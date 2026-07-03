@@ -8,8 +8,8 @@
 
 Most registrants have a real church pre-selected in the Elvanto form (`Attendee's Church`) and
 are allocated to it at CSV import. Some pick the **"OTHER – please specify below"** option, whose
-`Attendee's Church` cell holds a literal like `"Other - please specify below"` (exact string to be
-confirmed against a real submission — see Detection). Today, `import.service.resolveChurch()` takes
+`Attendee's Church` cell holds the exact literal `"OTHER - please specify below"`. Today,
+`import.service.resolveChurch()` takes
 whatever is in that cell and **auto-creates a junk church** from the literal string, silently
 lumping every OTHER registrant into a fake church.
 
@@ -30,7 +30,8 @@ Three things are wanted:
   registrants selected a *real* church (`REDACTED Church`) **and** filled the free-text note
   (`Josh Gazzard`, a youth pastor). So a filled note is **not** an unallocated signal — using it
   would wrongly flag people who have a proper church. Detection keys off `Attendee's Church` being
-  the "Other" literal (or blank). The note is display-only supporting info.
+  the exact literal `"OTHER - please specify below"` (matched case-insensitively and trimmed, held
+  in a single `OTHER_CHURCH_LITERAL` constant) or blank. The note is display-only supporting info.
 - **The free-text is already imported.** `Attendee's Church`'s companion column maps to
   `Person.churchUnlistedNote` (`elvanto-mapping.ts:24`, stored `import.service.ts:173`). No new
   field is needed to display it.
