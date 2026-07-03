@@ -12,6 +12,7 @@ function toNote(r: Record<string, unknown>): StudentNote {
     authorChurchId: (r['author_church_id'] as string | null) ?? undefined,
     sessionId: (r['session_id'] as string | null) ?? undefined,
     category: (r['category'] as StudentNote['category']) ?? undefined,
+    sensitive: (r['sensitive'] as boolean | null) ?? false,
     createdAt: (r['created_at'] as Date).toISOString(),
   };
 }
@@ -72,9 +73,10 @@ export class SupabaseNoteRepository implements INoteRepository {
         author_church_id: note.authorChurchId ?? null,
         session_id: note.sessionId ?? null,
         category: note.category ?? null,
+        sensitive: note.sensitive ?? false,
         created_at: note.createdAt,
       })}
-      on conflict (id) do update set body = excluded.body, category = excluded.category
+      on conflict (id) do update set body = excluded.body, category = excluded.category, sensitive = excluded.sensitive
     `;
     return note;
   }

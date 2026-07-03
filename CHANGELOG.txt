@@ -1,6 +1,58 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-03 — BUG-LIST BATCH: LEADER PRESENCE, SENSITIVE NOTES, BUDGET, LOG TOTALS
+-----------------------------------------------------------------------------------
+Admin-requested batch of 7 items. Design at
+docs/superpowers/specs/2026-07-03-bug-batch-design.md. Verified: npm run typecheck clean,
+npm run test = 409 pass (32 new tests), SPA main-script node --check OK. Migration 019
+applied to prod. sw.js camp-v14 -> v15.
+  * Import row-order CONFIRMED already correct (no code change) — Form/Ticket/Invoice
+    importers all match by a name(+phone) key (person-matching.ts / import.service.ts
+    nameChurchKey), never by CSV row position. Added a shuffled-row-order regression test
+    (multi-source-import.integration.test.ts).
+  * Budget: NEW collapsible "Discount codes" section at the bottom of the budget table —
+    each code's usage count out of total registrants in scope. New pure
+    computeDiscountCodeSummary (src/services/budget.ts) + SPA computeDiscountSummaryClient
+    mirror (RENDER.budget/drawBudget).
+  * Leaders are now bulk-signed-in (atCamp:true, lifecycle:'arrived') the moment the camp
+    mode switches pre-camp -> at-camp (admin.service.setMode), reusing the same
+    withSignEvent transition a normal sign-in uses — one saveMany, not a per-leader round
+    trip, so it can't reintroduce mode-switch latency. Leaders remain excluded from the
+    twice-daily check-in roster (checkin.service.getSessionStatus) and from the
+    dashboard's checkInsDue count (dashboard.service — they'd otherwise sit permanently
+    "due" since they never get a checkInHistory entry); totalAtCamp/totalExpected DO
+    include them. My Youth (SPA) gained a "Leaders" grade-filter option and its "Late
+    arrivals" bucket now includes leaders too (covers a leader added after the bulk
+    sign-in already ran), reusing the existing sign-in button on openCamper. Sign-out/
+    sign-in modal copy adapts wording for a leader vs a youth and skips the
+    parents-met question for leaders.
+  * Review Data Import: audited the flow (Ticket List/Invoice orphans -> needsReview ->
+    Data tab amber badge -> openReviewModal -> "Mark reviewed", by design never
+    auto-merges). Added a helpTip inside openReviewModal explaining what to check before
+    confirming — the one-tap confirm itself was already fine, the modal just gave no
+    guidance.
+  * At-camp mode-switch lag: root cause was RENDER.home() unconditionally re-fetching
+    /settings right after switchMode() already applied the fresh mode locally — 3
+    sequential round-trips where 1-2 would do. RENDER.home now accepts a skipModeSync
+    flag; switchMode passes it. Also closed a latent cache-correctness gap: _invalidate
+    didn't clear /settings on an /admin/mode write, so a same-session cached read within
+    the 30s window could see the stale pre-switch mode.
+  * Sensitive notes/testimonies (NEW): a "Mark as sensitive" toggle on both the "Add
+    note" modal and "Submit testimony" screen (default off). A sensitive note is hidden
+    from the individual student-profile view (GET /notes/camper/:id) for 'church' logins
+    only — zoneLeader/director/admin still see it (with a small "Sensitive" badge).
+    StudentNote.sensitive (migration 019, notes.sensitive boolean default false). The
+    false "Visible to zone leaders & directors only" subtitle text on the note modal was
+    deleted and replaced with a helpTip describing the real rule.
+  * Sign-in/out log: restructured from grouped-per-person into ONE chronological
+    timeline across every person (students AND leaders), with two new columns — Total
+    Students Signed In / Total Leaders Signed In — showing running per-kind counts
+    immediately after each row's event. Applied to both the compliance workbook's
+    "Sign-in & Sign-out Log" sheet and exportSignInOutCsv (buildSignInOutTimeline,
+    audit-export.service.ts). Leader events from the new bulk sign-in flow straight
+    into this the same way as any other event.
+
 2026-07-03 — SECURITY: LOGIN USER-ENUMERATION HARDENING
 -------------------------------------------------------
 Independent review (round 2, beyond the Phase E headers) found the auth stack strong — HMAC-signed

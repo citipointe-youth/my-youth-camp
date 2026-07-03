@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { computeBudget, labelForAmount, budgetToCsv, type BudgetPerson, type BudgetReport } from './budget';
+import {
+  computeBudget,
+  labelForAmount,
+  budgetToCsv,
+  computeDiscountCodeSummary,
+  type BudgetPerson,
+  type BudgetReport,
+} from './budget';
 
 function p(over: Partial<BudgetPerson> & Pick<BudgetPerson, 'churchId' | 'kind'>): BudgetPerson {
   return {
@@ -187,5 +194,35 @@ describe('budgetToCsv', () => {
     expect(csv).toContain('Grand Total');
     // grand total in the last row equals the report grand total
     expect(rows[rows.length - 1]!.endsWith(',' + r.grandTotal)).toBe(true);
+  });
+});
+
+describe('computeDiscountCodeSummary', () => {
+  const people: BudgetPerson[] = [
+    p({ churchId: 'c1', kind: 'camper', discountCode: 'EARLYBIRD' }),
+    p({ churchId: 'c1', kind: 'camper', discountCode: 'EARLYBIRD' }),
+    p({ churchId: 'c2', kind: 'leader', discountCode: 'ALIVE100' }),
+    p({ churchId: 'c2', kind: 'camper', discountCode: null }),
+    p({ churchId: 'c1', kind: 'camper', discountCode: '  ' }), // blank/whitespace-only — not a code
+  ];
+
+  it('groups by code, most-used first, and totals against all registrants in scope', () => {
+    const summary = computeDiscountCodeSummary(people);
+    expect(summary.totalInScope).toBe(5);
+    expect(summary.rows).toEqual([
+      { code: 'EARLYBIRD', count: 2 },
+      { code: 'ALIVE100', count: 1 },
+    ]);
+  });
+
+  it('scopes to a single church via filterChurchId', () => {
+    const summary = computeDiscountCodeSummary(people, 'c1');
+    expect(summary.totalInScope).toBe(3); // 2 EARLYBIRD + 1 blank-code camper, all c1
+    expect(summary.rows).toEqual([{ code: 'EARLYBIRD', count: 2 }]);
+  });
+
+  it('no discount codes at all → empty rows, totalInScope still reflects the scope', () => {
+    const none: BudgetPerson[] = [p({ churchId: 'c1', kind: 'camper', discountCode: null })];
+    expect(computeDiscountCodeSummary(none)).toEqual({ totalInScope: 1, rows: [] });
   });
 });

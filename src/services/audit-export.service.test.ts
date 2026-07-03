@@ -98,3 +98,61 @@ describe('audit-export: master workbook', () => {
     expect(bodies.some((b) => b.includes('Great week'))).toBe(true); // testimony still present
   });
 });
+
+describe('audit-export: sign-in/out log running totals (chronological across students AND leaders)', () => {
+  beforeEach(async () => {
+    // Inserted out of chronological order on purpose — the log must re-sort by timestamp,
+    // not trust person/array order. T1 < T2 < T3 < T4.
+    await people.save(person({
+      id: 'youth1', firstName: 'Yolanda', lastName: 'Youth', kind: 'youth', lifecycle: 'arrived', atCamp: false,
+      signOutHistory: [
+        { id: 'e2', type: 'in', leaderName: 'L', authorId: 'a', timestamp: '2026-07-01T10:00:00.000Z' },
+        { id: 'e4', type: 'out', leaderName: 'L', authorId: 'a', timestamp: '2026-07-01T13:00:00.000Z' },
+      ],
+    }));
+    await people.save(person({
+      id: 'leader1', firstName: 'Leo', lastName: 'LeaderOne', kind: 'leader', lifecycle: 'arrived', atCamp: true,
+      signOutHistory: [
+        { id: 'e1', type: 'in', leaderName: 'Admin', authorId: 'a', timestamp: '2026-07-01T09:00:00.000Z' },
+      ],
+    }));
+    await people.save(person({
+      id: 'leader2', firstName: 'Lena', lastName: 'LeaderTwo', kind: 'leader', lifecycle: 'arrived', atCamp: true,
+      signOutHistory: [
+        { id: 'e3', type: 'in', leaderName: 'Admin', authorId: 'a', timestamp: '2026-07-01T11:00:00.000Z' },
+      ],
+    }));
+  });
+
+  it('exportSignInOutCsv: events are one chronological timeline with running per-kind totals', async () => {
+    const csv = await svc.exportSignInOutCsv(actor);
+    const lines = csv.trim().split('\n');
+    expect(lines[0]).toBe(
+      'First Name,Last Name,Church,Zone,Gender,Grade,Event Type,Timestamp (local),Reason,Parents Met,Authorised By,Total Students Signed In,Total Leaders Signed In',
+    );
+    // 4 real events (cam1 has none — it was only ever noted, not signed) in chronological order.
+    const dataRows = lines.slice(1);
+    expect(dataRows).toHaveLength(4);
+    expect(dataRows[0]).toContain('Leo'); // T1: leader1 in -> students 0, leaders 1
+    expect(dataRows[0]!.endsWith('0,1')).toBe(true);
+    expect(dataRows[1]).toContain('Yolanda'); // T2: youth1 in -> students 1, leaders 1
+    expect(dataRows[1]!.endsWith('1,1')).toBe(true);
+    expect(dataRows[2]).toContain('Lena'); // T3: leader2 in -> students 1, leaders 2
+    expect(dataRows[2]!.endsWith('1,2')).toBe(true);
+    expect(dataRows[3]).toContain('Yolanda'); // T4: youth1 out -> students 0, leaders 2
+    expect(dataRows[3]!.endsWith('0,2')).toBe(true);
+  });
+
+  it('exportMasterWorkbook: Sign-in & Sign-out Log sheet carries the same running totals', async () => {
+    const wb = await load();
+    const sheet = wb.getWorksheet('Sign-in & Sign-out Log')!;
+    const header = (sheet.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    expect(header).toContain('Total Students Signed In');
+    expect(header).toContain('Total Leaders Signed In');
+    // cam1 (from the outer beforeEach — lifecycle 'arrived', no sign history) contributes
+    // no row at all (it's neither a no-show nor an event); the sheet is just the 4 events.
+    const lastRow = sheet.getRow(sheet.rowCount).values as unknown[];
+    const lastCells = lastRow.map((v) => (v == null ? '' : v));
+    expect(lastCells.slice(-2)).toEqual([0, 2]); // final row (youth1 out) matches the CSV totals
+  });
+});

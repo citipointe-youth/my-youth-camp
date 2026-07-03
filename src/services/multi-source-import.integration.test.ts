@@ -172,4 +172,42 @@ describe('Multi-source import — real 2026-07-02 sample files, run in sequence 
       expect(p.gender).not.toBe('other'); // both real students/leader have a real Gender value
     }
   });
+
+  /** Reverse a CSV's data rows while keeping the header on line 1 — matching is by name/
+   * invoice-number key, never row position, so this must produce identical results. */
+  function reverseRows(csv: string): string {
+    const lines = csv.trim().split('\n');
+    const [header, ...rows] = lines;
+    return [header, ...rows.reverse()].join('\n') + '\n';
+  }
+
+  it('row order within (and matching across) the three CSVs does not affect matching — reversing every file yields the identical fully-reconciled result', async () => {
+    const { formSvc, ticketSvc, invoiceSvc, personRepo } = await build();
+    await formSvc.importCsv(actor('admin'), { csvData: reverseRows(FORM_CSV) });
+    await ticketSvc.importTicketsCsv(actor('admin'), { csvData: reverseRows(TICKET_CSV) });
+    await invoiceSvc.importInvoicesCsv(actor('admin'), { csvData: reverseRows(INVOICE_CSV) });
+
+    const people = await personRepo.findAll();
+    expect(people).toHaveLength(3); // no orphans, no duplicates from the reordering
+
+    const redactedPerson = people.find((p) => p.firstName === 'REDACTED')!;
+    expect(redactedPerson.accommodationKind).toBe('classroom');
+    expect(redactedPerson.registrationCost).toBe(190);
+    expect(redactedPerson.amountPaid).toBe(190);
+
+    const redactedPerson3 = people.find((p) => p.firstName === 'REDACTED')!;
+    expect(redactedPerson3.accommodationKind).toBe('tent');
+    expect(redactedPerson3.registrationCost).toBe(150);
+
+    const redactedPerson2 = people.find((p) => p.firstName === 'REDACTED')!;
+    expect(redactedPerson2.kind).toBe('leader');
+    expect(redactedPerson2.accommodationKind).toBe('tent');
+    expect(redactedPerson2.discountCode).toBe('ALIVE100');
+    expect(redactedPerson2.amountPaid).toBe(0);
+
+    for (const p of people) {
+      expect(p.needsReview).toBe(false);
+      expect(p.accommodationKindConfidence).toBe('confirmed');
+    }
+  });
 });

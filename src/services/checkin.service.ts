@@ -65,7 +65,10 @@ export function makeCheckInService(
 
       const session = sessionFor(parsed.day, parsed.sfx);
       const allPeople = await personRepo.findAll();
-      const scoped = allPeople.filter((p) => p.atCamp && canAccessPerson(actor, p));
+      // Leaders are never on the twice-daily check-in roster (they're presence-tracked via
+      // attendance sign-in/out on My Youth instead, not this session-based flow) — even
+      // though they may well be atCamp (bulk-signed-in when the mode switches to at-camp).
+      const scoped = allPeople.filter((p) => p.atCamp && p.kind !== 'leader' && canAccessPerson(actor, p));
       const roster: RosterEntry[] = scoped.map((p) => toRosterEntry(p, sessionId));
       const checkedInCount = roster.filter((r) => r.checkedIn).length;
 

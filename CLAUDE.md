@@ -296,6 +296,63 @@ additive changes — no matching/merge logic needed to change.
   `PERSON_UPDATE_COLS` (Supabase `on conflict do update set` list) was missing `elvanto_meta`/
   `medicare_number`/`church_unlisted_note`, so those three fields silently never updated on save.
 
+## Bug-list batch — leader presence, sensitive notes, budget, log totals — deployed 2026-07-03
+
+Admin-requested batch of 7 items. Design doc: `docs/superpowers/specs/2026-07-03-bug-batch-design.md`.
+`npm run typecheck` clean, `npm run test` = 409 pass, SPA `node --check` OK. Migration `019`
+applied to prod. `sw.js` `camp-v14`→`camp-v15`.
+
+- **Leader at-camp presence (NEW).** `admin.service.ts` `setMode`: on the **pre-camp → at-camp**
+  transition only, every non-cancelled `kind:'leader'` person not already `atCamp` is bulk
+  sign-in'd (`withSignEvent` from `person-lifecycle.ts` — the same transition a normal sign-in
+  uses, so `atCamp`/`lifecycle`/`signOutHistory` stay fully consistent with the presence
+  invariants above) via a single `personRepo.saveMany` — **not** a per-leader round trip, so this
+  can't reintroduce mode-switch latency. Leaders stay excluded from the twice-daily check-in
+  roster (`checkin.service.getSessionStatus` now filters `kind !== 'leader'`) and from
+  `dashboard.service`'s `checkInsDue` (same filter — a leader never gets a `checkInHistory` entry
+  and would otherwise sit permanently "due"); `totalAtCamp`/`totalExpected` are **not** filtered —
+  leaders count as physically at camp. SPA My Youth (`RENDER.myyouth`/`filterMyYouth`) gained a
+  **"Leaders"** grade-filter option and its "Late arrivals" bucket now includes leaders (was
+  student-only) — covers a leader added after the bulk sign-in already ran; they get the same
+  existing "Sign in to camp" button on `openCamper`, no new UI. `signOutPrompt`/`signInPrompt` take
+  an `isLeader` flag and adapt copy ("this leader" vs "this youth"; the parents-met question is
+  skipped for leaders).
+- **Sensitive notes/testimonies (NEW).** `StudentNote.sensitive` (migration `019`,
+  `notes.sensitive boolean not null default false`). A "Mark as sensitive" toggle on both the "Add
+  note" modal (`notePrompt`) and "Submit testimony" screen (`RENDER.testimonies`), default off.
+  `note.service.forCamper` (the profile-notes read path) drops `sensitive:true` notes for
+  `actor.role==='church'` only — zoneLeader/director/admin still see them (with a small
+  "Sensitive" pill in `openCamper`'s notes list). The previously-false "Visible to zone leaders &
+  directors only" subtitle on the note modal is gone, replaced by a `helpTip` describing the real
+  rule.
+- **Budget discount-code breakdown (NEW).** `src/services/budget.ts` `computeDiscountCodeSummary`
+  (pure, tested) — each distinct `discountCode` used → count, against `totalInScope` (total
+  registrants in the same scope as the rest of the budget table). SPA mirror
+  `computeDiscountSummaryClient`; rendered as a new collapsible "Discount codes" card at the bottom
+  of `RENDER.budget`/`drawBudget`, same collapse pattern (`_budToggle`) as the per-church rows.
+- **Sign-in/out log running totals.** `audit-export.service.ts` `buildSignInOutTimeline`: the
+  "Sign-in & Sign-out Log" (both the compliance workbook sheet and `exportSignInOutCsv`) is now
+  **one chronological timeline** across every person (students AND leaders) instead of grouped
+  per-person — two new columns, **Total Students Signed In** / **Total Leaders Signed In**, show
+  the running per-kind count immediately after each row's event. Leader events from the new bulk
+  sign-in flow feed into this exactly like any other event.
+- **Mode-switch lag fix.** `switchMode()` (SPA) already applies the fresh `campMode` locally right
+  after `POST /admin/mode` succeeds, but the `RENDER.home()` it called next unconditionally
+  re-fetched `/settings` again — a 3rd sequential round-trip for no new information. `RENDER.home`
+  now takes a `skipModeSync` flag; `switchMode` passes it (other already-open sessions still get
+  the re-sync on their next home nav, unaffected). Also closed a related cache-correctness gap:
+  `_invalidate` didn't clear `/settings` on an `/admin/mode` write, so a same-session cached read
+  within the 30s TTL window could briefly see the stale pre-switch mode.
+- **Review Data Import (audit, no behaviour change).** Confirmed the flow: Ticket List/Invoice rows
+  that can't be confidently matched get `needsReview:true` → an amber badge on the Data tab
+  (`reviewCell`) → `openReviewModal` → "Mark reviewed" (`_markReviewed`, clears the flag only,
+  never auto-merges — by design). Added a `helpTip` inside `openReviewModal` explaining what to
+  check (name/church spelling, accommodation/cost) before confirming.
+- **Import row-order robustness (confirmed, no change).** All three importers match people by a
+  name(+phone) key (`person-matching.ts` cross-church index; `import.service.ts`
+  `nameChurchKey`) — never by CSV row position. Added a shuffled-row-order regression test to
+  `multi-source-import.integration.test.ts`.
+
 ## First-aid export + login-enumeration hardening — deployed 2026-07-03
 
 - **First-aid Records CSV export (SPA):** `RENDER.records` gained an **Export** button →

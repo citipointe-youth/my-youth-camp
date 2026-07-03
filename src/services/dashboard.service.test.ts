@@ -148,6 +148,17 @@ describe('at-camp dashboard — D2 scoping', () => {
     if (res.mode !== 'at-camp') throw new Error('expected at-camp');
     expect(res.totalExpected).toBe(1);
   });
+
+  it('leaders DO count toward totalAtCamp/totalExpected (they are physically at camp too)', async () => {
+    pinClock('2026-07-01T15:00:00Z');
+    const h = await build();
+    await h.personRepo.save(camper({ id: 'youth1', kind: 'youth', atCamp: true }));
+    await h.personRepo.save(camper({ id: 'lead1', kind: 'leader', atCamp: true }));
+    const res = await h.svc.home(actor('admin'), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.totalExpected).toBe(2);
+    expect(res.totalAtCamp).toBe(2);
+  });
 });
 
 describe('at-camp dashboard — D3 checkInsDue (current session, respects check-out)', () => {
@@ -189,6 +200,16 @@ describe('at-camp dashboard — D3 checkInsDue (current session, respects check-
     if (res.mode !== 'at-camp') throw new Error('expected at-camp');
     expect(res.currentSession?.id).toBe(PM);
     expect(res.checkInsDue).toBe(1); // checked into AM, but PM is current -> still due
+  });
+
+  it('leaders never inflate checkInsDue — they are not on the twice-daily check-in roster', async () => {
+    pinClock('2026-07-01T15:00:00Z'); // PM current
+    const h = await build();
+    await h.personRepo.save(camper({ id: 'lead1', kind: 'leader', atCamp: true })); // no checkInHistory
+    await h.personRepo.save(camper({ id: 'youth1', kind: 'youth', atCamp: true, checkInHistory: [ci(PM, 'in', '2026-07-01T13:30:00Z')] }));
+    const res = await h.svc.home(actor('admin'), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.checkInsDue).toBe(0); // would be 1 (the leader) if leaders weren't excluded
   });
 });
 

@@ -161,3 +161,31 @@ describe('note.service: recentFirstAid read scoping', () => {
     expect(blue.map((n) => n.camperId)).toEqual(['cam2']);
   });
 });
+
+describe('note.service: forCamper sensitive-note filtering (profile view)', () => {
+  beforeEach(async () => {
+    await svc.add(actor('church', { churchId: 'c1' }), { camperId: 'cam1', category: 'note', body: 'ordinary note' });
+    await svc.add(actor('director'), { camperId: 'cam1', category: 'note', body: 'sensitive note', sensitive: true });
+    await svc.add(actor('director'), { camperId: 'cam1', category: 'testimony', body: 'sensitive testimony', sensitive: true });
+  });
+
+  it('a new note defaults to sensitive:false', async () => {
+    const notesForCam1 = await svc.forCamper(actor('admin'), 'cam1');
+    const ordinary = notesForCam1.find((n) => n.body === 'ordinary note');
+    expect(ordinary?.sensitive).toBe(false);
+  });
+
+  it('church does NOT see sensitive notes/testimonies on the profile', async () => {
+    const recs = await svc.forCamper(actor('church', { churchId: 'c1' }), 'cam1');
+    expect(recs).toHaveLength(1);
+    expect(recs[0]?.body).toBe('ordinary note');
+  });
+
+  it('zoneLeader, director and admin DO see sensitive notes on the profile', async () => {
+    for (const role of ['zoneLeader', 'director', 'admin'] as const) {
+      const a = role === 'zoneLeader' ? actor(role, { zone: 'Yellow' }) : actor(role);
+      const recs = await svc.forCamper(a, 'cam1');
+      expect(recs).toHaveLength(3);
+    }
+  });
+});

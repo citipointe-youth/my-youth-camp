@@ -17,6 +17,7 @@ const AddNoteSchema = z.object({
   body: z.string().min(1).max(2000),
   sessionId: z.string().optional(),
   category: z.string().max(40).optional(),
+  sensitive: z.boolean().optional(),
 });
 
 export interface NoteService {
@@ -66,6 +67,7 @@ export function makeNoteService(
         authorChurchId: actor.churchId,
         sessionId: data.sessionId ?? null,
         category,
+        sensitive: data.sensitive ?? false,
         createdAt: nowISO(),
       };
       return noteRepo.save(note);
@@ -76,7 +78,12 @@ export function makeNoteService(
       const camper = await personRepo.findById(camperId);
       if (!camper || !isCamper(camper)) throw new NotFoundError('Camper not found');
       if (!canAccessPerson(actor, camper)) throw new NotFoundError('Camper not found');
-      return noteRepo.findByCamper(camperId);
+      const notes = await noteRepo.findByCamper(camperId);
+      // A sensitive note is hidden from the individual student-profile view for church
+      // logins only — zoneLeader/director/admin (who also reach this via openCamper) still
+      // see it. This is the only surface a church login can read notes on (church holds
+      // note:write but not the broader note:read used by the Notes tab/export).
+      return actor.role === 'church' ? notes.filter((n) => !n.sensitive) : notes;
     },
 
     async recent(actor, limit = 20) {

@@ -105,6 +105,15 @@ describe('getSessionStatus — roster filter', () => {
     const svc = makeCheckInService(personRepo, settingsRepo);
     await expect(svc.getSessionStatus(actor(), '2030-01-01~am')).rejects.toThrow();
   });
+
+  it('excludes leaders even when atCamp=true — leaders are never on the twice-daily check-in roster', async () => {
+    await personRepo.save(person({ id: 'lead1', kind: 'leader', atCamp: true, lifecycle: 'arrived' }));
+    await personRepo.save(person({ id: 'p1', kind: 'youth', atCamp: true, lifecycle: 'arrived' }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    const result = await svc.getSessionStatus(actor(), SESSION_ID);
+    expect(result.roster.map((r) => r.camperId)).toEqual(['p1']);
+    expect(result.totalCount).toBe(1);
+  });
 });
 
 describe('getSessionStatus — RosterEntry enriched fields', () => {

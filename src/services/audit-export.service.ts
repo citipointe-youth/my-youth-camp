@@ -31,6 +31,55 @@ function parseFirstAidBody(body: string): {
   return out;
 }
 
+interface SignLogEvent {
+  person: Person;
+  type: 'in' | 'out';
+  timestamp: string;
+  reason: string;
+  parentsMet: boolean;
+  authorId: string;
+}
+
+interface SignLogEventWithTotals extends SignLogEvent {
+  /** Running count of students (kind:'youth') currently signed in, immediately after this event. */
+  studentsSignedIn: number;
+  /** Running count of leaders currently signed in, immediately after this event. */
+  leadersSignedIn: number;
+}
+
+/**
+ * The sign-in/out log as ONE chronological timeline across every person (not grouped
+ * per-person) — needed so a running "students/leaders currently signed in" total means
+ * something as a point-in-time figure. Zero-history registrants ("Registered — Did Not
+ * Attend") have no real event/timestamp and are returned separately.
+ */
+function buildSignInOutTimeline(people: Person[]): { noShows: Person[]; events: SignLogEventWithTotals[] } {
+  const noShows = people.filter((p) => p.lifecycle === 'registered' && p.signOutHistory.length === 0);
+  const raw: SignLogEvent[] = [];
+  for (const p of people) {
+    for (const ev of p.signOutHistory) {
+      raw.push({
+        person: p,
+        type: ev.type === 'in' ? 'in' : 'out',
+        timestamp: ev.timestamp,
+        reason: ev.reason || '',
+        parentsMet: !!ev.parentsMet,
+        authorId: ev.authorId,
+      });
+    }
+  }
+  raw.sort((a, b) => a.timestamp.localeCompare(b.timestamp)); // ISO 8601 — lexical order === chronological
+  let studentsSignedIn = 0;
+  let leadersSignedIn = 0;
+  const events: SignLogEventWithTotals[] = raw.map((e) => {
+    const delta = e.type === 'in' ? 1 : -1;
+    if (e.person.kind === 'leader') leadersSignedIn += delta;
+    else studentsSignedIn += delta;
+    return { ...e, studentsSignedIn, leadersSignedIn };
+  });
+  return { noShows, events };
+}
+
 function toLocalTs(isoTs: string, tz: string): string {
   try {
     return new Intl.DateTimeFormat('en-AU', {
@@ -98,27 +147,33 @@ export function makeAuditExportService(
       signLog.addRow([
         'Student', 'Church', 'Zone', 'Gender', 'Grade',
         'Event Type', 'Timestamp (local)', 'Reason', 'Parents Met', 'Authorised By',
+        'Total Students Signed In', 'Total Leaders Signed In',
       ]);
       signLog.getRow(1).font = { bold: true };
 
-      // Include "Registered — Did Not Attend" rows for zero-history registrants
-      for (const p of people) {
-        if (p.lifecycle === 'registered' && p.signOutHistory.length === 0) {
-          signLog.addRow([
-            `${p.firstName} ${p.lastName}`, p.churchName, p.zone, p.gender, p.grade ?? '',
-            'Registered — Did Not Attend', '', '', '', '',
-          ]);
-        }
-        for (const ev of p.signOutHistory) {
-          signLog.addRow([
-            `${p.firstName} ${p.lastName}`, p.churchName, p.zone, p.gender, p.grade ?? '',
-            ev.type === 'in' ? 'Sign-in (returned)' : 'Sign-out',
-            toLocalTs(ev.timestamp, tz),
-            ev.reason || '',
-            ev.parentsMet ? 'Yes' : '',
-            ev.authorId,
-          ]);
-        }
+      // Zero-history registrants first ("Registered — Did Not Attend") — no real event, so
+      // no running-total figure. Then one true chronological timeline of every sign-in/out
+      // event across every person (students AND leaders), each row carrying the running
+      // "currently signed in" totals immediately after that event — the figures update as
+      // soon as an event is logged, including leader events (bulk-signed-in at mode switch).
+      const { noShows, events } = buildSignInOutTimeline(people);
+      for (const p of noShows) {
+        signLog.addRow([
+          `${p.firstName} ${p.lastName}`, p.churchName, p.zone, p.gender, p.grade ?? '',
+          'Registered — Did Not Attend', '', '', '', '', '', '',
+        ]);
+      }
+      for (const e of events) {
+        signLog.addRow([
+          `${e.person.firstName} ${e.person.lastName}`, e.person.churchName, e.person.zone, e.person.gender, e.person.grade ?? '',
+          e.type === 'in' ? 'Sign-in (returned)' : 'Sign-out',
+          toLocalTs(e.timestamp, tz),
+          e.reason,
+          e.parentsMet ? 'Yes' : '',
+          e.authorId,
+          e.studentsSignedIn,
+          e.leadersSignedIn,
+        ]);
       }
 
       // ----- Daily Check-in Log -----
@@ -202,27 +257,29 @@ export function makeAuditExportService(
       assertCan(actor, 'camper:read');
       const { tz, people } = await getAllData();
       const rows: string[][] = [];
-      for (const p of people) {
-        if (p.lifecycle === 'registered' && p.signOutHistory.length === 0) {
-          rows.push([
-            p.firstName, p.lastName, p.churchName, p.zone, p.gender, String(p.grade ?? ''),
-            'Registered — Did Not Attend', '', '', '', '',
-          ]);
-        }
-        for (const ev of p.signOutHistory) {
-          rows.push([
-            p.firstName, p.lastName, p.churchName, p.zone, p.gender, String(p.grade ?? ''),
-            ev.type === 'in' ? 'Sign-in (returned)' : 'Sign-out',
-            toLocalTs(ev.timestamp, tz),
-            ev.reason || '',
-            ev.parentsMet ? 'Yes' : '',
-            ev.authorId,
-          ]);
-        }
+      const { noShows, events } = buildSignInOutTimeline(people);
+      for (const p of noShows) {
+        rows.push([
+          p.firstName, p.lastName, p.churchName, p.zone, p.gender, String(p.grade ?? ''),
+          'Registered — Did Not Attend', '', '', '', '', '', '',
+        ]);
+      }
+      for (const e of events) {
+        rows.push([
+          e.person.firstName, e.person.lastName, e.person.churchName, e.person.zone, e.person.gender, String(e.person.grade ?? ''),
+          e.type === 'in' ? 'Sign-in (returned)' : 'Sign-out',
+          toLocalTs(e.timestamp, tz),
+          e.reason,
+          e.parentsMet ? 'Yes' : '',
+          e.authorId,
+          String(e.studentsSignedIn),
+          String(e.leadersSignedIn),
+        ]);
       }
       return toCsvString(
         ['First Name', 'Last Name', 'Church', 'Zone', 'Gender', 'Grade',
-          'Event Type', 'Timestamp (local)', 'Reason', 'Parents Met', 'Authorised By'],
+          'Event Type', 'Timestamp (local)', 'Reason', 'Parents Met', 'Authorised By',
+          'Total Students Signed In', 'Total Leaders Signed In'],
         rows,
       );
     },

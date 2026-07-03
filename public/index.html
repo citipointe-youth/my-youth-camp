@@ -591,6 +591,10 @@ function _invalidate(path){
   // clear /checkin. Schedule is de-linked from check-in (see CLAUDE.md "Daily check-in"), so a
   // settings write no longer clears /schedule.
   else if(path.startsWith('/settings'))Cache.del('/settings','/checkin');
+  // A mode switch changes settings.campMode — clear /settings too, or a same-session read
+  // within the 30s cache window (anything other than the switcher itself, which already
+  // applies the fresh mode locally) would see the stale pre-switch mode.
+  else if(path.startsWith('/admin/mode'))Cache.del('/settings','/checkin');
   // A schedule write is independent of check-in (de-linked) → clear only /schedule.
   else if(path.startsWith('/schedule'))Cache.del('/schedule');
   else if(path.startsWith('/attendance')||path.startsWith('/checkin'))Cache.del('/checkin');
@@ -1078,7 +1082,7 @@ function buildTabs(){
 const RENDER={};
 
 /* ===== PRE-CAMP HOME ===== */
-RENDER.home=async function renderHome(){
+RENDER.home=async function renderHome(skipModeSync){
   // Phase 4: firstAid has no Home — its landing is Search. (gotoTab already redirects home→search;
   // this guards any direct RENDER.home() call.)
   if(ACTOR&&ACTOR.role==='firstAid'){await gotoTab('search');return;}
@@ -1087,7 +1091,10 @@ RENDER.home=async function renderHome(){
   // NEVER while previewing: preview locally forces CAMP_MODE='at-camp' even though
   // the server is still 'pre-camp', so re-syncing here would instantly drop the user
   // back out of the preview (bug: "preview at-camp view doesn't load").
-  if(!PREVIEW_MODE){
+  // skipModeSync: the caller (switchMode) already applied fresh settings locally — this
+  // re-fetch would just be a 3rd sequential round-trip for no new information, and was the
+  // main contributor to "switching to at-camp lags" (perf audit, 2026-07-03).
+  if(!PREVIEW_MODE&&!skipModeSync){
     try{
       const fresh=await api('/settings');
       if(fresh&&fresh.campMode){
@@ -1595,29 +1602,34 @@ function undoCheck(){
   _queueEntry(id,type==='in'?'out':'in');
 }
 async function doCheck(camperId,type){_performCheck(camperId,type,'');}
+const _SENSITIVE_HELP='Notes show on the student\'s profile by default. Mark this sensitive to hide it from church logins — only zone leaders, directors and admins will be able to see it.';
 function notePrompt(camperId,name){
-  const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:LAST_LEADER,body:''};
-  modal(`<h3>Note · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Visible to zone leaders &amp; directors only.</p>
+  const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:LAST_LEADER,body:'',sensitive:false};
+  modal(`<h3>Note · ${esc(name)}</h3>
     <label>Your name (leader)</label><input class="fld" id="noteLeader" value="${esc(d.leader)}" placeholder="e.g. Sarah Doyle">
     <label>Note</label><textarea id="noteBody" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
-    <button class="btn" onclick="reviewNote('${camperId}','${esc(name)}')">Review ${icSm('arrowr')}</button>
+    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this note from church logins on the student's profile.</div></div>
+    <label class="tgl"><input type="checkbox" id="noteSensitive" ${d.sensitive?'checked':''}><span class="track"></span></label></div>
+    <button class="btn" style="margin-top:10px" onclick="reviewNote('${camperId}','${esc(name)}')">Review ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
 function reviewNote(camperId,name){
   const leader=document.getElementById('noteLeader').value.trim(),body=document.getElementById('noteBody').value.trim();
+  const sensitive=!!document.getElementById('noteSensitive')?.checked;
   if(!leader){toast('Add your name first');return;}if(!body){toast('Type a note first');return;}
-  LAST_LEADER=leader;window._draft={camperId,leader,body};
+  LAST_LEADER=leader;window._draft={camperId,leader,body,sensitive};
   modal(`<h3>Review note</h3><div class="card" style="margin:6px 0 10px">
     <div class="sub">Student</div><div class="nm">${esc(name)}</div>
     <div class="sub" style="margin-top:7px">Logged by</div><div class="nm">${esc(leader)}</div>
-    <div class="sub" style="margin-top:7px">Note</div><div style="font-size:.9rem">${esc(body)}</div></div>
+    <div class="sub" style="margin-top:7px">Note</div><div style="font-size:.9rem">${esc(body)}</div>
+    ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:.9rem">${icSm('alert')} Sensitive — hidden from church logins</div>`:''}</div>
     <button class="btn" onclick="confirmNote('${camperId}')">Confirm &amp; submit</button>
     <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(name)}')">‹ Edit</button>`);
 }
 async function confirmNote(camperId){const d=window._draft;if(!d)return;
   // Backend attributes the note to the logged-in actor; the typed leader name is folded into the body.
   const body=d.leader&&d.leader!==ACTOR.displayName?`${d.body}\n— logged by ${d.leader}`:d.body;
-  try{await api('/notes',{method:'POST',body:{camperId,body,sessionId:SEL_SESSION,category:'note'}});window._draft=null;closeModal();toast('Note submitted');}catch(e){toast(e.message);}}
+  try{await api('/notes',{method:'POST',body:{camperId,body,sessionId:SEL_SESSION,category:'note',sensitive:!!d.sensitive}});window._draft=null;closeModal();toast('Note submitted');}catch(e){toast(e.message);}}
 
 /* ===== FIRST AID ===== */
 /* ===== FIRST AID (Phase 4) =====
@@ -1938,6 +1950,14 @@ function computeBudgetClient(regs,filterId){
   return {grandTotal:churches.reduce((s,c)=>s+c.total,0),camperCount:churches.reduce((s,c)=>s+c.camperCount,0),
     leaderCount:churches.reduce((s,c)=>s+c.leaderCount,0),churchCount:churches.length,churches,fullAmount:full};
 }
+/** Mirrors src/services/budget.ts computeDiscountCodeSummary. */
+function computeDiscountSummaryClient(regs,filterId){
+  const people=(regs||[]).filter(r=>r.status!=='cancelled').filter(r=>!filterId||filterId==='all'||r.churchId===filterId);
+  const counts=new Map();
+  people.forEach(r=>{const code=(r.discountCode||'').trim();if(!code)return;counts.set(code,(counts.get(code)||0)+1);});
+  const rows=[...counts.entries()].map(([code,count])=>({code,count})).sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
+  return {totalInScope:people.length,rows};
+}
 RENDER.budget=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('budget','<p class="note-hint" style="margin-top:24px;text-align:center">Budget is available to directors only.</p>','Budget & Costings','');return;}
   const regs=await api('/registrants');
@@ -1976,7 +1996,16 @@ function drawBudget(){
       </div></div>`;
   };
   const body=rep.churches.length?`<div class="wide-cards">${rep.churches.map(churchCard).join('')}</div>`:emptyState('star','No registrations yet — import students to see the budget.');
-  const box=document.getElementById('budgetBody');if(box)box.innerHTML=head+body;
+  const disc=computeDiscountSummaryClient(window._budgetRegs,scope);
+  const discRow=(r)=>`<div class="rowsb" style="padding:5px 0"><span class="budcat-l">${esc(r.code)}</span><b>${r.count} used of ${disc.totalInScope}</b></div>`;
+  const discBody=disc.rows.length?disc.rows.map(discRow).join(''):'<p class="sub" style="padding:6px 0">No discount codes recorded.</p>';
+  const discSection=`<div class="card budchurch" data-cid="disc" style="margin-top:14px">
+    <div class="rowsb budchurch-hd" onclick="_budToggle('disc')" style="cursor:pointer">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="budchev">${icSm('chevron')}</span>
+        <div style="font-weight:700">Discount codes</div></div>
+      <span class="sub">${disc.rows.length} code${disc.rows.length===1?'':'s'}</span></div>
+    <div class="budchurch-body">${discBody}</div></div>`;
+  const box=document.getElementById('budgetBody');if(box)box.innerHTML=head+body+discSection;
 }
 function _budToggle(cid){const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.toggle('open');}
 function exportBudget(){
@@ -2241,14 +2270,17 @@ RENDER.myyouth=async function(){
   const zones=[...new Set(items.map(c=>c.zone))].sort();
   const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
   window._myYouthAll=items;
-  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not yet arrived. Tap a name to see their details and contacts.')}</div><div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="filterMyYouth()"><option value="all">All genders</option><option value="female">Girls</option><option value="male">Guys</option></select><select id="myGradeF" onchange="filterMyYouth()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}</select></div><div id="myYouthList"></div>`;
+  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not yet arrived. Tap a name to see their details and contacts.')}</div><div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="filterMyYouth()"><option value="all">All genders</option><option value="female">Girls</option><option value="male">Guys</option></select><select id="myGradeF" onchange="filterMyYouth()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}<option value="leaders">Leaders</option></select></div><div id="myYouthList"></div>`;
   paint('myyouth',base,'My Youth Details','At camp · signed out · late');
   filterMyYouth();
 };
 function filterMyYouth(){
   const zone=sel('myZoneF')||'all',gen=sel('myGenderF')||'all',gr=sel('myGradeF')||'all';
-  const all=(window._myYouthAll||[]).filter(c=>(zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)&&(gr==='all'||String(c.grade)===gr));
-  const notArrived=all.filter(c=>c.kind==='student'&&!c.atCamp&&(!c.signOutHistory||c.signOutHistory.length===0));
+  const all=(window._myYouthAll||[]).filter(c=>(zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)&&(gr==='all'||(gr==='leaders'?c.kind==='leader':String(c.grade)===gr)));
+  // Leaders are included here too (not just students) — a leader who wasn't part of the
+  // bulk sign-in at the mode switch (e.g. added by a later CSV import) shows up as a late
+  // arrival and can be signed in with the same button, rather than being invisible.
+  const notArrived=all.filter(c=>!c.atCamp&&(!c.signOutHistory||c.signOutHistory.length===0));
   const signedOut=all.filter(c=>!c.atCamp&&c.signOutHistory&&c.signOutHistory.length>0);
   const atCamp=all.filter(c=>c.atCamp);
   const el=document.getElementById('myYouthList');if(!el)return;
@@ -2274,21 +2306,21 @@ function filterMyYouth(){
     html+=`<div class="infobox" style="font-size:.8rem;margin-bottom:8px">First Day Sign In is closed. Sign in late arrivals here — tap a name, then “Sign in to camp”. A note is logged automatically.</div>`;
     html+=notArrived.map(myRow).join('');
   }
-  if(!html)html='<p class="note-hint" style="margin-top:24px;text-align:center">No students match these filters.</p>';
+  if(!html)html='<p class="note-hint" style="margin-top:24px;text-align:center">No one matches these filters.</p>';
   el.innerHTML=html;
 }
 async function openCamper(id,push=true){
   const p=await api('/campers/'+id);let notesHtml='';const lead=p.kind==='leader';
   const lastSignOut=(p.signOutHistory||[]).filter(e=>e.type==='out').slice(-1)[0]||null;
   if(canReadCamperNotes()){try{const notes=await api('/notes/camper/'+id);
-    notesHtml=`<div class="h3">Notes</div>${notes.length?notes.map(n=>`<div class="noteitem">${esc(n.body)}<div class="meta">${n.category&&n.category!=='note'?esc(n.category)+' · ':''}${esc(n.authorName)} · ${dtFmt(n.createdAt)}</div></div>`).join(''):'<p class="sub">No notes.</p>'}`;
+    notesHtml=`<div class="h3">Notes</div>${notes.length?notes.map(n=>`<div class="noteitem">${n.sensitive?`<span class="pill warn" style="margin-bottom:4px">${icSm('alert')} Sensitive</span> `:''}${esc(n.body)}<div class="meta">${n.category&&n.category!=='note'?esc(n.category)+' · ':''}${esc(n.authorName)} · ${dtFmt(n.createdAt)}</div></div>`).join(''):'<p class="sub">No notes.</p>'}`;
   }catch(e){}}
   const camp=`<div class="card"><div class="h3" style="margin-top:0">Camp attendance</div>
     <div class="kv"><span class="k">Status</span><span class="v">${p.atCamp?'<span class="pill ok">Signed in</span>':'<span class="pill warn">Signed out</span>'}</span></div>
     ${!p.atCamp&&lastSignOut?`<div class="kv"><span class="k">Signed out by</span><span class="v">${esc(lastSignOut.leaderName)}</span></div>
     <div class="kv"><span class="k">Reason</span><span class="v">${esc(lastSignOut.reason||'—')}</span></div>
     <div class="kv"><span class="k">Parents met</span><span class="v">${lastSignOut.parentsMet?'Yes':'No'}</span></div>`:''}
-    ${p.atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}')">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}')">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
+    ${p.atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
   const fullName=p.fullName||p.firstName+' '+p.lastName;
   document.getElementById('camper').innerHTML=`<div class="detail-hd"><div class="av-lg">${initials(fullName)}</div>
     <h2>${esc(fullName)}</h2><div style="color:#cfe0ff;font-size:.82rem">${esc(p.zone)} Zone · ${lead?'Leader (18+)':'Grade '+p.grade}</div></div>
@@ -2314,32 +2346,35 @@ async function openCamper(id,push=true){
 }
 
 /* SIGN OUT / IN */
-function signOutPrompt(id,name){
-  modal(`<h3>Sign out · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this youth OUT of camp.</p>
+function signOutPrompt(id,name,isLeader){
+  const who=isLeader?'leader':'youth';
+  window._soLeader=!!isLeader;
+  modal(`<h3>Sign out · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this ${who} OUT of camp.</p>
     <label>Your name</label><input class="fld" id="soLeader" value="${esc(LAST_LEADER||'')}" placeholder="e.g. Sarah Doyle">
-    <label>Reason</label><textarea id="soReason" placeholder="e.g. picked up by parents"></textarea>
-    <label>Were parents met at pickup?</label><div class="seg" id="soPm"><button class="on" data-pm="yes" onclick="soPm(this)">Yes</button><button data-pm="no" onclick="soPm(this)">No</button></div>
-    <button class="btn" onclick="signOutReview('${id}','${esc(name)}')">Review ${icSm('arrowr')}</button>
+    <label>Reason</label><textarea id="soReason" placeholder="${isLeader?'e.g. left early for the night':'e.g. picked up by parents'}"></textarea>
+    ${isLeader?'':'<label>Were parents met at pickup?</label><div class="seg" id="soPm"><button class="on" data-pm="yes" onclick="soPm(this)">Yes</button><button data-pm="no" onclick="soPm(this)">No</button></div>'}
+    <button class="btn" onclick="signOutReview('${id}','${esc(name)}',${!!isLeader})">Review ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
   window._soPm='yes';
 }
 function soPm(b){document.querySelectorAll('#soPm button').forEach(x=>x.classList.remove('on'));b.classList.add('on');window._soPm=b.dataset.pm;}
-function signOutReview(id,name){
-  const leader=document.getElementById('soLeader').value.trim(),reason=document.getElementById('soReason').value.trim(),pm=window._soPm==='yes';
+function signOutReview(id,name,isLeader){
+  const leader=document.getElementById('soLeader').value.trim(),reason=document.getElementById('soReason').value.trim(),pm=isLeader?false:window._soPm==='yes';
   if(!leader){toast('Add your name first');return;}if(!reason){toast('Add a reason');return;}
   LAST_LEADER=leader;window._soDraft={id,leader,reason,pm};
   modal(`<h3>Review sign-out</h3><div class="card" style="margin:6px 0 10px">
-    <div class="sub">Student</div><div class="nm">${esc(name)}</div>
+    <div class="sub">${isLeader?'Leader':'Student'}</div><div class="nm">${esc(name)}</div>
     <div class="sub" style="margin-top:7px">Signed out by</div><div class="nm">${esc(leader)}</div>
     <div class="sub" style="margin-top:7px">Reason</div><div style="font-size:.9rem">${esc(reason)}</div>
-    <div class="sub" style="margin-top:7px">Parents met</div><div class="nm">${pm?'Yes':'No'}</div></div>
+    ${isLeader?'':`<div class="sub" style="margin-top:7px">Parents met</div><div class="nm">${pm?'Yes':'No'}</div>`}</div>
     <button class="btn red" onclick="signOutConfirm()">Confirm &amp; sign out</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="signOutPrompt('${id}','${esc(name)}')">‹ Edit</button>`);
+    <button class="btn ghost" style="margin-top:6px" onclick="signOutPrompt('${id}','${esc(name)}',${!!isLeader})">‹ Edit</button>`);
 }
 async function signOutConfirm(){const d=window._soDraft;if(!d)return;
   try{await api('/attendance/sign-out',{method:'POST',body:{camperId:d.id,leaderName:d.leader,reason:d.reason,parentsMet:d.pm}});window._soDraft=null;closeModal();toast('Signed out');openCamper(d.id,false);}catch(e){toast(e.message);}}
-function signInPrompt(id,name){
-  modal(`<h3>Sign in · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this youth back IN to camp.</p>
+function signInPrompt(id,name,isLeader){
+  const who=isLeader?'leader':'youth';
+  modal(`<h3>Sign in · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this ${who} back IN to camp.</p>
     <label>Your initials</label><input class="fld" id="siInit" placeholder="e.g. SD" maxlength="6">
     <button class="btn" onclick="signInConfirm('${id}')">Sign in</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
@@ -2413,13 +2448,16 @@ RENDER.testimonies=async function(){
     <div class="card"><label>Student (optional)</label><select id="tmCamper">${opts}</select>
     <label>Your name (leader)</label><input class="fld" id="tmLeader" value="${esc(LAST_LEADER||'')}" placeholder="e.g. Sarah Doyle">
     <label>Testimony</label><textarea id="tmBody" placeholder="What happened? Whose story is it? What did God do?" style="min-height:120px"></textarea>
-    <button class="btn" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','Day 2+');
+    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this testimony from church logins on the student's profile.</div></div>
+    <label class="tgl"><input type="checkbox" id="tmSensitive"><span class="track"></span></label></div>
+    <button class="btn" style="margin-top:10px" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','Day 2+');
 };
 async function submitTestimony(){const camperId=sel('tmCamper'),leader=val('tmLeader'),body=val('tmBody');
+  const sensitive=!!document.getElementById('tmSensitive')?.checked;
   if(!body){toast('Write the testimony');return;}LAST_LEADER=leader;
   const full=leader&&leader!==ACTOR.displayName?`${body}\n— logged by ${leader}`:body;
-  const payload={body:full,category:'testimony'};if(camperId)payload.camperId=camperId;
-  try{await api('/notes',{method:'POST',body:payload});toast('Testimony submitted');const t=document.getElementById('tmBody');if(t)t.value='';}catch(e){toast(e.message);}}
+  const payload={body:full,category:'testimony',sensitive};if(camperId)payload.camperId=camperId;
+  try{await api('/notes',{method:'POST',body:payload});toast('Testimony submitted');const t=document.getElementById('tmBody');if(t)t.value='';const s=document.getElementById('tmSensitive');if(s)s.checked=false;}catch(e){toast(e.message);}}
 RENDER.notes=async function(){
   // /notes/recent returns bare notes (no camper details) — join /campers for name/church/zone/gender/grade.
   const [notes,page]=await Promise.all([api('/notes/recent'),api('/campers?pageSize=300').catch(()=>[])]);
@@ -2509,7 +2547,7 @@ async function switchMode(){
     await api('/admin/mode',{method:'POST',body:{campMode:newMode}});
     CAMP_MODE=newMode;SETTINGS.campMode=newMode;
     updateModeUI();buildTabs();
-    toast(`Switched to ${label}`);STACK=['home'];await RENDER.home();
+    toast(`Switched to ${label}`);STACK=['home'];await RENDER.home(true);
   }catch(e){toast(e.message);}
 }
 
@@ -3206,7 +3244,7 @@ function reviewCell(r){
 function openReviewModal(id){
   const r=(_dataCache||[]).find(x=>x.id===id);
   if(!r){toast('Record not found');return;}
-  modal(`<h3>Needs review · ${esc(r.firstName+' '+r.lastName)}</h3>
+  modal(`<h3>Needs review · ${esc(r.firstName+' '+r.lastName)} ${helpTip('This record was created or updated by a Ticket List / Invoice import that couldn\'t confidently match it to an existing person. Before confirming: check the name spelling and church are correct, and that the accommodation, cost and discount fields below look right. “Mark reviewed” only clears this flag — it does not change any data. If something’s wrong, fix it with a corrected re-import (matching improves once the name/church lines up), then come back and confirm.')}</h3>
     <p class="sub" style="margin:4px 0 8px">${esc(r.needsReviewReason||'No reason recorded.')}</p>
     <button class="btn" onclick="_markReviewed('${id}')">Mark reviewed</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);

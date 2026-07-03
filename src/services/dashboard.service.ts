@@ -163,7 +163,10 @@ export function makeDashboardService(
         // whole day — wrong for a twice-daily camp.
         // Only count persons physically at camp (atCamp===true) — isCamper() includes
         // 'departed' lifecycle which has atCamp:false and must not inflate this count.
-        const atCampNow = allCampers.filter((p) => p.atCamp);
+        // Leaders are excluded — they're never on the twice-daily check-in roster (see
+        // checkin.service), so they'd never get a checkInHistory entry and would sit
+        // permanently "due" once bulk-signed-in at the mode switch.
+        const atCampNow = allCampers.filter((p) => p.atCamp && p.kind !== 'leader');
         const checkInsDue = currentSession
           ? atCampNow.filter((p) => {
               const entries = p.checkInHistory.filter((e) => e.sessionId === currentSession.id);

@@ -182,6 +182,40 @@ export function computeBudget(
   return { grandTotal, camperCount, leaderCount, churchCount: churches.length, churches, fullAmount };
 }
 
+export interface DiscountCodeRow {
+  code: string;
+  count: number;
+}
+
+export interface DiscountCodeSummary {
+  /** total registrants in scope — the denominator for "X used of Y". */
+  totalInScope: number;
+  /** one row per distinct discount code actually used, most-used first. */
+  rows: DiscountCodeRow[];
+}
+
+/**
+ * How many registrants used each discount code, out of the total registrants in scope.
+ * Blank/null discount codes are not counted as a "code". Same scoping as computeBudget
+ * (own church / own zone / all, applied by the caller via filterChurchId).
+ */
+export function computeDiscountCodeSummary(
+  people: readonly BudgetPerson[],
+  filterChurchId?: string | null,
+): DiscountCodeSummary {
+  const scoped = filterChurchId ? people.filter((p) => p.churchId === filterChurchId) : people;
+  const counts = new Map<string, number>();
+  for (const p of scoped) {
+    const code = (p.discountCode ?? '').trim();
+    if (!code) continue;
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  }
+  const rows = [...counts.entries()]
+    .map(([code, count]) => ({ code, count }))
+    .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
+  return { totalInScope: scoped.length, rows };
+}
+
 /**
  * Build the CSV export string (mirrors the app's other CSV exports — a plain string the SPA
  * downloads directly). Columns: Church, Audience, Category, Count, UnitPrice, LineTotal, with
