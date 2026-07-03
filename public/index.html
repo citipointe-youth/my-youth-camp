@@ -319,6 +319,27 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .sheet{background:#fff;width:100%;border-radius:24px 24px 0 0;padding:20px 17px max(20px,env(safe-area-inset-bottom));animation:rise .2s;max-height:88dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
 .sheet::before{content:"";display:block;width:36px;height:4px;background:#e4e2f5;border-radius:2px;margin:0 auto 14px;}
 .sheet h3{font-size:var(--t-h3);color:var(--navy);margin-bottom:8px;font-weight:800;}
+/* Elvanto export guide (import screen) — full-screen step viewer, swipeable on phone */
+.ig-wrap{position:absolute;inset:0;background:rgba(14,10,30,.72);display:none;z-index:55;align-items:center;justify-content:center;padding:12px;}
+.ig-wrap.show{display:flex;}
+.ig-card{background:#fff;border-radius:20px;width:100%;max-width:720px;max-height:92dvh;display:flex;flex-direction:column;overflow:hidden;animation:rise .2s;}
+.ig-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 16px 10px;flex-shrink:0;}
+.ig-hd .t{font-weight:800;color:var(--navy);font-size:var(--t-h3);}
+.ig-x{border:none;background:#f1f0ff;color:var(--violet-dd);width:32px;height:32px;border-radius:50%;font-size:18px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1;}
+.ig-body{padding:0 16px 8px;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;flex:1;}
+.ig-step{font-size:var(--t-xs);font-weight:800;color:var(--violet-d);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;}
+.ig-cap{font-size:var(--t-sm);color:var(--ink-2);margin-bottom:10px;line-height:1.45;}
+.ig-imgwrap{border:1px solid var(--line);border-radius:12px;margin-bottom:10px;overflow:hidden;cursor:zoom-in;}
+.ig-imgwrap img{display:block;width:100%;}
+.ig-imgwrap.zoom{overflow-x:auto;cursor:zoom-out;-webkit-overflow-scrolling:touch;}
+.ig-imgwrap.zoom img{width:220%;max-width:none;}
+.ig-zoomhint{font-size:var(--t-2xs);color:var(--muted);text-align:center;margin-bottom:8px;}
+.ig-ft{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px max(12px,env(safe-area-inset-bottom));border-top:1px solid var(--line);flex-shrink:0;}
+.ig-ft .btn.sm{min-width:88px;}
+.ig-ft button:disabled{opacity:.35;pointer-events:none;}
+.ig-dots{display:flex;gap:6px;}
+.ig-dots i{width:8px;height:8px;border-radius:999px;background:var(--line);display:block;transition:.15s;}
+.ig-dots i.on{background:var(--blue);width:20px;}
 label{display:block;font-size:var(--t-xs);font-weight:700;color:var(--muted);margin:12px 2px 5px;letter-spacing:.04em;text-transform:uppercase;}
 .fld,select,textarea{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:11px 13px;font-size:var(--t-body);font-family:inherit;background:#fff;outline:none;transition:border-color .15s,box-shadow .15s;}
 .fld:focus,select:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,70,229,.1);}
@@ -531,6 +552,13 @@ textarea{min-height:84px;resize:vertical;}
   </div>
   <nav class="tabs" id="tabs" style="display:none"></nav>
   <div class="modal" id="modal" onclick="if(event.target===this)closeModal()"><div class="sheet" id="sheet"></div></div>
+  <div class="ig-wrap" id="impGuide" onclick="if(event.target===this)closeImportGuide()" role="dialog" aria-label="How to export from Elvanto">
+    <div class="ig-card">
+      <div class="ig-hd"><span class="t">Exporting from Elvanto</span><button class="ig-x" onclick="closeImportGuide()" aria-label="Close">&times;</button></div>
+      <div class="ig-body" id="igBody" ontouchstart="_igTs(event)" ontouchend="_igTe(event)"></div>
+      <div class="ig-ft"><button class="btn ghost sm" id="igPrev" onclick="_igGo(-1)">&lsaquo; Back</button><div class="ig-dots" id="igDots"></div><button class="btn sm" id="igNext"></button></div>
+    </div>
+  </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div id="login">
     <h1>My Youth Camp</h1>
@@ -3066,12 +3094,41 @@ function _importExtraLine(type,r){
   }
   return null;
 }
+/* ===== Elvanto export guide — screenshot walkthrough of producing the 3 import files.
+   Full-screen viewer (#impGuide in the shell): one step per file, ‹/›+dots+swipe to flick,
+   tap a screenshot to zoom (wide Elvanto strips are small on a phone at fit-width). */
+const IMPORT_GUIDE=[
+  {step:'Step 1 of 3 · Form export',cap:'In Elvanto open <b>Forms</b> › your camp registration form › <b>Submissions</b>. Press <b>Export</b> (top right) and pick <b>CSV</b> or <b>XLS</b>. This is the main roster file — students, churches, medical &amp; dietary all come from here.',imgs:[['/img/import-help/form-export.png','Elvanto Forms screen: Export button with the Choose Format (XLS / CSV) dialog open']]},
+  {step:'Step 2 of 3 · Ticket List',cap:'Open <b>Events</b> › your camp event › the <b>Invoices &amp; Tickets</b> tab, then press the green <b>Export</b> button. In the popup choose <b>Ticket List</b>, leave “include canceled” unticked, ignore the additional fields, and export as <b>CSV or XLSX</b>. This file confirms each person’s tent/classroom accommodation and payment status.',imgs:[['/img/import-help/events-export.png','Elvanto Events screen: the Invoices & Tickets tab with the green Export button top right'],['/img/import-help/ticket-export.png','Elvanto Export popup with Ticket List selected']]},
+  {step:'Step 3 of 3 · Billing Contacts',cap:'Still on <b>Invoices &amp; Tickets</b>, press <b>Export</b> again — this time choose <b>Billing Contacts</b> and export as <b>CSV or XLSX</b>. This is the invoice file (costs, discounts and amounts paid). Upload all three files together below — each one is detected automatically.',imgs:[['/img/import-help/billing-export.png','Elvanto Export popup with Billing Contacts selected']]}
+];
+let _igIdx=0,_igTouchX=null;
+function openImportGuide(){_igIdx=0;_igDraw();document.getElementById('impGuide').classList.add('show');}
+function closeImportGuide(){document.getElementById('impGuide').classList.remove('show');}
+function _igGo(d){const n=_igIdx+d;if(n<0||n>=IMPORT_GUIDE.length)return;_igIdx=n;_igDraw();}
+function _igZoom(w){w.classList.toggle('zoom');}
+function _igDraw(){
+  const s=IMPORT_GUIDE[_igIdx];
+  const body=document.getElementById('igBody');
+  body.innerHTML=`<div class="ig-step">${s.step}</div><p class="ig-cap">${s.cap}</p>`
+    +s.imgs.map(([src,alt])=>`<div class="ig-imgwrap" onclick="_igZoom(this)"><img src="${src}" alt="${esc(alt)}" loading="lazy"></div>`).join('')
+    +`<div class="ig-zoomhint">Tap a screenshot to zoom · swipe or use the arrows to change step</div>`;
+  body.scrollTop=0;
+  document.getElementById('igDots').innerHTML=IMPORT_GUIDE.map((_,i)=>`<i class="${i===_igIdx?'on':''}"></i>`).join('');
+  document.getElementById('igPrev').disabled=_igIdx===0;
+  const last=_igIdx===IMPORT_GUIDE.length-1,nx=document.getElementById('igNext');
+  nx.innerHTML=last?'Done':'Next &rsaquo;';nx.onclick=last?closeImportGuide:()=>_igGo(1);
+}
+function _igTs(e){_igTouchX=e.touches[0].clientX;}
+function _igTe(e){if(_igTouchX==null)return;const dx=e.changedTouches[0].clientX-_igTouchX;_igTouchX=null;if(Math.abs(dx)>48)_igGo(dx<0?1:-1);}
+
 const _importAccept='.csv,.xlsx,.xls'; // CSV read directly; Excel via lazy-loaded vendored SheetJS
 function _importUploadCardHtml(){
   return `<div class="card"><div class="h3" style="margin-top:0">Import registrations</div>
     <div id="impLastUploads" class="imp-stamps"></div>
     <input type="file" id="fileIn" accept="${_importAccept}" multiple class="fld">
     <button class="btn" onclick="adminUpload()">Upload &amp; import</button>
+    <button class="btn ghost" onclick="openImportGuide()">${icSm('help')} How do I export these files from Elvanto?</button>
     <p class="note-hint">Add your <b>Form</b>, <b>Ticket List</b> and/or <b>Invoice</b> export — one or all at once, <b>CSV or Excel</b>. Each file is detected automatically and imported in the right order. You can import just the Form now and add the others later.</p>
     <div id="impResult" class="card" style="margin-top:10px;display:none"></div></div>`;
 }

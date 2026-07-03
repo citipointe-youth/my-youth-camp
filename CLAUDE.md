@@ -353,6 +353,21 @@ applied to prod. `sw.js` `camp-v14`→`camp-v15`.
   `nameChurchKey`) — never by CSV row position. Added a shuffled-row-order regression test to
   `multi-source-import.integration.test.ts`.
 
+## Elvanto export guide on the import screen — deployed 2026-07-03
+
+**SPA-only** (`public/index.html` + static images), no backend/schema change. The import upload
+card (`_importUploadCardHtml`, both `RENDER.adminData` and `RENDER.import`) gained a ghost button
+**"How do I export these files from Elvanto?"** → `openImportGuide()`, a full-screen 3-step
+screenshot walkthrough (`#impGuide` overlay in the shell; `IMPORT_GUIDE` data; `_igDraw`/`_igGo`/
+`_igZoom`/`_igTs`/`_igTe`). One step per import file — Form / Ticket List / Billing Contacts —
+each with a short caption + real Elvanto screenshots served from **`public/img/import-help/`**
+(`form-export.png`, `events-export.png`, `ticket-export.png`, `billing-export.png`; the Ticket
+List step shows two images: where the Events Export button is, then the export popup). Steps
+flick via ‹/› buttons, dot indicators, or **touch swipe** (≥48px horizontal); screenshots are
+wide Elvanto strips so **tap-to-zoom** toggles a 220%-width horizontally-scrollable view
+(`.ig-imgwrap.zoom`) for phones. `sw.js` `camp-v15`→`camp-v16` (HTML changed; images ride the
+normal cache-first static path).
+
 ## First-aid export + login-enumeration hardening — deployed 2026-07-03
 
 - **First-aid Records CSV export (SPA):** `RENDER.records` gained an **Export** button →

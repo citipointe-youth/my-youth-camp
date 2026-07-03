@@ -1,6 +1,25 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-03 — ELVANTO EXPORT GUIDE ON THE IMPORT SCREEN
+-----------------------------------------------------------------------------------
+SPA-only + static images; no backend/schema change. Verified: npm run typecheck clean,
+npm run test = 409 pass, SPA main-script node --check OK. sw.js camp-v15 -> v16.
+  * NEW "How do I export these files from Elvanto?" ghost button on the import upload
+    card (_importUploadCardHtml — shows on both the admin Data screen and the director
+    Import screen) -> openImportGuide(), a full-screen 3-step screenshot walkthrough
+    (#impGuide overlay): Step 1 Form export (Forms > Submissions > Export > CSV/XLS),
+    Step 2 Ticket List (Events > Invoices & Tickets > Export > Ticket List — two
+    screenshots: where the button is, then the popup), Step 3 Billing Contacts (same
+    Export button, Billing Contacts option). Each step = short caption + real Elvanto
+    screenshots.
+  * Steps flick via Back/Next buttons, dot indicators, or touch swipe (>=48px) — works
+    on both phone and laptop. Screenshots are wide Elvanto strips, so tap-to-zoom
+    toggles a 220%-width horizontally-scrollable view for phones (.ig-imgwrap.zoom).
+  * Screenshots served same-origin from public/img/import-help/ (form-export,
+    events-export, ticket-export, billing-export .png) — ride the service worker's
+    normal cache-first static path; CSP img-src needs no change ('self').
+
 2026-07-03 — BUG-LIST BATCH: LEADER PRESENCE, SENSITIVE NOTES, BUDGET, LOG TOTALS
 -----------------------------------------------------------------------------------
 Admin-requested batch of 7 items. Design at

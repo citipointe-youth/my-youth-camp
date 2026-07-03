@@ -1,4 +1,4 @@
-const CACHE = 'camp-v15';
+const CACHE = 'camp-v16';
 const APP_SHELL = ['/'];
 
 // API paths that must NEVER be served from cache. GOTCHA (from connection-made-simple):
