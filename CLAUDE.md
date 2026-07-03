@@ -521,6 +521,41 @@ at both full size and realistic 60/76px home-screen size before picking one).
   `checkin.service.getSessionStatus` — the at-camp roster must stay live. Same serverless
   caveat as CMS: only helps within a warm instance.
 
+## Unallocated registrants & church-allocation overrides — implemented 2026-07-03 (branch)
+
+Design: `docs/superpowers/specs/2026-07-03-unallocated-registrants-allocation-design.md`; plan:
+`docs/superpowers/plans/2026-07-03-unallocated-registrants-allocation.md`. Backend + SPA + **migration
+`020_allocation_overrides.sql`** (⚠ **apply to prod before/with deploy**). `sw.js` `camp-v17`→`camp-v18`.
+`npm run typecheck` clean, `npm run test` = **431 pass**.
+
+- **Unallocated sentinel church.** A registrant whose `Attendee's Church` is the exact literal
+  `OTHER - please specify below` (or blank) is assigned `churchId = '__unallocated__'`
+  (`UNALLOCATED_CHURCH_ID`, `churchName = 'Unallocated'`, `zone = ''`) instead of the old behaviour
+  of auto-creating a junk church from that string. Constants + pure helpers live in
+  `src/services/church-allocation.ts`. Sentinel people are RBAC-invisible to church/zone logins
+  (scoped by churchId; `zone=''` keeps zoneLeaders out) and are excluded from accommodation grouping
+  (`accommodation.service.ts` `occupants()` filters the sentinel). They surface as an "Unallocated"
+  bucket in budget (informative, low priority).
+- **Persistent overrides.** `AllocationOverride` (`src/core/entities/allocation-override.ts`, table
+  `allocation_overrides`, repo trio + `container` wiring) records a MANUAL church allocation keyed by
+  the person's name(+mobile) identity. The **Form importer** (`import.service.ts`) re-applies them at
+  church-resolution time (`matchOverride`, before zone/accommodation are derived), so a manual
+  allocation **wins over the CSV on every re-import**, survives the delete-absent sweep (never deleted
+  or duplicated), and automatically inherits the assigned church's zone + accommodation override.
+  Duplicate name+mobile → skipped with a warning (never mis-assigned). Overrides whose person withdrew
+  (absent from a re-import) are pruned. Purged by reset/new-year (`admin.service.ts`).
+- **API + RBAC.** New `allocation:manage` capability (**director + admin**). `allocation.service.ts` +
+  `allocation.controller.ts`: `GET /import/unallocated`, `GET /import/allocations`,
+  `POST /import/allocate {personId,churchId}` (upserts override + moves the person + applies the
+  church accommodation override immediately, via the shared `accommodationKindForChurch` helper),
+  `DELETE /import/allocations/:id` (reverts to sentinel, or to the form's named church for `override`
+  kind). Allocation target = existing churches only.
+- **SPA.** `RENDER.import` (Data Import screen) gained two cards below the upload: **"Unallocated
+  registrants (N)"** (per-person church dropdown + Confirm) and **"Church overrides / forced
+  allocations (N)"** (the tracked list with Undo + a name-search "Override a church allocation" control
+  with a confirm modal). `_loadAllocation`/`_renderAllocCards`/`allocatePerson`/`overridePrompt`/
+  `confirmOverride`/`undoOverride`; the SPA's `UNALLOCATED_ID` must match the backend constant.
+
 ## Commands (run from this folder)
 
 ```bash
