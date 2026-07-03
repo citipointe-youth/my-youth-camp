@@ -11,6 +11,7 @@ import type {
   IDevotionalRepository,
   ISettingsRepository,
   ISnapshotRepository,
+  IAllocationOverrideRepository,
 } from '../repositories/interfaces/entity-repositories';
 import type { CampSettings } from '../core/entities/settings';
 import type { Church } from '../core/entities/church';
@@ -69,6 +70,7 @@ export function makeAdminService(
   devotionalRepo: IDevotionalRepository,
   settingsRepo: ISettingsRepository,
   snapshotRepo: ISnapshotRepository,
+  overrideRepo: IAllocationOverrideRepository,
 ): AdminService {
   const settingsService = makeSettingsService(settingsRepo);
 
@@ -113,6 +115,7 @@ export function makeAdminService(
         notifRepo.deleteAll(),
         noteRepo.deleteAll(),
         devotionalRepo.deleteAll(),
+        overrideRepo.deleteAll(),
       ]);
 
       // Delete every non-admin account (keep the single admin).
@@ -179,6 +182,7 @@ export function makeAdminService(
         noteRepo.deleteAll(),
         notifRepo.deleteAll(),
         allocationRepo.deleteAll(),
+        overrideRepo.deleteAll(),
       ]);
 
       // Restore the scaffold from the baseline. Accounts: replace all EXCEPT the

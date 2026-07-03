@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   InMemoryUserRepository,
   InMemoryChurchRepository,
+  InMemoryAllocationOverrideRepository,
   InMemoryPersonRepository,
   InMemoryClassroomRepository,
   InMemoryAllocationRepository,
@@ -22,6 +23,7 @@ import { JsonFilePersistence } from './repositories/persistence';
 import {
   SupabaseUserRepository,
   SupabaseChurchRepository,
+  SupabaseAllocationOverrideRepository,
   SupabasePersonRepository,
   SupabaseClassroomRepository,
   SupabaseAllocationRepository,
@@ -39,6 +41,7 @@ import { getSqlClient } from './repositories/supabase/client';
 import type {
   IUserRepository,
   IChurchRepository,
+  IAllocationOverrideRepository,
   IPersonRepository,
   IClassroomRepository,
   IAllocationRepository,
@@ -55,6 +58,7 @@ import type {
 import type { User } from './core/entities/user';
 import type { Church } from './core/entities/church';
 import type { Person } from './core/entities/person';
+import type { AllocationOverride } from './core/entities/allocation-override';
 import type { Classroom, RoomAllocation } from './core/entities/accommodation';
 import type { Zone } from './core/entities/zone';
 import type { Group } from './core/entities/group';
@@ -81,6 +85,7 @@ import { makeAccountService, type AccountService } from './services/account.serv
 import { makeDashboardService, type DashboardService } from './services/dashboard.service';
 import { makeAdminService, type AdminService } from './services/admin.service';
 import { makePersonService, type PersonService } from './services/person.service';
+import { makeAllocationService, type AllocationService } from './services/allocation.service';
 import { makeChurchImportService, type ChurchImportService } from './services/church-import.service';
 import { makeTicketImportService, type TicketImportService } from './services/ticket-import.service';
 import { makeInvoiceImportService, type InvoiceImportService } from './services/invoice-import.service';
@@ -89,6 +94,7 @@ import { makeAuditExportService, type AuditExportService } from './services/audi
 export interface Repositories {
   users: IUserRepository;
   churches: IChurchRepository;
+  allocationOverrides: IAllocationOverrideRepository;
   people: IPersonRepository;
   classrooms: IClassroomRepository;
   allocations: IAllocationRepository;
@@ -116,6 +122,7 @@ export interface Services {
   content: ContentService;
   importService: ImportService;
   exportService: ExportService;
+  allocation: AllocationService;
   churchImport: ChurchImportService;
   ticketImport: TicketImportService;
   invoiceImport: InvoiceImportService;
@@ -145,6 +152,7 @@ export async function buildContainer(): Promise<Container> {
     const sql = getSqlClient();
     const users: IUserRepository = new SupabaseUserRepository(sql);
     const churches: IChurchRepository = new SupabaseChurchRepository(sql);
+    const allocationOverrides: IAllocationOverrideRepository = new SupabaseAllocationOverrideRepository(sql);
     const people: IPersonRepository = new SupabasePersonRepository(sql);
     const classrooms: IClassroomRepository = new SupabaseClassroomRepository(sql);
     const allocations: IAllocationRepository = new SupabaseAllocationRepository(sql);
@@ -159,13 +167,13 @@ export async function buildContainer(): Promise<Container> {
     const snapshots: ISnapshotRepository = new SupabaseDefaultsRepository(sql);
 
     const repos: Repositories = {
-      users, churches, people, classrooms, allocations,
+      users, churches, allocationOverrides, people, classrooms, allocations,
       zones, groups, notes, notifications, schedule: scheduleRepo,
       devotionals, faqs, settings: settingsRepo, snapshots,
     };
 
     await Promise.all([
-      users.init(), churches.init(), people.init(), classrooms.init(), allocations.init(),
+      users.init(), churches.init(), allocationOverrides.init(), people.init(), classrooms.init(), allocations.init(),
       zones.init(), groups.init(), notes.init(), notifications.init(),
       scheduleRepo.init(), devotionals.init(), faqs.init(), settingsRepo.init(), snapshots.init(),
     ]);
@@ -180,8 +188,9 @@ export async function buildContainer(): Promise<Container> {
     const note = makeNoteService(notes, people);
     const schedule = makeScheduleService(scheduleRepo);
     const content = makeContentService(faqs, devotionals);
-    const importSvc = makeImportService(people, churches);
+    const importSvc = makeImportService(people, churches, allocationOverrides);
     const exportSvc = makeExportService(people, churches);
+    const allocation = makeAllocationService(people, churches, allocationOverrides);
     const churchImportSvc = makeChurchImportService(users, churches);
     const ticketImportSvc = makeTicketImportService(people, churches);
     const invoiceImportSvc = makeInvoiceImportService(people);
@@ -190,13 +199,13 @@ export async function buildContainer(): Promise<Container> {
     const dashboard = makeDashboardService(people, notifications, churches);
     const admin = makeAdminService(
       users, churches, people, classrooms, allocations, faqs, scheduleRepo,
-      notifications, notes, devotionals, settingsRepo, snapshots,
+      notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
     );
 
     const services: Services = {
       auth, settings, person: personSvc, accommodation: accommodationSvc,
       checkIn, notification, search, note, schedule, content,
-      importService: importSvc, exportService: exportSvc, churchImport: churchImportSvc,
+      importService: importSvc, exportService: exportSvc, allocation, churchImport: churchImportSvc,
       ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
       auditExport: auditExportSvc,
       account, dashboard, admin, users, settingsRepo,
@@ -212,6 +221,9 @@ export async function buildContainer(): Promise<Container> {
   );
   const churches: IChurchRepository = new InMemoryChurchRepository(
     useJson ? makeJsonPersistence<Church>('churches.json') : undefined,
+  );
+  const allocationOverrides: IAllocationOverrideRepository = new InMemoryAllocationOverrideRepository(
+    useJson ? makeJsonPersistence<AllocationOverride>('allocation-overrides.json') : undefined,
   );
   const people: IPersonRepository = new InMemoryPersonRepository(
     useJson ? makeJsonPersistence<Person>('people.json') : undefined,
@@ -253,6 +265,7 @@ export async function buildContainer(): Promise<Container> {
   const repos: Repositories = {
     users,
     churches,
+    allocationOverrides,
     people,
     classrooms,
     allocations,
@@ -271,6 +284,7 @@ export async function buildContainer(): Promise<Container> {
   await Promise.all([
     users.init(),
     churches.init(),
+    allocationOverrides.init(),
     people.init(),
     classrooms.init(),
     allocations.init(),
@@ -296,8 +310,9 @@ export async function buildContainer(): Promise<Container> {
   const note = makeNoteService(notes, people);
   const schedule = makeScheduleService(scheduleRepo);
   const content = makeContentService(faqs, devotionals);
-  const importSvc = makeImportService(people, churches);
+  const importSvc = makeImportService(people, churches, allocationOverrides);
   const exportSvc = makeExportService(people, churches);
+  const allocation = makeAllocationService(people, churches, allocationOverrides);
   const churchImportSvc = makeChurchImportService(users, churches);
   const ticketImportSvc = makeTicketImportService(people, churches);
   const invoiceImportSvc = makeInvoiceImportService(people);
@@ -321,6 +336,7 @@ export async function buildContainer(): Promise<Container> {
     devotionals,
     settingsRepo,
     snapshots,
+    allocationOverrides,
   );
 
   const services: Services = {
@@ -336,6 +352,7 @@ export async function buildContainer(): Promise<Container> {
     content,
     importService: importSvc,
     exportService: exportSvc,
+    allocation,
     churchImport: churchImportSvc,
     ticketImport: ticketImportSvc,
     invoiceImport: invoiceImportSvc,

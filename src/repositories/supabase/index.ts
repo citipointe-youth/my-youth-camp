@@ -1,5 +1,6 @@
 export { SupabaseUserRepository } from './supabase.users';
 export { SupabaseChurchRepository } from './supabase.churches';
+export { SupabaseAllocationOverrideRepository } from './supabase.allocation-override';
 export { SupabasePersonRepository } from './supabase.people';
 export { SupabaseClassroomRepository } from './supabase.classroom';
 export { SupabaseAllocationRepository } from './supabase.allocation';

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { makeExportService } from './export.service';
 import { makeImportService } from './import.service';
-import { InMemoryPersonRepository, InMemoryChurchRepository } from '../repositories/in-memory';
+import { InMemoryPersonRepository, InMemoryChurchRepository, InMemoryAllocationOverrideRepository } from '../repositories/in-memory';
 import { parseCsv } from '../utils/csv';
 import type { Church } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
@@ -36,7 +36,7 @@ describe('export.service', () => {
   beforeEach(async () => { h = await build(); });
 
   it('produces a header row + the filtered persons', async () => {
-    const imp = makeImportService(h.personRepo, h.churchRepo);
+    const imp = makeImportService(h.personRepo, h.churchRepo, new InMemoryAllocationOverrideRepository());
     await imp.importCsv(actor('admin'), { csvData: `${HEADER}\n${LIAM}` });
     const exp = makeExportService(h.personRepo, h.churchRepo);
     const csv = await exp.exportRegistrants(actor('admin'), {});
@@ -52,14 +52,14 @@ describe('export.service', () => {
   });
 
   it('round-trips: import → export → re-import yields identical modelled fields', async () => {
-    const imp = makeImportService(h.personRepo, h.churchRepo);
+    const imp = makeImportService(h.personRepo, h.churchRepo, new InMemoryAllocationOverrideRepository());
     await imp.importCsv(actor('admin'), { csvData: `${HEADER}\n${LIAM}` });
     const original = (await h.personRepo.findAll())[0]!;
     const exp = makeExportService(h.personRepo, h.churchRepo);
     const csv = await exp.exportRegistrants(actor('admin'), {});
 
     const fresh = await build();
-    const imp2 = makeImportService(fresh.personRepo, fresh.churchRepo);
+    const imp2 = makeImportService(fresh.personRepo, fresh.churchRepo, new InMemoryAllocationOverrideRepository());
     await imp2.importCsv(actor('admin'), { csvData: csv });
     const reimported = (await fresh.personRepo.findAll())[0]!;
 

@@ -1,6 +1,11 @@
-import type { IPersonRepository, IChurchRepository } from '../repositories/interfaces/entity-repositories';
+import type { IPersonRepository, IChurchRepository, IAllocationOverrideRepository } from '../repositories/interfaces/entity-repositories';
 import type { Person } from '../core/entities/person';
 import type { Church } from '../core/entities/church';
+import type { AllocationOverride } from '../core/entities/allocation-override';
+import {
+  UNALLOCATED_CHURCH_ID, UNALLOCATED_CHURCH_NAME, isUnlistedChurchCell,
+  overrideNameKey, overrideMobileKey, matchOverride,
+} from './church-allocation';
 import type { Actor } from '../core/entities/user';
 import type { ConsentType } from '../core/types/enums';
 import { assertCan } from './access-control';
@@ -52,6 +57,7 @@ function parseGender(val: string): Person['gender'] | null {
 export function makeImportService(
   personRepo: IPersonRepository,
   churchRepo: IChurchRepository,
+  overrideRepo: IAllocationOverrideRepository,
 ): ImportService {
   return {
     async importCsv(actor, input) {
@@ -90,6 +96,17 @@ export function makeImportService(
         const pool = poolByNameChurch.get(k);
         if (pool) pool.push(p);
         else poolByNameChurch.set(k, [p]);
+      }
+
+      // Manual church allocations re-applied at church-resolution time (keyed by name identity),
+      // so they win over the CSV and survive the delete-absent sweep below.
+      const overrides = await overrideRepo.findAll();
+      const overridesByName = new Map<string, AllocationOverride[]>();
+      for (const o of overrides) {
+        const k = `${o.firstNameKey}::${o.lastNameKey}`;
+        const list = overridesByName.get(k);
+        if (list) list.push(o);
+        else overridesByName.set(k, [o]);
       }
 
       function pickMatch(pool: Person[] | undefined, phone: string): Person | undefined {
@@ -172,10 +189,6 @@ export function makeImportService(
           const churchName = field(row, "Attendee's Church", 'churchName', 'church_name', 'Church');
           const churchUnlistedNote =
             field(row, 'If from a church not listed, please specify church name & Youth Pastor') || null;
-          const explicitChurchId = field(row, 'churchId', 'church_id') || opts.churchId || '';
-          const resolvedChurchId = explicitChurchId
-            ? explicitChurchId
-            : await resolveChurch(churchName, rowNum, now);
 
           // null when the CSV cell is blank/absent — the merge/create branches below decide
           // the fallback (keep existing value on update, default to 'other' on create).
@@ -188,6 +201,32 @@ export function makeImportService(
 
           const dob = normalizeDate(field(row, 'Date of Birth', 'dateOfBirth', 'dob', 'DOB'));
           const mobile = field(row, 'Mobile Number', 'mobile', 'Mobile') || null;
+
+          // ----- Church resolution (override → explicit → unlisted-sentinel → by-name) -----
+          const explicitChurchId = field(row, 'churchId', 'church_id') || opts.churchId || '';
+          const rowMobileKey = overrideMobileKey(mobile);
+          const ovCandidates = overridesByName.get(overrideNameKey(firstName, lastName)) ?? [];
+          const ovMatch = matchOverride(ovCandidates, rowMobileKey);
+          let resolvedChurchId: string;
+          let resolvedChurchName: string;
+          if (ovMatch === 'ambiguous') {
+            warnings.push({ row: rowNum, message: `Manual allocation for "${firstName} ${lastName}" skipped — duplicate name/mobile can't be disambiguated` });
+          }
+          if (ovMatch && ovMatch !== 'ambiguous') {
+            resolvedChurchId = ovMatch.assignedChurchId;
+            resolvedChurchName = ovMatch.assignedChurchName;
+            warnings.push({ row: rowNum, message: `Church forced to "${resolvedChurchName}" by manual allocation` });
+          } else if (explicitChurchId) {
+            resolvedChurchId = explicitChurchId;
+            resolvedChurchName = churchName || explicitChurchId;
+          } else if (isUnlistedChurchCell(churchName)) {
+            resolvedChurchId = UNALLOCATED_CHURCH_ID;
+            resolvedChurchName = UNALLOCATED_CHURCH_NAME;
+          } else {
+            resolvedChurchId = await resolveChurch(churchName, rowNum, now);
+            resolvedChurchName = churchName;
+          }
+
           const email = field(row, 'Email Address', 'email', 'Email') || null;
           const suburb = field(row, 'Suburb', 'suburb') || null;
           const postcode = field(row, 'Postcode', 'postcode') || null;
@@ -205,7 +244,8 @@ export function makeImportService(
           // Zone is a property of the church, not the CSV row — a person's zone always follows
           // their (resolved) church's current zone. There is no per-row zone override: if the
           // church's zone is changed later, re-importing is what brings people's zone up to date.
-          const zone = churchZoneById.get(resolvedChurchId) ?? 'Yellow';
+          // Unallocated (sentinel) people get no zone, so no zoneLeader can see them.
+          const zone = resolvedChurchId === UNALLOCATED_CHURCH_ID ? '' : (churchZoneById.get(resolvedChurchId) ?? 'Yellow');
           // 'Type' is the canonical Elvanto column; fall back to explicit aliases
           const typeRaw = field(row, 'Type', 'Registration Type', 'registrationType', 'registration_type');
           const registrationType = typeRaw || null;
@@ -343,7 +383,7 @@ export function makeImportService(
               blueCardNumber,
               blueCardExpiry,
               churchId: resolvedChurchId,
-              churchName: churchName || resolvedChurchId,
+              churchName: resolvedChurchName,
               paymentStatus: 'unpaid',
               accommodationKind,
               accommodationLabel: null,
@@ -379,6 +419,11 @@ export function makeImportService(
       if (!opts.dryRun) {
         if (touched.size > 0) await personRepo.saveMany([...touched.values()]);
         for (const id of absentIds) await personRepo.delete(id);
+        // Prune overrides whose person was just deleted (withdrew) — they're now stale.
+        const absentSet = new Set(absentIds);
+        for (const o of overrides) {
+          if (absentSet.has(o.personId)) await overrideRepo.delete(o.id);
+        }
         invalidateDashboardCache();
       }
 
