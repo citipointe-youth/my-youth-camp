@@ -210,19 +210,47 @@ describe('computeDiscountCodeSummary', () => {
     const summary = computeDiscountCodeSummary(people);
     expect(summary.totalInScope).toBe(5);
     expect(summary.rows).toEqual([
-      { code: 'EARLYBIRD', count: 2 },
-      { code: 'ALIVE100', count: 1 },
+      { code: 'EARLYBIRD', count: 2, purpose: null },
+      { code: 'ALIVE100', count: 1, purpose: null },
     ]);
   });
 
   it('scopes to a single church via filterChurchId', () => {
     const summary = computeDiscountCodeSummary(people, 'c1');
     expect(summary.totalInScope).toBe(3); // 2 EARLYBIRD + 1 blank-code camper, all c1
-    expect(summary.rows).toEqual([{ code: 'EARLYBIRD', count: 2 }]);
+    expect(summary.rows).toEqual([{ code: 'EARLYBIRD', count: 2, purpose: null }]);
   });
 
   it('no discount codes at all → empty rows, totalInScope still reflects the scope', () => {
     const none: BudgetPerson[] = [p({ churchId: 'c1', kind: 'camper', discountCode: null })];
     expect(computeDiscountCodeSummary(none)).toEqual({ totalInScope: 1, rows: [] });
+  });
+
+  it('derives a clean percentage label when the discount is nearly one of the standard tiers', () => {
+    const half: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 180, discountAmount: 90, discountCode: 'HALF' }),
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 90, discountAmount: 46, discountCode: 'HALF' }), // ~51% — within tolerance
+    ];
+    expect(computeDiscountCodeSummary(half).rows).toEqual([{ code: 'HALF', count: 2, purpose: '50% Off' }]);
+
+    const full: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 150, discountAmount: 150, discountCode: 'ALIVE100' }),
+    ];
+    expect(computeDiscountCodeSummary(full).rows).toEqual([{ code: 'ALIVE100', count: 1, purpose: '100% Off' }]);
+  });
+
+  it('falls back to a flat dollar label when the percentage is not close to a standard tier', () => {
+    const flat: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 20, discountCode: 'SIBLING20' }),
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 150, discountAmount: 20, discountCode: 'SIBLING20' }),
+    ];
+    expect(computeDiscountCodeSummary(flat).rows).toEqual([{ code: 'SIBLING20', count: 2, purpose: '$20 Off' }]);
+  });
+
+  it('purpose is null when no one using the code has both a cost and a discount amount recorded', () => {
+    const noFinancials: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: null, discountAmount: null, discountCode: 'MYSTERY' }),
+    ];
+    expect(computeDiscountCodeSummary(noFinancials).rows).toEqual([{ code: 'MYSTERY', count: 1, purpose: null }]);
   });
 });

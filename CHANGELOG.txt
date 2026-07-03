@@ -1,6 +1,36 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-03 — BUG-LIST BATCH: AUDIT COLUMNS, DISCOUNT PURPOSE, CONTACTS SAVE, DATA IMPORT NAV
+-----------------------------------------------------------------------------------
+Admin-requested batch of 6 items. SPA + backend (audit-export.service.ts, budget.ts), no
+schema/migration change. Verified: npm run typecheck clean, npm run test = 413 pass (4 new
+tests), SPA main-script node --check OK. sw.js camp-v16 -> v17.
+  * Audit workbook: Attendees sheet gained an Accommodation column (Tent/Classroom, from
+    accommodationKind); Notes & Testimonies and First-Aid Records sheets both gained
+    Grade + Gender columns (audit-export.service.ts).
+  * Budget "Discount codes" card: each code now shows an auto-derived purpose pill next to
+    it — "25%/50%/70%/100% Off" when the average discount-vs-cost ratio (discountAmount /
+    registrationCost) across everyone who used the code is within 3 points of one of those
+    tiers, else "$XX Off" (average dollar amount). New computeDiscountCodeSummary
+    deriveDiscountPurpose (budget.ts) + SPA _deriveDiscountPurpose mirror. Also fixed a
+    laptop-only layout complaint (the discount card read as an oddly wide, mostly-empty
+    table): RENDER.budget now splits into a 2/3 summary + 1/3 discount-codes column at
+    >=980px (.bud-grid CSS) — stacks normally on phone/tablet. Discount card still starts
+    collapsed by default (unchanged).
+  * Ministry contacts: pressing Save for one church no longer re-renders the whole screen
+    (RENDER.adminContacts re-fetches + rebuilds every card, which was collapsing every
+    other open card and dropping any unsaved edits). saveContacts() now just PATCHes and
+    updates that one card's "N/4 Contacts" pill in place (_updateContactPill) — admins can
+    drop down every church, fill them all in, and Save each one in turn. Removed the now-
+    unused _rContacts() wrapper.
+  * Admin data screens reorganised: the CSV/Excel upload card moved out of the "Data,
+    Reset & Exports" screen (renamed "Data Export/Reset") into its own "Data Import" admin
+    console tile + nav entry, reusing the existing (previously unreachable) RENDER.import
+    screen. Pre-camp admin bottom nav: Notices tab replaced with Data Import (new "upload"
+    icon); Notices is still reachable via a new button at the top of Admin Settings. At-camp
+    admin nav (desktop sidebar) is UNCHANGED — Notices stays there by owner's choice.
+
 2026-07-03 — ELVANTO EXPORT GUIDE ON THE IMPORT SCREEN
 -----------------------------------------------------------------------------------
 SPA-only + static images; no backend/schema change. Verified: npm run typecheck clean,

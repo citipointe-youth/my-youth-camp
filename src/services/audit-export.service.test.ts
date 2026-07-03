@@ -97,6 +97,33 @@ describe('audit-export: master workbook', () => {
     expect(bodies.some((b) => b.includes('Sprained ankle'))).toBe(false); // first-aid excluded
     expect(bodies.some((b) => b.includes('Great week'))).toBe(true); // testimony still present
   });
+
+  it('Attendees carries Grade/Gender/Accommodation; Notes & Testimonies and First-Aid Records carry Grade/Gender', async () => {
+    await people.save(person({
+      id: 'cam1', grade: 9, gender: 'female', accommodationKind: 'classroom', kind: 'youth',
+    }));
+    const wb = await load();
+
+    const attendees = wb.getWorksheet('Attendees')!;
+    const attHeader = (attendees.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    expect(attHeader).toEqual(
+      expect.arrayContaining(['Grade', 'Gender', 'Accommodation']),
+    );
+    const attRow = (attendees.getRow(2).values as unknown[]).map((v) => String(v ?? ''));
+    expect(attRow).toEqual(expect.arrayContaining(['9', 'female', 'Classroom']));
+
+    const notesSheet = wb.getWorksheet('Notes & Testimonies')!;
+    const notesHeader = (notesSheet.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    expect(notesHeader).toEqual(expect.arrayContaining(['Grade', 'Gender']));
+    const notesRow = (notesSheet.getRow(2).values as unknown[]).map((v) => String(v ?? ''));
+    expect(notesRow).toEqual(expect.arrayContaining(['9', 'female']));
+
+    const fa = wb.getWorksheet('First-Aid Records')!;
+    const faHeader = (fa.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    expect(faHeader).toEqual(expect.arrayContaining(['Grade', 'Gender']));
+    const faRow = (fa.getRow(2).values as unknown[]).map((v) => String(v ?? ''));
+    expect(faRow).toEqual(expect.arrayContaining(['9', 'female']));
+  });
 });
 
 describe('audit-export: sign-in/out log running totals (chronological across students AND leaders)', () => {

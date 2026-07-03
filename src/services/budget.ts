@@ -24,6 +24,7 @@ export interface BudgetPerson {
   kind: 'camper' | 'leader';
   registrationCost: number | null;
   discountCode?: string | null;
+  discountAmount?: number | null;
 }
 
 export interface CategoryRow {
@@ -185,6 +186,11 @@ export function computeBudget(
 export interface DiscountCodeRow {
   code: string;
   count: number;
+  /**
+   * Auto-derived summary of what the code is worth, e.g. "25% Off" or "$20 Off" — null
+   * when no one using the code has both a registrationCost and a discountAmount recorded.
+   */
+  purpose: string | null;
 }
 
 export interface DiscountCodeSummary {
@@ -192,6 +198,27 @@ export interface DiscountCodeSummary {
   totalInScope: number;
   /** one row per distinct discount code actually used, most-used first. */
   rows: DiscountCodeRow[];
+}
+
+/** The four "clean" percentage tiers a code is snapped to when it's close enough. */
+const DISCOUNT_PERCENT_BUCKETS = [25, 50, 70, 100] as const;
+/** How many percentage points off a bucket still counts as "nearly divisible". */
+const DISCOUNT_PERCENT_TOLERANCE = 3;
+
+/**
+ * Derive a human label for a discount code from the (pre-discount cost, discount amount)
+ * pairs of the people who used it — e.g. "25% Off" or "$20 Off". Percentage is checked
+ * first (a % code stays consistent across different ticket prices); if the average isn't
+ * close to one of the four standard tiers, falls back to the average flat dollar amount.
+ */
+function deriveDiscountPurpose(pairs: { cost: number; discount: number }[]): string | null {
+  const valid = pairs.filter((p) => p.cost > 0 && p.discount != null);
+  if (!valid.length) return null;
+  const avgPercent = valid.reduce((s, p) => s + (p.discount / p.cost) * 100, 0) / valid.length;
+  const bucket = DISCOUNT_PERCENT_BUCKETS.find((b) => Math.abs(avgPercent - b) <= DISCOUNT_PERCENT_TOLERANCE);
+  if (bucket != null) return `${bucket}% Off`;
+  const avgDollar = Math.round(valid.reduce((s, p) => s + p.discount, 0) / valid.length);
+  return avgDollar > 0 ? `$${avgDollar} Off` : null;
 }
 
 /**
@@ -205,13 +232,19 @@ export function computeDiscountCodeSummary(
 ): DiscountCodeSummary {
   const scoped = filterChurchId ? people.filter((p) => p.churchId === filterChurchId) : people;
   const counts = new Map<string, number>();
+  const pairsByCode = new Map<string, { cost: number; discount: number }[]>();
   for (const p of scoped) {
     const code = (p.discountCode ?? '').trim();
     if (!code) continue;
     counts.set(code, (counts.get(code) ?? 0) + 1);
+    if (p.registrationCost != null && p.discountAmount != null) {
+      const pairs = pairsByCode.get(code) ?? [];
+      pairs.push({ cost: p.registrationCost, discount: p.discountAmount });
+      pairsByCode.set(code, pairs);
+    }
   }
   const rows = [...counts.entries()]
-    .map(([code, count]) => ({ code, count }))
+    .map(([code, count]) => ({ code, count, purpose: deriveDiscountPurpose(pairsByCode.get(code) ?? []) }))
     .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
   return { totalInScope: scoped.length, rows };
 }

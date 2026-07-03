@@ -353,6 +353,45 @@ applied to prod. `sw.js` `camp-v14`→`camp-v15`.
   `nameChurchKey`) — never by CSV row position. Added a shuffled-row-order regression test to
   `multi-source-import.integration.test.ts`.
 
+## Bug-list batch — audit columns, discount purpose, contacts save, Data Import nav — deployed 2026-07-03
+
+Admin-requested batch of 6 items (from "Account: Admin, Mode: Pre-Camp"). SPA + backend
+(`audit-export.service.ts`, `budget.ts`), **no schema/migration change**. `npm run typecheck`
+clean, `npm run test` = 413 pass, SPA `node --check` OK. `sw.js` `camp-v16`→`camp-v17`.
+
+- **Audit workbook columns.** Attendees sheet gained an **Accommodation** column
+  (`accommodationDisplay(p.accommodationKind)` → "Tent"/"Classroom"/blank). Notes &
+  Testimonies and First-Aid Records sheets both gained **Grade** + **Gender** columns.
+- **Budget discount-code purpose (auto-derived, no manual entry).** Each discount code's
+  card row now shows a pill like "25% Off" or "$20 Off" next to the code —
+  `deriveDiscountPurpose` (`budget.ts`) averages `discountAmount/registrationCost` across
+  everyone who used the code; snaps to 25/50/70/100% if within 3 points of a tier, else
+  falls back to the average flat dollar amount (`purpose: null` when no one using the code
+  has both fields recorded). SPA mirror `_deriveDiscountPurpose`. **`BudgetPerson` gained
+  `discountAmount`** (already present on `RegistrantDto`, just not previously passed
+  through to the budget calc). Also fixed a laptop-only layout complaint — the discount
+  card read as a wide, mostly-empty table below the church cards — `RENDER.budget` now
+  splits into a 2/3 summary + 1/3 discount-codes column at `≥980px` (`.bud-grid` CSS,
+  inside the existing 980px block); stacks normally below that. The discount card still
+  starts collapsed by default in both layouts (unchanged).
+- **Ministry contacts save no longer blows away the whole screen.** `saveContacts(id)`
+  used to call `_rContacts()` → a full `RENDER.adminContacts()` re-render (re-fetches every
+  church, rebuilds every card) — which collapsed every other open card and dropped any
+  unsaved edits an admin had typed into other churches while working down the list. It now
+  just PATCHes and updates that one card's "N/4 Contacts" pill in place
+  (`_updateContactPill`), leaving every other card exactly as the admin left it. The
+  now-unused `_rContacts()` wrapper was deleted.
+- **Data Import moved to its own admin console tile + nav entry.** The CSV/Excel upload
+  card (`_importUploadCardHtml`) is gone from the admin **Data** screen — that screen is
+  renamed **"Data Export/Reset"** (was "Data, Reset & Exports") and is export/reset-only
+  now. Import lives at the previously-built-but-unreachable `RENDER.import` screen
+  (`'import'` nav id), now wired up: a new **"Data Import"** tile on the admin console, and
+  — **pre-camp only** — the admin bottom-nav Notices tab is replaced with a **Data Import**
+  tab (new `upload` icon in `ICONS`). Notices is still reachable pre-camp via a new button
+  at the top of **Admin Settings** (`RENDER.adminSettings`). **At-camp admin nav (desktop
+  sidebar) is unchanged** — Notices stays there; this was a deliberate scope decision (the
+  bug list didn't specify a mode, and the owner chose pre-camp-only for the swap).
+
 ## Elvanto export guide on the import screen — deployed 2026-07-03
 
 **SPA-only** (`public/index.html` + static images), no backend/schema change. The import upload

@@ -477,6 +477,11 @@ textarea{min-height:84px;resize:vertical;}
   .wide-cards>*{margin-bottom:0;}
   /* Bug-9: an expanded Budget church stays in its own column (a narrow dropdown) rather than
      stretching to fill the page width. */
+  /* Budget layout (laptop): the church-total summary took the full page width, leaving the
+     "Discount codes" card looking like an oddly wide, mostly-empty table below it. Split into
+     summary (2/3) + discount codes (1/3) side by side; the discount card still starts collapsed
+     (no .open class by default) same as on mobile. */
+  .bud-grid{display:grid;grid-template-columns:2fr 1fr;gap:14px;align-items:start;}
 }
 @media(min-width:1280px){
   html{font-size:18px;}              /* A1: laptop root bump → all rem text grows again */
@@ -757,6 +762,7 @@ close:'<path d="M18 6 6 18M6 6l12 12"/>',
 arrowr:'<path d="M5 12h14M13 6l6 6-6 6"/>',
 arrowl:'<path d="M19 12H5M11 6l-6 6 6 6"/>',
 download:'<path d="M12 3v12M7 11l5 5 5-5"/><path d="M5 21h14"/>',
+upload:'<path d="M12 21V9M7 13l5-5 5 5"/><path d="M5 3h14"/>',
 diamond:'<path d="M12 2 22 12 12 22 2 12Z"/>',
 plus:'<path d="M12 5v14M5 12h14"/>'
 };
@@ -955,7 +961,7 @@ const TAB_OF={home:'home',people:'people',student:'people',help:'help',
   adminChurchImport:'admin',adminRecords:'admin',adminCloseOut:'admin',adminWizard:'admin',adminStudents:'admin',
   checkin:'checkin',search:'search',allstudents:'allstudents',records:'records',notifs:'notifs',compose:'notifs',
   data:'data',
-  camper:'home',myyouth:'home',firstday:'home',schedule:'schedule',devotional:'home',faq:'home',notes:'home',testimonies:'home',budget:'home',accom:'home',import:'home'};
+  camper:'home',myyouth:'home',firstday:'home',schedule:'schedule',devotional:'home',faq:'home',notes:'home',testimonies:'home',budget:'home',accom:'home',import:'import'};
 
 function _showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -1044,8 +1050,9 @@ function navModel(role,mode){
     if(role==='director')
       return {tabs:[T('home','home','Home'),T('people','users','My Youth'),T('data','note','Data'),T('help','help','Help'),T('notifs','bell','Notices')],
               extras:[T('budget','star','Budget & Costings'),T('accom','classroom','Accommodation Allocations')]};
-    /* admin pre-camp */
-    return {tabs:[T('home','home','Home'),T('people','users','My Youth'),T('data','note','Data'),T('notifs','bell','Notices'),T('admin','gear','Admin')],
+    /* admin pre-camp — Notices replaced by Data Import (bug 6); Notices is still reachable via
+       a button on Admin Settings (bug 5), pre-camp only. */
+    return {tabs:[T('home','home','Home'),T('people','users','My Youth'),T('data','note','Data'),T('import','upload','Data Import'),T('admin','gear','Admin')],
             extras:[T('budget','star','Budget & Costings'),T('accom','classroom','Accommodation Allocations')]};
   }
   /* at-camp */
@@ -1978,12 +1985,25 @@ function computeBudgetClient(regs,filterId){
   return {grandTotal:churches.reduce((s,c)=>s+c.total,0),camperCount:churches.reduce((s,c)=>s+c.camperCount,0),
     leaderCount:churches.reduce((s,c)=>s+c.leaderCount,0),churchCount:churches.length,churches,fullAmount:full};
 }
+/** Mirrors src/services/budget.ts deriveDiscountPurpose. */
+function _deriveDiscountPurpose(pairs){
+  const valid=pairs.filter(x=>x.cost>0&&x.discount!=null);
+  if(!valid.length)return null;
+  const avgPercent=valid.reduce((s,x)=>s+(x.discount/x.cost)*100,0)/valid.length;
+  const bucket=[25,50,70,100].find(b=>Math.abs(avgPercent-b)<=3);
+  if(bucket!=null)return bucket+'% Off';
+  const avgDollar=Math.round(valid.reduce((s,x)=>s+x.discount,0)/valid.length);
+  return avgDollar>0?('$'+avgDollar+' Off'):null;
+}
 /** Mirrors src/services/budget.ts computeDiscountCodeSummary. */
 function computeDiscountSummaryClient(regs,filterId){
   const people=(regs||[]).filter(r=>r.status!=='cancelled').filter(r=>!filterId||filterId==='all'||r.churchId===filterId);
-  const counts=new Map();
-  people.forEach(r=>{const code=(r.discountCode||'').trim();if(!code)return;counts.set(code,(counts.get(code)||0)+1);});
-  const rows=[...counts.entries()].map(([code,count])=>({code,count})).sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
+  const counts=new Map(),pairsByCode=new Map();
+  people.forEach(r=>{const code=(r.discountCode||'').trim();if(!code)return;
+    counts.set(code,(counts.get(code)||0)+1);
+    const cost=r.registrationCost==null?null:Number(r.registrationCost),discount=r.discountAmount==null?null:Number(r.discountAmount);
+    if(cost!=null&&discount!=null){const pairs=pairsByCode.get(code)||[];pairs.push({cost,discount});pairsByCode.set(code,pairs);}});
+  const rows=[...counts.entries()].map(([code,count])=>({code,count,purpose:_deriveDiscountPurpose(pairsByCode.get(code)||[])})).sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
   return {totalInScope:people.length,rows};
 }
 RENDER.budget=async function(){
@@ -2025,7 +2045,9 @@ function drawBudget(){
   };
   const body=rep.churches.length?`<div class="wide-cards">${rep.churches.map(churchCard).join('')}</div>`:emptyState('star','No registrations yet — import students to see the budget.');
   const disc=computeDiscountSummaryClient(window._budgetRegs,scope);
-  const discRow=(r)=>`<div class="rowsb" style="padding:5px 0"><span class="budcat-l">${esc(r.code)}</span><b>${r.count} used of ${disc.totalInScope}</b></div>`;
+  const discRow=(r)=>`<div class="rowsb" style="padding:5px 0">
+    <div style="min-width:0"><span class="budcat-l">${esc(r.code)}</span>${r.purpose?`<span class="gradepill">${esc(r.purpose)}</span>`:''}</div>
+    <b style="white-space:nowrap">${r.count} used of ${disc.totalInScope}</b></div>`;
   const discBody=disc.rows.length?disc.rows.map(discRow).join(''):'<p class="sub" style="padding:6px 0">No discount codes recorded.</p>';
   const discSection=`<div class="card budchurch" data-cid="disc" style="margin-top:14px">
     <div class="rowsb budchurch-hd" onclick="_budToggle('disc')" style="cursor:pointer">
@@ -2033,7 +2055,8 @@ function drawBudget(){
         <div style="font-weight:700">Discount codes</div></div>
       <span class="sub">${disc.rows.length} code${disc.rows.length===1?'':'s'}</span></div>
     <div class="budchurch-body">${discBody}</div></div>`;
-  const box=document.getElementById('budgetBody');if(box)box.innerHTML=head+body+discSection;
+  const box=document.getElementById('budgetBody');
+  if(box)box.innerHTML=`<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${discSection}</div></div>`;
 }
 function _budToggle(cid){const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.toggle('open');}
 function exportBudget(){
@@ -2547,7 +2570,8 @@ RENDER.admin=function(){
   const isAdmin=ACTOR.role==='admin';
   const isAdminOrDirector=['admin','director'].includes(ACTOR.role);
   const modeTile=isAdmin?`<div class="tile" onclick="switchMode()"><div class="l">Switch to ${CAMP_MODE==='pre-camp'?'At-Camp':'Pre-Camp'}</div></div>`:'';
-  const dataTile=isAdmin?`<div class="tile" onclick="go('adminData')"><div class="l">Data, Reset &amp; Exports</div></div>`:isAdminOrDirector?`<div class="tile" onclick="go('adminData')"><div class="l">Records &amp; Export</div></div>`:'';
+  const dataTile=isAdmin?`<div class="tile" onclick="go('adminData')"><div class="l">Data Export/Reset</div></div>`:isAdminOrDirector?`<div class="tile" onclick="go('adminData')"><div class="l">Records &amp; Export</div></div>`:'';
+  const importTile=isAdmin?`<div class="tile" onclick="go('import')"><div class="l">Data Import</div></div>`:'';
   // At camp, the setup wizard gives way to per-student data edits (no more CSV uploads mid-camp).
   const wizardTile=isAdmin&&CAMP_MODE==='pre-camp'?`<div class="tile" onclick="go('adminWizard')"><div class="l">Setup Wizard</div></div>`:'';
   const studentsTile=isAdmin&&CAMP_MODE==='at-camp'?`<div class="tile" onclick="go('adminStudents')"><div class="l">Individual Student Data Edit</div></div>`:'';
@@ -2560,7 +2584,7 @@ RENDER.admin=function(){
       <div class="tile" onclick="go('adminFaq')"><div class="l">FAQ</div></div>
       <div class="tile" onclick="go('adminDevos')"><div class="l">Devotionals</div></div>
       <div class="tile" onclick="go('adminSchedEdit')"><div class="l">Schedule</div></div>
-      ${dataTile}${wizardTile}${studentsTile}${modeTile}
+      ${importTile}${dataTile}${wizardTile}${studentsTile}${modeTile}
     </div>`,'Admin console','Back office');
 };
 
@@ -2768,7 +2792,6 @@ async function _rAccts(){const el=document.getElementById('stage');const y=el?el
 async function _rFaq(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminFaq();if(el)el.scrollTop=y;}
 async function _rFaqEdit(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminFaqEdit();if(el)el.scrollTop=y;}
 async function _rSched(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminSchedEdit();if(el)el.scrollTop=y;}
-async function _rContacts(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminContacts();if(el)el.scrollTop=y;}
 
 /* ===== ADMIN ACCOMMODATION (classroom rooms) ===== */
 RENDER.adminAccom=async function(){
@@ -2924,7 +2947,7 @@ async function doNewYear(){
     // purged on this error path (the snapshot check runs before any delete).
     if(e.message&&e.message.toLowerCase().includes('snapshot')){
       modal(`<h3>Save your setup first</h3>
-        <p class="sub" style="margin:8px 0 14px">This rollover restores your churches, accounts, accommodation, FAQ, schedule &amp; devotionals from a saved baseline — but you haven't saved one yet. Nothing was changed. Go to <b>Data, Reset &amp; Exports → Save Defaults</b>, then come back and roll over.</p>
+        <p class="sub" style="margin:8px 0 14px">This rollover restores your churches, accounts, accommodation, FAQ, schedule &amp; devotionals from a saved baseline — but you haven't saved one yet. Nothing was changed. Go to <b>Data Export/Reset → Save Defaults</b>, then come back and roll over.</p>
         <button class="btn" onclick="closeModal();go('adminData')">Go to Data &amp; Save Defaults ${icSm('arrowr')}</button>
         <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
     }else{toast(e.message);}
@@ -2936,7 +2959,9 @@ function _addDays(dateStr,n){const d=new Date(dateStr+'T12:00:00Z');if(isNaN(d))
 function _datesBetween(start,end){const out=[];if(!start)return out;const s=new Date(start+'T12:00:00Z');let e=end?new Date(end+'T12:00:00Z'):s;if(isNaN(s)||isNaN(e)||e<s)return start&&!isNaN(s)?[start]:[];let cur=new Date(s);let guard=0;while(cur<=e&&guard++<60){out.push(cur.toISOString().slice(0,10));cur.setUTCDate(cur.getUTCDate()+1);}return out;}
 RENDER.adminSettings=async function(){
   const s=SETTINGS||await api('/settings');
-  paint('adminSettings',`<div class="card">
+  paint('adminSettings',`<div class="card tap" onclick="go('notifs')" style="margin-bottom:12px">
+      <div class="rowsb"><div><div style="font-weight:600">Notices</div><div class="sub">Send &amp; review camp notices</div></div><span class="pill info">View ›</span></div></div>
+    <div class="card">
     <div class="two-col">
       <div><label>Camp name</label><input class="fld" id="stName" value="${esc(s.campName||'')}"></div>
       <div><label>Year</label><input class="fld" id="stYear" type="number" inputmode="numeric" value="${esc(s.year||'')}"></div>
@@ -3150,8 +3175,9 @@ RENDER.adminData=async function(){
   try{const s=await api('/settings');if(s){if(s.lastExportedAt)exported=dtFmt(s.lastExportedAt);pendingTemps=s.pendingTempPasswordCount||0;if(s.defaultsSavedAt)defaultsSaved=dtFmt(s.defaultsSavedAt);}}catch(e){}
   const isAdmin=ACTOR.role==='admin';
   const dataTableCard=`<div class="card tap" onclick="go('data')"><div class="rowsb"><div><div style="font-weight:600">Student data table</div><div class="sub">Filterable registration table &amp; Elvanto-format export</div></div><span class="pill info">View ›</span></div></div>`;
-  const uploadSection=_importUploadCardHtml()
-    +(CAMP_MODE==='at-camp'?`<div class="card"><div class="h3" style="margin-top:0">Notifications</div><button class="btn red" onclick="adminClear()">Clear all notifications</button></div>`:'');
+  // Import moved to its own "Data Import" admin console tile / nav entry (RENDER.import) — this
+  // screen is export/reset only.
+  const notifSection=CAMP_MODE==='at-camp'?`<div class="card"><div class="h3" style="margin-top:0">Notifications</div><button class="btn red" onclick="adminClear()">Clear all notifications</button></div>`:'';
   // R9: surface temp passwords still waiting from a new-year rollover so the admin knows to
   // download the workbook (which includes them once, then clears them) rather than lose them.
   const tempBanner=pendingTemps?`<div class="warnbox">${icSm('alert')} ${pendingTemps} restored account${pendingTemps===1?'':'s have'} a temporary password from the last rollover. Download the audit workbook below — its "Temp Passwords" tab lists them (included once, then cleared). Share each securely with its leader.</div>`:'';
@@ -3176,17 +3202,17 @@ RENDER.adminData=async function(){
   const factoryResetCard=isAdmin?`<div class="card"><div class="h3" style="margin-top:0">Factory reset</div>
       <button class="btn red" onclick="adminReset()">Full reset (wipe to bare)</button>
       <p class="note-hint" style="text-align:left">Deletes ALL data and every non-admin account, keeping only this admin account &amp; the camp settings. No restore. Signs you out.</p></div>`:'';
-  // PC-1: order = 1. Upload, 2. Save Defaults, 3. Compliance Export, 4. Close-Out, 5. Factory Reset.
+  // PC-1: order = 1. Save Defaults, 2. Compliance Export, 3. Close-Out, 4. Factory Reset.
   paint('adminData',
-    `${dataTableCard}${uploadSection}${saveDefaultsCard}${complianceCard}${closeOutCard}${factoryResetCard}`,
-    'Data, Reset & Exports','Upload / export / reset');
-  _loadImportStamps();
+    `${dataTableCard}${notifSection}${saveDefaultsCard}${complianceCard}${closeOutCard}${factoryResetCard}`,
+    'Data Export/Reset','Export & reset');
 };
-/* Standalone import screen — gives director (who has import:run but not the Admin
-   tab) a way to import. Reuses adminUpload()'s #fileIn/#impResult elements. */
+/* Standalone import screen (its own "Data Import" admin console tile / nav entry) — also
+   gives director (who has import:run but not the Admin tab) a way to import. Reuses
+   adminUpload()'s #fileIn/#impResult elements. */
 RENDER.import=function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('import','<p class="note-hint">Importing is restricted to directors and admins.</p>','Import','');return;}
-  paint('import',_importUploadCardHtml(),'Import registrations','Form · Ticket · Invoice');
+  paint('import',_importUploadCardHtml(),'Data Import','Form · Ticket · Invoice');
   _loadImportStamps();
 };
 
@@ -3711,7 +3737,7 @@ RENDER.adminContacts=async function(){
       <div class="rowsb" style="padding:13px 14px;cursor:pointer" onclick="toggleContactCard('${c.id}')">
         <div style="min-width:0"><div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div><div class="sub" style="font-size:.74rem">${esc(c.zone||'—')}</div></div>
         <div style="display:flex;align-items:center;gap:8px;flex:none">
-          <span class="pill ${pill}">${filled}/4 Contacts</span>
+          <span class="pill ${pill}" id="contactPill_${c.id}">${filled}/4 Contacts</span>
           <span id="contactChev_${c.id}" style="display:inline-flex;transition:transform .15s;color:var(--muted)">${ic('chevron')}</span>
         </div>
       </div>
@@ -3729,8 +3755,23 @@ RENDER.adminContacts=async function(){
   paint('adminContacts',grid,'Ministry contacts','Tap a church to edit');
 };
 function toggleContactCard(id){const b=document.getElementById('contactBody_'+id),ch=document.getElementById('contactChev_'+id);if(!b)return;const open=b.style.display!=='none';b.style.display=open?'none':'block';if(ch)ch.style.transform=open?'':'rotate(90deg)';}
+// Updates just this card's "N/4 Contacts" pill in place instead of a full RENDER.adminContacts()
+// re-render — a full re-render re-fetches every church and rebuilds the whole grid, which
+// collapses every open card and would drop any unsaved edits typed into OTHER churches while
+// working through the list one church at a time.
+function _updateContactPill(id,people){
+  const filled=people.filter(x=>x&&x.name&&String(x.name).trim()).length;
+  const pill=document.getElementById('contactPill_'+id);
+  if(pill){pill.textContent=filled+'/4 Contacts';pill.className='pill '+(filled===4?'ok':filled?'amb':'info');}
+}
 async function saveContacts(id){const C=(n,p)=>({name:val(n),phone:val(p)});
-  try{await api('/accounts/churches/'+id,{method:'PATCH',body:{contacts:{male:{primary:C('mp_n_'+id,'mp_p_'+id),backup:C('mb_n_'+id,'mb_p_'+id)},female:{primary:C('fp_n_'+id,'fp_p_'+id),backup:C('fb_n_'+id,'fb_p_'+id)}}}});toast('Contacts saved');await _rContacts();}catch(e){toast(e.message);}}
+  const mp=C('mp_n_'+id,'mp_p_'+id),mb=C('mb_n_'+id,'mb_p_'+id),fp=C('fp_n_'+id,'fp_p_'+id),fb=C('fb_n_'+id,'fb_p_'+id);
+  try{
+    await api('/accounts/churches/'+id,{method:'PATCH',body:{contacts:{male:{primary:mp,backup:mb},female:{primary:fp,backup:fb}}}});
+    toast('Contacts saved');
+    _updateContactPill(id,[mp,mb,fp,fb]);
+  }catch(e){toast(e.message);}
+}
 
 async function _tryRestoreSession(){
   const tok=localStorage.getItem('ycp_token');const actorJson=localStorage.getItem('ycp_actor');

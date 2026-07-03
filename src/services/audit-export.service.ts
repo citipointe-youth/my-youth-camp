@@ -13,6 +13,13 @@ export interface AuditExportService {
   exportCheckInLogCsv(actor: Actor): Promise<string>;
 }
 
+/** "Tent"/"Classroom"/blank — mirrors the SPA's accommodation display convention. */
+function accommodationDisplay(kind: Person['accommodationKind'] | null | undefined): string {
+  if (kind === 'classroom') return 'Classroom';
+  if (kind === 'tent') return 'Tent';
+  return '';
+}
+
 /** Parse a first-aid note's 4-line body into columns (mirrors the SPA's _faParse). */
 function parseFirstAidBody(body: string): {
   problem: string; treatment: string; firstAider: string; broughtBy: string;
@@ -125,7 +132,7 @@ export function makeAuditExportService(
 
       // ----- Attendees -----
       const attendees = wb.addWorksheet('Attendees');
-      attendees.addRow(['First Name', 'Last Name', 'Kind', 'Church', 'Zone', 'Grade', 'Gender', 'Lifecycle', 'At Camp']);
+      attendees.addRow(['First Name', 'Last Name', 'Kind', 'Church', 'Zone', 'Grade', 'Gender', 'Accommodation', 'Lifecycle', 'At Camp']);
       attendees.getRow(1).font = { bold: true };
       for (const p of people) {
         if (!isCamper(p)) continue;
@@ -135,6 +142,7 @@ export function makeAuditExportService(
           p.churchName, p.zone,
           p.grade ?? '',
           p.gender,
+          accommodationDisplay(p.accommodationKind),
           p.lifecycle,
           p.atCamp ? 'Yes' : 'No',
         ]);
@@ -195,7 +203,7 @@ export function makeAuditExportService(
 
       // ----- Notes & Testimonies (first-aid records get their own sheet below) -----
       const notesSheet = wb.addWorksheet('Notes & Testimonies');
-      notesSheet.addRow(['Student', 'Church', 'Zone', 'Category', 'Note', 'Session', 'Created At']);
+      notesSheet.addRow(['Student', 'Church', 'Zone', 'Grade', 'Gender', 'Category', 'Note', 'Session', 'Created At']);
       notesSheet.getRow(1).font = { bold: true };
       for (const note of notes) {
         if (note.category === 'firstaid') continue; // → dedicated First-Aid Records sheet
@@ -204,6 +212,8 @@ export function makeAuditExportService(
           p ? `${p.firstName} ${p.lastName}` : 'No specific student',
           p?.churchName || '',
           p?.zone || '',
+          p?.grade ?? '',
+          p?.gender || '',
           note.category || 'note',
           note.body,
           note.sessionId || '',
@@ -213,10 +223,10 @@ export function makeAuditExportService(
 
       // ----- First-Aid Records (parsed 4-line body: Problem / Treatment / First-aider / Brought by) -----
       const faSheet = wb.addWorksheet('First-Aid Records');
-      faSheet.addRow(['Student', 'Church', 'Zone', 'Problem', 'Treatment', 'First-aider', 'Brought by', 'Logged At']);
+      faSheet.addRow(['Student', 'Church', 'Zone', 'Grade', 'Gender', 'Problem', 'Treatment', 'First-aider', 'Brought by', 'Logged At']);
       faSheet.getRow(1).font = { bold: true };
       faSheet.columns = [
-        { width: 22 }, { width: 20 }, { width: 10 }, { width: 30 },
+        { width: 22 }, { width: 20 }, { width: 10 }, { width: 8 }, { width: 10 }, { width: 30 },
         { width: 30 }, { width: 18 }, { width: 18 }, { width: 20 },
       ];
       for (const note of notes) {
@@ -227,6 +237,8 @@ export function makeAuditExportService(
           p ? `${p.firstName} ${p.lastName}` : 'No specific student',
           p?.churchName || '',
           p?.zone || '',
+          p?.grade ?? '',
+          p?.gender || '',
           fa.problem, fa.treatment, fa.firstAider, fa.broughtBy,
           toLocalTs(note.createdAt, tz),
         ]);
