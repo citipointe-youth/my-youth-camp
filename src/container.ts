@@ -199,7 +199,7 @@ export async function buildContainer(): Promise<Container> {
     const dashboard = makeDashboardService(people, notifications, churches);
     const admin = makeAdminService(
       users, churches, people, classrooms, allocations, faqs, scheduleRepo,
-      notifications, notes, devotionals, settingsRepo, snapshots,
+      notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
     );
 
     const services: Services = {
@@ -336,6 +336,7 @@ export async function buildContainer(): Promise<Container> {
     devotionals,
     settingsRepo,
     snapshots,
+    allocationOverrides,
   );
 
   const services: Services = {

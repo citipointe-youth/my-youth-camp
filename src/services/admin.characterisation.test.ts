@@ -13,6 +13,7 @@ import {
   InMemoryDevotionalRepository,
   InMemorySettingsRepository,
   InMemorySnapshotRepository,
+  InMemoryAllocationOverrideRepository,
 } from '../repositories/in-memory';
 import type { User, Actor } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
@@ -186,6 +187,7 @@ interface Repos {
   devotionalRepo: InMemoryDevotionalRepository;
   settingsRepo: InMemorySettingsRepository;
   snapshotRepo: InMemorySnapshotRepository;
+  overrideRepo: InMemoryAllocationOverrideRepository;
 }
 
 async function makeRepos(): Promise<Repos> {
@@ -202,6 +204,7 @@ async function makeRepos(): Promise<Repos> {
     devotionalRepo: new InMemoryDevotionalRepository(),
     settingsRepo: new InMemorySettingsRepository(),
     snapshotRepo: new InMemorySnapshotRepository(),
+    overrideRepo: new InMemoryAllocationOverrideRepository(),
   };
   await Promise.all([
     repos.userRepo.init(),
@@ -216,6 +219,7 @@ async function makeRepos(): Promise<Repos> {
     repos.devotionalRepo.init(),
     repos.settingsRepo.init(),
     repos.snapshotRepo.init(),
+    repos.overrideRepo.init(),
   ]);
   return repos;
 }
@@ -234,6 +238,7 @@ function build(r: Repos) {
     r.devotionalRepo,
     r.settingsRepo,
     r.snapshotRepo,
+    r.overrideRepo,
   );
 }
 
@@ -289,6 +294,17 @@ describe('AdminService.reset', () => {
     expect(await repos.notifRepo.findAll()).toEqual([]);
     expect(await repos.noteRepo.findAll()).toEqual([]);
     expect(await repos.devotionalRepo.findAll()).toEqual([]);
+  });
+
+  it('purges allocation overrides on reset', async () => {
+    await repos.overrideRepo.save({
+      id: 'o1', personId: 'p1', firstNameKey: 'john', lastNameKey: 'smith', mobileKey: '',
+      assignedChurchId: 'c1', assignedChurchName: 'Grace', formChurch: 'OTHER - please specify below',
+      kind: 'unallocated', note: null, createdBy: 'Admin', createdAt: 't', updatedAt: 't',
+    });
+    const svc = build(repos);
+    await svc.reset(actor('admin'));
+    expect(await repos.overrideRepo.findAll()).toEqual([]);
   });
 
   it('A4 FIX: keeps the single admin account, deletes every non-admin account', async () => {

@@ -9,6 +9,7 @@ import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
 import { CreateClassroomSchema, UpdateClassroomSchema, SetAllocationsSchema } from '../core/validation/accommodation.schema';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
+import { UNALLOCATED_CHURCH_ID } from './church-allocation';
 import {
   computeGroups, validateAllocations,
   type AllocationOccupant, type AllocationGroup, type AllocationMap,
@@ -49,7 +50,8 @@ export function makeAccommodationService(
   }
 
   async function occupants(): Promise<AllocationOccupant[]> {
-    const people = await personRepo.findAll();
+    // Unallocated (sentinel) people have no real church — exclude them from accommodation grouping.
+    const people = (await personRepo.findAll()).filter((p) => p.churchId !== UNALLOCATED_CHURCH_ID);
     return people.map((p) => ({
       churchId: p.churchId ?? '',
       churchName: p.churchName,
