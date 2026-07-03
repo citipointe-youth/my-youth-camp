@@ -3210,11 +3210,116 @@ RENDER.adminData=async function(){
 /* Standalone import screen (its own "Data Import" admin console tile / nav entry) — also
    gives director (who has import:run but not the Admin tab) a way to import. Reuses
    adminUpload()'s #fileIn/#impResult elements. */
-RENDER.import=function(){
+RENDER.import=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('import','<p class="note-hint">Importing is restricted to directors and admins.</p>','Import','');return;}
-  paint('import',_importUploadCardHtml(),'Data Import','Form · Ticket · Invoice');
+  paint('import',_importUploadCardHtml()+'<div id="allocWrap"></div>','Data Import','Form · Ticket · Invoice');
   _loadImportStamps();
+  _loadAllocation();
 };
+
+/* ===== UNALLOCATED REGISTRANTS + CHURCH OVERRIDES (bottom of Data Import) ===== */
+const UNALLOCATED_ID='__unallocated__'; // must match backend UNALLOCATED_CHURCH_ID
+let _allocState={unallocated:[],regs:[],churches:[],overrides:[]};
+
+async function _loadAllocation(){
+  const wrap=document.getElementById('allocWrap'); if(!wrap) return;
+  const [unallocated,regs,churches,overrides]=await Promise.all([
+    api('/import/unallocated').catch(()=>[]),
+    api('/registrants').catch(()=>[]),
+    api('/accounts/churches').catch(()=>[]),
+    api('/import/allocations').catch(()=>[]),
+  ]);
+  _allocState={unallocated:unallocated||[],regs:regs||[],churches:churches||[],overrides:overrides||[]};
+  _renderAllocCards();
+}
+
+function _churchOpts(sel){
+  return '<option value="">Select a church…</option>'+_allocState.churches.slice()
+    .sort((a,b)=>String(a.name).localeCompare(String(b.name)))
+    .map(c=>`<option value="${esc(c.id)}"${c.id===sel?' selected':''}>${esc(c.name)}</option>`).join('');
+}
+
+function _renderAllocCards(){
+  const wrap=document.getElementById('allocWrap'); if(!wrap) return;
+  const un=_allocState.unallocated;
+  const gradeLabel=p=>p.grade?('Grade '+esc(p.grade)):(p.kind==='leader'?'Leader':'—');
+  const unRows=un.length?un.map(p=>`
+    <div class="card" style="padding:10px">
+      <div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div>
+      <div class="sub">${esc(p.registrationType||'—')} · ${esc(p.gender||'—')} · ${gradeLabel(p)} · ${p.mobile?esc(fmtPhone(p.mobile)):'no phone'}</div>
+      ${p.churchUnlistedNote?`<div class="note-hint" style="text-align:left;margin:4px 0"><b>They wrote:</b> ${esc(p.churchUnlistedNote)}</div>`:''}
+      <div class="rowsb" style="gap:6px;margin-top:6px">
+        <select class="fld" id="alloc_${esc(p.id)}" style="flex:1">${_churchOpts('')}</select>
+        <button class="btn" onclick="allocatePerson('${esc(p.id)}')">Confirm</button>
+      </div>
+    </div>`).join(''):'<p class="note-hint">No unallocated registrants.</p>';
+  const cardA=`<div class="card"><div class="h3" style="margin-top:0">Unallocated registrants (${un.length})</div>
+    <p class="note-hint" style="text-align:left">These people chose “OTHER – please specify below” and have no church yet. Allocate each to a church.</p>${unRows}</div>`;
+
+  const ov=_allocState.overrides;
+  const ovRows=ov.length?ov.map(o=>`
+    <div class="card" style="padding:10px">
+      <div class="rowsb">
+        <div>
+          <div style="font-weight:600">${esc(o.personName)}</div>
+          <div class="sub">${esc(o.formChurch||'—')} → <b>${esc(o.assignedChurchName)}</b></div>
+          <div class="sub" style="font-size:.7rem;color:var(--muted)">${o.kind==='unallocated'?'Allocated from unlisted':'Overridden'} · ${esc(o.createdBy)} · ${dtFmt(o.updatedAt)}</div>
+        </div>
+        <button class="btn ghost" onclick="undoOverride('${esc(o.id)}')">Undo</button>
+      </div>
+    </div>`).join(''):'<p class="note-hint">No forced allocations yet.</p>';
+  const cardB=`<div class="card"><div class="h3" style="margin-top:0">Church overrides / forced allocations (${ov.length})</div>
+    <p class="note-hint" style="text-align:left">Everyone whose church differs from their form. These persist across re-imports.</p>
+    <div class="card" style="padding:10px;background:var(--paper)">
+      <div class="lbl" style="margin-top:0">Override a church allocation</div>
+      <input class="fld" id="ovSearch" placeholder="Search a registrant by name…" oninput="_renderOvSearch()">
+      <div id="ovSearchResults"></div>
+    </div>
+    ${ovRows}</div>`;
+
+  wrap.innerHTML=cardA+cardB;
+}
+
+function _renderOvSearch(){
+  const box=document.getElementById('ovSearchResults'); if(!box) return;
+  const q=(document.getElementById('ovSearch').value||'').trim().toLowerCase();
+  if(q.length<2){box.innerHTML='';return;}
+  const hits=_allocState.regs.filter(r=>r.churchId!==UNALLOCATED_ID && `${r.firstName} ${r.lastName}`.toLowerCase().includes(q)).slice(0,8);
+  box.innerHTML=hits.length?hits.map(p=>`<div class="rowsb" style="gap:6px;padding:4px 0">
+    <div><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}</div></div>
+    <button class="btn ghost" onclick="overridePrompt('${esc(p.id)}')">Change church</button>
+  </div>`).join(''):'<p class="note-hint">No matches.</p>';
+}
+
+async function allocatePerson(id){
+  const sel=document.getElementById('alloc_'+id); const churchId=sel&&sel.value;
+  if(!churchId){toast('Pick a church first');return;}
+  try{await api('/import/allocate',{method:'POST',body:{personId:id,churchId}});toast('Allocated');_invalidate('/registrants');await _loadAllocation();}
+  catch(e){toast(e.message||'Failed');}
+}
+
+function overridePrompt(id){
+  const p=_allocState.regs.find(r=>r.id===id); if(!p)return;
+  modal(`<div class="h3" style="margin-top:0">Override church</div>
+    <p class="note-hint" style="text-align:left"><b>${esc(p.firstName)} ${esc(p.lastName)}</b> is currently in <b>${esc(p.churchName)}</b>. Move them to another church? This persists across re-imports.</p>
+    <select class="fld" id="ovSel">${_churchOpts('')}</select>
+    <div class="rowsb" style="gap:6px;margin-top:10px">
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="confirmOverride('${esc(id)}')">Confirm override</button>
+    </div>`);
+}
+
+async function confirmOverride(id){
+  const sel=document.getElementById('ovSel'); const churchId=sel&&sel.value;
+  if(!churchId){toast('Pick a church first');return;}
+  try{await api('/import/allocate',{method:'POST',body:{personId:id,churchId}});closeModal();toast('Church overridden');_invalidate('/registrants');await _loadAllocation();}
+  catch(e){toast(e.message||'Failed');}
+}
+
+async function undoOverride(id){
+  try{await api('/import/allocations/'+id,{method:'DELETE'});toast('Reverted');_invalidate('/registrants');await _loadAllocation();}
+  catch(e){toast(e.message||'Failed');}
+}
 
 /* ===== DATA (director/admin): filterable registration table + Elvanto-format export ===== */
 let _dataCache=null; // cached /registrants for client-side filtering, default-sorted to import order
