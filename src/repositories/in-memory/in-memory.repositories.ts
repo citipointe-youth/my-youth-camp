@@ -6,6 +6,7 @@ import type { User } from '../../core/entities/user';
 import type { Church } from '../../core/entities/church';
 import type { Person } from '../../core/entities/person';
 import { isCamper } from '../../core/entities/person';
+import type { AllocationOverride } from '../../core/entities/allocation-override';
 import type { Classroom, RoomAllocation } from '../../core/entities/accommodation';
 import type { Zone } from '../../core/entities/zone';
 import type { Group } from '../../core/entities/group';
@@ -20,6 +21,7 @@ import type { UserRole } from '../../core/types/enums';
 import type {
   IUserRepository,
   IChurchRepository,
+  IAllocationOverrideRepository,
   IPersonRepository,
   IClassroomRepository,
   IAllocationRepository,
@@ -63,6 +65,25 @@ export class InMemoryUserRepository
     return Array.from(this.store.values())
       .filter((u) => u.role === role)
       .map((u) => this.clone(u));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Allocation overrides (manual church allocations that survive re-imports)
+// ---------------------------------------------------------------------------
+export class InMemoryAllocationOverrideRepository
+  extends InMemoryBaseRepository<AllocationOverride>
+  implements IAllocationOverrideRepository
+{
+  constructor(persistence?: IPersistenceAdapter<AllocationOverride>) {
+    super(persistence);
+  }
+
+  async findByPersonId(personId: string): Promise<AllocationOverride | null> {
+    for (const o of this.store.values()) {
+      if (o.personId === personId) return this.clone(o);
+    }
+    return null;
   }
 }
 

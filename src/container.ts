@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   InMemoryUserRepository,
   InMemoryChurchRepository,
+  InMemoryAllocationOverrideRepository,
   InMemoryPersonRepository,
   InMemoryClassroomRepository,
   InMemoryAllocationRepository,
@@ -22,6 +23,7 @@ import { JsonFilePersistence } from './repositories/persistence';
 import {
   SupabaseUserRepository,
   SupabaseChurchRepository,
+  SupabaseAllocationOverrideRepository,
   SupabasePersonRepository,
   SupabaseClassroomRepository,
   SupabaseAllocationRepository,
@@ -39,6 +41,7 @@ import { getSqlClient } from './repositories/supabase/client';
 import type {
   IUserRepository,
   IChurchRepository,
+  IAllocationOverrideRepository,
   IPersonRepository,
   IClassroomRepository,
   IAllocationRepository,
@@ -55,6 +58,7 @@ import type {
 import type { User } from './core/entities/user';
 import type { Church } from './core/entities/church';
 import type { Person } from './core/entities/person';
+import type { AllocationOverride } from './core/entities/allocation-override';
 import type { Classroom, RoomAllocation } from './core/entities/accommodation';
 import type { Zone } from './core/entities/zone';
 import type { Group } from './core/entities/group';
@@ -89,6 +93,7 @@ import { makeAuditExportService, type AuditExportService } from './services/audi
 export interface Repositories {
   users: IUserRepository;
   churches: IChurchRepository;
+  allocationOverrides: IAllocationOverrideRepository;
   people: IPersonRepository;
   classrooms: IClassroomRepository;
   allocations: IAllocationRepository;
@@ -145,6 +150,7 @@ export async function buildContainer(): Promise<Container> {
     const sql = getSqlClient();
     const users: IUserRepository = new SupabaseUserRepository(sql);
     const churches: IChurchRepository = new SupabaseChurchRepository(sql);
+    const allocationOverrides: IAllocationOverrideRepository = new SupabaseAllocationOverrideRepository(sql);
     const people: IPersonRepository = new SupabasePersonRepository(sql);
     const classrooms: IClassroomRepository = new SupabaseClassroomRepository(sql);
     const allocations: IAllocationRepository = new SupabaseAllocationRepository(sql);
@@ -159,13 +165,13 @@ export async function buildContainer(): Promise<Container> {
     const snapshots: ISnapshotRepository = new SupabaseDefaultsRepository(sql);
 
     const repos: Repositories = {
-      users, churches, people, classrooms, allocations,
+      users, churches, allocationOverrides, people, classrooms, allocations,
       zones, groups, notes, notifications, schedule: scheduleRepo,
       devotionals, faqs, settings: settingsRepo, snapshots,
     };
 
     await Promise.all([
-      users.init(), churches.init(), people.init(), classrooms.init(), allocations.init(),
+      users.init(), churches.init(), allocationOverrides.init(), people.init(), classrooms.init(), allocations.init(),
       zones.init(), groups.init(), notes.init(), notifications.init(),
       scheduleRepo.init(), devotionals.init(), faqs.init(), settingsRepo.init(), snapshots.init(),
     ]);
@@ -213,6 +219,9 @@ export async function buildContainer(): Promise<Container> {
   const churches: IChurchRepository = new InMemoryChurchRepository(
     useJson ? makeJsonPersistence<Church>('churches.json') : undefined,
   );
+  const allocationOverrides: IAllocationOverrideRepository = new InMemoryAllocationOverrideRepository(
+    useJson ? makeJsonPersistence<AllocationOverride>('allocation-overrides.json') : undefined,
+  );
   const people: IPersonRepository = new InMemoryPersonRepository(
     useJson ? makeJsonPersistence<Person>('people.json') : undefined,
   );
@@ -253,6 +262,7 @@ export async function buildContainer(): Promise<Container> {
   const repos: Repositories = {
     users,
     churches,
+    allocationOverrides,
     people,
     classrooms,
     allocations,
@@ -271,6 +281,7 @@ export async function buildContainer(): Promise<Container> {
   await Promise.all([
     users.init(),
     churches.init(),
+    allocationOverrides.init(),
     people.init(),
     classrooms.init(),
     allocations.init(),

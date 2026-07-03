@@ -2,6 +2,7 @@ import type { IRepository } from './base.repository';
 import type { User } from '../../core/entities/user';
 import type { Church } from '../../core/entities/church';
 import type { Person } from '../../core/entities/person';
+import type { AllocationOverride } from '../../core/entities/allocation-override';
 import type { Classroom, RoomAllocation } from '../../core/entities/accommodation';
 import type { Zone } from '../../core/entities/zone';
 import type { Group } from '../../core/entities/group';
@@ -21,6 +22,10 @@ export interface IUserRepository extends IRepository<User> {
 
 export interface IChurchRepository extends IRepository<Church> {
   findByZone(zone: string): Promise<Church[]>;
+}
+
+export interface IAllocationOverrideRepository extends IRepository<AllocationOverride> {
+  findByPersonId(personId: string): Promise<AllocationOverride | null>;
 }
 
 /**
