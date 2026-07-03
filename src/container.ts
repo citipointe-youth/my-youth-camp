@@ -85,6 +85,7 @@ import { makeAccountService, type AccountService } from './services/account.serv
 import { makeDashboardService, type DashboardService } from './services/dashboard.service';
 import { makeAdminService, type AdminService } from './services/admin.service';
 import { makePersonService, type PersonService } from './services/person.service';
+import { makeAllocationService, type AllocationService } from './services/allocation.service';
 import { makeChurchImportService, type ChurchImportService } from './services/church-import.service';
 import { makeTicketImportService, type TicketImportService } from './services/ticket-import.service';
 import { makeInvoiceImportService, type InvoiceImportService } from './services/invoice-import.service';
@@ -121,6 +122,7 @@ export interface Services {
   content: ContentService;
   importService: ImportService;
   exportService: ExportService;
+  allocation: AllocationService;
   churchImport: ChurchImportService;
   ticketImport: TicketImportService;
   invoiceImport: InvoiceImportService;
@@ -188,6 +190,7 @@ export async function buildContainer(): Promise<Container> {
     const content = makeContentService(faqs, devotionals);
     const importSvc = makeImportService(people, churches);
     const exportSvc = makeExportService(people, churches);
+    const allocation = makeAllocationService(people, churches, allocationOverrides);
     const churchImportSvc = makeChurchImportService(users, churches);
     const ticketImportSvc = makeTicketImportService(people, churches);
     const invoiceImportSvc = makeInvoiceImportService(people);
@@ -202,7 +205,7 @@ export async function buildContainer(): Promise<Container> {
     const services: Services = {
       auth, settings, person: personSvc, accommodation: accommodationSvc,
       checkIn, notification, search, note, schedule, content,
-      importService: importSvc, exportService: exportSvc, churchImport: churchImportSvc,
+      importService: importSvc, exportService: exportSvc, allocation, churchImport: churchImportSvc,
       ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
       auditExport: auditExportSvc,
       account, dashboard, admin, users, settingsRepo,
@@ -309,6 +312,7 @@ export async function buildContainer(): Promise<Container> {
   const content = makeContentService(faqs, devotionals);
   const importSvc = makeImportService(people, churches);
   const exportSvc = makeExportService(people, churches);
+  const allocation = makeAllocationService(people, churches, allocationOverrides);
   const churchImportSvc = makeChurchImportService(users, churches);
   const ticketImportSvc = makeTicketImportService(people, churches);
   const invoiceImportSvc = makeInvoiceImportService(people);
@@ -347,6 +351,7 @@ export async function buildContainer(): Promise<Container> {
     content,
     importService: importSvc,
     exportService: exportSvc,
+    allocation,
     churchImport: churchImportSvc,
     ticketImport: ticketImportSvc,
     invoiceImport: invoiceImportSvc,

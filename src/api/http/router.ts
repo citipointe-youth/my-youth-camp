@@ -15,6 +15,7 @@ import { makeNoteController } from '../controllers/note.controller';
 import { makeAttendanceController } from '../controllers/attendance.controller';
 import { makeContentController } from '../controllers/content.controller';
 import { makeImportController } from '../controllers/import.controller';
+import { makeAllocationController } from '../controllers/allocation.controller';
 import { makeChurchImportController } from '../controllers/church-import.controller';
 import { makeTicketImportController } from '../controllers/ticket-import.controller';
 import { makeInvoiceImportController } from '../controllers/invoice-import.controller';
@@ -38,6 +39,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const attendance = makeAttendanceController({ person: services.person });
   const content = makeContentController({ content: services.content });
   const importCtrl = makeImportController({ importService: services.importService, settingsRepo: services.settingsRepo });
+  const allocationCtrl = makeAllocationController({ allocation: services.allocation });
   const churchImportCtrl = makeChurchImportController({ churchImport: services.churchImport });
   const ticketImportCtrl = makeTicketImportController({ ticketImport: services.ticketImport, settingsRepo: services.settingsRepo });
   const invoiceImportCtrl = makeInvoiceImportController({ invoiceImport: services.invoiceImport, settingsRepo: services.settingsRepo });
@@ -160,6 +162,10 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/import/churches', auth: true, handler: (r) => churchImportCtrl.run(r) },
     { method: 'POST', path: '/import/tickets', auth: true, handler: (r) => ticketImportCtrl.run(r) },
     { method: 'POST', path: '/import/invoices', auth: true, handler: (r) => invoiceImportCtrl.run(r) },
+    { method: 'GET', path: '/import/unallocated', auth: true, handler: (r) => allocationCtrl.listUnallocated(r) },
+    { method: 'GET', path: '/import/allocations', auth: true, handler: (r) => allocationCtrl.listOverrides(r) },
+    { method: 'POST', path: '/import/allocate', auth: true, handler: (r) => allocationCtrl.allocate(r) },
+    { method: 'DELETE', path: '/import/allocations/:id', auth: true, handler: (r) => allocationCtrl.removeOverride(r) },
     { method: 'GET', path: '/export/registrants', auth: true, handler: (r) => exportCtrl.registrants(r) },
 
     // ----- Audit export (BufferRoute — xlsx and CSV downloads) -----

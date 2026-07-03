@@ -21,6 +21,7 @@ export type Action =
   | 'notification:send:zone'
   | 'notification:send:camp'
   | 'import:run'
+  | 'allocation:manage'
   | 'admin:manage';
 
 const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
@@ -65,6 +66,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'notification:send:zone',
     'notification:send:camp',
     'import:run',
+    'allocation:manage',
   ]),
   admin: new Set<Action>([
     'registrant:read',
@@ -82,6 +84,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'notification:send:zone',
     'notification:send:camp',
     'import:run',
+    'allocation:manage',
     'admin:manage',
   ]),
   // firstAid: read-only at-camp access PLUS first-aid record logging (Phase 4).
