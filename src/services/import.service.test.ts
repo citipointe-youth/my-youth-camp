@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { makeImportService } from './import.service';
-import { InMemoryPersonRepository, InMemoryChurchRepository } from '../repositories/in-memory';
+import { InMemoryPersonRepository, InMemoryChurchRepository, InMemoryAllocationOverrideRepository } from '../repositories/in-memory';
 import type { Church } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
 import { ForbiddenError, BadRequestError } from '../core/errors/app-error';
+import { UNALLOCATED_CHURCH_ID } from './church-allocation';
 
 // ---------------------------------------------------------------------------
 // ImportService tests — focus on the C1 fix: church/camper indexing, in-file
@@ -26,11 +27,13 @@ function church(over: Partial<Church>): Church {
 async function build(churches: Church[] = [church({ id: 'c1', name: 'Victory' })]) {
   const personRepo = new InMemoryPersonRepository();
   const churchRepo = new InMemoryChurchRepository();
+  const overrideRepo = new InMemoryAllocationOverrideRepository();
   await personRepo.init();
   await churchRepo.init();
+  await overrideRepo.init();
   for (const c of churches) await churchRepo.save(c);
-  const svc = makeImportService(personRepo, churchRepo);
-  return { svc, personRepo, churchRepo };
+  const svc = makeImportService(personRepo, churchRepo, overrideRepo);
+  return { svc, personRepo, churchRepo, overrideRepo };
 }
 
 describe('ImportService.importCsv — RBAC + validation', () => {
@@ -378,5 +381,64 @@ describe('ImportService.importCsv — blank-cell guard on update (no clobbering)
     expect(p.grade).toBe(9);
     expect(p.kind).toBe('youth');
     expect(p.mobile).toBe('0400 555 555'); // the field that WAS present still updates
+  });
+});
+
+describe('import: unallocated + overrides', () => {
+  // The multi-word note column is quoted, exactly as a real Elvanto export has it.
+  const HEADER = 'First Name,Last Name,Gender,School Grade,Mobile Number,Attendee\'s Church,"If from a church not listed, please specify church name & Youth Pastor"';
+
+  function savedOverride(personId: string) {
+    return {
+      id: 'o1', personId, firstNameKey: 'john', lastNameKey: 'smith', mobileKey: '0411928301',
+      assignedChurchId: 'c1', assignedChurchName: 'Grace Point', formChurch: 'OTHER - please specify below',
+      kind: 'unallocated' as const, note: null, createdBy: 'Admin', createdAt: 't', updatedAt: 't',
+    };
+  }
+
+  it('routes an OTHER registrant to the unallocated sentinel instead of creating a junk church', async () => {
+    const { svc, personRepo, churchRepo } = await build();
+    const csv = `${HEADER}\nJohn,Smith,Male,9,0411928301,OTHER - please specify below,Hope Church Ps Josh`;
+    await svc.importCsv(actor('admin'), { csvData: csv, updateExisting: true });
+    const john = (await personRepo.findAll()).find((p) => p.firstName === 'John')!;
+    expect(john.churchId).toBe(UNALLOCATED_CHURCH_ID);
+    expect(john.zone).toBe('');
+    expect(john.churchUnlistedNote).toContain('Hope');
+    expect((await churchRepo.findAll()).some((c) => c.name.toLowerCase().includes('other'))).toBe(false);
+  });
+
+  it('re-applies a saved override on re-import: person keeps their church, is not deleted or duplicated', async () => {
+    const { svc, personRepo, overrideRepo } = await build([church({ id: 'c1', name: 'Grace Point', zone: 'Blue' })]);
+    const csv = `${HEADER}\nJohn,Smith,Male,9,0411928301,OTHER - please specify below,Hope`;
+    await svc.importCsv(actor('admin'), { csvData: csv, updateExisting: true });
+    const john = (await personRepo.findAll()).find((p) => p.firstName === 'John')!;
+    expect(john.churchId).toBe(UNALLOCATED_CHURCH_ID);
+
+    // Admin allocates John to Grace Point (person move + override store).
+    await personRepo.save({ ...john, churchId: 'c1', churchName: 'Grace Point', zone: 'Blue' });
+    await overrideRepo.save(savedOverride(john.id));
+
+    // Re-import the SAME form (John's row still says OTHER).
+    await svc.importCsv(actor('admin'), { csvData: csv, updateExisting: true });
+
+    const after = await personRepo.findAll();
+    expect(after).toHaveLength(1);                 // no duplicate
+    expect(after[0]!.id).toBe(john.id);            // same person, updated in place
+    expect(after[0]!.churchId).toBe('c1');         // manual church retained
+    expect(after[0]!.zone).toBe('Blue');
+    expect(await overrideRepo.findAll()).toHaveLength(1); // not pruned — person still present
+  });
+
+  it('prunes an override when its person withdraws (absent from the re-imported file)', async () => {
+    const { svc, personRepo, overrideRepo } = await build([church({ id: 'c1', name: 'Grace Point', zone: 'Blue' })]);
+    const csv1 = `${HEADER}\nJohn,Smith,Male,9,0411928301,OTHER - please specify below,Hope`;
+    await svc.importCsv(actor('admin'), { csvData: csv1, updateExisting: true });
+    const john = (await personRepo.findAll()).find((p) => p.firstName === 'John')!;
+    await overrideRepo.save(savedOverride(john.id));
+
+    // Re-import with John absent (a different registrant only).
+    const csv2 = `${HEADER}\nMary,Jones,Female,10,0422000000,Grace Point,`;
+    await svc.importCsv(actor('admin'), { csvData: csv2, updateExisting: true });
+    expect(await overrideRepo.findAll()).toHaveLength(0);
   });
 });

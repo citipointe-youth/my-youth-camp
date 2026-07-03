@@ -188,7 +188,7 @@ export async function buildContainer(): Promise<Container> {
     const note = makeNoteService(notes, people);
     const schedule = makeScheduleService(scheduleRepo);
     const content = makeContentService(faqs, devotionals);
-    const importSvc = makeImportService(people, churches);
+    const importSvc = makeImportService(people, churches, allocationOverrides);
     const exportSvc = makeExportService(people, churches);
     const allocation = makeAllocationService(people, churches, allocationOverrides);
     const churchImportSvc = makeChurchImportService(users, churches);
@@ -310,7 +310,7 @@ export async function buildContainer(): Promise<Container> {
   const note = makeNoteService(notes, people);
   const schedule = makeScheduleService(scheduleRepo);
   const content = makeContentService(faqs, devotionals);
-  const importSvc = makeImportService(people, churches);
+  const importSvc = makeImportService(people, churches, allocationOverrides);
   const exportSvc = makeExportService(people, churches);
   const allocation = makeAllocationService(people, churches, allocationOverrides);
   const churchImportSvc = makeChurchImportService(users, churches);

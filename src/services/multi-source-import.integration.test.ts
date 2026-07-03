@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { makeImportService } from './import.service';
 import { makeTicketImportService } from './ticket-import.service';
 import { makeInvoiceImportService } from './invoice-import.service';
-import { InMemoryPersonRepository, InMemoryChurchRepository } from '../repositories/in-memory';
+import { InMemoryPersonRepository, InMemoryChurchRepository, InMemoryAllocationOverrideRepository } from '../repositories/in-memory';
 import type { Actor } from '../core/entities/user';
 
 // ---------------------------------------------------------------------------
@@ -50,12 +50,14 @@ const INVOICE_CSV = `Invoice Number,Event Name,Last Name,First Name,Email,Phone,
 async function build() {
   const personRepo = new InMemoryPersonRepository();
   const churchRepo = new InMemoryChurchRepository();
+  const overrideRepo = new InMemoryAllocationOverrideRepository();
   await personRepo.init();
   await churchRepo.init();
+  await overrideRepo.init();
   return {
     personRepo,
     churchRepo,
-    formSvc: makeImportService(personRepo, churchRepo),
+    formSvc: makeImportService(personRepo, churchRepo, overrideRepo),
     ticketSvc: makeTicketImportService(personRepo, churchRepo),
     invoiceSvc: makeInvoiceImportService(personRepo),
   };
