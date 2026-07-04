@@ -482,11 +482,9 @@ at both full size and realistic 60/76px home-screen size before picking one).
 - **`public/sw.js` `CACHE` bumped `camp-v7`→`camp-v8`** — the service worker cache-firsts icons,
   so without a version bump, anyone who already added the app to their home screen would keep
   seeing the old icon indefinitely.
-- **Known gap, not yet fixed**: `apple-touch-icon` in `index.html` points straight at the SVG.
-  iOS Safari's "Add to Home Screen" generally needs a PNG there (SVG support for that specific
-  link tag is inconsistent) — likely part of why the icon looked wrong on a phone in the first
-  place. Rasterizing to PNG (180×180 apple-touch-icon, 192/512 for the manifest) is flagged for a
-  follow-up, not done as part of this change.
+- **Gap closed (2026-07-04):** `public/icons/icon-180.png`/`icon-192.png`/`icon-512.png` exist,
+  match the SVG design, and are referenced by both `index.html` (`apple-touch-icon` +
+  `<link rel="icon">`) and `manifest.json`. The SVG stays the manifest's `sizes:"any"` entry.
 - **`heroMark()` (NEW, `public/index.html`)** — a reduced-detail, 16%-opacity white version of the
   same tent+cross mark (no background square, just the line art), absolutely positioned on the
   right side of a `.hero` card. Added as the **first child** of both Home hero cards (pre-camp

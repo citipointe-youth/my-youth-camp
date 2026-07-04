@@ -135,7 +135,7 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
 .lbl{font-size:var(--t-xs);font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:2px 0 9px;}
 .h3{font-size:var(--t-xs);font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:16px 2px 9px;}
 h3.sec{font-size:var(--t-xs);font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:18px 2px 9px;}
-.bar7{height:9px;border-radius:999px;background:var(--chip);overflow:hidden;margin:9px 0 8px;}.bar7>i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--violet),var(--blue2));}
+.bar7{height:9px;border-radius:999px;background:var(--chip);overflow:hidden;margin:9px 0 8px;}.bar7>i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--violet),var(--blue2));}.bar7.amber>i{background:linear-gradient(90deg,#f59e0b,#fbbf24);}
 .pill{font-size:var(--t-2xs);font-weight:700;padding:3px 9px;border-radius:999px;display:inline-block;letter-spacing:.02em;white-space:nowrap;flex-shrink:0;}
 .pill.ok{background:#dcfce7;color:#15803d;}.pill.warn{background:#fee2e2;color:#b91c1c;}.pill.amb{background:#fef3c7;color:#92400e;}.pill.info{background:var(--chip);color:var(--violet-d);}
 .pills{display:flex;gap:7px;flex-wrap:wrap;}
@@ -540,7 +540,6 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="admin"></section>
     <section class="screen" id="adminAccounts"></section>
     <section class="screen" id="adminAccom"></section>
-    <section class="screen" id="adminFaq"></section>
     <section class="screen" id="adminSettings"></section>
     <section class="screen" id="adminData"></section>
     <section class="screen" id="adminChurchImport"></section>
@@ -550,9 +549,8 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="adminStudents"></section>
     <section class="screen" id="import"></section>
     <section class="screen" id="data"></section>
-    <section class="screen" id="adminDevos"></section>
     <section class="screen" id="adminFaqEdit"></section>
-    <section class="screen" id="adminSchedEdit"></section>
+    <section class="screen" id="atCampInfo"></section>
     <section class="screen" id="adminContacts"></section>
   </div>
   <nav class="tabs" id="tabs" style="display:none"></nav>
@@ -876,7 +874,19 @@ function logout(){
   PREVIEW_MODE=false;
   api('/auth/logout',{method:'POST'}).catch(()=>{});
   localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
+  sessionStorage.removeItem('ycp_wizardReturn');
   TOKEN=null;ACTOR=null;location.reload();
+}
+// Brisbane-anchored "today" (YYYY-MM-DD), mirroring the backend's zonedNow(). The camp's
+// timezone is hardcoded Australia/Brisbane (see adminSettings — the field was removed), so this
+// needs no settings lookup. Pass an ISO/Date to convert a specific instant instead of "now" —
+// e.g. a server createdAt timestamp — so UTC-vs-Brisbane day boundaries agree everywhere in the
+// SPA (a plain `new Date().toISOString().slice(0,10)` is WRONG here: it's UTC, so anywhere from
+// midnight to 10am Brisbane it still reports yesterday's date).
+function localDateISO(at){
+  const d=at?new Date(at):new Date();
+  const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:'Australia/Brisbane',year:'numeric',month:'2-digit',day:'2-digit'});
+  return fmt.format(d); // en-CA formats as YYYY-MM-DD
 }
 // Real (non-preview) current camp day number, 1-based, from the actual check-in day dates —
 // today's day if camp is underway, day 1 before camp starts, the last day after it ends.
@@ -884,7 +894,7 @@ function _realCampDayNumber(){
   const days=(SETTINGS&&SETTINGS.checkInDays)||[];
   if(!days.length)return 1;
   const sorted=[...days].sort();
-  const today=new Date().toISOString().slice(0,10);
+  const today=localDateISO();
   let idx=sorted.findIndex(d=>d>=today);
   if(idx===-1)idx=sorted.length-1;
   return idx+1;
@@ -956,8 +966,8 @@ function switchDay(){
 
 /* ===== ROUTER ===== */
 const TAB_OF={home:'home',people:'people',student:'people',help:'help',
-  admin:'admin',adminAccounts:'admin',adminFaq:'admin',adminSettings:'admin',adminAccom:'admin',adminData:'admin',
-  adminDevos:'admin',adminFaqEdit:'admin',adminSchedEdit:'admin',adminContacts:'admin',
+  admin:'admin',adminAccounts:'admin',adminSettings:'admin',adminAccom:'admin',adminData:'admin',
+  adminFaqEdit:'admin',atCampInfo:'admin',adminContacts:'admin',
   adminChurchImport:'admin',adminRecords:'admin',adminCloseOut:'admin',adminWizard:'admin',adminStudents:'admin',
   checkin:'checkin',search:'search',allstudents:'allstudents',records:'records',notifs:'notifs',compose:'notifs',
   data:'data',
@@ -1009,6 +1019,18 @@ async function gotoTab(id){
 }
 async function back(){if(STACK.length>1){STACK.pop();const id=STACK[STACK.length-1];await _navTo(id);}}
 
+// Item 5b: persistent "Back to setup" chip. A tap on a WIZARD_STEPS row stores which step
+// number sent the admin here (sessionStorage — survives the navigation, cleared on return to
+// the wizard); every wizard-linked screen shows the chip while that flag is set, rather than
+// wiring a return-chip call into every individual save function across ~10 screens.
+function _wizardChipHtml(id){
+  const step=sessionStorage.getItem('ycp_wizardReturn');
+  if(!step)return '';
+  if(typeof WIZARD_STEPS==='undefined'||!WIZARD_STEPS.some(s=>s.screen===id))return '';
+  return `<div class="card" style="background:#ede9fe;border:1px solid #c4b5fd;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;margin-bottom:10px;cursor:pointer" onclick="go('adminWizard')">
+    <span style="font-size:.82rem;font-weight:600;color:#5b21b6">${icSm('arrowr')} Back to setup (step ${esc(step)} of ${WIZARD_STEPS.length})</span>
+  </div>`;
+}
 function paint(id,html,t,s){
   // Stale-render guard: if the user has navigated to a DIFFERENT screen while this
   // render was awaiting, don't overwrite it. (id===_navId means this is still the
@@ -1023,7 +1045,7 @@ function paint(id,html,t,s){
     // resets to top. This subsumes the manual save/restore in the _r* re-loaders.
     const samePaint=el.classList.contains('active')&&el.innerHTML.trim()!==''&&!el.querySelector('.loading');
     const keepY=samePaint?el.scrollTop:0;
-    el.innerHTML=html;
+    el.innerHTML=_wizardChipHtml(id)+html;
     el.scrollTop=keepY;
   }
   _showScreen(id);
@@ -1212,6 +1234,50 @@ function accLabelOf(tent,cls){const p=tent&&cls?'mixed':tent?'tent':cls?'classro
   return{primary:p,text:p==='tent'?`${icSm('tent')} All tents · ${tent}`:p==='classroom'?`${icSm('classroom')} All classrooms · ${cls}`:p==='mixed'?`${icSm('tent')} Tent ${tent} · ${icSm('classroom')} Classroom ${cls}`:''};}
 
 /* ===== AT-CAMP HOME ===== */
+/* ===== DIRECTOR/ADMIN MORNING DIGEST (New Feature 2) =====
+   "Day N · X/Y checked in this session · Z churches complete · K first-aid records today",
+   inside the hero card. Day N + X/Y come from the already-fetched /home DTO (sessionExpected
+   is New Feature 2's addition to the dashboard service); churches-complete and first-aid-today
+   need their own fetches, filled in by _renderDirectorDigest() once ready (same
+   paint-immediately-then-inject pattern as renderOversightPulse). */
+function _digestCardHtml(d){
+  const day=_realCampDayNumber();
+  const expected=d.sessionExpected||0;
+  const checkedIn=Math.max(0,expected-(d.checkInsDue||0));
+  const seg=(html,onclick)=>`<span${onclick?` style="cursor:pointer;text-decoration:underline dotted" onclick="${onclick}"`:''}>${html}</span>`;
+  return `<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.25);display:flex;flex-wrap:wrap;gap:6px 10px;font-size:.78rem;color:#e0e7ff">
+    ${seg('Day '+day)}<span style="opacity:.55">·</span>
+    ${seg(checkedIn+'/'+expected+' checked in this session',"gotoTab('checkin')")}<span style="opacity:.55">·</span>
+    ${seg('<span id="digestChurches">…</span>',"gotoTab('checkin')")}<span style="opacity:.55">·</span>
+    ${seg('<span id="digestFirstAid">…</span>',"go('notes','firstaid')")}
+  </div>`;
+}
+async function _renderDirectorDigest(){
+  if(!ACTOR||!['director','admin'].includes(ACTOR.role))return;
+  try{
+    const session=await api('/checkin/sessions/current').catch(()=>null);
+    const el=document.getElementById('digestChurches');
+    if(session){
+      const st=await api('/checkin/sessions/'+encodeURIComponent(session.id)+'/status').catch(()=>null);
+      const byChurch={};
+      (st&&st.roster||[]).forEach(r=>{
+        if(!byChurch[r.church])byChurch[r.church]={done:0,total:0};
+        byChurch[r.church].total++;
+        if(r.checkedIn)byChurch[r.church].done++;
+      });
+      const churches=Object.values(byChurch);
+      const complete=churches.filter(c=>c.total>0&&c.done===c.total).length;
+      if(el)el.textContent=`${complete}/${churches.length} churches complete`;
+    }else if(el)el.textContent='No session today';
+  }catch(e){}
+  try{
+    const recs=await api('/notes/firstaid?limit=100').catch(()=>[]);
+    const today=localDateISO();
+    const count=(recs||[]).filter(n=>n.createdAt&&localDateISO(n.createdAt)===today).length;
+    const el=document.getElementById('digestFirstAid');
+    if(el)el.textContent=`${count} first-aid record${count===1?'':'s'} today`;
+  }catch(e){}
+}
 async function renderHomeAtCamp(){
   const [d,feed]=await Promise.all([api('/home'),api('/notifications')]);
   const DUE=d.checkInsDue||0;
@@ -1241,11 +1307,16 @@ async function renderHomeAtCamp(){
   const notices=(feed||[]).slice(0,3);
   const noticesHtml=notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>';
   const myDayHtml=ACTOR.role==='church'?renderMyDay(d):'';
+  // New Feature 2: director + admin get a glanceable digest strip inside the hero card.
+  // Day N + "X/Y checked in" are known synchronously from the already-fetched /home DTO;
+  // the other two figures need their own fetches and are filled in by _renderDirectorDigest().
+  const digestHtml=['director','admin'].includes(ACTOR.role)?_digestCardHtml(d):'';
   // Paint the home screen immediately with tiles + notices — don't block on the pulse.
   // The pulse placeholder is replaced in the background once the check-in status loads.
   const html=`<div class="hero">${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
     <h2>Hi ${esc(d.greetingName||ACTOR.displayName)}</h2>
-    <div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':ACTOR.role==='director'?'Director':ACTOR.role==='zoneLeader'?(esc(ACTOR.zone)+' Zone Leader'):'Church · '+esc(ACTOR.zone)+' Zone'}</div></div>
+    <div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':ACTOR.role==='director'?'Director':ACTOR.role==='zoneLeader'?(esc(ACTOR.zone)+' Zone Leader'):'Church · '+esc(ACTOR.zone)+' Zone'}</div>
+    ${digestHtml}</div>
   ${myDayHtml}
   <div class="tiles">${tiles.join('')}</div>
   <div id="homePulse"></div>
@@ -1255,6 +1326,7 @@ async function renderHomeAtCamp(){
   document.getElementById('home').innerHTML=html;
   // Urgent notice check uses the feed we already have — no second /notifications fetch.
   _checkUrgentNoticesFromFeed(feed||[]);
+  if(['director','admin'].includes(ACTOR.role))_renderDirectorDigest();
   // Load the oversight pulse in the background and inject it when ready.
   renderOversightPulse().then(pulseHtml=>{
     const el=document.getElementById('homePulse');
@@ -1315,6 +1387,11 @@ function renderMyDay(d){
     <div style="font-weight:800;font-size:1.4rem;color:#b45309">${DUE} still to check in</div>
     <button class="btn sm" style="margin-top:8px" onclick="gotoTab('checkin')">Go to Check-in ${icSm('arrowr')}</button></div>`:'';
 }
+// Item 4: zoneLeader's roster is already scoped to their own zone (single zone), so the old
+// byZone grouping just produced one bar — effectively the "single aggregate bar" the admin
+// wanted broken out. Group by church instead for zoneLeader; director/admin keep the camp-wide
+// per-zone view (per-church would be 10+ bars on their home screen).
+const PULSE_AMBER_PCT=70;
 async function renderOversightPulse(){
   if(!['director','admin','zoneLeader'].includes(ACTOR.role))return '';
   try{
@@ -1322,20 +1399,30 @@ async function renderOversightPulse(){
     if(!session)return '';
     const st=await api('/checkin/sessions/'+encodeURIComponent(session.id)+'/status').catch(()=>null);
     if(!st)return '';
-    const byZone={};
+    const byChurch=ACTOR.role==='zoneLeader';
+    const groups={};
     (st.roster||[]).forEach(r=>{
-      if(!byZone[r.zone])byZone[r.zone]={zone:r.zone,total:0,done:0};
-      byZone[r.zone].total++;
-      if(r.checkedIn)byZone[r.zone].done++;
+      const key=byChurch?r.church:r.zone;
+      if(!groups[key])groups[key]={label:key,total:0,done:0};
+      groups[key].total++;
+      if(r.checkedIn)groups[key].done++;
     });
-    const bars=Object.values(byZone).map(z=>{
-      const pct=z.total?Math.round(z.done/z.total*100):0;
-      return `<div style="margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;font-size:.8rem"><span>${esc(z.zone)} Zone</span><span>${z.done}/${z.total}</span></div>
-        <div class="bar7"><i style="width:${pct}%"></i></div></div>`;
+    const bars=Object.values(groups).map(g=>{
+      const pct=g.total?Math.round(g.done/g.total*100):0;
+      const amber=pct<PULSE_AMBER_PCT;
+      const label=byChurch?esc(g.label):esc(g.label)+' Zone';
+      const tap=byChurch?` onclick="_pulseGoToChurch('${esc(g.label)}')" style="cursor:pointer"`:'';
+      return `<div style="margin-bottom:8px"${tap}>
+        <div style="display:flex;justify-content:space-between;font-size:.8rem"><span>${label}</span><span>${g.done}/${g.total}</span></div>
+        <div class="bar7${amber?' amber':''}"><i style="width:${pct}%"></i></div></div>`;
     }).join('');
     return bars?`<div class="card"><div class="lbl" style="margin-top:0">Check-in pulse · ${esc(st.session?.label||'')}</div>${bars}</div>`:'';
   }catch(e){return '';}
+}
+// Tapping a church bar (zoneLeader pulse) jumps to Check-in pre-filtered to that church.
+function _pulseGoToChurch(church){
+  FILTER.church=church;
+  gotoTab('checkin');
 }
 // Displays AU mobile numbers consistently (e.g. CSV imports that dropped the leading 0
 // via spreadsheet numeric coercion show "411928301" — this reformats to "0411 928 301").
@@ -1433,6 +1520,15 @@ function openPerson(id){
   api('/registrants/'+id).then(p=>{(ALLREG=ALLREG||[]).push(p);_paintPerson(p);}).catch(e=>toast(e.message));
 }
 const _BLUE_CARD_HELP='A Blue Card (Working With Children Check) is the clearance every adult leader must hold. "Outstanding" means it isn\'t recorded yet — collect it before camp.';
+// Item 7a: registrationCost is the ticket price, not what was actually paid — an Invoice
+// import can record a real amountPaid (partial payment/discount cases where the two differ).
+// Show the real figure labelled "Paid" when there's invoice data on record; otherwise fall back
+// to the ticket price labelled "Cost" so the field is never misleadingly named.
+function _paidOrCostRow(s){
+  if(s.amountPaid!=null)return `<div class="kv2"><span class="k">Paid</span><span class="v">$${Number(s.amountPaid).toLocaleString()}</span></div>`;
+  if(s.registrationCost!=null)return `<div class="kv2"><span class="k">Cost</span><span class="v">$${Number(s.registrationCost).toLocaleString()}</span></div>`;
+  return '';
+}
 function _paintPerson(s){
   const isL=s.kind==='leader';
   const body=`<div class="detail-hd"><div class="av-lg">${initials(s.firstName+' '+s.lastName)}</div>
@@ -1444,7 +1540,7 @@ function _paintPerson(s){
       <div class="kv2"><span class="k">Medical</span><span class="v">${esc((s.medicalConditions||[]).join(', ')||'—')}</span></div>
       <div class="kv2"><span class="k">Parent</span><span class="v">${esc(s.parentGuardianName||'—')}</span></div>
       ${s.registrationType?`<div class="kv2"><span class="k">Reg type</span><span class="v">${esc(s.registrationType)}</span></div>`:''}
-      ${s.registrationCost!=null?`<div class="kv2"><span class="k">Paid</span><span class="v">$${s.registrationCost.toLocaleString()}</span></div>`:''}`}
+      ${_paidOrCostRow(s)}`}
       ${isL?`<div class="kv2"><span class="k">Blue card (WWC) ${helpTip(_BLUE_CARD_HELP)}</span><span class="v">${s.blueCardCollected?`<span class="pill ok">${icSm('check')} Collected</span>`:'<span class="pill warn">Outstanding</span>'}</span></div>`:''}
     </div>
     ${isL?`<div class="card"><div class="lbl" style="margin-top:0">Blue card (WWC) ${helpTip(_BLUE_CARD_HELP)}</div>
@@ -1534,7 +1630,16 @@ RENDER.checkin=async function renderCheckin(){
   }
   if(!SEL_SESSION){paint('checkin','<p class="note-hint">No check-in sessions configured. Set camp dates in admin settings.</p>','Daily Check-in','');return;}
   // Enriched RosterEntry now includes gender, grade, medicalFlag — no second /campers fetch needed.
-  const st=await api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status');
+  // "Not Signed In" (item 3) needs the students NOT on the roster at all (checkin.service's
+  // roster only ever includes atCamp===true — see CLAUDE.md presence model), so fetch the
+  // scoped registrant/camper lists alongside the roster status, same call shape as
+  // RENDER.firstday. Both /registrants and /campers are 30s-cached by api(), so selDay/setFilter
+  // re-renders don't re-hit the network.
+  const [st,regList,camperPage]=await Promise.all([
+    api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status'),
+    api('/registrants').catch(()=>[]),
+    api('/campers?pageSize=300').catch(()=>[]),
+  ]);
   const roster=(st.roster||[]).map(r=>({
     id:r.camperId,name:(r.firstName+' '+r.lastName).trim(),
     church:r.church,zone:r.zone,
@@ -1585,6 +1690,24 @@ RENDER.checkin=async function renderCheckin(){
       :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${syncingN} syncing…</div>`):'';
   const doneSection=doneList.length>0?`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · ${doneList.length}</summary>
     ${doneList.map(c=>rowHtml(c,false)).join('')}</details>`:'';
+  // Item 3: students the viewer can see who aren't atCamp at all yet (never arrived, OR
+  // arrived earlier and have since signed/checked out) — distinct from "Due" above, which is
+  // scoped to people already atCamp who haven't logged THIS session yet. Dedup the same way
+  // RENDER.firstday does (campers = kind:'student' already-camper records; registrants fill in
+  // anyone not yet promoted to a camper record).
+  const camperIds=new Set((Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student').map(c=>c.id));
+  const nsCampers=(Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student'&&!c.atCamp);
+  const nsRegs=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id)&&!c.atCamp);
+  const notSignedIn=[...nsRegs,...nsCampers];
+  const nsRow=c=>{
+    const nm=(c.firstName+' '+c.lastName).trim();
+    return `<div class="row">
+      <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div><div class="sub">${esc(c.churchName||'')}${c.grade?' · Yr '+c.grade:''}</div></div>
+      <button class="btn ghost sm" style="flex:none" onclick="signInPrompt('${c.id}','${esc(nm)}',false)">Sign in to camp</button>
+    </div>`;
+  };
+  const notSignedInSection=notSignedIn.length>0?`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Not Signed In · ${notSignedIn.length}</summary>
+    ${notSignedIn.map(nsRow).join('')}</details>`:'';
   const html=`<div class="seg" id="dayseg">${dayBtns}</div>
     ${(showZone||showChurch)?`<div class="filters">${showZone?`<select onchange="setFilter('zone',this.value)">${zoneSelOpts}</select>`:''}${showChurch?`<select onchange="setFilter('church',this.value)">${churchSelOpts}</select>`:''}</div>`:''}
     <div class="filters">
@@ -1599,7 +1722,8 @@ RENDER.checkin=async function renderCheckin(){
     ${completionBanner}
     ${dueList.map(c=>rowHtml(c,true)).join('')}
     ${doneSection}
-    <p class="note-hint">Tap a row to check in/out. Notes visible to zone leaders &amp; directors only.</p>`;
+    ${notSignedInSection}
+    <p class="note-hint">Tap a row to check in/out. Notes show on the student's profile to your church too, unless marked sensitive.</p>`;
   paint('checkin',html,'Daily Check-in',label);
   // Show undo toast if pending
   if(_undoCamperId)_showUndoToast(_undoType);
@@ -1651,11 +1775,13 @@ function notePrompt(camperId,name){
 function reviewNote(camperId,name){
   const leader=document.getElementById('noteLeader').value.trim(),body=document.getElementById('noteBody').value.trim();
   const sensitive=!!document.getElementById('noteSensitive')?.checked;
-  if(!leader){toast('Add your name first');return;}if(!body){toast('Type a note first');return;}
-  LAST_LEADER=leader;window._draft={camperId,leader,body,sensitive};
+  // Item 7e: the leader name is optional — the backend already attributes the note to the
+  // logged-in actor (see confirmNote below); this field is only a "logged by" annotation.
+  if(!body){toast('Type a note first');return;}
+  if(leader)LAST_LEADER=leader;window._draft={camperId,leader,body,sensitive};
   modal(`<h3>Review note</h3><div class="card" style="margin:6px 0 10px">
     <div class="sub">Student</div><div class="nm">${esc(name)}</div>
-    <div class="sub" style="margin-top:7px">Logged by</div><div class="nm">${esc(leader)}</div>
+    ${leader?`<div class="sub" style="margin-top:7px">Logged by</div><div class="nm">${esc(leader)}</div>`:''}
     <div class="sub" style="margin-top:7px">Note</div><div style="font-size:.9rem">${esc(body)}</div>
     ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:.9rem">${icSm('alert')} Sensitive — hidden from church logins</div>`:''}</div>
     <button class="btn" onclick="confirmNote('${camperId}')">Confirm &amp; submit</button>
@@ -1887,8 +2013,8 @@ function faRecSeg(f){_faRecFilter=f;const a=document.getElementById('faSegToday'
 function drawFaRecords(){
   const box=document.getElementById('faRecList');if(!box)return;
   let list=window._faRecsAll||[];
-  const today=new Date().toISOString().slice(0,10);
-  if(_faRecFilter==='today')list=list.filter(n=>String(n.createdAt||'').slice(0,10)===today);
+  const today=localDateISO();
+  if(_faRecFilter==='today')list=list.filter(n=>n.createdAt&&localDateISO(n.createdAt)===today);
   const q=(val('faRecQ')||'').trim().toLowerCase();
   // join camper name from the cached people list if present; fall back to id
   const cmap=window._faCamperMap||{};
@@ -2509,7 +2635,7 @@ async function submitTestimony(){const camperId=sel('tmCamper'),leader=val('tmLe
   const full=leader&&leader!==ACTOR.displayName?`${body}\n— logged by ${leader}`:body;
   const payload={body:full,category:'testimony',sensitive};if(camperId)payload.camperId=camperId;
   try{await api('/notes',{method:'POST',body:payload});toast('Testimony submitted');const t=document.getElementById('tmBody');if(t)t.value='';const s=document.getElementById('tmSensitive');if(s)s.checked=false;}catch(e){toast(e.message);}}
-RENDER.notes=async function(){
+RENDER.notes=async function(presetFilter){
   // /notes/recent returns bare notes (no camper details) — join /campers for name/church/zone/gender/grade.
   const [notes,page]=await Promise.all([api('/notes/recent'),api('/campers?pageSize=300').catch(()=>[])]);
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c;});
@@ -2526,13 +2652,21 @@ RENDER.notes=async function(){
   const churches=[...new Set(window._notesAll.map(n=>n.church).filter(Boolean))].sort();
   const zonesPresent=[...new Set(window._notesAll.map(n=>n.zone).filter(Boolean))].sort();
   // AC-8: record filter gains "Signed out".
-  const recSel=`<div><label>Record</label><select id="ntCat" onchange="drawNotes()"><option value="all">All records</option><option value="testimony">Testimony</option><option value="note">Student note</option><option value="firstaid">First-aid</option><option value="signedout">Signed out</option></select></div>`;
+  // New Feature 2: a preset filter (e.g. from the director/admin digest card's first-aid
+  // figure) pre-selects a record type instead of always defaulting to "All records".
+  const pf=presetFilter||'all';
+  const opt=(v,label)=>`<option value="${v}"${pf===v?' selected':''}>${label}</option>`;
+  const recSel=`<div><label>Record</label><select id="ntCat" onchange="drawNotes()">${opt('all','All records')}${opt('testimony','Testimony')}${opt('note','Student note')}${opt('firstaid','First-aid')}${opt('signedout','Signed out')}</select></div>`;
   const minSel=`<div><label>Ministry</label><select id="ntChurch" onchange="drawNotes()"><option value="all">All ministries</option>${churches.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></div>`;
   const zoneSel=`<div><label>Zone</label><select id="ntZone" onchange="drawNotes()"><option value="all">All zones</option>${zonesPresent.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select></div>`;
   // AC-7: swap Zone and Ministry positions — Zone first, then Ministry.
+  // Item 7c: the "All zones · whole camp" subtitle was never true for a zoneLeader — their
+  // /notes/recent read is already zone-scoped server-side. director/admin genuinely see the
+  // whole camp, so their subtitle is unchanged.
+  const notesSubtitle=ACTOR.role==='zoneLeader'?`Your zone: ${esc(ACTOR.zone||'')}`:'All zones · whole camp';
   paint('notes',`<button class="btn alt" onclick="exportNotes()">${icSm('download')} Export (CSV)</button>
     <div class="selrow">${recSel}${zoneSel}</div><div class="selrow">${minSel}</div>
-    <div id="notesList"></div>`,'Testimonies & Student Notes','All zones · whole camp');
+    <div id="notesList"></div>`,'Testimonies & Student Notes',notesSubtitle);
   drawNotes();
 };
 function drawNotes(){
@@ -2575,16 +2709,24 @@ RENDER.admin=function(){
   // At camp, the setup wizard gives way to per-student data edits (no more CSV uploads mid-camp).
   const wizardTile=isAdmin&&CAMP_MODE==='pre-camp'?`<div class="tile" onclick="go('adminWizard')"><div class="l">Setup Wizard</div></div>`:'';
   const studentsTile=isAdmin&&CAMP_MODE==='at-camp'?`<div class="tile" onclick="go('adminStudents')"><div class="l">Individual Student Data Edit</div></div>`:'';
+  // Item 5c: tiles grouped under three headings. Item 8: FAQ/Devotionals/Schedule are one
+  // "At-Camp Info" tile now (RENDER.atCampInfo, defaults to the Schedule sub-tab).
   paint('admin',`<div class="infobox">Admin console — configure camp here year-round.</div>
+    <div class="h3" style="margin:14px 0 6px">Camp setup</div>
+    <div class="tiles">
+      <div class="tile" onclick="go('adminSettings')"><div class="l">Camp settings</div></div>
+      <div class="tile" onclick="go('adminAccom')"><div class="l">Accommodation</div></div>
+      ${wizardTile}${modeTile}
+    </div>
+    <div class="h3" style="margin:16px 0 6px">People &amp; data</div>
     <div class="tiles">
       <div class="tile" onclick="go('adminAccounts')"><div class="l">Accounts &amp; churches</div></div>
-      <div class="tile" onclick="go('adminAccom')"><div class="l">Accommodation</div></div>
+      ${importTile}${dataTile}${studentsTile}
+    </div>
+    <div class="h3" style="margin:16px 0 6px">At-camp content</div>
+    <div class="tiles">
+      <div class="tile" onclick="go('atCampInfo')"><div class="l">At-Camp Info</div></div>
       <div class="tile" onclick="go('adminContacts')"><div class="l">Ministry contacts</div></div>
-      <div class="tile" onclick="go('adminSettings')"><div class="l">Camp settings</div></div>
-      <div class="tile" onclick="go('adminFaq')"><div class="l">FAQ</div></div>
-      <div class="tile" onclick="go('adminDevos')"><div class="l">Devotionals</div></div>
-      <div class="tile" onclick="go('adminSchedEdit')"><div class="l">Schedule</div></div>
-      ${importTile}${dataTile}${wizardTile}${studentsTile}${modeTile}
     </div>`,'Admin console','Back office');
 };
 
@@ -2789,9 +2931,9 @@ async function saveBulkChurch(){
 // re-painted until a manual refresh. The write that triggers them already invalidated the
 // relevant cache key (via api()→_invalidate), so the re-render fetches fresh data.
 async function _rAccts(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminAccounts();if(el)el.scrollTop=y;}
-async function _rFaq(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminFaq();if(el)el.scrollTop=y;}
+async function _rFaq(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.atCampInfo('faq');if(el)el.scrollTop=y;}
 async function _rFaqEdit(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminFaqEdit();if(el)el.scrollTop=y;}
-async function _rSched(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminSchedEdit();if(el)el.scrollTop=y;}
+async function _rSched(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.atCampInfo('schedule');if(el)el.scrollTop=y;}
 
 /* ===== ADMIN ACCOMMODATION (classroom rooms) ===== */
 RENDER.adminAccom=async function(){
@@ -2809,14 +2951,14 @@ RENDER.adminAccom=async function(){
       </div>
     </div>`).join('')||'<p class="note-hint">No classroom rooms yet.</p>';
   const tileGrid=rooms&&rooms.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:4px">${tiles}</div>`:tiles;
-  paint('adminAccom',`<div class="infobox">Classroom rooms have a name &amp; capacity. Tent City is auto-distributed (7 per tent) — no setup needed.</div>
-    <div class="card"><h3 class="sec" style="margin-top:0">Classroom rooms</h3>${tileGrid}</div>
+  paint('adminAccom',`<div class="infobox">Classrooms have a name &amp; capacity. Tent City is auto-distributed (7 per tent) — no setup needed.</div>
+    <div class="card"><h3 class="sec" style="margin-top:0">Classrooms</h3>${tileGrid}</div>
     <div class="card"><div class="lbl" style="margin-top:0">Add a room</div>
       <div style="display:flex;gap:6px;align-items:flex-end">
         <div style="flex:2;min-width:110px"><label style="font-size:.72rem">Name</label><input class="fld" id="nrName" placeholder="e.g. Room 5"></div>
         <div style="flex:1;min-width:60px"><label style="font-size:.72rem">Cap</label><input class="fld" id="nrCap" type="number" inputmode="numeric" min="0" value="8"></div>
         <button class="btn sm" onclick="addRoom()" style="flex:none;align-self:flex-end">Add</button>
-      </div></div>`,'Accommodation setup','Classroom rooms');
+      </div></div>`,'Accommodation setup','Classrooms');
 };
 async function saveRoom(id){const el=document.getElementById('stage');const y=el?el.scrollTop:0;
   try{await api('/accommodation/classrooms/'+id,{method:'PATCH',body:{name:val('rn_'+id),capacity:Number(val('rc_'+id))||0}});toast('Saved');await RENDER.adminAccom();if(el)el.scrollTop=y;}catch(e){toast(e.message);}}
@@ -2828,15 +2970,17 @@ async function addRoom(){if(!val('nrName')){toast('Enter a room name');return;}
   try{await api('/accommodation/classrooms',{method:'POST',body:{name,capacity:Number(val('nrCap'))||0}});toast('Room added');RENDER.adminAccom();}catch(e){toast(e.message);}}
 
 /* ===== ADMIN FAQ (pre-camp) ===== */
-RENDER.adminFaq=async function(){
+// Item 8: content builder only (no paint) — used as the "FAQ" sub-tab of the merged
+// RENDER.atCampInfo screen below.
+async function _acFaqBody(){
   const faqs=await api('/faq');
-  paint('adminFaq',faqs.map(f=>`<div class="card" style="padding:11px 13px">
+  return faqs.map(f=>`<div class="card" style="padding:11px 13px">
     <div class="rowsb" style="margin-bottom:5px"><label style="margin:0">Question</label>
       <div style="display:flex;gap:6px;flex:none"><button class="btn sm" onclick="saveFaqPre('${f.id}')">Save</button><button class="btn red sm" onclick="delFaqPre('${f.id}')">Delete</button></div></div>
     <input class="fld" id="fq_${f.id}" value="${esc(f.question)}">
     <label>Answer</label><textarea id="fa_${f.id}" style="min-height:52px">${esc(f.answer)}</textarea></div>`).join('')+
-    `<div class="card"><div class="lbl" style="margin-top:0">Add FAQ</div><input class="fld" id="nfq" placeholder="Question"><textarea id="nfa" placeholder="Answer" style="margin-top:8px"></textarea><button class="btn" onclick="addFaqPre()">Add FAQ</button></div>`,'FAQ','Edit answers');
-};
+    `<div class="card"><div class="lbl" style="margin-top:0">Add FAQ</div><input class="fld" id="nfq" placeholder="Question"><textarea id="nfa" placeholder="Answer" style="margin-top:8px"></textarea><button class="btn" onclick="addFaqPre()">Add FAQ</button></div>`;
+}
 async function saveFaqPre(id){try{await api('/faq/'+id,{method:'PATCH',body:{question:val('fq_'+id),answer:val('fa_'+id)}});toast('Saved');await _rFaq();}catch(e){toast(e.message);}}
 async function delFaqPre(id){if(!confirm('Delete?'))return;try{await api('/faq/'+id,{method:'DELETE'});await _rFaq();}catch(e){toast(e.message);}}
 async function addFaqPre(){if(!val('nfq')||!val('nfa')){toast('Enter question + answer');return;}try{await api('/faq',{method:'POST',body:{question:val('nfq'),answer:val('nfa'),order:99}});toast('Added');await _rFaq();}catch(e){toast(e.message);}}
@@ -3177,7 +3321,10 @@ RENDER.adminData=async function(){
   const dataTableCard=`<div class="card tap" onclick="go('data')"><div class="rowsb"><div><div style="font-weight:600">Student data table</div><div class="sub">Filterable registration table &amp; Elvanto-format export</div></div><span class="pill info">View ›</span></div></div>`;
   // Import moved to its own "Data Import" admin console tile / nav entry (RENDER.import) — this
   // screen is export/reset only.
-  const notifSection=CAMP_MODE==='at-camp'?`<div class="card"><div class="h3" style="margin-top:0">Notifications</div><button class="btn red" onclick="adminClear()">Clear all notifications</button></div>`:'';
+  // Admin-only: newYear/clearNotifications both assert admin:manage server-side (director lacks
+  // it), so hide these two cards for a director reaching this screen via the Data tab's
+  // Records & Export button — same isAdmin gate already used below for Save Defaults/Factory Reset.
+  const notifSection=(isAdmin&&CAMP_MODE==='at-camp')?`<div class="card"><div class="h3" style="margin-top:0">Notifications</div><button class="btn red" onclick="adminClear()">Clear all notifications</button></div>`:'';
   // R9: surface temp passwords still waiting from a new-year rollover so the admin knows to
   // download the workbook (which includes them once, then clears them) rather than lose them.
   const tempBanner=pendingTemps?`<div class="warnbox">${icSm('alert')} ${pendingTemps} restored account${pendingTemps===1?'':'s have'} a temporary password from the last rollover. Download the audit workbook below — its "Temp Passwords" tab lists them (included once, then cleared). Share each securely with its leader.</div>`:'';
@@ -3189,12 +3336,12 @@ RENDER.adminData=async function(){
     <button class="btn" style="width:100%;margin-top:8px" onclick="downloadAuditExport()">${icSm('download')} Download audit workbook (.xlsx)</button>
     <button class="btn alt" style="width:100%;margin-top:8px" onclick="downloadCsvExport('/export/signin-out',_exportName('sign-in-out-log','csv'))">${icSm('download')} Sign-in/out log (.csv)</button>
   </div>`;
-  const closeOutCard=`<div class="card" style="border:1px solid #fbbf24">
+  const closeOutCard=isAdmin?`<div class="card" style="border:1px solid #fbbf24">
     <div class="lbl" style="margin-top:0;color:#92400e">Close-out camp</div>
     <p class="note-hint" style="text-align:left;color:#92400e">Complete all 3 steps before rolling over to a new year.</p>
     <div id="closeoutSteps"></div>
     <button class="btn" onclick="go('adminCloseOut')">Start close-out ${icSm('arrowr')}</button>
-  </div>`;
+  </div>`:'';
   const saveDefaultsCard=isAdmin?`<div class="card"><div class="h3" style="margin-top:0">Save Defaults</div>
       <div class="kv"><span class="k">Last saved</span><span class="v">${esc(defaultsSaved)}</span></div>
       <button class="btn" style="margin-top:8px" onclick="adminSaveDefaults()">Save Defaults</button>
@@ -3212,10 +3359,50 @@ RENDER.adminData=async function(){
    adminUpload()'s #fileIn/#impResult elements. */
 RENDER.import=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('import','<p class="note-hint">Importing is restricted to directors and admins.</p>','Import','');return;}
-  paint('import',_importUploadCardHtml()+'<div id="allocWrap"></div>','Data Import','Form · Ticket · Invoice');
+  paint('import',_importUploadCardHtml()+'<div id="allocWrap"></div>'+_offlineSignInCardHtml(),'Data Import','Form · Ticket · Invoice');
   _loadImportStamps();
   _loadAllocation();
 };
+
+/* ===== OFFLINE SIGN-IN (New Feature 1, bottom of Data Import) =====
+   Fallback for churches who prefer bulk/paper sign-in over the app: export a spreadsheet of
+   every registered student, a church marks "Y" as they arrive, re-importing bulk-signs-in
+   anyone marked Y who isn't already at camp. Matches by First+Last+Church text — no id column
+   (the export is the source of these exact values, so a straight match is expected to work). */
+function _offlineSignInCardHtml(){
+  return `<div class="card">
+    <div class="h3" style="margin-top:0">Offline Sign-In</div>
+    <p class="note-hint" style="text-align:left">A fallback for churches who prefer a bulk/paper sign-in instead of the app. Export the sheet, have the church mark "Y" as students arrive, then import the filled sheet to sign in everyone marked Y who isn't already at camp.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn ghost" onclick="downloadOfflineSignInTemplate()">${icSm('download')} Export sign-in sheet</button>
+      <button class="btn ghost" onclick="document.getElementById('osiFileIn').click()">${icSm('upload')} Import filled sheet</button>
+      <input type="file" id="osiFileIn" accept=".csv,.xlsx,.xls" style="display:none" onchange="offlineSignInUpload()">
+    </div>
+    <div id="osiResult" style="display:none;margin-top:10px"></div>
+  </div>`;
+}
+async function downloadOfflineSignInTemplate(){
+  await downloadCsvExport('/export/offline-signin',_exportName('offline-sign-in','xlsx'));
+}
+async function offlineSignInUpload(){
+  const input=document.getElementById('osiFileIn');
+  const file=input&&input.files&&input.files[0];
+  if(!file)return;
+  const box=document.getElementById('osiResult');
+  if(!confirm('Import this sheet and sign in everyone marked "Y" who isn\'t already at camp?')){input.value='';return;}
+  if(box){box.style.display='block';box.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">Reading sheet…</div></div>';}
+  try{
+    const rd=await _readImportFile(file);
+    const r=await api('/import/offline-signin',{method:'POST',body:{csvData:rd.text}});
+    const bits=[`${r.signedIn} signed in`];
+    if(r.alreadySignedIn)bits.push(`${r.alreadySignedIn} already at camp`);
+    if(r.unmatched&&r.unmatched.length)bits.push(`${r.unmatched.length} not matched`);
+    const unmatchedList=r.unmatched&&r.unmatched.length?`<p class="note-hint" style="text-align:left;margin-top:6px">Not matched: ${r.unmatched.map(esc).join(', ')}</p>`:'';
+    if(box){box.innerHTML=`<div class="callbox">${icSm('check')} ${bits.join(' · ')}</div>${unmatchedList}`;}
+    toast('Offline sign-in applied');
+  }catch(e){if(box)box.innerHTML='<p class="note-hint">'+esc(e.message||'Import failed')+'</p>';else toast(e.message||'Import failed');}
+  finally{input.value='';}
+}
 
 /* ===== UNALLOCATED REGISTRANTS + CHURCH OVERRIDES (bottom of Data Import) ===== */
 const UNALLOCATED_ID='__unallocated__'; // must match backend UNALLOCATED_CHURCH_ID
@@ -3338,7 +3525,16 @@ RENDER.data=async function(){
     (churches||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`)).join('');
   const gradeOpts=['<option value="">All grades</option>','<option value="leader">Leaders</option>']
     .concat([7,8,9,10,11,12].map(g=>`<option value="${g}">Grade ${g}</option>`)).join('');
-  paint('data',`<div class="card">
+  // BUG regression fix: director has import:run + allocation:manage (access-control.ts) and
+  // RENDER.import/RENDER.adminData both already accept director — they were just unreachable
+  // (navModel gives director no 'import' tab and no Records & Export extra in either mode).
+  // These two buttons are the reachable entry point in both pre-camp and at-camp (the at-camp
+  // home "Student Data Table" tile already routes here via go('data')).
+  const navCard=`<div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn ghost" style="flex:1;min-width:160px" onclick="go('import')">${icSm('upload')} Data Import</button>
+    <button class="btn ghost" style="flex:1;min-width:160px" onclick="go('adminData')">${icSm('download')} Records &amp; Export</button>
+  </div>`;
+  paint('data',`${navCard}<div class="card">
     <div class="h3" style="margin-top:0">Registration data</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
       <select class="fld" id="dfCh" style="flex:1;min-width:140px" onchange="dataApply()">${chOpts}</select>
@@ -3749,17 +3945,29 @@ const WIZARD_STEPS=[
   {key:'settings',label:'Camp settings',icon:'gear',screen:'adminSettings',tip:'Set the camp name and dates first — the dates unlock the schedule, devotionals and check-in days.',check:()=>!!(SETTINGS&&SETTINGS.campName&&SETTINGS.startDate)},
   {key:'churches',label:'Churches',icon:'users',screen:'adminAccounts',tip:'Add every church attending — or let the registration upload auto-create any church it names (zone defaults to Yellow; set its login and zone afterwards via Account Info, which also holds the per-church accommodation override).',check:async()=>{try{const c=await api('/accounts/churches');return(c||[]).length>0;}catch(e){return false;}}},
   {key:'accounts',label:'Accounts',icon:'users',screen:'adminAccounts',tip:'Create login accounts for church leaders, zone leaders and directors.',check:async()=>{try{const u=await api('/accounts/users');return(u||[]).filter(x=>x.role!=='admin').length>0;}catch(e){return false;}}},
+  // Item 5a: sits between Accounts and Accommodation rooms — a camp usually imports its
+  // registration export right after accounts exist, before setting up rooms/allocation.
+  {key:'import',label:'Import registrations',icon:'upload',screen:'import',tip:'Upload your registration export (Form/Ticket List/Invoice) to bring in students and leaders.',check:async()=>{if(SETTINGS&&SETTINGS.formImportedAt)return true;try{const r=await api('/registrants');return(r||[]).length>0;}catch(e){return false;}}},
   {key:'accom',label:'Accommodation rooms',icon:'classroom',screen:'adminAccom',tip:'Set up your sleeping rooms and give each one a capacity.',check:async()=>{try{const b=await api('/accommodation/classrooms');return(b||[]).length>0;}catch(e){return false;}}},
   {key:'accomAlloc',label:'Accommodation allocation',icon:'home',screen:'accom',tip:'Assign churches to rooms. Eligible groups auto-fill each room to capacity.',check:async()=>{try{const a=await api('/accommodation/allocations');return Object.values(a||{}).some(arr=>Array.isArray(arr)&&arr.some(e=>e&&Number(e.n)>0));}catch(e){return false;}}},
-  {key:'schedule',label:'Schedule',icon:'clock',screen:'adminSchedEdit',tip:'Fill in each day’s activities and times for campers to follow.',check:async()=>{try{const s=await api('/schedule');return(s||[]).length>0;}catch(e){return false;}}},
-  {key:'devos',label:'Devotionals',icon:'book',screen:'adminDevos',tip:'Write the daily verse, reflection and prayer for each camp day.',check:async()=>{try{const days=SETTINGS?.checkInDays||[];if(!days.length)return false;const dv=await Promise.all(days.map(d=>api('/devotional/'+d).catch(()=>null)));return dv.some(x=>x&&(x.verse||x.reflection||x.prayer));}catch(e){return false;}}},
-  {key:'faq',label:'FAQ',icon:'help',screen:'adminFaq',tip:'Add common questions and answers for families to read before camp.',check:async()=>{try{const f=await api('/faq');return(f||[]).length>0;}catch(e){return false;}}},
+  // Item 8: these three now route into the merged At-Camp Info screen, pinned to their own sub-tab.
+  {key:'schedule',label:'Schedule',icon:'clock',screen:'atCampInfo',arg:'schedule',tip:'Fill in each day’s activities and times for campers to follow.',check:async()=>{try{const s=await api('/schedule');return(s||[]).length>0;}catch(e){return false;}}},
+  {key:'devos',label:'Devotionals',icon:'book',screen:'atCampInfo',arg:'devos',tip:'Write the daily verse, reflection and prayer for each camp day.',check:async()=>{try{const days=SETTINGS?.checkInDays||[];if(!days.length)return false;const dv=await Promise.all(days.map(d=>api('/devotional/'+d).catch(()=>null)));return dv.some(x=>x&&(x.verse||x.reflection||x.prayer));}catch(e){return false;}}},
+  {key:'faq',label:'FAQ',icon:'help',screen:'atCampInfo',arg:'faq',tip:'Add common questions and answers for families to read before camp.',check:async()=>{try{const f=await api('/faq');return(f||[]).length>0;}catch(e){return false;}}},
   {key:'contacts',label:'Ministry contacts',icon:'phone',screen:'adminContacts',tip:'Set each church’s leader phone numbers, used for first-aid and emergencies.',check:async()=>{try{const c=await api('/accounts/churches');return(c||[]).some(ch=>{const t=ch.contacts||{};return['male','female'].some(g=>['primary','backup'].some(k=>t[g]&&t[g][k]&&t[g][k].name&&String(t[g][k].name).trim()));});}catch(e){return false;}}},
 ];
+// Item 5b: tapping a step remembers it (1-based) so _wizardChipHtml can show "Back to
+// setup (step N of 10)" on wherever that step sends the admin.
+function _wizardGo(i){
+  const s=WIZARD_STEPS[i];if(!s)return;
+  sessionStorage.setItem('ycp_wizardReturn',String(i+1));
+  go(s.screen,s.arg);
+}
 RENDER.adminWizard=async function(){
+  sessionStorage.removeItem('ycp_wizardReturn'); // they're back — the chip's job is done
   const checks=await Promise.all(WIZARD_STEPS.map(s=>Promise.resolve(s.check())));
   const steps=WIZARD_STEPS.map((s,i)=>{const done=!!checks[i];
-    return `<div class="row" onclick="go('${s.screen}')" style="cursor:pointer">
+    return `<div class="row" onclick="_wizardGo(${i})" style="cursor:pointer">
       <div class="av" style="background:${done?'#dcfce7':'#f1f5f9'};color:${done?'#16a34a':'#94a3b8'}">${done?icSm('check'):(i+1)}</div>
       <div style="flex:1;display:flex;align-items:center;gap:7px"><span class="nm">${esc(s.label)}</span>${s.tip?helpTip(s.tip):''}</div>
       <span style="color:#94a3b8">${ic('chevron')}</span></div>`;}).join('');
@@ -3770,10 +3978,10 @@ RENDER.adminWizard=async function(){
     </div>`,'Setup Wizard','Pre-camp checklist');
 };
 
-/* ===== ADMIN DEVOTIONALS ===== */
-RENDER.adminDevos=async function(){
+/* ===== ADMIN DEVOTIONALS (content builder — merged into RENDER.atCampInfo, item 8) ===== */
+async function _acDevosBody(){
   const days=SETTINGS?.checkInDays||[];
-  if(!days.length){paint('adminDevos','<p class="note-hint">Set the camp dates first (Camp settings).</p>','Devotionals','');return;}
+  if(!days.length)return '<p class="note-hint">Set the camp dates first (Camp settings).</p>';
   const blocks=await Promise.all(days.map(async d=>{
     const dv=await api('/devotional/'+d).catch(()=>null);
     const wk=dayLong(d);
@@ -3784,11 +3992,11 @@ RENDER.adminDevos=async function(){
       <textarea id="dv_f_${d}" placeholder="Reflection" style="margin-top:8px;min-height:60px">${esc(dv?.reflection||'')}</textarea>
       <textarea id="dv_p_${d}" placeholder="Prayer" style="margin-top:8px;min-height:48px">${esc(dv?.prayer||'')}</textarea></div>`;
   }));
-  paint('adminDevos',blocks.join(''),'Devotionals','Edit each camp day');
-};
+  return blocks.join('');
+}
 async function saveDevo(d){try{await api('/devotional',{method:'POST',body:{day:d,verse:val('dv_v_'+d),reference:val('dv_r_'+d),reflection:val('dv_f_'+d),prayer:val('dv_p_'+d)}});toast('Saved');}catch(e){toast(e.message);}}
 
-/* ===== ADMIN SCHEDULE ===== */
+/* ===== ADMIN SCHEDULE (content builder — merged into RENDER.atCampInfo, item 8) ===== */
 // One editable table row (Time + Activity). Index r keeps input ids unique per day.
 // Inputs are addressed by CLASS within each .sched-row (not index-based ids), so a row can be
 // deleted from the middle without renumbering the rest — saveSchedDay reads the live rows.
@@ -3797,9 +4005,9 @@ function _schedRow(d,r,t,n){return `<div class="sched-row" style="display:grid;g
   +`<input class="fld sr-n" placeholder="Activity" value="${esc(n||'')}">`
   +`<button class="iconbtn danger" type="button" title="Delete row" onclick="this.closest('.sched-row').remove()">${icSm('trash')}</button></div>`;}
 const SCHED_MIN_ROWS=7;
-RENDER.adminSchedEdit=async function(){
+async function _acScheduleBody(){
   const days=SETTINGS?.checkInDays||[];
-  if(!days.length){paint('adminSchedEdit','<p class="note-hint">Set the camp dates first (Camp settings).</p>','Schedule','');return;}
+  if(!days.length)return '<p class="note-hint">Set the camp dates first (Camp settings).</p>';
   const blocks=await Promise.all(days.map(async d=>{
     const items=(await api('/schedule?day='+d).catch(()=>[])).slice()
       .sort((a,b)=>String(a.startTime||'').localeCompare(String(b.startTime||'')));
@@ -3812,8 +4020,8 @@ RENDER.adminSchedEdit=async function(){
         <button class="btn ghost sm" style="flex:1" onclick="addSchedRow('${d}')">+ Add row</button>
         <button class="btn sm" style="flex:1" onclick="saveSchedDay('${d}')">Save ${dayLong(d)}</button></div></div>`;
   }));
-  paint('adminSchedEdit',blocks.join(''),'Schedule','Fill a day, then Save');
-};
+  return blocks.join('');
+}
 function addSchedRow(d){const wrap=document.getElementById('schedRows_'+d);if(!wrap)return;
   wrap.insertAdjacentHTML('beforeend',_schedRow(d,wrap.children.length,'',''));}
 // Table is the source of truth: saving replaces the whole day's schedule with the
@@ -3822,13 +4030,26 @@ async function saveSchedDay(d){
   const wrap=document.getElementById('schedRows_'+d);if(!wrap)return;
   const entries=[];
   for(const row of Array.from(wrap.children)){const t=(row.querySelector('.sr-t')||{}).value||'',n=(row.querySelector('.sr-n')||{}).value||'';if(t&&n)entries.push({startTime:t,title:n});}
+  // Item 6: PUT /schedule/day replaces the whole day in one call (backend does the
+  // delete+insert as one transaction) — was N deletes then N creates sequentially.
   try{
-    const existing=await api('/schedule?day='+d,{noCache:true}).catch(()=>[]);
-    for(const it of (existing||[])){await api('/schedule/'+it.id,{method:'DELETE'});}
-    for(const e of entries){await api('/schedule',{method:'POST',body:{day:d,startTime:e.startTime,title:e.title,type:'activity'}});}
+    await api('/schedule/day',{method:'PUT',body:{day:d,items:entries.map(e=>({startTime:e.startTime,title:e.title,type:'activity'}))}});
     toast('Saved '+dayLong(d)+'');await _rSched();
   }catch(e){toast(e.message);await _rSched();}
 }
+
+/* ===== AT-CAMP INFO (item 8) — Schedule/FAQ/Devotionals condensed into one admin console
+   entry with three sub-tab buttons at the top, defaulting to Schedule. ===== */
+const AC_INFO_TABS=[['schedule','Schedule'],['faq','FAQ'],['devos','Devotionals']];
+let _acInfoSub='schedule';
+RENDER.atCampInfo=async function(sub){
+  if(sub&&AC_INFO_TABS.some(([id])=>id===sub))_acInfoSub=sub;
+  const seg=`<div class="seg" style="margin-bottom:10px">${AC_INFO_TABS.map(([id,label])=>
+    `<button class="${_acInfoSub===id?'on':''}" onclick="RENDER.atCampInfo('${id}')">${label}</button>`).join('')}</div>`;
+  const body=_acInfoSub==='faq'?await _acFaqBody():_acInfoSub==='devos'?await _acDevosBody():await _acScheduleBody();
+  const subtitle=_acInfoSub==='faq'?'Edit answers':_acInfoSub==='devos'?'Edit each camp day':'Fill a day, then Save';
+  paint('atCampInfo',seg+body,'At-Camp Info',subtitle);
+};
 
 /* ===== ADMIN CONTACTS ===== */
 RENDER.adminContacts=async function(){

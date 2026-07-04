@@ -353,6 +353,17 @@ export class InMemoryScheduleRepository
       .sort((a, b) => a.startTime.localeCompare(b.startTime))
       .map((s) => this.clone(s));
   }
+
+  async replaceDay(day: string, items: ScheduleItem[]): Promise<ScheduleItem[]> {
+    for (const [id, s] of this.store) {
+      if (s.day === day) this.store.delete(id);
+    }
+    for (const item of items) {
+      this.store.set(item.id, this.clone(item));
+    }
+    await this.writeToPersistence();
+    return items.map((i) => this.clone(i));
+  }
 }
 
 // ---------------------------------------------------------------------------

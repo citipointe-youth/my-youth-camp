@@ -1,4 +1,4 @@
-import type { SqlClient } from './client';
+import type { SqlClient, TxClient } from './client';
 import type { IScheduleRepository } from '../interfaces/entity-repositories';
 import type { ScheduleItem } from '../../core/entities/schedule';
 
@@ -74,5 +74,15 @@ export class SupabaseScheduleRepository implements IScheduleRepository {
   async deleteAll(): Promise<number> {
     const rows = await this.sql`delete from schedule_items returning id`;
     return rows.length;
+  }
+
+  async replaceDay(day: string, items: ScheduleItem[]): Promise<ScheduleItem[]> {
+    await this.sql.begin(async (tx: TxClient) => {
+      await tx`delete from schedule_items where day = ${day}`;
+      if (items.length > 0) {
+        await tx`insert into schedule_items ${tx(items.map(itemCols))}`;
+      }
+    });
+    return items;
   }
 }

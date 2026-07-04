@@ -34,5 +34,10 @@ export function makeScheduleController(services: ScheduleControllerServices) {
       await services.schedule.remove(req.ctx.actor, id);
       return { ok: true };
     },
+
+    async replaceDay(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.schedule.replaceDay(req.ctx.actor, req.body);
+    },
   };
 }

@@ -20,6 +20,7 @@ import { makeChurchImportController } from '../controllers/church-import.control
 import { makeTicketImportController } from '../controllers/ticket-import.controller';
 import { makeInvoiceImportController } from '../controllers/invoice-import.controller';
 import { makeAuditController } from '../controllers/audit.controller';
+import { makeOfflineSignInController } from '../controllers/offline-signin.controller';
 import { makeExportController } from '../controllers/export.controller';
 import { makeAccountController } from '../controllers/account.controller';
 import { makeSettingsController } from '../controllers/settings.controller';
@@ -44,6 +45,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const ticketImportCtrl = makeTicketImportController({ ticketImport: services.ticketImport, settingsRepo: services.settingsRepo });
   const invoiceImportCtrl = makeInvoiceImportController({ invoiceImport: services.invoiceImport, settingsRepo: services.settingsRepo });
   const auditCtrl = makeAuditController({ auditExport: services.auditExport, settingsRepo: services.settingsRepo });
+  const offlineSignInCtrl = makeOfflineSignInController({ offlineSignIn: services.offlineSignIn });
   const exportCtrl = makeExportController({ exportService: services.exportService });
   const account = makeAccountController({ account: services.account });
   const settingsCtrl = makeSettingsController({ settings: services.settings });
@@ -146,6 +148,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     // ----- Schedule -----
     { method: 'GET', path: '/schedule', auth: true, handler: (r) => schedule.get(r) },
     { method: 'POST', path: '/schedule', auth: true, handler: (r) => schedule.create(r) },
+    { method: 'PUT', path: '/schedule/day', auth: true, handler: (r) => schedule.replaceDay(r) },
     { method: 'PATCH', path: '/schedule/:id', auth: true, handler: (r) => schedule.update(r) },
     { method: 'DELETE', path: '/schedule/:id', auth: true, handler: (r) => schedule.remove(r) },
 
@@ -181,6 +184,15 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
       filename: 'sign-in-out-log.csv',
       bufferHandler: (r) => auditCtrl.exportSignInOutCsv(r),
     },
+
+    // ----- Offline sign-in sheet (New Feature 1) -----
+    {
+      method: 'GET', path: '/export/offline-signin', auth: true,
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      filename: 'offline-sign-in.xlsx',
+      bufferHandler: (r) => offlineSignInCtrl.exportTemplate(r),
+    },
+    { method: 'POST', path: '/import/offline-signin', auth: true, handler: (r) => offlineSignInCtrl.run(r) },
 
     // ----- Account management -----
     { method: 'GET', path: '/accounts/users', auth: true, handler: (r) => account.list(r) },

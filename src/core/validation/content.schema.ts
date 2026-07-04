@@ -49,6 +49,22 @@ export const UpdateScheduleItemSchema = z.object({
 
 export type UpdateScheduleItemInput = z.infer<typeof UpdateScheduleItemSchema>;
 
+// Item 6: bulk replace-a-day payload — one call instead of N deletes + N creates.
+export const ReplaceScheduleDaySchema = z.object({
+  day: z.string().min(1),
+  items: z.array(
+    z.object({
+      startTime: z.string().min(1),
+      endTime: z.string().nullable().optional(),
+      title: z.string().min(1),
+      location: z.string().nullable().optional(),
+      type: z.enum(SCHEDULE_ITEM_TYPES).default('activity'),
+    }),
+  ),
+});
+
+export type ReplaceScheduleDayInput = z.infer<typeof ReplaceScheduleDaySchema>;
+
 export const SetModeSchema = z.object({
   campMode: z.enum(CAMP_MODES),
 });

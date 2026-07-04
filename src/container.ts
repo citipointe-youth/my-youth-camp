@@ -90,6 +90,7 @@ import { makeChurchImportService, type ChurchImportService } from './services/ch
 import { makeTicketImportService, type TicketImportService } from './services/ticket-import.service';
 import { makeInvoiceImportService, type InvoiceImportService } from './services/invoice-import.service';
 import { makeAuditExportService, type AuditExportService } from './services/audit-export.service';
+import { makeOfflineSignInService, type OfflineSignInService } from './services/offline-signin.service';
 
 export interface Repositories {
   users: IUserRepository;
@@ -127,6 +128,7 @@ export interface Services {
   ticketImport: TicketImportService;
   invoiceImport: InvoiceImportService;
   auditExport: AuditExportService;
+  offlineSignIn: OfflineSignInService;
   account: AccountService;
   dashboard: DashboardService;
   admin: AdminService;
@@ -195,6 +197,7 @@ export async function buildContainer(): Promise<Container> {
     const ticketImportSvc = makeTicketImportService(people, churches);
     const invoiceImportSvc = makeInvoiceImportService(people);
     const auditExportSvc = makeAuditExportService(people, notes, settingsRepo);
+    const offlineSignInSvc = makeOfflineSignInService(people);
     const account = makeAccountService(users, churches, people);
     const dashboard = makeDashboardService(people, notifications, churches);
     const admin = makeAdminService(
@@ -207,7 +210,7 @@ export async function buildContainer(): Promise<Container> {
       checkIn, notification, search, note, schedule, content,
       importService: importSvc, exportService: exportSvc, allocation, churchImport: churchImportSvc,
       ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
-      auditExport: auditExportSvc,
+      auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
       account, dashboard, admin, users, settingsRepo,
     };
 
@@ -317,6 +320,7 @@ export async function buildContainer(): Promise<Container> {
   const ticketImportSvc = makeTicketImportService(people, churches);
   const invoiceImportSvc = makeInvoiceImportService(people);
   const auditExportSvc = makeAuditExportService(people, notes, settingsRepo);
+  const offlineSignInSvc = makeOfflineSignInService(people);
   const account = makeAccountService(users, churches, people);
   const dashboard = makeDashboardService(
     people,
@@ -357,6 +361,7 @@ export async function buildContainer(): Promise<Container> {
     ticketImport: ticketImportSvc,
     invoiceImport: invoiceImportSvc,
     auditExport: auditExportSvc,
+    offlineSignIn: offlineSignInSvc,
     account,
     dashboard,
     admin,

@@ -39,7 +39,7 @@ export function createApp(routes: (Route | BufferRoute)[], authService: AuthServ
     if (!origin || env.CORS_ORIGINS.includes(origin) || allowWildcard) {
       res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
     }
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     // Security headers (parity with connection-made-simple Phase 4).
@@ -78,7 +78,7 @@ export function createApp(routes: (Route | BufferRoute)[], authService: AuthServ
   // Register routes
   for (const route of routes) {
     const expressPath = route.path.replace(/:([a-zA-Z]+)/g, ':$1');
-    const method = route.method.toLowerCase() as 'get' | 'post' | 'patch' | 'delete';
+    const method = route.method.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete';
 
     app[method](expressPath, async (req: Request, res: Response) => {
       const isLogin = route.method === 'POST' && route.path === '/auth/login';

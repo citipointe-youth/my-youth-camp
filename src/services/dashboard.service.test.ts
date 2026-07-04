@@ -213,6 +213,32 @@ describe('at-camp dashboard — D3 checkInsDue (current session, respects check-
   });
 });
 
+// New Feature 2 (director/admin morning digest card): "X/Y checked in this session" is
+// derived client-side as (sessionExpected - checkInsDue) / sessionExpected — same population
+// checkInsDue is computed against (atCamp, non-leader), so the two must always agree.
+describe('at-camp dashboard — sessionExpected (New Feature 2)', () => {
+  it('equals the atCamp non-leader population when there is a current session', async () => {
+    pinClock('2026-07-01T15:00:00Z'); // PM current
+    const h = await build();
+    await h.personRepo.save(camper({ id: 'lead1', kind: 'leader', atCamp: true }));
+    await h.personRepo.save(camper({ id: 'youth1', kind: 'youth', atCamp: true, checkInHistory: [ci(PM, 'in', '2026-07-01T13:30:00Z')] }));
+    await h.personRepo.save(camper({ id: 'youth2', kind: 'youth', atCamp: true }));
+    const res = await h.svc.home(actor('admin'), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.sessionExpected).toBe(2); // youth1 + youth2, leader excluded
+    expect(res.sessionExpected - res.checkInsDue).toBe(1); // youth1 checked in, youth2 due
+  });
+
+  it('is 0 when there is no current session', async () => {
+    const h = await build();
+    await h.personRepo.save(camper({ id: 'youth1', kind: 'youth', atCamp: true }));
+    const res = await h.svc.home(actor('admin'), { ...settings(), checkInDays: [] });
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.sessionExpected).toBe(0);
+    expect(res.checkInsDue).toBe(0);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Server-side response cache (dashboard-cache.ts). ~30s TTL, keyed by actor
 // scope (role + churchId + zone). Two hard requirements verified below:

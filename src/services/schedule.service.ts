@@ -3,7 +3,7 @@ import type { ScheduleItem } from '../core/entities/schedule';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
 import { NotFoundError } from '../core/errors/app-error';
-import { CreateScheduleItemSchema, UpdateScheduleItemSchema } from '../core/validation/content.schema';
+import { CreateScheduleItemSchema, UpdateScheduleItemSchema, ReplaceScheduleDaySchema } from '../core/validation/content.schema';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 
@@ -13,6 +13,8 @@ export interface ScheduleService {
   create(actor: Actor, input: unknown): Promise<ScheduleItem>;
   update(actor: Actor, id: string, input: unknown): Promise<ScheduleItem>;
   remove(actor: Actor, id: string): Promise<void>;
+  /** Item 6: replace a day's entire schedule in one call. */
+  replaceDay(actor: Actor, input: unknown): Promise<ScheduleItem[]>;
 }
 
 export function makeScheduleService(repo: IScheduleRepository): ScheduleService {
@@ -57,6 +59,24 @@ export function makeScheduleService(repo: IScheduleRepository): ScheduleService 
       assertCan(actor, 'admin:manage');
       const ok = await repo.delete(id);
       if (!ok) throw new NotFoundError('Schedule item not found');
+    },
+
+    async replaceDay(actor, input) {
+      assertCan(actor, 'admin:manage');
+      const data = ReplaceScheduleDaySchema.parse(input);
+      const now = nowISO();
+      const items: ScheduleItem[] = data.items.map((it) => ({
+        id: newId('sched'),
+        day: data.day,
+        startTime: it.startTime,
+        endTime: it.endTime ?? null,
+        title: it.title,
+        location: it.location ?? null,
+        type: it.type,
+        createdAt: now,
+        updatedAt: now,
+      }));
+      return repo.replaceDay(data.day, items);
     },
   };
 }

@@ -77,6 +77,12 @@ export interface INotificationRepository extends IRepository<Notification> {
 
 export interface IScheduleRepository extends IRepository<ScheduleItem> {
   findByDay(day: string): Promise<ScheduleItem[]>;
+  /**
+   * Replace a day's entire schedule in one call (item 6) — the SPA used to delete then
+   * re-create every row sequentially (~2N round trips per save). Implementations do the
+   * delete+insert as one transaction, not a per-row loop.
+   */
+  replaceDay(day: string, items: ScheduleItem[]): Promise<ScheduleItem[]>;
 }
 
 export interface IDevotionalRepository extends IRepository<Devotional> {

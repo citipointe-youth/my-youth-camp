@@ -46,6 +46,14 @@ export interface AtCampDashboard {
   totalAtCamp: number;
   totalExpected: number;
   checkInsDue: number;
+  /**
+   * New Feature 2 (director/admin morning digest): the population subject to the CURRENT
+   * session's check-in (atCamp, non-leader) — same population `checkInsDue` is computed
+   * against. Exposed so the SPA can derive "X/Y checked in this session" as
+   * (sessionExpected - checkInsDue) / sessionExpected without a second fetch. 0 when there's
+   * no current session.
+   */
+  sessionExpected: number;
   currentSession: { id: string; label: string; day: string; startTime: string } | null;
   nextSession: { id: string; label: string; day: string; startTime: string } | null;
   latestNotification: { title: string; body: string; priority: string; createdAt: string } | null;
@@ -174,6 +182,7 @@ export function makeDashboardService(
               return last?.type !== 'in';
             }).length
           : 0;
+        const sessionExpected = currentSession ? atCampNow.length : 0;
 
         const dashboard: AtCampDashboard = {
           mode: 'at-camp',
@@ -182,6 +191,7 @@ export function makeDashboardService(
           totalAtCamp,
           totalExpected,
           checkInsDue,
+          sessionExpected,
           currentSession: currentSession
             ? { id: currentSession.id, label: currentSession.label, day: currentSession.day, startTime: currentSession.startTime }
             : null,
