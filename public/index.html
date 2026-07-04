@@ -2709,24 +2709,28 @@ RENDER.admin=function(){
   // At camp, the setup wizard gives way to per-student data edits (no more CSV uploads mid-camp).
   const wizardTile=isAdmin&&CAMP_MODE==='pre-camp'?`<div class="tile" onclick="go('adminWizard')"><div class="l">Setup Wizard</div></div>`:'';
   const studentsTile=isAdmin&&CAMP_MODE==='at-camp'?`<div class="tile" onclick="go('adminStudents')"><div class="l">Individual Student Data Edit</div></div>`:'';
-  // Item 5c: tiles grouped under three headings. Item 8: FAQ/Devotionals/Schedule are one
-  // "At-Camp Info" tile now (RENDER.atCampInfo, defaults to the Schedule sub-tab).
+  // Tiles grouped under three headings (re-ordered per admin request):
+  // Camp setup = Setup Wizard, Camp settings, Accommodation, At-Camp Info, Switch mode.
+  // People & churches = Accounts & churches, Ministry contacts.
+  // Data = Data Import, Data Export/Reset (+ Individual Student Data Edit, at-camp only —
+  // not explicitly listed in the request but there's no other home for it in this console).
   paint('admin',`<div class="infobox">Admin console — configure camp here year-round.</div>
     <div class="h3" style="margin:14px 0 6px">Camp setup</div>
     <div class="tiles">
+      ${wizardTile}
       <div class="tile" onclick="go('adminSettings')"><div class="l">Camp settings</div></div>
       <div class="tile" onclick="go('adminAccom')"><div class="l">Accommodation</div></div>
-      ${wizardTile}${modeTile}
+      <div class="tile" onclick="go('atCampInfo')"><div class="l">At-Camp Info</div></div>
+      ${modeTile}
     </div>
-    <div class="h3" style="margin:16px 0 6px">People &amp; data</div>
+    <div class="h3" style="margin:16px 0 6px">People &amp; churches</div>
     <div class="tiles">
       <div class="tile" onclick="go('adminAccounts')"><div class="l">Accounts &amp; churches</div></div>
-      ${importTile}${dataTile}${studentsTile}
-    </div>
-    <div class="h3" style="margin:16px 0 6px">At-camp content</div>
-    <div class="tiles">
-      <div class="tile" onclick="go('atCampInfo')"><div class="l">At-Camp Info</div></div>
       <div class="tile" onclick="go('adminContacts')"><div class="l">Ministry contacts</div></div>
+    </div>
+    <div class="h3" style="margin:16px 0 6px">Data</div>
+    <div class="tiles">
+      ${importTile}${dataTile}${studentsTile}
     </div>`,'Admin console','Back office');
 };
 

@@ -554,6 +554,118 @@ Design: `docs/superpowers/specs/2026-07-03-unallocated-registrants-allocation-de
   with a confirm modal). `_loadAllocation`/`_renderAllocCards`/`allocatePerson`/`overridePrompt`/
   `confirmOverride`/`undoOverride`; the SPA's `UNALLOCATED_ID` must match the backend constant.
 
+## Admin bug batch + offline sign-in + director digest — deployed 2026-07-04
+
+Large overnight admin-requested batch (8 numbered bugs + 2 new features), SPA + backend +
+**no schema migration** (reused existing `amountPaid`/`formImportedAt` columns). `npm run
+typecheck` clean, `npm run test` = **442 pass** (11 new), SPA `node --check` OK. `sw.js`
+`camp-v18`→`camp-v20` (two HTML-changing pushes in the batch).
+
+- **Director navigation restored.** Director had `import:run`+`allocation:manage`
+  (`access-control.ts`) and `RENDER.import`/`RENDER.adminData` already accepted director, but
+  `navModel` gave director no route to either in any mode — a regression. `RENDER.data` (the
+  pre-camp "Data" tab, also reachable at-camp via the home tile "Student Data Table") now has
+  two buttons: **Data Import** (`go('import')`) and **Records & Export** (`go('adminData')`).
+  `RENDER.adminData`'s Close-out and Clear-notifications cards are now `isAdmin`-gated (same
+  pattern as Save Defaults/Factory Reset) so a director viewing via this new route never sees an
+  action the backend would 403 on.
+- **Brisbane-anchored "today" (`localDateISO()`, NEW).** `new Date().toISOString().slice(0,10)`
+  is UTC, so anywhere from midnight to 10am Brisbane it read yesterday's date. New helper
+  mirrors the backend's `zonedNow()` via `Intl.DateTimeFormat('en-CA',{timeZone:'Australia/
+  Brisbane'})`; takes an optional instant to convert (used to compare a server `createdAt`
+  timestamp against "today" in Brisbane, not just slice its UTC date). Fixes `_realCampDayNumber()`
+  (header Day badge + the home-tile First-Day/Testimonies switch, which reads it) and
+  `drawFaRecords`'s "Today" filter on First-aid Records.
+- **"Not Signed In" section on check-in (`RENDER.checkin`, NEW).** A collapsed `<details>` at
+  the bottom of the daily check-in screen listing the viewer's scoped students with
+  `atCamp!==true` — ANY lifecycle stage (never-arrived AND already-checked-out/departed), fetched
+  via `/registrants`+`/campers` in parallel with the roster status (same dedup pattern as
+  `RENDER.firstday`). Each row has a direct "Sign in to camp" button (`signInPrompt`). Does not
+  touch `checkin.service`'s roster contract (still atCamp-only).
+- **Zone-leader per-church pulse (`renderOversightPulse`).** zoneLeader's home pulse now groups
+  by `r.church` instead of `r.zone` (their roster is already zone-scoped, so the old zone grouping
+  produced one aggregate bar) — amber below **70%** (`PULSE_AMBER_PCT`, new `.bar7.amber` CSS).
+  Tapping a church bar sets `FILTER.church` and jumps to Check-in (`_pulseGoToChurch`). Director/
+  admin deliberately KEPT the existing per-zone bars (would be 10+ bars camp-wide otherwise).
+- **Setup wizard + return chip + console regroup.**
+  - `WIZARD_STEPS` gained an **"Import registrations"** step between Accounts and Accommodation
+    rooms (done-check: any person exists OR `settings.formImportedAt` set) — **10 steps total**.
+  - **"Back to setup (step N of 10)" chip**: a *persistent* banner (`_wizardChipHtml`, hooked into
+    `paint()` itself) shown on any screen that's a `WIZARD_STEPS` target while a
+    `sessionStorage['ycp_wizardReturn']` flag is set — set by `_wizardGo(i)` when a wizard row is
+    tapped, cleared on returning to `RENDER.adminWizard` or on logout. Deliberately NOT wired into
+    each individual save handler (~10 screens) — one shared hook instead.
+  - **Admin console tiles regrouped** under three headings (`RENDER.admin`), **re-ordered again
+    same day** per follow-up feedback — current final order:
+    - **Camp setup**: Setup Wizard → Camp settings → Accommodation → At-Camp Info → Switch mode.
+    - **People & churches**: Accounts & churches, Ministry contacts.
+    - **Data**: Data Import, Data Export/Reset (Records & Export for director), + Individual
+      Student Data Edit (at-camp only — not explicitly specified in the reorder request, kept
+      here as the closest fit since it has no other home in this console).
+- **Batch schedule saves.** New `PUT /schedule/day` (`schedule.service.ts` `replaceDay`,
+  `IScheduleRepository.replaceDay` — in-memory does delete+re-set on the Map, Supabase does
+  delete-then-multi-row-insert inside one `sql.begin` transaction) replaces `saveSchedDay`'s old
+  N-deletes-then-N-creates loop. **`Route`/`BufferRoute` method unions and the Express adapter's
+  method cast had no `'PUT'`** — added, since this was the first `PUT` route in the app (also
+  added to `Access-Control-Allow-Methods`).
+- **Copy/label/trust batch.**
+  - `_paintPerson`'s "Paid" field showed `registrationCost` (ticket price, not what was actually
+    paid). New `_paidOrCostRow(s)`: shows `amountPaid` labelled **"Paid"** when an Invoice import
+    recorded one, else `registrationCost` labelled **"Cost"**.
+  - Check-in screen's stale "Notes visible to zone leaders & directors only" hint corrected to
+    match the real rule (church sees non-sensitive notes too).
+  - `RENDER.notes` subtitle: **"Your zone: `<zone>`"** for zoneLeader (was hardcoded "All zones ·
+    whole camp", never true for a zone-scoped read); director/admin unchanged. Also gained an
+    optional `presetFilter` param (used by the new digest card below) that pre-selects a Record
+    filter option.
+  - `RENDER.adminAccom` (accommodation **setup** screen): "Classroom rooms" → **"Classrooms"**,
+    matching the allocations page (the two screens had drifted).
+  - `notePrompt`'s leader-name field already prefilled from `LAST_LEADER` — `reviewNote` no
+    longer *requires* it (backend already attributes the note to the logged-in actor; the typed
+    name is just folded into the body as a "logged by" annotation when present).
+- **Schedule/FAQ/Devotionals condensed → "At-Camp Info" (`RENDER.atCampInfo`, NEW).** One admin
+  screen with three sub-tab buttons (Schedule/FAQ/Devotionals, defaults to Schedule) replacing
+  three separate console tiles/nav entries. Old `RENDER.adminFaq`/`adminDevos`/`adminSchedEdit`
+  bodies became internal content-builders (`_acFaqBody`/`_acDevosBody`/`_acScheduleBody`) called
+  by the merged screen; `_rFaq`/`_rSched` re-render helpers now call `RENDER.atCampInfo('faq'|
+  'schedule')`. `WIZARD_STEPS`' schedule/devos/faq rows still route here, each pinned to its own
+  sub-tab via `go('atCampInfo', arg)`. (`adminFaqEdit` — a pre-existing, already-unreachable
+  at-camp FAQ screen with no nav path to it — was left alone, out of scope.)
+- **Offline Sign-In (NEW, `src/services/offline-signin.service.ts`).** Fallback bulk sign-in for
+  churches who prefer paper/bulk sign-in over the app, at the bottom of the Data Import screen.
+  `GET /export/offline-signin` (exceljs) builds ONE workbook — every registered **student**
+  (leaders excluded), all churches, sorted by church then surname — columns First/Last/Church/
+  Gender/Grade + blank **"Signed In?"**, with an obviously-fake "Sample Student" row demonstrating
+  `Y`. `POST /import/offline-signin` re-parses a filled sheet (`parseCsv`) and bulk-signs-in every
+  row marked exactly `Y` that matches an existing student by **First+Last+Church text** (no id
+  column) and isn't already `atCamp` — via the same `withSignEvent`+`saveMany` bulk pattern as the
+  leader bulk sign-in in `admin.service.setMode`. The Sample row is matched by name and always
+  skipped, regardless of what's typed in its Church cell. SPA reuses the existing client-side
+  `_readImportFile` (CSV/Excel via lazy SheetJS) to parse the upload, then POSTs the raw CSV text
+  — the backend does all matching (consistent with the Form/Ticket/Invoice import architecture,
+  and testable with vitest). A plain `confirm()` gate precedes the POST (no separate dry-run mode
+  — a lower-effort deliberate choice for this fallback feature). 9 new tests
+  (`offline-signin.service.test.ts`).
+- **Director + admin morning digest card (NEW, at-camp home hero).** "Day N · X/Y checked in
+  this session · Z churches complete · K first-aid records today", each figure tappable
+  (`_digestCardHtml`/`_renderDirectorDigest`, same paint-immediately-then-inject-async pattern as
+  `renderOversightPulse`, called un-awaited from `renderHomeAtCamp`). Required one backend DTO
+  addition: `AtCampDashboard.sessionExpected` (the atCamp-non-leader population subject to the
+  CURRENT session — same population `checkInsDue` is computed against) so the SPA can derive
+  "X/Y checked in" as `sessionExpected - checkInsDue` / `sessionExpected` with no extra fetch.
+  "Churches complete" re-fetches `/checkin/sessions/current` + status independently of
+  `renderOversightPulse` (harmless — both hit the SPA's 30s client `Cache`, so this is a cache hit
+  in practice, not a second real network call) and groups by church (`done===total`, regardless
+  of the per-role pulse-bar grouping above). "First-aid records today" fetches
+  `/notes/firstaid?limit=100` and filters via `localDateISO()`. Tapping "churches complete" or the
+  check-in ratio jumps to Check-in; tapping first-aid jumps to `RENDER.notes` pre-filtered
+  (`go('notes','firstaid')`) — reachable for admin too via their existing "Testimonies & Notes"
+  home tile even though admin has no permanent nav entry to Notes at-camp.
+- **`icons-180/192/512.png` gap (CLAUDE.md correction only, no code change).** These PNGs already
+  existed, matched the SVG design, and were already referenced in `index.html`+`manifest.json` —
+  the "known gap, not yet fixed" note below was stale from an earlier session and has been
+  corrected in place.
+
 ## Commands (run from this folder)
 
 ```bash
