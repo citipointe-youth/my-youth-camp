@@ -704,6 +704,36 @@ CORS_ORIGINS=https://camp.<your-domain>   # lock this; '*' warns in prod
 Auth is **stateless HMAC sessions** (signed with `SESSION_SECRET`) — no server-side token
 store, so logout is client-side and tokens stay valid until their 12h TTL.
 
+### Production DB config — role-level query timeout (NOT in migrations, 2026-07-06)
+
+`ALTER ROLE postgres SET statement_timeout = '15s'` is applied on the prod DB (ref
+`nwfafrgojqkxylbppywo`). The per-connection `statement_timeout: 15000` in `client.ts` is
+**not reliably enforced through the pooler** (CMS proved a trivial query ran 4+ min despite
+it), so the ceiling is enforced at the DB-role level like Supabase's own roles. This lives
+on the role, **not** in `supabase/migrations/` — it survives new-year rollover but **must be
+re-applied if the Supabase project is ever recreated.** Verify with
+`select rolconfig from pg_roles where rolname='postgres';`.
+
+### Planned: session-mode pooler cutover — see `docs/SESSION-MODE-CUTOVER.md`
+
+To survive the camp AM-check-in burst (100–200 leaders), the plan is to switch the pooler
+from **transaction mode (port 6543)** to **session mode (port 5432)** — the fix that ended
+the CMS outage. **Not yet done** (gated on the paid upgrade for the camp burst test; the
+cutover itself can happen anytime — the runbook splits it into "do now" vs "at upgrade").
+Two env gotchas that matter here:
+
+- **The app reads only `DATABASE_URL`** (`src/config/env.ts`) — never `POSTGRES_URL*` or any
+  other var the **Supabase→Vercel integration** syncs. So the integration's env sync does
+  **not** control the app's DB connection *as long as `DATABASE_URL` is a manually-set Vercel
+  var* (which it is — `DATABASE_URL` is not a name the integration manages). Switch modes by
+  editing that manual var's port; a resync can't revert a var the integration doesn't own.
+  **Still, re-verify `DATABASE_URL` is present + on the intended port after any upgrade or
+  integration resync.**
+- **Session mode = the Supabase *Session pooler* string** (`aws-…pooler.supabase.com:5432`,
+  user `postgres.<ref>`). Do **not** use the *Direct connection* (`db.<ref>.supabase.co:5432`,
+  IPv6-only — won't work on Vercel) or the integration's `POSTGRES_URL_NON_POOLING` (that's
+  the direct one). Both are port 5432 but different hosts.
+
 ## Architecture
 
 ```
