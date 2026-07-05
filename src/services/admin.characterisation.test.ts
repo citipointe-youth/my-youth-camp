@@ -635,19 +635,79 @@ describe('AdminService.setMode', () => {
     expect(p1!.atCamp).toBe(false);
   });
 
-  it('does NOT bulk-sign-in leaders switching at-camp -> pre-camp, or at-camp -> at-camp (no-op)', async () => {
+  it('does NOT re-bulk-sign-in leaders on an at-camp -> at-camp no-op', async () => {
     await repos.personRepo.save(person({ id: 'lead1', kind: 'leader', lifecycle: 'registered', atCamp: false }));
     const svc = build(repos);
 
     await svc.setMode(actor('admin'), 'at-camp');
     expect((await repos.personRepo.findById('lead1'))!.atCamp).toBe(true);
 
-    // Switch back to pre-camp, then re-add a fresh leader — going pre-camp -> at-camp again
-    // should sign THAT one in too (each real transition re-applies), but going the other
-    // direction must never touch anyone.
-    await svc.setMode(actor('admin'), 'pre-camp');
+    // A fresh leader added after the transition already ran is untouched by re-selecting
+    // the SAME mode — only a real pre-camp -> at-camp transition applies the bulk sign-in.
+    await svc.setMode(actor('admin'), 'at-camp');
     await repos.personRepo.save(person({ id: 'lead2', kind: 'leader', lifecycle: 'registered', atCamp: false }));
-    expect((await repos.personRepo.findById('lead1'))!.atCamp).toBe(true); // unaffected by the pre-camp switch
-    expect((await repos.personRepo.findById('lead2'))!.atCamp).toBe(false); // not yet — mode hasn't switched again
+    await svc.setMode(actor('admin'), 'at-camp');
+    expect((await repos.personRepo.findById('lead2'))!.atCamp).toBe(false);
+  });
+
+  it('reverts everyone still atCamp on the at-camp -> pre-camp transition', async () => {
+    // A bulk-signed-in leader (mirrors the pre-camp -> at-camp transition above).
+    await repos.personRepo.save(
+      person({ id: 'lead1', kind: 'leader', lifecycle: 'arrived', atCamp: true, signOutHistory: [] }),
+    );
+    // A student who individually signed in (Day-1 arrival) while genuinely at camp.
+    await repos.personRepo.save(
+      person({ id: 'stu1', kind: 'youth', lifecycle: 'arrived', atCamp: true, signOutHistory: [] }),
+    );
+    // A student who already signed back out — must be left alone (not atCamp).
+    await repos.personRepo.save(
+      person({ id: 'stu2', kind: 'youth', lifecycle: 'checked_out', atCamp: false, signOutHistory: [] }),
+    );
+    // A cancelled person — never touched, even if somehow still flagged atCamp.
+    await repos.personRepo.save(
+      person({ id: 'cancelled1', kind: 'leader', lifecycle: 'cancelled', atCamp: true, signOutHistory: [] }),
+    );
+    // Someone still just registered (never arrived) — no-op, nothing to revert.
+    await repos.personRepo.save(person({ id: 'reg1', kind: 'youth', lifecycle: 'registered', atCamp: false }));
+
+    const svc = build(repos);
+    await svc.setMode(actor('admin', { id: 'a1', displayName: 'Sarah Admin' }), 'at-camp');
+    await svc.setMode(actor('admin', { id: 'a1', displayName: 'Sarah Admin' }), 'pre-camp');
+
+    const lead1 = await repos.personRepo.findById('lead1');
+    expect(lead1!.atCamp).toBe(false);
+    expect(lead1!.lifecycle).toBe('registered');
+    expect(lead1!.signOutHistory).toHaveLength(1);
+    expect(lead1!.signOutHistory[0]).toMatchObject({ type: 'out', authorId: 'a1', leaderName: 'Sarah Admin' });
+
+    const stu1 = await repos.personRepo.findById('stu1');
+    expect(stu1!.atCamp).toBe(false);
+    expect(stu1!.lifecycle).toBe('registered');
+    expect(stu1!.signOutHistory).toHaveLength(1);
+
+    const stu2 = await repos.personRepo.findById('stu2');
+    expect(stu2!.atCamp).toBe(false);
+    expect(stu2!.lifecycle).toBe('checked_out'); // not atCamp — untouched, stays checked_out
+    expect(stu2!.signOutHistory).toHaveLength(0);
+
+    const cancelled1 = await repos.personRepo.findById('cancelled1');
+    expect(cancelled1!.lifecycle).toBe('cancelled'); // never revived
+    expect(cancelled1!.signOutHistory).toHaveLength(0);
+
+    const reg1 = await repos.personRepo.findById('reg1');
+    expect(reg1!.lifecycle).toBe('registered');
+    expect(reg1!.signOutHistory).toHaveLength(0);
+  });
+
+  it('does NOT revert anyone on a pre-camp -> pre-camp no-op', async () => {
+    const fresh = await makeRepos();
+    await seedEverything(fresh);
+    await fresh.personRepo.save(
+      person({ id: 'lead1', kind: 'leader', lifecycle: 'arrived', atCamp: true, signOutHistory: [] }),
+    );
+    const svc = build(fresh);
+    await svc.setMode(actor('admin'), 'pre-camp'); // already pre-camp — no-op
+    const lead1 = await fresh.personRepo.findById('lead1');
+    expect(lead1!.atCamp).toBe(true); // untouched — before.campMode was never 'at-camp'
   });
 });

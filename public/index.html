@@ -2134,8 +2134,13 @@ function computeDiscountSummaryClient(regs,filterId){
 }
 RENDER.budget=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('budget','<p class="note-hint" style="margin-top:24px;text-align:center">Budget is available to directors only.</p>','Budget & Costings','');return;}
-  const regs=await api('/registrants');
-  window._budgetRegs=regs||[];
+  const [regs,camperPage]=await Promise.all([api('/registrants'),api('/campers?pageSize=1000').catch(()=>[])]);
+  // Anyone already at camp (esp. leaders, bulk-signed-in on the mode switch) has
+  // lifecycle !== 'registered' and drops out of /registrants — merge in /campers
+  // (deduped by id) so registration fees for arrived people still count.
+  const campers=Array.isArray(camperPage)?camperPage:camperPage.items||[];
+  const regIds=new Set((regs||[]).map(r=>r.id));
+  window._budgetRegs=[...(regs||[]),...campers.filter(c=>!regIds.has(c.id))];
   const churches=[...new Map((regs||[]).map(r=>[r.churchId,r.churchName])).entries()].map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name));
   const selHtml=`<div class="rowsb" style="gap:8px;margin-bottom:12px">
     <select id="budChurch" onchange="drawBudget()" style="flex:1"><option value="all">All ministries</option>${churches.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>
@@ -2739,7 +2744,7 @@ async function switchMode(){
   const label=newMode==='at-camp'?'AT CAMP (live operations)':'PRE-CAMP (registration prep)';
   const changes=newMode==='at-camp'
     ?'Everyone moves to live camp operations — daily check-in, notices and sign-out. Pre-camp registration tiles are hidden.'
-    :'Everyone moves back to pre-camp prep — registrations, payments and accommodation.';
+    :'Everyone moves back to pre-camp prep — registrations, payments and accommodation.\n\n⚠️ Anyone currently signed in at camp (students and leaders) will be automatically signed out.';
   if(!confirm('Switch the whole app to '+label+'?\n\n'+changes))return;
   try{
     await api('/admin/mode',{method:'POST',body:{campMode:newMode}});

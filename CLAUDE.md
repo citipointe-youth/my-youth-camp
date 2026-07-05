@@ -704,6 +704,37 @@ Admin-requested 3-bug batch. `npm run typecheck` clean, `npm run test` = 442 pas
   SVG. `#previewBanner .pb-label` is now an empty span (`id="pbLabel"`) filled via
   `ic('preview')` at boot, once `ICONS`/`ic` are defined.
 
+## Follow-up — mode-switch revert, Budget/Data leader visibility — deployed 2026-07-06
+
+Same-day follow-up after the batch above: the admin flagged leaders were still missing from
+Budget and Home, with Cost blank on the Data tab. Root cause (found by querying prod
+directly): the camp had at some point been switched to at-camp (bulk-signing in leaders and
+some students who then signed in for real testing) and back to pre-camp — but `setMode` only
+ever handled the forward transition, so everyone who was `atCamp` stayed stuck at
+`lifecycle:'arrived'`/`atCamp:true` even in pre-camp mode, invisible to every screen that reads
+the registrants view (`lifecycle==='registered'`). `npm run typecheck` clean, `npm run test` =
+444 pass (2 new), SPA `node --check` OK. No migration.
+
+- **`admin.service.ts` `setMode` now reverts on at-camp -> pre-camp.** Mirrors the existing
+  forward bulk-sign-in: anyone still `atCamp` (any kind, not just leaders — a student who
+  individually signed in during at-camp testing has the same problem) is force-set back to
+  `lifecycle:'registered'`/`atCamp:false` with an audit `SignOutEvent` appended (reason "Camp
+  mode reverted to pre-camp"). This bypasses `withSignEvent`/`applyCheckIn` deliberately — the
+  presence model has no normal transition back to `'registered'` (arrived/checked_out only
+  cycle between each other), so a direct field assignment is the only way to undo the forward
+  bulk transition. Already-cancelled or already-checked-out people are untouched. **One-off
+  prod data correction** applied the same revert directly via SQL to the 10 leaders + 15
+  students already stuck this way (same ids, `sign_out_history` audit rows added to match what
+  the code now does automatically).
+- **`switchMode()` (SPA) warns before reverting to pre-camp** — the confirm dialog now says
+  anyone currently signed in at camp will be automatically signed out.
+- **Budget now includes arrived leaders/students.** `RENDER.budget` only fetched
+  `/registrants` — same gap as the Data tab fix above. Now merges `/campers` in (deduped by
+  id, same pattern). `CamperDto` gained `registrationCost`/`discountCode`/`discountAmount` so
+  a merged-in camper row prices and discount-codes correctly (`registrationType` was already
+  added for the Data tab's "Reg type" column — `exportBudget()` and the discount-codes card
+  get this for free since they both read the same merged `window._budgetRegs`).
+
 ## Commands (run from this folder)
 
 ```bash

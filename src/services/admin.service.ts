@@ -22,7 +22,7 @@ import type { ScheduleItem } from '../core/entities/schedule';
 import type { Devotional } from '../core/entities/devotional';
 import type { CampMode } from '../core/types/enums';
 import type { Actor } from '../core/entities/user';
-import type { SignOutEvent } from '../core/entities/person';
+import type { Person, SignOutEvent } from '../core/entities/person';
 import { assertCan } from './access-control';
 import { ForbiddenError, NotFoundError, BadRequestError, WipeGuardError } from '../core/errors/app-error';
 import { nowISO } from '../utils/date';
@@ -254,6 +254,40 @@ export function makeAdminService(
             timestamp: now,
           });
           const updated = toSignIn.map((leader) => withSignEvent(leader, event(), now));
+          await personRepo.saveMany(updated);
+          invalidateDashboardCache();
+        }
+      } else if (before.campMode === 'at-camp' && mode === 'pre-camp') {
+        // Reverting from at-camp back to pre-camp (e.g. an admin toggling modes during
+        // setup/testing rather than a real end-of-camp rollover) must undo the presence
+        // state or every person still marked atCamp becomes permanently invisible to every
+        // pre-camp screen (Home, Budget, Data, accommodation) — those all read the
+        // registrants view (`lifecycle==='registered'`), and the presence model has no
+        // normal transition back to 'registered' (arrived/checked_out only cycle between
+        // each other — see person-lifecycle.ts). This bypasses withSignEvent and sets the
+        // fields directly for exactly that reason, while still appending an audit sign-out
+        // event so the history reflects what happened.
+        const people = await personRepo.findAll();
+        const now = nowISO();
+        const toRevert = people.filter((p) => p.atCamp && p.lifecycle !== 'cancelled');
+        if (toRevert.length > 0) {
+          const updated: Person[] = toRevert.map((p) => ({
+            ...p,
+            lifecycle: 'registered',
+            atCamp: false,
+            signOutHistory: [
+              ...p.signOutHistory,
+              {
+                id: newId('so'),
+                type: 'out',
+                leaderName: actor.displayName,
+                reason: 'Camp mode reverted to pre-camp',
+                authorId: actor.id,
+                timestamp: now,
+              },
+            ],
+            updatedAt: now,
+          }));
           await personRepo.saveMany(updated);
           invalidateDashboardCache();
         }

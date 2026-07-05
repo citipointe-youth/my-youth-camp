@@ -72,6 +72,9 @@ export interface CamperDto {
   dateOfBirth: string | null;
   accommodationKind: Person['accommodationKind'];
   registrationType: string | null;
+  registrationCost: number | null;
+  discountCode: string | null;
+  discountAmount: number | null;
   medicalConditions: string[];
   dietaryRequirements: string[];
   otherMedications: string | null;
@@ -173,6 +176,9 @@ export function toCamperDto(p: Person): CamperDto {
     dateOfBirth: p.dateOfBirth ?? null,
     accommodationKind: p.accommodationKind ?? null,
     registrationType: p.registrationType ?? null,
+    registrationCost: p.registrationCost ?? null,
+    discountCode: p.discountCode ?? null,
+    discountAmount: p.discountAmount ?? null,
     medicalConditions: p.medicalConditions,
     dietaryRequirements: p.dietaryRequirements,
     otherMedications: p.otherMedications ?? null,
