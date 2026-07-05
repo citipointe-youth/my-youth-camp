@@ -666,6 +666,44 @@ typecheck` clean, `npm run test` = **442 pass** (11 new), SPA `node --check` OK.
   the "known gap, not yet fixed" note below was stale from an earlier session and has been
   corrected in place.
 
+## Bug batch — Unallocated FK crash, at-camp Data tab, preview banner, Reg type — deployed 2026-07-06
+
+Admin-requested 3-bug batch. `npm run typecheck` clean, `npm run test` = 442 pass, SPA
+`node --check` OK. No migration.
+
+- **Unallocated-import crash FIXED (Supabase-only, not caught by vitest).** `people.church_id`
+  has a real FK to `churches(id)`, but the `__unallocated__` sentinel (church-allocation.ts,
+  2026-07-03) was never a `churches` row — writing it threw a foreign-key violation, surfaced
+  to the SPA as the generic "An unexpected error occurred". `src/repositories/supabase/
+  supabase.people.ts` now maps the sentinel to/from SQL `NULL` at the I/O boundary
+  (`personColumns`/`toPerson`/`findByChurch`) — `NULL` is already FK-legal (`on delete set
+  null`) and the domain model never sees it; `Person.churchId` still always reads as either a
+  real id or `__unallocated__`. **Prod data note:** 10 people already sat with `church_id
+  NULL`/`church_name 'OTHER - please specify below'` from an old auto-created "OTHER" church
+  that had since been deleted (its FK cascade nulled `church_id` but left the denormalized
+  `church_name`/`zone` stale) — this is what made a re-import see them as "absent" (10
+  flagged for deletion) while the replacement row crashed on save. One-off prod SQL
+  corrected their `church_name`→`'Unallocated'`/`zone`→`''` in place (same ids, no data
+  loss); the repo fix means they now round-trip correctly on every future import.
+- **Data tab missing at-camp leaders FIXED.** `RENDER.data` (the Data/registrants table) only
+  fetched `/registrants` (`lifecycle==='registered'`). At-camp, **every leader is bulk-signed-in
+  on the mode switch** (2026-07-04 presence feature) — their lifecycle becomes `arrived`, which
+  drops them out of `/registrants` permanently, since nothing ever demotes a camper back to
+  registrant. Regular students don't show this since they're promoted individually as they
+  physically arrive. `RENDER.data` now also fetches `/campers` and merges in any not already
+  present by id (same dedup pattern as `RENDER.firstday`), so the table always shows the full
+  roster regardless of lifecycle. `CamperDto` gained `registrationType` (was registrant-only)
+  so the "Reg type" column doesn't go blank for a merged-in camper row.
+- **"Reg type" column wired to real data.** It read a `Type`/`Registration Type` Form CSV
+  column that doesn't exist in any real Elvanto export (Form/Ticket List/Invoice all lack it) —
+  always blank. `ticket-import.service.ts` now stores the Ticket List's real `Ticket Type` text
+  (e.g. `"EARLY BIRD | Tent Accomodation"`) as `registrationType` (added to the service's
+  `OWNED_KEYS`, same never-clobber-with-blank rule as `ticketNumber`/`invoiceNumber`).
+- **Preview banner code-spill fixed.** `${ic('preview')}` sat in static `<body>` HTML markup
+  (not a JS template literal), so the browser printed it literally instead of rendering the
+  SVG. `#previewBanner .pb-label` is now an empty span (`id="pbLabel"`) filled via
+  `ic('preview')` at boot, once `ICONS`/`ic` are defined.
+
 ## Commands (run from this folder)
 
 ```bash

@@ -502,7 +502,7 @@ textarea{min-height:84px;resize:vertical;}
 <body>
 <div class="app" id="app">
   <div id="previewBanner">
-    <span class="pb-label">${ic('preview')} PREVIEW — at-camp view is read-only</span>
+    <span class="pb-label" id="pbLabel">PREVIEW — at-camp view is read-only</span>
     <button class="pb-exit" onclick="exitPreview()">Exit preview ×</button>
   </div>
   <header class="bar" id="bar" style="display:none">
@@ -3517,13 +3517,21 @@ let _dataCache=null; // cached /registrants for client-side filtering, default-s
 let _dataSortKey=null,_dataSortDir=1; // active column sort; null key = default import order
 RENDER.data=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('data','<p class="note-hint">This area is restricted to directors and admins.</p>','Data','');return;}
-  const [regs,churches]=await Promise.all([
+  const [regs,camperPage,churches]=await Promise.all([
     api('/registrants').catch(()=>[]),
+    api('/campers?pageSize=1000').catch(()=>[]),
     api('/accounts/churches').catch(()=>[]),
   ]);
+  // At-camp, anyone already signed in (esp. leaders — bulk-signed-in on the mode switch)
+  // has lifecycle !== 'registered' and drops out of /registrants entirely. Merge in
+  // /campers (deduped by id) so this screen always shows the full roster, not just the
+  // pre-camp-registered subset — same pattern as RENDER.firstday's dedup.
+  const campers=Array.isArray(camperPage)?camperPage:camperPage.items||[];
+  const regIds=new Set((regs||[]).map(r=>r.id));
+  const merged=[...(regs||[]),...campers.filter(c=>!regIds.has(c.id))];
   // Default order = the order records were imported in (createdAt asc) — /registrants
   // itself returns alphabetical (last name), so re-sort here rather than trust the API order.
-  _dataCache=(regs||[]).slice().sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
+  _dataCache=merged.slice().sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
   _dataSortKey=null;_dataSortDir=1;
   const chOpts=['<option value="">All churches</option>'].concat(
     (churches||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`)).join('');
@@ -4125,6 +4133,7 @@ async function _tryRestoreSession(){
 document.getElementById('password').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 document.getElementById('username').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('modal').classList.contains('show'))closeModal();});
+document.getElementById('pbLabel').innerHTML=ic('preview')+' PREVIEW — at-camp view is read-only';
 _initDemoLogin();_tryRestoreSession();
 
 /* B-3: cross-tab + on-focus mode sync. A second tab (or a tab not on Home) used to keep stale

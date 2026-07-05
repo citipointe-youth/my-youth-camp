@@ -69,7 +69,7 @@ function blankConsents(): Person['consents'] {
   return { medical: mk(), media: mk(), supervision: mk() } as Person['consents'];
 }
 
-const OWNED_KEYS = ['ticketNumber', 'invoiceNumber', 'paymentStatus'] as const satisfies readonly (keyof Person)[];
+const OWNED_KEYS = ['ticketNumber', 'invoiceNumber', 'paymentStatus', 'registrationType'] as const satisfies readonly (keyof Person)[];
 
 export function makeTicketImportService(
   personRepo: IPersonRepository,
@@ -191,7 +191,11 @@ export function makeTicketImportService(
 
             const mergedOwned = mergeOwnedFields(
               existing,
-              { ticketNumber, invoiceNumber, paymentStatus: parsedPaymentStatus ?? undefined },
+              {
+                ticketNumber, invoiceNumber,
+                paymentStatus: parsedPaymentStatus ?? undefined,
+                registrationType: ticketTypeRaw || undefined,
+              },
               OWNED_KEYS,
             );
 
@@ -240,7 +244,7 @@ export function makeTicketImportService(
               paymentStatus: parsedPaymentStatus ?? 'unpaid',
               accommodationKind: parsedKind,
               accommodationLabel: null,
-              registrationType: null,
+              registrationType: ticketTypeRaw || null,
               registrationCost: null,
               discountCode: null,
               ticketNumber: ticketNumber || null,

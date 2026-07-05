@@ -10,6 +10,15 @@ import type { Person } from '../../core/entities/person';
 import type { CheckInEntry, SignOutEvent, ElvantoMeta } from '../../core/entities/person';
 import { isCamper } from '../../core/entities/person';
 
+// The "Unallocated" sentinel churchId (see src/services/church-allocation.ts —
+// UNALLOCATED_CHURCH_ID; duplicated here, not imported, to keep repositories/
+// from depending on services/). It is NOT a row in `churches`, so it can never
+// be written to `people.church_id` (which has a real FK to `churches(id)`) —
+// doing so throws a foreign-key violation ("An unexpected error occurred") on
+// every write. Map it to/from SQL NULL instead, which the FK already allows
+// (`on delete set null`).
+const UNALLOCATED_CHURCH_ID = '__unallocated__';
+
 // ---------------------------------------------------------------------------
 // Row → entity mappers
 // ---------------------------------------------------------------------------
@@ -58,7 +67,7 @@ function toPerson(
     grade: (row['grade'] as Person['grade'] | null) ?? null,
     school: (row['school'] as string | null) ?? null,
     kind: row['kind'] as Person['kind'],
-    churchId: row['church_id'] as string,
+    churchId: (row['church_id'] as string | null) ?? UNALLOCATED_CHURCH_ID,
     churchName: row['church_name'] as string,
     zone: row['zone'] as string,
     groupId: (row['group_id'] as string | null) ?? null,
@@ -165,6 +174,9 @@ export class SupabasePersonRepository implements IPersonRepository {
   }
 
   async findByChurch(churchId: string): Promise<Person[]> {
+    if (churchId === UNALLOCATED_CHURCH_ID) {
+      return this.hydrate(await this.sql`select * from people where church_id is null order by last_name`);
+    }
     return this.hydrate(await this.sql`select * from people where church_id = ${churchId} order by last_name`);
   }
 
@@ -264,7 +276,7 @@ function personColumns(p: Person): Record<string, unknown> {
     grade: p.grade ?? null,
     school: p.school ?? null,
     kind: p.kind,
-    church_id: p.churchId ?? null,
+    church_id: p.churchId === UNALLOCATED_CHURCH_ID ? null : (p.churchId ?? null),
     church_name: p.churchName,
     zone: p.zone,
     group_id: p.groupId ?? null,
