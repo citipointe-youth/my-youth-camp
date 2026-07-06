@@ -135,6 +135,9 @@ export interface Services {
   // Expose raw user repo for auth/me lookup and audit controller
   users: IUserRepository;
   settingsRepo: ISettingsRepository;
+  // Expose raw person/church repos for the auth controller's first-aid sample-data seeding
+  people: IPersonRepository;
+  churches: IChurchRepository;
 }
 
 export interface Container {
@@ -211,7 +214,7 @@ export async function buildContainer(): Promise<Container> {
       importService: importSvc, exportService: exportSvc, allocation, churchImport: churchImportSvc,
       ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
       auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
-      account, dashboard, admin, users, settingsRepo,
+      account, dashboard, admin, users, settingsRepo, people, churches,
     };
 
     return { repos, services };
@@ -367,6 +370,8 @@ export async function buildContainer(): Promise<Container> {
     admin,
     users,
     settingsRepo,
+    people,
+    churches,
   };
 
   return { repos, services };

@@ -29,6 +29,7 @@ import { nowISO } from '../utils/date';
 import { newId } from '../utils/id';
 import { makeSettingsService } from './settings.service';
 import { withSignEvent } from './person-lifecycle';
+import { clearFirstAidSample } from './sample-data';
 import { generateTempPassword } from '../utils/temp-password';
 import { hashPassword } from '../utils/crypto';
 import { invalidateDashboardCache } from './dashboard-cache';
@@ -257,6 +258,10 @@ export function makeAdminService(
           await personRepo.saveMany(updated);
           invalidateDashboardCache();
         }
+        // Clear the first-aid pre-camp sample roster (if any was seeded — see
+        // sample-data.ts) now that the real camp is going live, so test students never
+        // reach the live camp's Data/Budget/search screens.
+        await clearFirstAidSample(personRepo, churchRepo);
       } else if (before.campMode === 'at-camp' && mode === 'pre-camp') {
         // Reverting from at-camp back to pre-camp (e.g. an admin toggling modes during
         // setup/testing rather than a real end-of-camp rollover) must undo the presence

@@ -27,7 +27,10 @@ import { makeSettingsController } from '../controllers/settings.controller';
 import { makeAdminController } from '../controllers/admin.controller';
 
 export function buildRoutes(services: Services): (Route | BufferRoute)[] {
-  const auth = makeAuthController({ auth: services.auth, users: services.users });
+  const auth = makeAuthController({
+    auth: services.auth, users: services.users,
+    people: services.people, churches: services.churches, settingsRepo: services.settingsRepo,
+  });
   const dashboard = makeDashboardController({ dashboard: services.dashboard, settings: services.settings });
   const registrant = makeRegistrantController({ person: services.person });
   const accommodation = makeAccommodationController({ accommodation: services.accommodation });

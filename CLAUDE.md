@@ -753,6 +753,35 @@ Admin request, church role only, both modes. No backend/schema change.
   registrations" total card just below (with its own "X campers · Y leaders" sub-line) was
   left as-is — not explicitly in scope.
 
+## First-aid pre-camp sample roster — deployed 2026-07-06
+
+Admin request. `src/services/sample-data.ts` (NEW, no schema change — identified purely by
+church name, not a flag column). `npm run typecheck` clean, `npm run test` = 452 pass (8 new).
+
+- **`ensureFirstAidSample(personRepo, churchRepo)`** — a first-aid login has nothing real to
+  search/log against before the real roster is imported. `auth.controller.ts`'s `login` calls
+  this (wrapped in try/catch — a seeding failure must never break a real login) whenever
+  `result.user.role==='firstAid'` and `settings.campMode==='pre-camp'`. Seeds one clearly-named
+  church (`SAMPLE_CHURCH_NAME = 'Sample Data (Pre-Camp Testing)'`) with 25 sample students
+  (`kind:'youth'`, `lifecycle:'registered'`, `atCamp:false` — never signed in), several with
+  medical/dietary detail so first-aid has realistic conditions/allergies to test search and
+  record-keeping against. **Idempotent** — keyed on the sample church already existing by name,
+  so repeat first-aid logins never duplicate it.
+- **`clearFirstAidSample(personRepo, churchRepo)`** — deletes the sample church and every
+  person in it (their notes/check-in/sign-out history cascade with them). Called from
+  `admin.service.ts` `setMode` on the real **pre-camp → at-camp** transition, right after the
+  existing leader bulk-sign-in block, so sample data can never reach the live camp's
+  Data/Budget/search screens. A no-op if no sample roster was ever seeded.
+- **Isolation, not a flag column.** Both functions identify the sample data purely by the
+  sample church's name (`churchRepo.findAll()` + name match) — deliberately avoids a new
+  `people`/`churches` column or migration. This does mean the sample church is a completely
+  ordinary `Church` row and will appear in church dropdowns/lists like any other while a
+  first-aid tester is logged in pre-camp; it disappears the moment the real camp goes at-camp.
+- **Wiring:** `Services` (`container.ts`) gained raw `people`/`churches` repo exposure
+  (mirrors the existing `users`/`settingsRepo` pattern) so `auth.controller.ts` can call
+  `ensureFirstAidSample` without going through a higher-level service — `AuthControllerServices`
+  gained `people`/`churches`/`settingsRepo`.
+
 ## Commands (run from this folder)
 
 ```bash
