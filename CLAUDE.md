@@ -753,6 +753,31 @@ Admin request, church role only, both modes. No backend/schema change.
   registrations" total card just below (with its own "X campers · Y leaders" sub-line) was
   left as-is — not explicitly in scope.
 
+## First-aid pre-camp testing — deployed 2026-07-06
+
+Admin request. Superseded an earlier same-day approach (a dedicated sample church + 25 fake
+students, fully reverted — see git history around commit `6c3bf3d` if it ever needs
+resurrecting) once a cleaner fix was found: first-aid can already **search** any real
+registrant regardless of arrival status (`search.service.ts` already lets `firstAid` see
+`isRegistrant` people, not just `isCamper` ones — pre-existing, not new). The actual gap was
+`note.service.ts`, which required `isCamper()` before a first-aid record could be
+created/read at all — meaning first-aid record-keeping was completely untestable pre-camp
+(nobody is a "camper" until the real Day-1 sign-in), and would have stayed broken even
+against fake sample data seeded as `lifecycle:'registered'`. `npm run typecheck` clean,
+`npm run test` = 450 pass (10 new). No schema change, no fake data.
+
+- **`note.service.ts` `firstAidEligible(actor, person)`** — `isCamper(person) ||
+  (actor.role==='firstAid' && isRegistrant(person))`. Used in place of the bare `isCamper`
+  check in both `add()` (creating a record) and `recentFirstAid()` (reading them back).
+  Every other role's note-eligibility is unchanged — only firstAid gets the pre-camp
+  allowance, and only for people it can otherwise already access. A cancelled person is
+  still never eligible for anyone.
+- **`admin.service.ts` `setMode`** — on the real pre-camp → at-camp transition (same branch
+  as the existing leader bulk-sign-in), every `category:'firstaid'` note is deleted. Safe and
+  unambiguous: a real first-aid incident cannot happen before the camp is physically live, so
+  every first-aid record that exists while still in pre-camp mode is by definition a test one.
+  Testimonies and general notes are untouched.
+
 ## Commands (run from this folder)
 
 ```bash

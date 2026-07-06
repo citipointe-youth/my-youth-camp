@@ -121,6 +121,50 @@ describe('note.service: first-aid write authorization (category-scoped)', () => 
   });
 });
 
+describe('note.service: pre-camp first-aid testing (registered, not-yet-arrived)', () => {
+  beforeEach(async () => {
+    await people.save(person({ id: 'reg1', churchId: 'c1', zone: 'Yellow', lifecycle: 'registered', atCamp: false }));
+  });
+
+  it('firstAid CAN create a first-aid record about a registered (not-yet-arrived) person', async () => {
+    const note = await svc.add(actor('firstAid'), {
+      camperId: 'reg1',
+      category: 'firstaid',
+      body: 'Problem: test run\nTreatment: n/a',
+    });
+    expect(note.category).toBe('firstaid');
+    expect(note.camperId).toBe('reg1');
+  });
+
+  it('firstAid then sees that record via recentFirstAid', async () => {
+    await svc.add(actor('firstAid'), { camperId: 'reg1', category: 'firstaid', body: 'x' });
+    const recs = await svc.recentFirstAid(actor('firstAid'));
+    expect(recs.map((n) => n.camperId)).toContain('reg1');
+  });
+
+  it('admin/director CANNOT create any note about a not-yet-arrived person — NotFoundError', async () => {
+    await expect(
+      svc.add(actor('admin'), { camperId: 'reg1', category: 'firstaid', body: 'x' }),
+    ).rejects.toThrow(NotFoundError);
+    await expect(
+      svc.add(actor('director'), { camperId: 'reg1', category: 'firstaid', body: 'x' }),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('admin does NOT see a firstAid-only pre-camp record via recentFirstAid (not a camper for them)', async () => {
+    await svc.add(actor('firstAid'), { camperId: 'reg1', category: 'firstaid', body: 'x' });
+    const recs = await svc.recentFirstAid(actor('admin'));
+    expect(recs.map((n) => n.camperId)).not.toContain('reg1');
+  });
+
+  it('a cancelled person is still never eligible, even for firstAid', async () => {
+    await people.save(person({ id: 'cancelled1', churchId: 'c1', zone: 'Yellow', lifecycle: 'cancelled', atCamp: false }));
+    await expect(
+      svc.add(actor('firstAid'), { camperId: 'cancelled1', category: 'firstaid', body: 'x' }),
+    ).rejects.toThrow(NotFoundError);
+  });
+});
+
 describe('note.service: recentFirstAid read scoping', () => {
   beforeEach(async () => {
     // Seed a mix of categories across two churches.

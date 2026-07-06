@@ -2,7 +2,8 @@ import type { INoteRepository, IPersonRepository } from '../repositories/interfa
 import type { StudentNote } from '../core/entities/note';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
-import { isCamper } from '../core/entities/person';
+import { isCamper, isRegistrant } from '../core/entities/person';
+import type { Person } from '../core/entities/person';
 import { canAccessPerson } from './person.service';
 import { NotFoundError, BadRequestError } from '../core/errors/app-error';
 import { newId } from '../utils/id';
@@ -35,6 +36,15 @@ export interface NoteService {
 
 const FIRSTAID_CATEGORY = 'firstaid';
 
+// A first-aider needs to be able to log/read records against real registrants during
+// pre-camp testing too — nobody is a "camper" yet (nothing arrives until the real
+// Day-1 sign-in), so the normal isCamper() gate would make first-aid record-keeping
+// untestable before the camp actually goes live. Every other role keeps the existing
+// arrived-only scope (mirrors the same fallback already used in search.service.ts).
+function firstAidEligible(actor: Actor, person: Person): boolean {
+  return isCamper(person) || (actor.role === 'firstAid' && isRegistrant(person));
+}
+
 export function makeNoteService(
   noteRepo: INoteRepository,
   personRepo: IPersonRepository,
@@ -54,7 +64,7 @@ export function makeNoteService(
       if (isFirstAid && !camperId) throw new BadRequestError('A first-aid record requires a camper');
       if (camperId) {
         const camper = await personRepo.findById(camperId);
-        if (!camper || !isCamper(camper)) throw new NotFoundError('Camper not found');
+        if (!camper || !firstAidEligible(actor, camper)) throw new NotFoundError('Camper not found');
         if (!canAccessPerson(actor, camper)) throw new NotFoundError('Camper not found');
       }
 
@@ -116,7 +126,7 @@ export function makeNoteService(
         if ((note.category ?? 'note') !== FIRSTAID_CATEGORY) continue;
         if (!note.camperId) continue; // first-aid records are always about a camper
         const camper = await personRepo.findById(note.camperId);
-        if (!camper || !isCamper(camper)) continue;
+        if (!camper || !firstAidEligible(actor, camper)) continue;
         if (!canAccessPerson(actor, camper)) continue;
         result.push(note);
         if (result.length >= limit) break;

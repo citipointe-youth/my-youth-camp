@@ -257,6 +257,14 @@ export function makeAdminService(
           await personRepo.saveMany(updated);
           invalidateDashboardCache();
         }
+        // First-aid records logged during pre-camp are necessarily test/practice ones —
+        // nobody is physically at camp yet for a real first-aid incident to happen (see
+        // note.service.ts's firstAidEligible, which lets a first-aider log/read a record
+        // against a not-yet-arrived registrant specifically so this can be tested before
+        // going live). Wipe them all now that the real camp is starting.
+        const allNotes = await noteRepo.findAll();
+        const testFirstAidNotes = allNotes.filter((n) => (n.category ?? 'note') === 'firstaid');
+        for (const n of testFirstAidNotes) await noteRepo.delete(n.id);
       } else if (before.campMode === 'at-camp' && mode === 'pre-camp') {
         // Reverting from at-camp back to pre-camp (e.g. an admin toggling modes during
         // setup/testing rather than a real end-of-camp rollover) must undo the presence
