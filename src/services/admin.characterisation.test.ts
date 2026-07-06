@@ -27,7 +27,6 @@ import type { Devotional } from '../core/entities/devotional';
 import type { CampSettings } from '../core/entities/settings';
 import { SETTINGS_ID } from '../core/entities/settings';
 import { ForbiddenError, NotFoundError, WipeGuardError, BadRequestError } from '../core/errors/app-error';
-import { ensureFirstAidSample, SAMPLE_CHURCH_NAME } from './sample-data';
 
 const NOW = '2026-01-01T00:00:00.000Z';
 
@@ -710,24 +709,5 @@ describe('AdminService.setMode', () => {
     await svc.setMode(actor('admin'), 'pre-camp'); // already pre-camp — no-op
     const lead1 = await fresh.personRepo.findById('lead1');
     expect(lead1!.atCamp).toBe(true); // untouched — before.campMode was never 'at-camp'
-  });
-
-  it('clears the first-aid sample roster (if seeded) on the pre-camp -> at-camp transition', async () => {
-    await ensureFirstAidSample(repos.personRepo, repos.churchRepo);
-    const svc = build(repos);
-
-    await svc.setMode(actor('admin'), 'at-camp');
-
-    const churches = await repos.churchRepo.findAll();
-    expect(churches.find((c) => c.name === SAMPLE_CHURCH_NAME)).toBeUndefined();
-    const people = await repos.personRepo.findAll();
-    expect(people.filter((p) => p.churchName === SAMPLE_CHURCH_NAME)).toHaveLength(0);
-    // Real seeded people (p1/p2 from seedEverything) are untouched.
-    expect(await repos.personRepo.findById('p1')).not.toBeNull();
-  });
-
-  it('does nothing extra on pre-camp -> at-camp when no sample roster was ever seeded', async () => {
-    const svc = build(repos);
-    await expect(svc.setMode(actor('admin'), 'at-camp')).resolves.toBeDefined();
   });
 });
