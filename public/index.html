@@ -1825,15 +1825,21 @@ let faT;function runFaSearch(v){clearTimeout(faT);faT=setTimeout(async()=>{
 },200);}
 // Shared first-aid person row (search + All Students). FA1: anyone NOT currently on site
 // (signed out, departed, or not yet arrived) gets a red warning flag, while still being findable.
+// Presence is only meaningful once the camp is actually live — pre-camp, nobody has arrived
+// yet, so flagging every single row would be noise (the expected state), not a genuine
+// exception worth calling out.
 function faResultRow(c){
   const hasMed=(c.medicalConditions||[]).length>0||c.otherMedications||(c.dietaryRequirements||[]).some(d=>_ALLERGY_RE.test(d));
-  const offSite=!c.atCamp;
+  const showPresence=CAMP_MODE==='at-camp';
+  const offSite=showPresence&&!c.atCamp;
   const flag=offSite?` <span class="pill" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca">${icSm('alert')} Not on site</span>`:'';
   const grade=c.grade?` · Yr ${c.grade}`:(c.kind==='leader'?' · Leader':'');
+  const presence=showPresence?(offSite?'<span style="color:var(--danger);font-weight:700">signed out / not on site</span>':'on site'):'';
+  const metaBits=[esc(c.churchName||''),esc(c.zone||'')+' Zone',presence].filter(Boolean).join(' · ');
   return `<div class="row" onclick="openStudentInfo('${c.id}')">
     ${_faBubble(c)}
     <div style="flex:1;min-width:0"><div class="nm">${esc((c.firstName||'')+' '+(c.lastName||''))}${hasMed?' <span class="pill" style="background:var(--alert-bg);color:var(--alert-ink);border:1px solid var(--alert-bd)">medical</span>':''}${flag}</div>
-    <div class="sub" style="color:var(--ink-2)">${esc(c.churchName||'')} · ${esc(c.zone||'')} Zone · ${offSite?'<span style="color:var(--danger);font-weight:700">signed out / not on site</span>':'on site'}${grade}</div></div>
+    <div class="sub" style="color:var(--ink-2)">${metaBits}${grade}</div></div>
     <span style="color:var(--lav-2)">${ic('chevron')}</span></div>`;
 }
 /* FA2: All Students — first-aider picks a church, then filters by gender (buttons) and grade
@@ -1916,7 +1922,7 @@ async function openStudentInfo(id){
   paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${_faBackExpr(scr)}">${icSm('arrowl')} Back</button></div>
     <div class="fa-id">${_faBubble(c)}<div><h2>${esc(c.firstName+' '+c.lastName)}</h2>
       <div class="meta">${c.kind==='leader'?'Leader':'Student'+(c.grade?' · Grade '+c.grade:'')} · ${esc(c.churchName)} · ${esc(c.zone)} Zone</div>
-      <span class="fa-status ${c.atCamp?'on':'off'}">${c.atCamp?'On site':'Not on site'}</span></div></div>
+      ${CAMP_MODE==='at-camp'?`<span class="fa-status ${c.atCamp?'on':'off'}">${c.atCamp?'On site':'Not on site'}</span>`:''}</div></div>
     ${alert}${consent}${leadCard}${medicare}${dietCard}
     <button class="btn" onclick="openFirstAidLog('${c.id}')">${icSm('plus')} Log first-aid action</button>
     <div id="faRecent"></div>

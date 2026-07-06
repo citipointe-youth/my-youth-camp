@@ -777,6 +777,13 @@ against fake sample data seeded as `lifecycle:'registered'`. `npm run typecheck`
   unambiguous: a real first-aid incident cannot happen before the camp is physically live, so
   every first-aid record that exists while still in pre-camp mode is by definition a test one.
   Testimonies and general notes are untouched.
+- **"Not on site" flag suppressed pre-camp (SPA-only follow-up).** `faResultRow` (shared by
+  Search and All Students — both already listed pre-camp registrants via the existing
+  `scope=all`/`isRegistrant` fallback, no change needed there) and `openStudentInfo`'s header
+  badge only show the red "Not on site"/"signed out / not on site" flag when
+  `CAMP_MODE==='at-camp'`. Pre-camp, being "not on site" is the universal expected state, not
+  an exception worth flagging on every single row — the flag returns as soon as the camp goes
+  live.
 
 ## Commands (run from this folder)
 
