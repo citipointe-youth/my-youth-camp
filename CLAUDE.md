@@ -307,7 +307,9 @@ applied to prod. `sw.js` `camp-v14`→`camp-v15`.
   sign-in'd (`withSignEvent` from `person-lifecycle.ts` — the same transition a normal sign-in
   uses, so `atCamp`/`lifecycle`/`signOutHistory` stay fully consistent with the presence
   invariants above) via a single `personRepo.saveMany` — **not** a per-leader round trip, so this
-  can't reintroduce mode-switch latency. Leaders stay excluded from the twice-daily check-in
+  can't reintroduce mode-switch latency. **(2026-07-06 addendum)** the reverse transition
+  (**at-camp → pre-camp**) now also reverts everyone still `atCamp` — see "Follow-up — mode-switch
+  revert" further down; the forward bulk-sign-in described here is unchanged. Leaders stay excluded from the twice-daily check-in
   roster (`checkin.service.getSessionStatus` now filters `kind !== 'leader'`) and from
   `dashboard.service`'s `checkInsDue` (same filter — a leader never gets a `checkInHistory` entry
   and would otherwise sit permanently "due"); `totalAtCamp`/`totalExpected` are **not** filtered —
