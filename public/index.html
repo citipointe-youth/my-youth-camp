@@ -1179,14 +1179,23 @@ RENDER.home=async function renderHome(skipModeSync){
   // Bug-2: registrations split by who (Student/Leader) × where they sleep (Tent/Classroom).
   // Replaces the old Campers/Leaders/Ldr-blue-card band. Counts come from the already-loaded
   // /registrants (`regs`), so they reflect this login's scope (own church / zone / all).
+  // Church (admin request): just two simple totals, no accommodation breakdown.
   const _acc=(k,a)=>(regs||[]).filter(r=>r.kind===k&&r.accommodationKind===a).length;
-  body+=`<div class="rowsb" style="margin-bottom:6px"><span class="lbl" style="margin:0">Registrations by accommodation</span>${helpTip('Your registered people, split by type (Student or Leader) and sleeping kind (Tent or Classroom), as set in the import.',{left:true})}</div>
-  <div class="statband statband-4">
-    <div class="s"><b>${_acc('camper','tent')}</b><span>Student (Tent)</span></div>
-    <div class="s"><b>${_acc('leader','tent')}</b><span>Leader (Tent)</span></div>
-    <div class="s"><b>${_acc('camper','classroom')}</b><span>Student (Classroom)</span></div>
-    <div class="s"><b>${_acc('leader','classroom')}</b><span>Leader (Classroom)</span></div>
-  </div>`;
+  if(ACTOR.role==='church'){
+    body+=`<div class="rowsb" style="margin-bottom:6px"><span class="lbl" style="margin:0">Registrations</span></div>
+    <div class="statband">
+      <div class="s"><b>${h.totalCampers||0}</b><span>Students</span></div>
+      <div class="s"><b>${h.totalLeaders||0}</b><span>Leaders</span></div>
+    </div>`;
+  }else{
+    body+=`<div class="rowsb" style="margin-bottom:6px"><span class="lbl" style="margin:0">Registrations by accommodation</span>${helpTip('Your registered people, split by type (Student or Leader) and sleeping kind (Tent or Classroom), as set in the import.',{left:true})}</div>
+    <div class="statband statband-4">
+      <div class="s"><b>${_acc('camper','tent')}</b><span>Student (Tent)</span></div>
+      <div class="s"><b>${_acc('leader','tent')}</b><span>Leader (Tent)</span></div>
+      <div class="s"><b>${_acc('camper','classroom')}</b><span>Student (Classroom)</span></div>
+      <div class="s"><b>${_acc('leader','classroom')}</b><span>Leader (Classroom)</span></div>
+    </div>`;
+  }
   if(isWide)body+=`<div class="card tap" onclick="go('budget')"><div class="rowsb"><div><div style="font-weight:600">Budget &amp; costings</div><div class="sub">Camper fees by accommodation</div></div><span class="pill info">View ›</span></div></div>`;
   if(isWide)body+=`<div class="card tap" onclick="go('accom')"><div class="rowsb"><div><div style="font-weight:600">Accommodation allocations</div><div class="sub">Spaces &amp; per-church spot allocation</div></div><span class="pill info">View ›</span></div></div>`;
   body+=`<div class="card"><div class="rowsb"><div class="lbl" style="margin:0">${isWide?'Camp registrations':'Your registrations'}</div><b>${h.totalRegistrants||0}</b></div>
@@ -1295,9 +1304,9 @@ async function renderHomeAtCamp(){
   if(canReadNotes())tiles.push(`<div class="tile" onclick="go('notes')"><div class="ic">${ic('note')}</div><div class="l">Testimonies &amp; Notes</div></div>`);
   tiles.push(`<div class="tile" onclick="go('schedule')"><div class="ic">${ic('calendar')}</div><div class="l">Schedule</div></div>`);
   tiles.push(`<div class="tile" onclick="go('devotional')"><div class="ic">${ic('book')}</div><div class="l">Devotional</div></div>`);
-  // Director's at-camp home hides the Notices tile (they reach notices via the nav tab); every
-  // other role keeps the quick tile.
-  if(ACTOR.role!=='director')tiles.push(`<div class="tile" onclick="gotoTab('notifs')"><div class="ic">${ic('bell')}</div><div class="l">Notices</div></div>`);
+  // Director's at-camp home hides the Notices tile (they reach notices via the nav tab); church
+  // also has it hidden (admin request); zoneLeader/admin keep the quick tile.
+  if(ACTOR.role!=='director'&&ACTOR.role!=='church')tiles.push(`<div class="tile" onclick="gotoTab('notifs')"><div class="ic">${ic('bell')}</div><div class="l">Notices</div></div>`);
   if(ACTOR.role==='church'&&!PREVIEW_MODE)tiles.push(`<div class="tile" style="cursor:default"><div class="ic">${ic('classroom')}</div><div class="l">Your Accommodation</div><div class="sub" style="font-size:.62rem;margin-top:2px">${esc(myAccom)}</div></div>`);
   // Director has no Data tab at-camp (only pre-camp) — surface a direct entry point to the
   // raw registration data table so the capability is reachable in either mode.

@@ -737,6 +737,22 @@ the registrants view (`lifecycle==='registered'`). `npm run typecheck` clean, `n
   added for the Data tab's "Reg type" column — `exportBudget()` and the discount-codes card
   get this for free since they both read the same merged `window._budgetRegs`).
 
+## Church home screen simplification — deployed 2026-07-06 (SPA-only)
+
+Admin request, church role only, both modes. No backend/schema change.
+
+- **At-camp: Notices tile removed from church home.** `renderHomeAtCamp`'s tile-building now
+  excludes `ACTOR.role==='church'` from the Notices quick-tile (mirrors the existing
+  director exclusion) — church still reaches Notices via its bottom-nav tab, just not as a
+  home tile.
+- **Pre-camp: tent/classroom breakdown replaced with two simple tiles for church.** The
+  "Registrations by accommodation" 4-tile band (Student/Leader × Tent/Classroom,
+  `statband-4`) is now conditional on role — church instead gets a plain 2-tile
+  `.statband` ("Students" / "Leaders", from the already-scoped `h.totalCampers`/
+  `h.totalLeaders`); zoneLeader/director/admin are unchanged. The existing "Your
+  registrations" total card just below (with its own "X campers · Y leaders" sub-line) was
+  left as-is — not explicitly in scope.
+
 ## Commands (run from this folder)
 
 ```bash
