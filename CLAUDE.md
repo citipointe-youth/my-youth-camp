@@ -853,6 +853,17 @@ Two env gotchas that matter here:
   IPv6-only — won't work on Vercel) or the integration's `POSTGRES_URL_NON_POOLING` (that's
   the direct one). Both are port 5432 but different hosts.
 
+## UI fix — Data Import "Confirm" button overwide on phone — deployed 2026-07-08
+
+**SPA-only** (`public/index.html`), no backend/schema change. `_renderAllocCards` (Data Import →
+"Unallocated registrants" card): the per-person church `<select>` (`style="flex:1"`) sat next to a
+plain `<button class="btn">Confirm</button>` inside a `.rowsb` flex row. `.btn`'s base CSS is
+`display:block;width:100%`, and inside a flex container an unconstrained `width:100%` becomes the
+item's flex-basis — so the button claimed almost the whole row and squeezed the `<select>` down to
+just its native dropdown arrows on a narrow phone screen. Fixed with an inline override on that one
+button (`style="width:auto;flex:0 0 auto;margin-top:0"`) so it sizes to its own content and the
+church picker gets the space. `sw.js` `camp-v20`→`camp-v21` (HTML changed).
+
 ## Architecture
 
 ```

@@ -3461,7 +3461,7 @@ function _renderAllocCards(){
       ${p.churchUnlistedNote?`<div class="note-hint" style="text-align:left;margin:4px 0"><b>They wrote:</b> ${esc(p.churchUnlistedNote)}</div>`:''}
       <div class="rowsb" style="gap:6px;margin-top:6px">
         <select class="fld" id="alloc_${esc(p.id)}" style="flex:1">${_churchOpts('')}</select>
-        <button class="btn" onclick="allocatePerson('${esc(p.id)}')">Confirm</button>
+        <button class="btn" style="width:auto;flex:0 0 auto;margin-top:0" onclick="allocatePerson('${esc(p.id)}')">Confirm</button>
       </div>
     </div>`).join(''):'<p class="note-hint">No unallocated registrants.</p>';
   const cardA=`<div class="card"><div class="h3" style="margin-top:0">Unallocated registrants (${un.length})</div>
