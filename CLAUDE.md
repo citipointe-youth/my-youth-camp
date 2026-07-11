@@ -866,6 +866,16 @@ church picker gets the space. `sw.js` `camp-v20`→`camp-v21` (HTML changed).
 
 ## Forced password change for admin-set/temp passwords — deployed 2026-07-11 (public-repo privacy audit)
 
+> **⚠️ DISABLED 2026-07-11, at the owner's request** (same day it shipped). The gate is a no-op:
+> `MUST_CHANGE_PASSWORD_ENFORCED = false` in both `src/api/http/express-adapter.ts` and
+> `public/index.html` (two separate constants that must be flipped together — bump `sw.js`'s
+> `CACHE` when you touch the HTML one). Everything else described below — the flag-setting in
+> `account.service`/`admin.service`, the `must_change_password` column, the self-service
+> `POST /accounts/me/password` endpoint, the frontend gate screen — is still fully wired up and
+> dormant. Flipping both constants back to `true` re-enables it immediately, retroactively
+> covering any account flagged while it was off (an admin password reset or new-year rollover
+> still sets the flag even while enforcement is disabled).
+
 A privacy audit of the public GitHub repo (`citipointe-youth/my-youth-camp`) found two issues:
 `src/services/multi-source-import.integration.test.ts` (plus two comments referencing it) carried
 real PII from an actual 2026-07-02 Elvanto export (names, DOB, mobile numbers, emails, Medicare
@@ -898,7 +908,8 @@ than reacting to one already-leaked list.
   `ACTOR.mustChangePassword` and route to `_showChangePasswordGate()` (a full-page gate reusing
   the `#login` card styles) instead of the normal app shell. `_doFetch` also catches a
   `MUST_CHANGE_PASSWORD` response code defensively (a stale cached `ACTOR` without the flag hitting
-  a gated route) and shows the same gate. `sw.js` `camp-v21`→`camp-v22` (HTML changed).
+  a gated route) and shows the same gate. `sw.js` `camp-v21`→`camp-v22` (HTML changed; →`v23` for
+  the disable toggle above).
 - **Migration `021_must_change_password.sql`** — adds `users.must_change_password` (default
   `false` — does not retroactively flag any existing row; no email-list backfill was needed since,
   unlike CMS, no migration here ever seeded named production accounts with a known password).

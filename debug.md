@@ -280,6 +280,7 @@ tolerate absence via `?? false`.
 | **Data tab: phone shown inconsistently / missing leading 0** | SPA `fmtPhone` (~1259) — see Infrastructure table above. |
 | **Data tab: can't sort columns / doesn't default to import order** | SPA `RENDER.data`/`dataApply` (~2906/~2969) — see Pre-camp screens table above. |
 | Write silently blocked, "preview" toast | SPA `api()` preview guard (357) + `enterPreview` (483) |
+| **Login/every screen 403s with `MUST_CHANGE_PASSWORD`, or a "Set a New Password" screen appears** | `mustChangePassword` gate — **currently DISABLED** (2026-07-11, `MUST_CHANGE_PASSWORD_ENFORCED = false` in both `express-adapter.ts` and `public/index.html`; see CLAUDE.md). If you see this, one of those two constants was flipped back to `true` without the other, or a stale deploy is live — check both are in sync and `sw.js` was bumped. |
 | **Preview at-camp view won't load** | SPA `RENDER.home` `/settings` re-fetch is guarded by `if(!PREVIEW_MODE)` (~636); `enterPreview` (483) |
 | Mode change didn't reach a logged-in user | SPA `RENDER.home` `/settings` re-fetch (~636, skipped in preview); backend `admin.service` |
 | **Check-in "Endpoint not found" / session 404** | SPA `RENDER.checkin` (981) — status path must `encodeURIComponent` the id; session-id delimiter is `~` (NOT `#`). Backend `checkin-sessions.ts` `parseSessionId`. |

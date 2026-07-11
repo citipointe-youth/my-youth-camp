@@ -739,6 +739,9 @@ function _prefetch(){
   [...common,...byMode,...byRole].forEach(p=>api(p).catch(()=>{}));
 }
 /* ===== STATE ===== */
+// Temporarily disabled (2026-07-11, at the owner's request) — matches
+// MUST_CHANGE_PASSWORD_ENFORCED in express-adapter.ts. Flip both back to true to re-enable.
+const MUST_CHANGE_PASSWORD_ENFORCED=false;
 let TOKEN=null,ACTOR=null,SETTINGS=null,CAMP_MODE='pre-camp',STACK=['home'],PREVIEW_MODE=false;
 let SESSIONS=[],SEL_SESSION=null,FILTER={gender:'all',grade:'all',church:'all',zone:'all'};
 let LAST_LEADER='';
@@ -884,7 +887,7 @@ async function doLogin(){
     const d=await api('/auth/login',{method:'POST',body:{username:document.getElementById('username').value.trim(),password:document.getElementById('password').value}});
     TOKEN=d.token;ACTOR={...d.user,displayName:((d.user.firstName||'')+' '+(d.user.lastName||'')).trim()};
     localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
-    if(ACTOR.mustChangePassword){document.getElementById('login').style.display='none';_showChangePasswordGate();return;}
+    if(MUST_CHANGE_PASSWORD_ENFORCED&&ACTOR.mustChangePassword){document.getElementById('login').style.display='none';_showChangePasswordGate();return;}
     SETTINGS=await api('/settings');
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
     document.getElementById('login').style.display='none';
@@ -4194,7 +4197,7 @@ async function _tryRestoreSession(){
   TOKEN=tok;
   try{
     ACTOR=JSON.parse(actorJson);
-    if(ACTOR.mustChangePassword){_showChangePasswordGate();return;}
+    if(MUST_CHANGE_PASSWORD_ENFORCED&&ACTOR.mustChangePassword){_showChangePasswordGate();return;}
     SETTINGS=await api('/settings');
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
     document.getElementById('login').style.display='none';

@@ -10,6 +10,13 @@ import { RateLimiter } from '../../utils/rate-limiter';
 
 const logger = createLogger('http');
 
+// Temporarily disabled (2026-07-11, at the owner's request) — the flag-setting in
+// account.service/admin.service, the self-service POST /accounts/me/password endpoint,
+// and the frontend gate (public/index.html, its own matching constant) all stay wired up;
+// this just stops the gate from actually blocking anyone. Flip back to true to re-enable
+// (see CLAUDE.md "Forced password change" — do the same in public/index.html).
+const MUST_CHANGE_PASSWORD_ENFORCED = false;
+
 // Login throttle: 10 FAILED attempts per (IP + username) per 15-minute window.
 // Keyed by ip+username (not bare IP) and counting failures only — at a camp venue all
 // ~200 leaders share ONE public IP behind the WiFi NAT and re-log-in every morning
@@ -100,7 +107,7 @@ export function createApp(routes: (Route | BufferRoute)[], authService: AuthServ
         if (route.auth && !ctx) {
           throw new UnauthorizedError();
         }
-        if (ctx?.actor.mustChangePassword && !('allowMustChangePassword' in route && route.allowMustChangePassword)) {
+        if (MUST_CHANGE_PASSWORD_ENFORCED && ctx?.actor.mustChangePassword && !('allowMustChangePassword' in route && route.allowMustChangePassword)) {
           throw new MustChangePasswordError();
         }
 
