@@ -206,7 +206,9 @@ export function makeAdminService(
         if (u.role === 'admin') continue;
         const tempPassword = generateTempPassword();
         const passwordHash = await hashPassword(tempPassword);
-        await userRepo.save({ ...u, passwordHash });
+        // Generated, not self-chosen — force the holder to set their own before anything
+        // else is reachable (was previously advisory-only: "should set their own password").
+        await userRepo.save({ ...u, passwordHash, mustChangePassword: true });
         if (u.username) tempPasswords.push({ username: u.username, tempPassword });
       }
 

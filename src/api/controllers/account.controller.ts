@@ -30,6 +30,11 @@ export function makeAccountController(services: AccountControllerServices) {
       return services.account.setPassword(req.ctx.actor, req.body);
     },
 
+    async changeOwnPassword(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.account.changeOwnPassword(req.ctx.actor, req.body);
+    },
+
     async createChurch(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.account.createChurchWithAccount(req.ctx.actor, req.body);

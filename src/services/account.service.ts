@@ -7,15 +7,16 @@ import type { User, SafeUser } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
-import { NotFoundError, BadRequestError, ForbiddenError } from '../core/errors/app-error';
+import { NotFoundError, BadRequestError, ForbiddenError, UnauthorizedError } from '../core/errors/app-error';
 import {
   CreateUserSchema,
   UpdateUserSchema,
   SetPasswordSchema,
+  ChangeOwnPasswordSchema,
   CreateChurchWithAccountSchema,
   UpdateChurchSchema,
 } from '../core/validation/account.schema';
-import { hashPassword } from '../utils/crypto';
+import { hashPassword, verifyPassword } from '../utils/crypto';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { toSafeUser } from './auth.service';
@@ -26,6 +27,8 @@ export interface AccountService {
   createUser(actor: Actor, input: unknown): Promise<SafeUser>;
   updateUser(actor: Actor, id: string, input: unknown): Promise<SafeUser>;
   setPassword(actor: Actor, input: unknown): Promise<void>;
+  /** Self-service — proving the current password is what clears mustChangePassword. */
+  changeOwnPassword(actor: Actor, input: unknown): Promise<void>;
   /** Flip an account between active/inactive (CMS parity). The admin can't be deactivated. */
   toggleStatus(actor: Actor, id: string): Promise<SafeUser>;
   createChurchWithAccount(actor: Actor, input: unknown): Promise<{ church: Church; user: SafeUser }>;
@@ -107,7 +110,20 @@ export function makeAccountService(
       const user = await userRepo.findById(data.userId);
       if (!user) throw new NotFoundError('User not found');
       const passwordHash = await hashPassword(data.password);
-      await userRepo.save({ ...user, passwordHash, updatedAt: nowISO() });
+      // An admin-chosen password is never trusted as the account holder's own — flag it so
+      // the holder must set their own password before anything else is reachable (closes the
+      // gap where a reused/guessable/documented default password grants a same-day login).
+      await userRepo.save({ ...user, passwordHash, mustChangePassword: true, updatedAt: nowISO() });
+    },
+
+    async changeOwnPassword(actor, input) {
+      const data = ChangeOwnPasswordSchema.parse(input);
+      const user = await userRepo.findById(actor.id);
+      if (!user || !user.passwordHash) throw new UnauthorizedError('Invalid credentials');
+      const valid = await verifyPassword(data.currentPassword, user.passwordHash);
+      if (!valid) throw new UnauthorizedError('Current password is incorrect');
+      const passwordHash = await hashPassword(data.newPassword);
+      await userRepo.save({ ...user, passwordHash, mustChangePassword: false, updatedAt: nowISO() });
     },
 
     async toggleStatus(actor, id) {

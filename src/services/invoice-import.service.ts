@@ -173,8 +173,8 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
           const invoiceNumber = field(row, 'Invoice Number', 'Invoice #', 'Invoice ID', 'invoiceNumber') || null;
           // Real Billing Contacts export (2026-07-02 sample) uses plain "First Name"/"Last Name"
           // for the billing contact — NOT a "Billing "/"Payer " prefix as first guessed. Note this
-          // is very often a PARENT, not the registrant (e.g. invoice billed to "REDACTED"
-          // for attendee "REDACTED") — that's exactly why invoice-number matching is tier 1
+          // is very often a PARENT, not the registrant (e.g. invoice billed to "Robin Thompson"
+          // for attendee "Ivy Thompson") — that's exactly why invoice-number matching is tier 1
           // and this name is only a fallback (see the "billing-contact name only" warning below).
           const billingFirst = field(row, 'First Name', 'Billing First Name', 'Payer First Name') || '';
           const billingLast = field(row, 'Last Name', 'Billing Last Name', 'Payer Last Name') || '';

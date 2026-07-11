@@ -144,8 +144,8 @@ exceptional state).
 
 1. ~~**Invoice export may have no name field at all**~~ — **RESOLVED 2026-07-02.** The real
    export does have a name field (plain `First Name`/`Last Name`), but it's the **billing
-   contact**, frequently a parent rather than the registrant (e.g. an invoice for "Jacqueline
-   Hales" covers attendee "REDACTED") — confirming the tiered design was the right call:
+   contact**, frequently a parent rather than the registrant (e.g. an invoice for "Robin
+   Thompson" covers attendee "Ivy Thompson") — confirming the tiered design was the right call:
    `invoiceNumber` cross-reference is tier 1 and is what actually resolves real invoices;
    billing-name matching (tier 2) is a fallback and always emits a "verify" warning. See
    `src/services/multi-source-import.integration.test.ts`.

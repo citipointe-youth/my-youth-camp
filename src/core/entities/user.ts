@@ -19,6 +19,13 @@ export interface User {
   zone?: ZoneName | null;
   status: 'active' | 'inactive';
   passwordHash?: string;
+  /**
+   * True for accounts whose current password was set by someone/something other
+   * than the account holder (admin `setPassword`, new-year rollover temp passwords)
+   * and hasn't been changed since. The holder is blocked from everything except
+   * changing their own password until this clears.
+   */
+  mustChangePassword?: boolean;
   createdAt: ISODateString;
   updatedAt: ISODateString;
 }
@@ -32,4 +39,6 @@ export interface Actor {
   churchName: string | null;
   zone: ZoneName | null;
   displayName: string;
+  /** See User.mustChangePassword. Embedded in the signed session token. */
+  mustChangePassword?: boolean;
 }

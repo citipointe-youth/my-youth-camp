@@ -68,8 +68,8 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
 
     // ----- Auth -----
     { method: 'POST', path: '/auth/login', auth: false, handler: (r) => auth.login(r) },
-    { method: 'GET', path: '/auth/me', auth: true, handler: (r) => auth.me(r) },
-    { method: 'POST', path: '/auth/logout', auth: true, handler: (r) => auth.logout(r) },
+    { method: 'GET', path: '/auth/me', auth: true, allowMustChangePassword: true, handler: (r) => auth.me(r) },
+    { method: 'POST', path: '/auth/logout', auth: true, allowMustChangePassword: true, handler: (r) => auth.logout(r) },
 
     // ----- Dashboard / Home -----
     { method: 'GET', path: '/home', auth: true, handler: (r) => dashboard.home(r) },
@@ -199,6 +199,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/accounts/users', auth: true, handler: (r) => account.create(r) },
     { method: 'PATCH', path: '/accounts/users/:id', auth: true, handler: (r) => account.update(r) },
     { method: 'POST', path: '/accounts/users/password', auth: true, handler: (r) => account.setPassword(r) },
+    { method: 'POST', path: '/accounts/me/password', auth: true, allowMustChangePassword: true, handler: (r) => account.changeOwnPassword(r) },
     { method: 'DELETE', path: '/accounts/users/:id', auth: true, handler: (r) => account.deleteUser(r) },
     { method: 'GET', path: '/accounts/churches', auth: true, handler: (r) => account.listChurches(r) },
     { method: 'POST', path: '/accounts/churches', auth: true, handler: (r) => account.createChurch(r) },

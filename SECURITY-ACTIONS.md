@@ -42,7 +42,10 @@ set passwords by hand any more.
   Admin → Records & Export → Download audit workbook; the "Temp Passwords" tab lists
   username + temp password. They are included **once** and then cleared from settings.
 - Share each temp password securely with its church/zone leader. Leaders log in with it
-  and should set their own password (Admin → Accounts can also reset any account).
+  and are **required** to set their own password before reaching anything else in the
+  app (`mustChangePassword`, 2026-07-11 — this used to be advisory only; it's now
+  enforced server-side, not just a "should"). Admin → Accounts can also reset any
+  account's password, which carries the same requirement.
 
 Note: the temp passwords live in plaintext in `settings.lastTempPasswords` only between
 rollover and the first export-or-view, then are wiped. Treat the audit workbook (which

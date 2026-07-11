@@ -4,7 +4,7 @@ import type { Route, BufferRoute, HttpRequest } from './types';
 import type { AuthService } from '../../services/auth.service';
 import { resolveContext } from '../middleware/auth.middleware';
 import { sendError } from '../middleware/error.middleware';
-import { UnauthorizedError } from '../../core/errors/app-error';
+import { UnauthorizedError, MustChangePasswordError } from '../../core/errors/app-error';
 import { createLogger } from '../../utils/logger';
 import { RateLimiter } from '../../utils/rate-limiter';
 
@@ -99,6 +99,9 @@ export function createApp(routes: (Route | BufferRoute)[], authService: AuthServ
         const ctx = await resolveContext(req.headers['authorization'], authService, route.auth);
         if (route.auth && !ctx) {
           throw new UnauthorizedError();
+        }
+        if (ctx?.actor.mustChangePassword && !('allowMustChangePassword' in route && route.allowMustChangePassword)) {
+          throw new MustChangePasswordError();
         }
 
         const httpReq: HttpRequest = {

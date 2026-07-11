@@ -5,9 +5,11 @@ import {
   InMemoryChurchRepository,
   InMemoryPersonRepository,
 } from '../repositories/in-memory';
-import type { Actor } from '../core/entities/user';
+import type { Actor, User } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
 import type { Person } from '../core/entities/person';
+import { hashPassword } from '../utils/crypto';
+import { UnauthorizedError } from '../core/errors/app-error';
 
 // ---------------------------------------------------------------------------
 // AccountService.updateChurch — church rename propagation.
@@ -108,5 +110,63 @@ describe('AccountService.updateChurch — rename propagation', () => {
     const p1 = await people.findById('p1');
     expect(p1?.churchName).toBe('Victory Church');
     expect(p1?.updatedAt).toBe(NOW); // untouched
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mustChangePassword — 2026-07-11 public-repo privacy audit follow-up.
+// setPassword (admin reset) must flag the account; only a successful
+// self-service changeOwnPassword clears it.
+// ---------------------------------------------------------------------------
+
+describe('AccountService — mustChangePassword', () => {
+  let users: InMemoryUserRepository;
+  let svc: AccountService;
+  let leader: User;
+
+  beforeEach(async () => {
+    users = new InMemoryUserRepository();
+    const churches = new InMemoryChurchRepository();
+    const people = new InMemoryPersonRepository();
+    await Promise.all([users.init(), churches.init(), people.init()]);
+    leader = await users.save({
+      id: 'u-leader', firstName: 'Grace', lastName: 'Point', username: 'gracepoint', role: 'church',
+      churchId: null, churchName: null, zone: null, status: 'active',
+      passwordHash: await hashPassword('correcthorse1'),
+      createdAt: NOW, updatedAt: NOW,
+    });
+    svc = makeAccountService(users, churches, people);
+  });
+
+  it('setPassword (admin reset) flags mustChangePassword', async () => {
+    await svc.setPassword(admin(), { userId: leader.id, password: 'newtemp123' });
+    const updated = await users.findById(leader.id);
+    expect(updated?.mustChangePassword).toBe(true);
+  });
+
+  it('changeOwnPassword clears mustChangePassword on a successful self-change', async () => {
+    await svc.setPassword(admin(), { userId: leader.id, password: 'newtemp123' });
+    const actor: Actor = { id: leader.id, role: 'church', churchId: null, churchName: null, zone: null, displayName: 'gracepoint' };
+    await svc.changeOwnPassword(actor, { currentPassword: 'newtemp123', newPassword: 'ownchoice1' });
+    const updated = await users.findById(leader.id);
+    expect(updated?.mustChangePassword).toBe(false);
+  });
+
+  it('changeOwnPassword rejects the wrong current password and leaves the flag untouched', async () => {
+    await svc.setPassword(admin(), { userId: leader.id, password: 'newtemp123' });
+    const actor: Actor = { id: leader.id, role: 'church', churchId: null, churchName: null, zone: null, displayName: 'gracepoint' };
+    await expect(
+      svc.changeOwnPassword(actor, { currentPassword: 'wrongpassword', newPassword: 'ownchoice1' }),
+    ).rejects.toBeInstanceOf(UnauthorizedError);
+    const unchanged = await users.findById(leader.id);
+    expect(unchanged?.mustChangePassword).toBe(true);
+  });
+
+  it('createUser defaults mustChangePassword to false (admin-created accounts are not gated)', async () => {
+    const created = await svc.createUser(admin(), {
+      firstName: 'New', lastName: 'Leader', username: 'newleader', role: 'church', password: 'longenoughpw',
+    });
+    const stored = await users.findById(created.id);
+    expect(stored?.mustChangePassword).toBeFalsy();
   });
 });

@@ -6,10 +6,11 @@ import { InMemoryPersonRepository, InMemoryChurchRepository, InMemoryAllocationO
 import type { Actor } from '../core/entities/user';
 
 // ---------------------------------------------------------------------------
-// Real-sample integration test — runs the ACTUAL three Elvanto exports the
-// user supplied on 2026-07-02 (Form Submissions, Ticket List, Billing
-// Contacts/Invoice) through all three importers in sequence, verifying the
-// end-to-end pipeline against real column headers and real data quirks:
+// Multi-source integration test — runs three Elvanto-shaped exports (Form
+// Submissions, Ticket List, Billing Contacts/Invoice) through all three
+// importers in sequence, verifying the end-to-end pipeline against real
+// column headers and real data quirks discovered against an actual Elvanto
+// export on 2026-07-02 (fictional sample data below, quirks preserved):
 //   - Ticket List's real headers differ from the original guesses ("Event
 //     Occurrence information" not "Event Occurrence", "Invoice Payment
 //     Status" not "Payment Status") and include a "Ticket Status" column
@@ -17,8 +18,8 @@ import type { Actor } from '../core/entities/user';
 //   - Ticket Type values are "Classroom Accommodation" / "EARLY BIRD | Tent
 //     Accomodation" (sic) — substring-matched, not exact.
 //   - The Invoice export's billing-contact name is very often a PARENT, not
-//     the registrant (e.g. invoice for "REDACTED" covers attendee
-//     "REDACTED") — proving why invoice-number matching must be tier 1,
+//     the registrant (e.g. invoice for "Robin Thompson" covers attendee
+//     "Ivy Thompson") — proving why invoice-number matching must be tier 1,
 //     not the name fallback.
 //   - Invoice headers differ from the original guesses too ("Fees Paid" not
 //     "Fees", "Total Tax" not "Tax", plain "First Name"/"Last Name" not
@@ -30,21 +31,21 @@ function actor(role: Actor['role'], over: Partial<Actor> = {}): Actor {
 }
 
 const FORM_CSV = `Date Submitted,Submission Status,Person,Person Status,First Name,Last Name,Gender,Date of Birth,School Grade,Mobile Number,Email Address,Suburb,Postcode,State,Medicare Number,Medical Conditions,Dietary Requirements,List Other Medical Conditions or Medication Taken,Attendee's Church,"If from a church not listed, please specify church name & Youth Pastor",Blue Card/Working with Children Card Number,Blue Card/Working with Children Card Expiry,I give medical consent for my child as listed above.,I give photography and video consent for my child as listed above.,I understand and agree to the Supervision policy.,Parent/Guardian Name,Relation to Child,Parent/Guardian Phone Number,Today's Date
-30/06/2026,Pending,"REDACTED, REDACTED",Pending,REDACTED,REDACTED,Female,01/01/2000,9,0400000000,redacted@example.com,REDACTED,4502,QLD,0000000000,REDACTED,None,,REDACTED Church,,,,Yes,Yes,Yes,Jacqueline REDACTED,Mother,0400000000,30/06/2026
-30/06/2026,Pending,,Pending,REDACTED,REDACTED,Male,01/01/2000,12,0400000000,redacted@example.com,REDACTED,4129,Qld,0000000000,,,,REDACTED Church,,,,Yes,Yes,Yes,Chrisa REDACTED,Father,0400000000,30/06/2026
-29/06/2026,Pending,"REDACTED, REDACTED",Pending,REDACTED,REDACTED,Male,2000-01-01,18+ Leader,0400000000,redacted@example.com,REDACTED,4670,QLD,0000000000,,,,REDACTED Church,,0000000/0,15/11/2028,Yes,Yes,Yes,REDACTED REDACTED,myself,0400000000,29/06/2026
+30/06/2026,Pending,"Thompson, Ivy",Pending,Ivy,Thompson,Female,12/03/2013,9,0400111222,ivy.thompson.sample@example.com,Fakeville,4000,QLD,1234567890,Peanut Allergy,None,,Coastal Community Church,,,,Yes,Yes,Yes,Robin Thompson,Mother,0400111222,30/06/2026
+30/06/2026,Pending,,Pending,Noah,Whitfield,Male,19/11/2010,12,0400222333,noah.whitfield.sample@example.com,Sampleton,4100,QLD,2234567890,,,,Meadowbrook Fellowship,,,,Yes,Yes,Yes,Casey Whitfield,Father,0400333444,30/06/2026
+29/06/2026,Pending,"Sol, Micah",Pending,Micah,Sol,Male,2000-07-15,18+ Leader,0400555666,micah.sol.sample@example.com,Placeholder Hills,4200,QLD,3234567890,,,,Horizon Alliance Church,,9999999/9,15/11/2028,Yes,Yes,Yes,Micah Sol,myself,0400555666,29/06/2026
 `;
 
 const TICKET_CSV = `Ticket Number,Ticket Type,Invoice Number,Event Occurrence information,Last Name,First Name,Phone,Invoice Payment Status,Ticket Status
-31318,Classroom Accommodation,022243,,REDACTED,REDACTED,0400000000,Paid,Active
-31317,EARLY BIRD | Tent Accomodation,022242,,REDACTED,REDACTED,0400000000,Paid,Active
-31316,EARLY BIRD | Tent Accomodation,022241,,REDACTED,REDACTED,0400000000,Paid,Active
+31318,Classroom Accommodation,022243,,Thompson,Ivy,0400111222,Paid,Active
+31317,EARLY BIRD | Tent Accomodation,022242,,Whitfield,Noah,0400222333,Paid,Active
+31316,EARLY BIRD | Tent Accomodation,022241,,Sol,Micah,0400555666,Paid,Active
 `;
 
 const INVOICE_CSV = `Invoice Number,Event Name,Last Name,First Name,Email,Phone,Home Address,Home Address City,Home Address State,Home Address Postcode,Home Address Country,Mailing Address,Mailing Address City,Mailing Address State,Mailing Address Postcode,Mailing Address Country,Payment Method,Invoice Date,Invoice Status,Registrants,Amount Paid,Ticket Total,Discount Total,Fees Paid,Total Tax,Tax Type,Total,Total Due,Transaction Total,Discount Code
-022243,YOUTH CAMP 2026 - PREPARE THE WAY,REDACTED,REDACTED,redacted@example.com,,,,,,,,,,,,,30/06/2026 21:18,Paid,1,190,190,0,0,0,Inclusive,190,0,190,
-022242,YOUTH CAMP 2026 - PREPARE THE WAY,REDACTED,Chrisa,redacted@example.com,,,,,,,,,,,,,30/06/2026 5:05,Paid,1,150,150,0,0,0,Inclusive,150,0,150,
-022241,YOUTH CAMP 2026 - PREPARE THE WAY,REDACTED,REDACTED,redacted@example.com,,,,,,,,,,,,,29/06/2026 15:03,Paid,1,0,150,150,0,0,Inclusive,0,0,0,ALIVE100
+022243,SAMPLE YOUTH CAMP 2026,Thompson,Robin,robin.thompson.sample@example.com,,,,,,,,,,,,,30/06/2026 21:18,Paid,1,190,190,0,0,0,Inclusive,190,0,190,
+022242,SAMPLE YOUTH CAMP 2026,Whitfield,Casey,casey.whitfield.sample@example.com,,,,,,,,,,,,,30/06/2026 5:05,Paid,1,150,150,0,0,0,Inclusive,150,0,150,
+022241,SAMPLE YOUTH CAMP 2026,Sol,Micah,micah.sol.sample@example.com,,,,,,,,,,,,,29/06/2026 15:03,Paid,1,0,150,150,0,0,Inclusive,0,0,0,HORIZON100
 `;
 
 async function build() {
@@ -63,8 +64,8 @@ async function build() {
   };
 }
 
-describe('Multi-source import — real 2026-07-02 sample files, run in sequence (Form -> Ticket -> Invoice)', () => {
-  it('creates 3 registrants from the real Form export, auto-creating their churches', async () => {
+describe('Multi-source import — sample files modelled on a real 2026-07-02 export, run in sequence (Form -> Ticket -> Invoice)', () => {
+  it('creates 3 registrants from the sample Form export, auto-creating their churches', async () => {
     const { formSvc, personRepo, churchRepo } = await build();
     const res = await formSvc.importCsv(actor('admin'), { csvData: FORM_CSV });
     expect(res).toMatchObject({ created: 3, updated: 0, skipped: 0, errors: [] });
@@ -72,64 +73,64 @@ describe('Multi-source import — real 2026-07-02 sample files, run in sequence 
     expect(people).toHaveLength(3);
     const churches = await churchRepo.findAll();
     expect(churches.map((c) => c.name).sort()).toEqual(
-      ['REDACTED Church', 'REDACTED Church', 'REDACTED Church'].sort(),
+      ['Coastal Community Church', 'Horizon Alliance Church', 'Meadowbrook Fellowship'].sort(),
     );
-    const redactedPerson2 = people.find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson2.kind).toBe('leader'); // "18+ Leader" School Grade
+    const micah = people.find((p) => p.firstName === 'Micah')!;
+    expect(micah.kind).toBe('leader'); // "18+ Leader" School Grade
   });
 
-  it('the real Ticket List file matches all 3 by name (cross-church) and sets confirmed accommodation', async () => {
+  it('the sample Ticket List file matches all 3 by name (cross-church) and sets confirmed accommodation', async () => {
     const { formSvc, ticketSvc, personRepo } = await build();
     await formSvc.importCsv(actor('admin'), { csvData: FORM_CSV });
     const res = await ticketSvc.importTicketsCsv(actor('admin'), { csvData: TICKET_CSV });
-    // All 3 real rows match an existing person by (cross-church) name — no orphans, no skips.
+    // All 3 sample rows match an existing person by (cross-church) name — no orphans, no skips.
     expect(res).toMatchObject({ created: 0, updated: 3, skipped: 0, errors: [] });
 
     const people = await personRepo.findAll();
     expect(people).toHaveLength(3); // no orphans created
 
-    const redactedPerson = people.find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson.accommodationKind).toBe('classroom'); // "Classroom Accommodation"
-    expect(redactedPerson.accommodationKindConfidence).toBe('confirmed');
-    expect(redactedPerson.ticketNumber).toBe('31318');
-    expect(redactedPerson.invoiceNumber).toBe('022243');
-    expect(redactedPerson.paymentStatus).toBe('paid');
+    const ivy = people.find((p) => p.firstName === 'Ivy')!;
+    expect(ivy.accommodationKind).toBe('classroom'); // "Classroom Accommodation"
+    expect(ivy.accommodationKindConfidence).toBe('confirmed');
+    expect(ivy.ticketNumber).toBe('31318');
+    expect(ivy.invoiceNumber).toBe('022243');
+    expect(ivy.paymentStatus).toBe('paid');
 
-    const redactedPerson3 = people.find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson3.accommodationKind).toBe('tent'); // "EARLY BIRD | Tent Accomodation" (real misspelling)
-    expect(redactedPerson3.accommodationKindConfidence).toBe('confirmed');
-    expect(redactedPerson3.ticketNumber).toBe('31317');
-    expect(redactedPerson3.invoiceNumber).toBe('022242');
+    const noah = people.find((p) => p.firstName === 'Noah')!;
+    expect(noah.accommodationKind).toBe('tent'); // "EARLY BIRD | Tent Accomodation" (real misspelling)
+    expect(noah.accommodationKindConfidence).toBe('confirmed');
+    expect(noah.ticketNumber).toBe('31317');
+    expect(noah.invoiceNumber).toBe('022242');
 
-    const redactedPerson2 = people.find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson2.accommodationKind).toBe('tent');
-    expect(redactedPerson2.ticketNumber).toBe('31316');
-    expect(redactedPerson2.invoiceNumber).toBe('022241');
+    const micah = people.find((p) => p.firstName === 'Micah')!;
+    expect(micah.accommodationKind).toBe('tent');
+    expect(micah.ticketNumber).toBe('31316');
+    expect(micah.invoiceNumber).toBe('022241');
   });
 
   it('a non-Active Ticket Status is skipped, not treated as confirmed truth', async () => {
     const { formSvc, ticketSvc, personRepo } = await build();
     await formSvc.importCsv(actor('admin'), { csvData: FORM_CSV });
     const cancelledCsv = TICKET_CSV.replace(
-      '31318,Classroom Accommodation,022243,,REDACTED,REDACTED,0400000000,Paid,Active',
-      '31318,Classroom Accommodation,022243,,REDACTED,REDACTED,0400000000,Paid,Cancelled',
+      '31318,Classroom Accommodation,022243,,Thompson,Ivy,0400111222,Paid,Active',
+      '31318,Classroom Accommodation,022243,,Thompson,Ivy,0400111222,Paid,Cancelled',
     );
     const res = await ticketSvc.importTicketsCsv(actor('admin'), { csvData: cancelledCsv });
     expect(res.skipped).toBe(1); // the cancelled row
     expect(res.updated).toBe(2); // the other two still import
     expect(res.warnings.some((w) => /Ticket Status "Cancelled" is not Active/.test(w.message))).toBe(true);
-    const redactedPerson = (await personRepo.findAll()).find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson.accommodationKind).toBeNull(); // untouched — cancelled ticket never wrote it
+    const ivy = (await personRepo.findAll()).find((p) => p.firstName === 'Ivy')!;
+    expect(ivy.accommodationKind).toBeNull(); // untouched — cancelled ticket never wrote it
   });
 
-  it('the real Billing Contacts file attributes money to the RIGHT registrant via invoice number, even though the billing contact is a different-named parent', async () => {
+  it('the sample Billing Contacts file attributes money to the RIGHT registrant via invoice number, even though the billing contact is a different-named parent', async () => {
     const { formSvc, ticketSvc, invoiceSvc, personRepo } = await build();
     await formSvc.importCsv(actor('admin'), { csvData: FORM_CSV });
     await ticketSvc.importTicketsCsv(actor('admin'), { csvData: TICKET_CSV });
     const res = await invoiceSvc.importInvoicesCsv(actor('admin'), { csvData: INVOICE_CSV });
-    // All 3 real rows resolve via tier-1 invoiceNumber match (set by the Ticket List import
+    // All 3 sample rows resolve via tier-1 invoiceNumber match (set by the Ticket List import
     // above) — the billing-contact-name fallback (tier 2) is never needed, which is exactly
-    // right since "REDACTED REDACTED" (the billing contact) is NOT "REDACTED REDACTED" (the
+    // right since "Robin Thompson" (the billing contact) is NOT "Ivy Thompson" (the
     // registrant) and would otherwise risk a wrong/ambiguous name-only match.
     expect(res).toMatchObject({
       created: 0, updated: 3, skipped: 0, deleted: 0, ambiguousGroupInvoices: 0, errors: [],
@@ -137,24 +138,24 @@ describe('Multi-source import — real 2026-07-02 sample files, run in sequence 
     expect(res.warnings.some((w) => /billing-contact name only/.test(w.message))).toBe(false);
 
     const people = await personRepo.findAll();
-    const redactedPerson = people.find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson.registrationCost).toBe(190);
-    expect(redactedPerson.amountPaid).toBe(190);
-    expect(redactedPerson.discountAmount).toBe(0);
-    expect(redactedPerson.feesAmount).toBe(0);
-    expect(redactedPerson.taxAmount).toBe(0);
+    const ivy = people.find((p) => p.firstName === 'Ivy')!;
+    expect(ivy.registrationCost).toBe(190);
+    expect(ivy.amountPaid).toBe(190);
+    expect(ivy.discountAmount).toBe(0);
+    expect(ivy.feesAmount).toBe(0);
+    expect(ivy.taxAmount).toBe(0);
     // accommodationKind was already 'confirmed' via Ticket List — Invoice must not touch it.
-    expect(redactedPerson.accommodationKind).toBe('classroom');
-    expect(redactedPerson.accommodationKindConfidence).toBe('confirmed');
+    expect(ivy.accommodationKind).toBe('classroom');
+    expect(ivy.accommodationKindConfidence).toBe('confirmed');
 
-    const redactedPerson2 = people.find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson2.registrationCost).toBe(150);
-    expect(redactedPerson2.discountAmount).toBe(150); // ALIVE100 — fully discounted
-    expect(redactedPerson2.amountPaid).toBe(0);
-    expect(redactedPerson2.discountCode).toBe('ALIVE100');
+    const micah = people.find((p) => p.firstName === 'Micah')!;
+    expect(micah.registrationCost).toBe(150);
+    expect(micah.discountAmount).toBe(150); // HORIZON100 — fully discounted
+    expect(micah.amountPaid).toBe(0);
+    expect(micah.discountCode).toBe('HORIZON100');
   });
 
-  it('full pipeline (Form -> Ticket -> Invoice) leaves all 3 real registrants fully reconciled with no orphans and nothing flagged for review', async () => {
+  it('full pipeline (Form -> Ticket -> Invoice) leaves all 3 sample registrants fully reconciled with no orphans and nothing flagged for review', async () => {
     const { formSvc, ticketSvc, invoiceSvc, personRepo } = await build();
     await formSvc.importCsv(actor('admin'), { csvData: FORM_CSV });
     await ticketSvc.importTicketsCsv(actor('admin'), { csvData: TICKET_CSV });
@@ -171,7 +172,7 @@ describe('Multi-source import — real 2026-07-02 sample files, run in sequence 
       expect(p.registrationCost).not.toBeNull();
       expect(p.paymentStatus).toBe('paid');
       // grade/gender/medical (Form-owned) survive both later imports untouched.
-      expect(p.gender).not.toBe('other'); // both real students/leader have a real Gender value
+      expect(p.gender).not.toBe('other'); // both sample students/leader have a real Gender value
     }
   });
 
@@ -192,20 +193,20 @@ describe('Multi-source import — real 2026-07-02 sample files, run in sequence 
     const people = await personRepo.findAll();
     expect(people).toHaveLength(3); // no orphans, no duplicates from the reordering
 
-    const redactedPerson = people.find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson.accommodationKind).toBe('classroom');
-    expect(redactedPerson.registrationCost).toBe(190);
-    expect(redactedPerson.amountPaid).toBe(190);
+    const ivy = people.find((p) => p.firstName === 'Ivy')!;
+    expect(ivy.accommodationKind).toBe('classroom');
+    expect(ivy.registrationCost).toBe(190);
+    expect(ivy.amountPaid).toBe(190);
 
-    const redactedPerson3 = people.find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson3.accommodationKind).toBe('tent');
-    expect(redactedPerson3.registrationCost).toBe(150);
+    const noah = people.find((p) => p.firstName === 'Noah')!;
+    expect(noah.accommodationKind).toBe('tent');
+    expect(noah.registrationCost).toBe(150);
 
-    const redactedPerson2 = people.find((p) => p.firstName === 'REDACTED')!;
-    expect(redactedPerson2.kind).toBe('leader');
-    expect(redactedPerson2.accommodationKind).toBe('tent');
-    expect(redactedPerson2.discountCode).toBe('ALIVE100');
-    expect(redactedPerson2.amountPaid).toBe(0);
+    const micah = people.find((p) => p.firstName === 'Micah')!;
+    expect(micah.kind).toBe('leader');
+    expect(micah.accommodationKind).toBe('tent');
+    expect(micah.discountCode).toBe('HORIZON100');
+    expect(micah.amountPaid).toBe(0);
 
     for (const p of people) {
       expect(p.needsReview).toBe(false);

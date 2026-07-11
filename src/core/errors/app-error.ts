@@ -49,3 +49,9 @@ export class WipeGuardError extends AppError {
     super(409, 'WIPE_GUARD', m);
   }
 }
+
+export class MustChangePasswordError extends AppError {
+  constructor(m = 'Password must be changed before continuing') {
+    super(403, 'MUST_CHANGE_PASSWORD', m);
+  }
+}

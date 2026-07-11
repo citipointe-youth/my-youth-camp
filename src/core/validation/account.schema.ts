@@ -44,6 +44,13 @@ export const SetPasswordSchema = z.object({
 
 export type SetPasswordInput = z.infer<typeof SetPasswordSchema>;
 
+export const ChangeOwnPasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6),
+});
+
+export type ChangeOwnPasswordInput = z.infer<typeof ChangeOwnPasswordSchema>;
+
 export const CreateChurchWithAccountSchema = z.object({
   churchName: z.string().min(1),
   zone: z.enum(ZONE_NAMES),

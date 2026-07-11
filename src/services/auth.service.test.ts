@@ -191,6 +191,26 @@ describe('AuthService token lifecycle (stateless HMAC sessions)', () => {
     expect(await svc.resolveToken(token)).not.toBeNull();
   });
 
+  it('embeds mustChangePassword: true in the token for a flagged account', async () => {
+    const repo = new InMemoryUserRepository();
+    await repo.init();
+    await seedUser(repo, { mustChangePassword: true });
+    const svc = makeAuthService(repo);
+    const { token } = await svc.login({ username: 'admin', password: 'demo1234' });
+    const actor = await svc.resolveToken(token);
+    expect(actor?.mustChangePassword).toBe(true);
+  });
+
+  it('embeds mustChangePassword: false for a normal account', async () => {
+    const repo = new InMemoryUserRepository();
+    await repo.init();
+    await seedUser(repo);
+    const svc = makeAuthService(repo);
+    const { token } = await svc.login({ username: 'admin', password: 'demo1234' });
+    const actor = await svc.resolveToken(token);
+    expect(actor?.mustChangePassword).toBe(false);
+  });
+
   it('resolveToken returns null for a malformed / unsigned token', async () => {
     const repo = new InMemoryUserRepository();
     await repo.init();

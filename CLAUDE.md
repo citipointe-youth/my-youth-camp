@@ -241,10 +241,10 @@ headers are plain `First Name`/`Last Name` (not `Billing First Name`), `Fees Pai
 `Total Tax` (not `Tax`). Ticket List also has a `Ticket Status` column not anticipated at design
 time — a ticket whose status isn't `Active` (case-insensitive) is now skipped with a warning
 rather than treated as confirmed accommodation truth (e.g. a cancelled/refunded ticket). All of
-this is covered by `src/services/multi-source-import.integration.test.ts`, which runs the actual
-three real sample files end-to-end through all three importers in sequence and asserts the final
-state — including that the Invoice file's billing contact is often a **parent**, not the
-registrant (e.g. an invoice billed to "REDACTED" covering attendee "REDACTED"),
+this is covered by `src/services/multi-source-import.integration.test.ts`, which runs sample
+files modelled on a real export end-to-end through all three importers in sequence and asserts the
+final state — including that the Invoice file's billing contact is often a **parent**, not the
+registrant (e.g. an invoice billed to "Robin Thompson" covering attendee "Ivy Thompson"),
 which is exactly why invoice-number matching is tier 1 and billing-name matching is only a
 fallback. The multi-alias `field(row, ...)` pattern made all of these corrections low-risk,
 additive changes — no matching/merge logic needed to change.
@@ -864,6 +864,45 @@ just its native dropdown arrows on a narrow phone screen. Fixed with an inline o
 button (`style="width:auto;flex:0 0 auto;margin-top:0"`) so it sizes to its own content and the
 church picker gets the space. `sw.js` `camp-v20`→`camp-v21` (HTML changed).
 
+## Forced password change for admin-set/temp passwords — deployed 2026-07-11 (public-repo privacy audit)
+
+A privacy audit of the public GitHub repo (`citipointe-youth/my-youth-camp`) found two issues:
+`src/services/multi-source-import.integration.test.ts` (plus two comments referencing it) carried
+real PII from an actual 2026-07-02 Elvanto export (names, DOB, mobile numbers, emails, Medicare
+numbers, a medical condition, addresses) — replaced with fictional sample data (the tests only
+ever asserted on structural values — names-as-lookup-keys, grades, ticket/invoice numbers, amounts
+— never on the PII fields themselves, so nothing else needed to change). And, mirroring the CMS
+audit finding, `CLAUDE.md`'s seed-account table sat directly under a documented shared default
+password, and `public/index.html`'s demo quick-login button ships that literal password (plus the
+real username list) in the production JS bundle regardless of the `_isDemoHost()` UI gate — unlike
+CMS, no migration seeds named production accounts with it, so this closes the gap for good rather
+than reacting to one already-leaked list.
+
+- **`User`/`Actor.mustChangePassword`** (`src/core/entities/user.ts`), embedded in the signed
+  session token (`toActor()` in `auth.service.ts`) and enforced in `express-adapter.ts` right
+  after `resolveContext`: any route without `allowMustChangePassword: true` on its `Route` entry
+  throws `MustChangePasswordError` (403, code `MUST_CHANGE_PASSWORD`) for a flagged actor. Only
+  `GET /auth/me`, `POST /auth/logout`, and the new `POST /accounts/me/password` are allowlisted.
+- **New self-service endpoint**, `POST /accounts/me/password` (`account.service.changeOwnPassword`)
+  — this app previously had no way for an account holder to change their own password, only
+  `POST /accounts/users/password` (admin resetting someone else). Verifies the current password
+  server-side, then clears the flag; the only path that ever clears it.
+- **Who gets flagged:** `account.service.setPassword` (admin resets an existing account's
+  password) and the new-year rollover's generated temp passwords (`admin.service.ts` `newYear`) —
+  both were previously admin-chosen/generated passwords trusted with no enforcement (temp
+  passwords were advisory-only: "should set their own password"). Deliberately **NOT** flagged:
+  `createUser`/`createChurchWithAccount` (initial account creation, admin present) — narrower
+  scope, matching the equivalent CMS decision, to avoid extra friction on accounts an admin just
+  walked someone through setting up.
+- **Frontend** (`public/index.html`): `doLogin()`/`_tryRestoreSession()` check
+  `ACTOR.mustChangePassword` and route to `_showChangePasswordGate()` (a full-page gate reusing
+  the `#login` card styles) instead of the normal app shell. `_doFetch` also catches a
+  `MUST_CHANGE_PASSWORD` response code defensively (a stale cached `ACTOR` without the flag hitting
+  a gated route) and shows the same gate. `sw.js` `camp-v21`→`camp-v22` (HTML changed).
+- **Migration `021_must_change_password.sql`** — adds `users.must_change_password` (default
+  `false` — does not retroactively flag any existing row; no email-list backfill was needed since,
+  unlike CMS, no migration here ever seeded named production accounts with a known password).
+
 ## Architecture
 
 ```
@@ -1016,7 +1055,7 @@ The SPA was forked from an earlier demo and had drifted onto the demo's **MockAP
 - `renderHomeAtCamp()` fetches `/notifications` once in the initial `Promise.all`. The urgent-notice popup uses `_checkUrgentNoticesFromFeed(feed)` with the pre-fetched feed — never a second `/notifications` call.
 - `renderOversightPulse()` is called without `await` from `renderHomeAtCamp()` — the home screen paints immediately and the pulse bars inject asynchronously into `#homePulse`.
 
-## Seed demo accounts (password: `demo1234`)
+## Seed demo accounts
 
 Logins are **usernames**, not emails (`User.username`; case-insensitive). Real
 contact emails live on Person/Church, separate from the login id. The demo
@@ -1031,9 +1070,18 @@ quick-login panel only appears on localhost/dev (gated by `_initDemoLogin()`).
 | `director` | director | — |
 | `admin` | admin | — |
 
-Passwords are min 6 chars. Admin can create/edit accounts (editable username +
-uniqueness), set passwords, and activate/deactivate (`toggleStatus`; the sole admin
-can't be deactivated).
+Local `PERSISTENCE=memory` dev/demo mode: password `demo1234` for all of the
+above (`src/data/seed.ts`, never touches production — production has no user-seeding
+migration beyond the single admin row in `002_seed_admin.sql`, which is seeded with a
+`null` password_hash so login is rejected until an operator sets one). Passwords are
+min 6 chars. Admin can create/edit accounts (editable username + uniqueness), set
+passwords, and activate/deactivate (`toggleStatus`; the sole admin can't be
+deactivated). **Forced password change (see "Security notes" below):** any account
+whose password was set by an admin (`setPassword`) or generated by the new-year
+rollover (`lastTempPasswords`) is flagged `mustChangePassword` and can do nothing but
+change its own password (`POST /accounts/me/password`) until it does — this closes the
+gap where an admin-set password following this documented convention (e.g. `demo1234`)
+could otherwise grant a same-day login to a real account.
 
 ## Year-to-year reuse  (reset vs new-year semantics — decided 2026-06-18)
 

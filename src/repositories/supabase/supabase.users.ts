@@ -15,6 +15,7 @@ function toUser(row: Record<string, unknown>): User {
     zone: (row['zone'] as User['zone']) ?? undefined,
     status: row['status'] as User['status'],
     passwordHash: (row['password_hash'] as string | null) ?? undefined,
+    mustChangePassword: (row['must_change_password'] as boolean | null) ?? false,
     createdAt: (row['created_at'] as Date).toISOString(),
     updatedAt: (row['updated_at'] as Date).toISOString(),
   };
@@ -33,6 +34,7 @@ function userColumns(u: User): Record<string, unknown> {
     zone: u.zone ?? null,
     status: u.status,
     password_hash: u.passwordHash ?? null,
+    must_change_password: u.mustChangePassword ?? false,
     created_at: u.createdAt,
     updated_at: u.updatedAt,
   };
@@ -40,7 +42,7 @@ function userColumns(u: User): Record<string, unknown> {
 
 const UPDATE_COLS = [
   'first_name', 'last_name', 'username', 'mobile', 'role',
-  'church_id', 'church_name', 'zone', 'status', 'password_hash', 'updated_at',
+  'church_id', 'church_name', 'zone', 'status', 'password_hash', 'must_change_password', 'updated_at',
 ] as const;
 
 export class SupabaseUserRepository implements IUserRepository {

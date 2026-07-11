@@ -399,10 +399,10 @@ textarea{min-height:84px;resize:vertical;}
 .gradepill{font-size:var(--t-micro);font-weight:800;background:#eef2f8;color:#475569;border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
 .err{background:#fde2e1;color:#7f1d1d;border-radius:10px;padding:9px 12px;font-size:var(--t-sm);margin-top:8px;display:none;}
 /* Login is white-background / purple-text to match the in-app theme (was dark gradient). */
-#login{position:absolute;inset:0;background:#fff;display:flex;flex-direction:column;justify-content:center;padding:28px;z-index:60;}
-#login h1{color:var(--violet);font-size:1.85rem;text-align:center;margin-bottom:5px;letter-spacing:-.03em;font-weight:800;}
-#login p{color:var(--purple);text-align:center;font-size:var(--t-sm);margin-bottom:22px;font-weight:600;}
-#login .card{background:#fff;border:1px solid var(--line);box-shadow:0 14px 40px rgba(124,58,237,.12);border-radius:20px;}
+#login,#mcpGate{position:absolute;inset:0;background:#fff;display:flex;flex-direction:column;justify-content:center;padding:28px;z-index:60;}
+#login h1,#mcpGate h1{color:var(--violet);font-size:1.85rem;text-align:center;margin-bottom:5px;letter-spacing:-.03em;font-weight:800;}
+#login p,#mcpGate p{color:var(--purple);text-align:center;font-size:var(--t-sm);margin-bottom:22px;font-weight:600;}
+#login .card,#mcpGate .card{background:#fff;border:1px solid var(--line);box-shadow:0 14px 40px rgba(124,58,237,.12);border-radius:20px;}
 .quick{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
 .quick button{flex:1;min-width:44%;border:1px solid var(--line);background:var(--chip);color:var(--violet-d,#6d28d9);border-radius:12px;padding:9px 8px;font-size:var(--t-xs);cursor:pointer;font-weight:700;font-family:inherit;transition:background .12s;}
 .quick button:active{background:var(--lav,#ede9fe);}
@@ -577,6 +577,20 @@ textarea{min-height:84px;resize:vertical;}
          with prefilled credentials in production. -->
     <div id="demoLogin"></div>
   </div>
+  <!-- Full-page gate for accounts flagged mustChangePassword (admin-set or new-year
+       temp password) — shown instead of #login/the app shell; see _showChangePasswordGate(). -->
+  <div id="mcpGate" style="display:none">
+    <h1>Set a New Password</h1>
+    <p>This account's password must be changed before continuing</p>
+    <div class="card">
+      <label>Current Password</label><input class="fld" id="mcp-cur" type="password" autocomplete="current-password">
+      <label>New Password (min 6 chars)</label><input class="fld" id="mcp-new" type="password" autocomplete="new-password">
+      <label>Confirm New Password</label><input class="fld" id="mcp-new2" type="password" autocomplete="new-password">
+      <button class="btn" onclick="submitChangePassword()">Set Password &amp; Continue</button>
+      <button class="btn ghost" style="margin-top:8px" onclick="logout()">Sign Out</button>
+      <div class="err" id="mcpErr"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -684,7 +698,17 @@ async function _doFetch(path,opt){
   if(res.status===401&&TOKEN){sessionExpired();throw new Error('Session expired — please sign in again.');}
   if(res.status===204)return null;
   let j=null;try{j=await res.json();}catch(e){j=null;}
-  if(!res.ok)throw new Error((j&&(j.message||j.error))||('Request failed ('+res.status+')'));
+  if(!res.ok){
+    const err=new Error((j&&(j.message||j.error))||('Request failed ('+res.status+')'));
+    err.code=j&&j.code;
+    // A stale cached ACTOR (e.g. an admin reset this account's password in another tab) can
+    // drift out of sync with the server; if the server says the gate is up, trust it.
+    if(err.code==='MUST_CHANGE_PASSWORD'){
+      if(ACTOR&&!ACTOR.mustChangePassword){ACTOR.mustChangePassword=true;localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));}
+      _showChangePasswordGate();
+    }
+    throw err;
+  }
   return j;
   }finally{_npDone();}
 }
@@ -859,9 +883,10 @@ async function doLogin(){
     Cache.clear(); // never carry one user's cached data into another's session
     const d=await api('/auth/login',{method:'POST',body:{username:document.getElementById('username').value.trim(),password:document.getElementById('password').value}});
     TOKEN=d.token;ACTOR={...d.user,displayName:((d.user.firstName||'')+' '+(d.user.lastName||'')).trim()};
+    localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
+    if(ACTOR.mustChangePassword){document.getElementById('login').style.display='none';_showChangePasswordGate();return;}
     SETTINGS=await api('/settings');
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
-    localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
     document.getElementById('login').style.display='none';
     document.getElementById('bar').style.display='flex';
     document.getElementById('stage').style.display='block';
@@ -876,6 +901,38 @@ function logout(){
   localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
   sessionStorage.removeItem('ycp_wizardReturn');
   TOKEN=null;ACTOR=null;location.reload();
+}
+// Full-page gate for accounts flagged mustChangePassword (admin-set or new-year temp
+// password) — blocks everything else app-side too, mirroring the server's
+// MUST_CHANGE_PASSWORD 403 (see express-adapter.ts).
+function _showChangePasswordGate(){
+  document.getElementById('bar').style.display='none';
+  document.getElementById('stage').style.display='none';
+  document.getElementById('tabs').style.display='none';
+  document.getElementById('login').style.display='none';
+  document.getElementById('mcpGate').style.display='flex';
+}
+function _mcpErr(m){const e=document.getElementById('mcpErr');if(e){e.textContent=m;e.style.display='block';}}
+async function submitChangePassword(){
+  const errEl=document.getElementById('mcpErr');if(errEl)errEl.style.display='none';
+  const cur=document.getElementById('mcp-cur').value;
+  const pw1=document.getElementById('mcp-new').value;
+  const pw2=document.getElementById('mcp-new2').value;
+  if(!cur)return _mcpErr('Enter your current password');
+  if(!pw1||pw1.length<6)return _mcpErr('New password must be at least 6 characters');
+  if(pw1!==pw2)return _mcpErr('New passwords do not match');
+  try{
+    await api('/accounts/me/password',{method:'POST',body:{currentPassword:cur,newPassword:pw1}});
+    ACTOR.mustChangePassword=false;localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
+    toast('Password updated');
+    document.getElementById('mcpGate').style.display='none';
+    SETTINGS=await api('/settings');
+    CAMP_MODE=SETTINGS.campMode||'pre-camp';
+    document.getElementById('bar').style.display='flex';
+    document.getElementById('stage').style.display='block';
+    document.getElementById('tabs').style.display='';
+    updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
+  }catch(e){_mcpErr(e.message);}
 }
 // Brisbane-anchored "today" (YYYY-MM-DD), mirroring the backend's zonedNow(). The camp's
 // timezone is hardcoded Australia/Brisbane (see adminSettings — the field was removed), so this
@@ -4137,6 +4194,7 @@ async function _tryRestoreSession(){
   TOKEN=tok;
   try{
     ACTOR=JSON.parse(actorJson);
+    if(ACTOR.mustChangePassword){_showChangePasswordGate();return;}
     SETTINGS=await api('/settings');
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
     document.getElementById('login').style.display='none';
@@ -4145,6 +4203,7 @@ async function _tryRestoreSession(){
     document.getElementById('tabs').style.display='';  // let CSS media query control visibility
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
   }catch(e){
+    if(e&&e.code==='MUST_CHANGE_PASSWORD'){_showChangePasswordGate();return;}
     TOKEN=null;ACTOR=null;
     localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
   }

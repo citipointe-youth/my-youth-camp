@@ -506,6 +506,16 @@ describe('AdminService.newYear', () => {
     expect(Array.isArray(result.tempPasswords)).toBe(true);
   });
 
+  it('flags restored non-admin accounts mustChangePassword (temp passwords are generated, not self-chosen)', async () => {
+    await saveBaseline();
+    const svc = build(repos);
+    await svc.newYear(actor('admin'), 2027);
+    const users = await repos.userRepo.findAll();
+    const restored = users.find((u) => u.id === 'baseChurchUser')!;
+    expect(restored.mustChangePassword).toBe(true);
+    expect(users.find((u) => u.role === 'admin')!.mustChangePassword).toBeFalsy();
+  });
+
   it('wipe guard: newYear throws WipeGuardError when lastExportedAt is null', async () => {
     await repos.settingsRepo.saveSingleton(settings({ lastExportedAt: null }));
     await saveBaseline();
