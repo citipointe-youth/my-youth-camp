@@ -503,7 +503,8 @@ textarea{min-height:84px;resize:vertical;}
 <div class="app" id="app">
   <div id="previewBanner">
     <span class="pb-label" id="pbLabel">PREVIEW — at-camp view is read-only</span>
-    <button class="pb-exit" onclick="exitPreview()">Exit preview ×</button>
+    <button class="pb-exit" id="pbToggle" style="display:none" onclick="_togglePreviewMode()"></button>
+    <button class="pb-exit" id="pbExit" onclick="_exitAnyPreview()">Exit ×</button>
   </div>
   <header class="bar" id="bar" style="display:none">
     <div id="nprog"></div>
@@ -715,7 +716,7 @@ async function _doFetch(path,opt){
 async function api(path,opt={}){
   const method=(opt.method||'GET').toUpperCase();
   if(method!=='GET'){
-    if(PREVIEW_MODE){toast('Preview mode — sign-in actions are disabled');throw new Error('Preview mode — read only');}
+    if(PREVIEW_MODE||ACCOUNT_PREVIEW){toast('Preview — this is read-only');throw new Error('Preview — read only');}
     const r=await _doFetch(path,opt);
     _invalidate(path); // a write invalidates the resources it touched
     return r;
@@ -743,6 +744,10 @@ function _prefetch(){
 // MUST_CHANGE_PASSWORD_ENFORCED in express-adapter.ts. Flip both back to true to re-enable.
 const MUST_CHANGE_PASSWORD_ENFORCED=false;
 let TOKEN=null,ACTOR=null,SETTINGS=null,CAMP_MODE='pre-camp',STACK=['home'],PREVIEW_MODE=false;
+// Account preview (previewing a DIFFERENT login) is orthogonal to PREVIEW_MODE (the at-camp
+// mode overlay). Both can be true at once: an admin previewing church X's at-camp view.
+let ACCOUNT_PREVIEW=false;
+let _previewStash=null; // { token, actor } — the admin's own session while account-previewing
 let SESSIONS=[],SEL_SESSION=null,FILTER={gender:'all',grade:'all',church:'all',zone:'all'};
 let LAST_LEADER='';
 const GRADES=[7,8,9,10,11,12];
@@ -899,7 +904,8 @@ async function doLogin(){
 }
 function logout(){
   // Clear preview state before the POST so the write guard doesn't block the logout call.
-  PREVIEW_MODE=false;
+  PREVIEW_MODE=false;ACCOUNT_PREVIEW=false;_previewStash=null;
+  localStorage.removeItem('ycp_preview_stash');
   api('/auth/logout',{method:'POST'}).catch(()=>{});
   localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
   sessionStorage.removeItem('ycp_wizardReturn');
@@ -964,7 +970,7 @@ function updateModeUI(){
   if(PREVIEW_MODE){b.textContent='Preview';b.style.background='#92400e';b.style.color='#fff';}
   else if(CAMP_MODE==='at-camp'){b.textContent='At Camp';b.style.background='#16a34a';b.style.color='#fff';}
   else{b.textContent='Pre-Camp';b.style.background='#9333ea';b.style.color='#fff';}
-  if(r&&ACTOR)r.textContent=ACTOR.role==='admin'?'Admin':ACTOR.role==='director'?'Director':ACTOR.role==='zoneLeader'?'Zone·'+ACTOR.zone:'Church';
+  if(r&&ACTOR)r.textContent=ACTOR.role==='admin'?'Admin':ACTOR.role==='director'?'Director':ACTOR.role==='firstAid'?'First aid':ACTOR.role==='zoneLeader'?'Zone·'+ACTOR.zone:'Church';
   const db=document.getElementById('dayBadge');
   if(db){
     if(CAMP_MODE==='at-camp'){
@@ -982,6 +988,7 @@ function updateModeUI(){
       }
     }else db.style.display='none';
   }
+  _updatePreviewBanner();
 }
 /* ===== AT-CAMP PREVIEW ===== */
 function enterPreview(){
@@ -998,6 +1005,71 @@ function exitPreview(){
   SESSIONS=[];SEL_SESSION=null;
   document.getElementById('previewBanner').classList.remove('show');
   updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
+}
+/* ===== ACCOUNT PREVIEW (previewing a different login, read-only) ===== */
+const _previewRoleLabel=r=>r==='zoneLeader'?'Zone leader':r==='director'?'Director':r==='firstAid'?'First aid':r==='church'?'Church':r;
+function confirmEnterAccountPreview(id){
+  const u=_findUser(id);
+  const who=esc(((u.firstName||'')+' '+(u.lastName||'')).trim()||u.username||'this account');
+  modal(`<h3>Preview login</h3>
+    <p style="color:var(--muted);font-size:.85rem;margin:6px 0 4px">You'll see the app exactly as <b>${who}</b> sees it, scoped to their access. This is <b>read-only</b> — nothing is saved and nothing is written to the audit.</p>
+    <button class="btn" style="margin-top:10px" onclick="closeModal();enterAccountPreview('${id}')">Start preview</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+}
+async function enterAccountPreview(id){
+  let d;
+  // _doFetch (not api) so the write-guard doesn't block our own POST — works even if the admin
+  // is already inside the same-user at-camp preview when they click.
+  try{d=await _doFetch('/accounts/users/'+id+'/preview',{method:'POST'});}
+  catch(e){toast((e&&e.message)||'Could not start preview');return;}
+  _previewStash={token:TOKEN,actor:ACTOR};
+  localStorage.setItem('ycp_preview_stash',JSON.stringify(_previewStash));
+  TOKEN=d.token;
+  ACTOR={...d.user,displayName:((d.user.firstName||'')+' '+(d.user.lastName||'')).trim()};
+  localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
+  Cache.clear(); // never let admin-scoped cached reads leak into the scoped preview
+  SESSIONS=[];SEL_SESSION=null;
+  ACCOUNT_PREVIEW=true;PREVIEW_MODE=false;
+  CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
+  document.getElementById('previewBanner').classList.add('show');
+  updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
+}
+function exitAccountPreview(){
+  if(!_previewStash){document.getElementById('previewBanner').classList.remove('show');ACCOUNT_PREVIEW=false;return;}
+  TOKEN=_previewStash.token;ACTOR=_previewStash.actor;
+  localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
+  _previewStash=null;localStorage.removeItem('ycp_preview_stash');
+  ACCOUNT_PREVIEW=false;PREVIEW_MODE=false;
+  Cache.clear();SESSIONS=[];SEL_SESSION=null;
+  CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
+  document.getElementById('previewBanner').classList.remove('show');
+  updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
+}
+// The banner Exit button serves both preview kinds.
+function _exitAnyPreview(){if(ACCOUNT_PREVIEW)exitAccountPreview();else exitPreview();}
+// At-camp overlay toggle, only meaningful during account preview while the real mode is pre-camp.
+function _togglePreviewMode(){
+  if((SETTINGS&&SETTINGS.campMode)!=='pre-camp')return;
+  if(PREVIEW_MODE){PREVIEW_MODE=false;CAMP_MODE='pre-camp';}
+  else{PREVIEW_MODE=true;CAMP_MODE='at-camp';}
+  SESSIONS=[];SEL_SESSION=null;
+  updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
+}
+function _updatePreviewBanner(){
+  const lbl=document.getElementById('pbLabel'),tog=document.getElementById('pbToggle');
+  if(!lbl||!tog)return;
+  if(ACCOUNT_PREVIEW){
+    const who=ACTOR?esc(ACTOR.displayName||''):'';
+    const roleTxt=ACTOR?_previewRoleLabel(ACTOR.role):'';
+    const modeTxt=PREVIEW_MODE?'at-camp preview':(CAMP_MODE==='at-camp'?'at-camp':'pre-camp');
+    lbl.innerHTML=ic('preview')+' Previewing: <b>'+who+'</b> ('+roleTxt+') — '+modeTxt+' · read-only';
+    if((SETTINGS&&SETTINGS.campMode)==='pre-camp'){
+      tog.style.display='';tog.textContent=PREVIEW_MODE?'Back to pre-camp view':'Switch to at-camp view';
+    }else tog.style.display='none';
+  }else{
+    lbl.innerHTML=ic('preview')+' PREVIEW — at-camp view is read-only';
+    tog.style.display='none';
+  }
 }
 // B-3: apply a mode change detected from ANOTHER tab (storage event) or on tab re-focus.
 // Mirrors what RENDER.home does on mode change, with the same PREVIEW_MODE guard (a previewing
@@ -4197,6 +4269,8 @@ async function _tryRestoreSession(){
   TOKEN=tok;
   try{
     ACTOR=JSON.parse(actorJson);
+    const stash=localStorage.getItem('ycp_preview_stash');
+    if(stash){try{_previewStash=JSON.parse(stash);ACCOUNT_PREVIEW=true;document.getElementById('previewBanner').classList.add('show');}catch(_){}}
     if(MUST_CHANGE_PASSWORD_ENFORCED&&ACTOR.mustChangePassword){_showChangePasswordGate();return;}
     SETTINGS=await api('/settings');
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
@@ -4215,7 +4289,6 @@ async function _tryRestoreSession(){
 document.getElementById('password').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 document.getElementById('username').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('modal').classList.contains('show'))closeModal();});
-document.getElementById('pbLabel').innerHTML=ic('preview')+' PREVIEW — at-camp view is read-only';
 _initDemoLogin();_tryRestoreSession();
 
 /* B-3: cross-tab + on-focus mode sync. A second tab (or a tab not on Home) used to keep stale
