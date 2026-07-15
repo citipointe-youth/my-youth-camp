@@ -36,6 +36,8 @@ export interface AccountService {
   updateChurch(actor: Actor, id: string, input: unknown): Promise<Church>;
   deleteUser(actor: Actor, id: string): Promise<{ deleted: string }>;
   deleteChurch(actor: Actor, id: string): Promise<{ deleted: string }>;
+  /** Admin-only: validate a target account for read-only preview; returns its SafeUser. */
+  previewAccount(actor: Actor, id: string): Promise<SafeUser>;
 }
 
 export function makeAccountService(
@@ -134,6 +136,15 @@ export function makeAccountService(
       const next = user.status === 'active' ? 'inactive' : 'active';
       const saved = await userRepo.save({ ...user, status: next, updatedAt: nowISO() });
       return toSafeUser(saved);
+    },
+
+    async previewAccount(actor, id) {
+      assertCan(actor, 'admin:manage');
+      const user = await userRepo.findById(id);
+      if (!user) throw new NotFoundError('Account not found');
+      if (user.status !== 'active') throw new BadRequestError('Account is not active');
+      if (user.role === 'admin') throw new BadRequestError('Admin accounts cannot be previewed');
+      return toSafeUser(user);
     },
 
     async createChurchWithAccount(actor, input) {

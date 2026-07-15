@@ -170,3 +170,59 @@ describe('AccountService — mustChangePassword', () => {
     expect(stored?.mustChangePassword).toBeFalsy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// previewAccount — admin account preview (2026-07-15). Validates that only an
+// admin can preview, and only an active NON-admin target.
+// ---------------------------------------------------------------------------
+
+describe('AccountService.previewAccount', () => {
+  let users: InMemoryUserRepository;
+  let svc: AccountService;
+
+  async function seedTarget(over: Partial<User>): Promise<User> {
+    return users.save({
+      id: 'u', firstName: 'Vic', lastName: 'Tory', username: 'victory', role: 'church',
+      churchId: 'ch1', churchName: 'Victory', zone: 'Yellow', status: 'active',
+      passwordHash: 'x', createdAt: NOW, updatedAt: NOW, ...over,
+    });
+  }
+
+  beforeEach(async () => {
+    users = new InMemoryUserRepository();
+    const churches = new InMemoryChurchRepository();
+    const people = new InMemoryPersonRepository();
+    await Promise.all([users.init(), churches.init(), people.init()]);
+    svc = makeAccountService(users, churches, people);
+  });
+
+  it('rejects a non-admin actor', async () => {
+    await seedTarget({ id: 'c1' });
+    const nonAdmin: Actor = { id: 'c1', role: 'church', churchId: 'ch1', churchName: 'Victory', zone: 'Yellow', displayName: 'Church' };
+    await expect(svc.previewAccount(nonAdmin, 'c1')).rejects.toThrow();
+  });
+
+  it('throws NotFound for a missing id', async () => {
+    await expect(svc.previewAccount(admin(), 'nope')).rejects.toThrow(/not found/i);
+  });
+
+  it('rejects an admin target', async () => {
+    await seedTarget({ id: 'a2', role: 'admin', username: 'admin2' });
+    await expect(svc.previewAccount(admin(), 'a2')).rejects.toThrow(/admin/i);
+  });
+
+  it('rejects an inactive target', async () => {
+    await seedTarget({ id: 'c1', status: 'inactive' });
+    await expect(svc.previewAccount(admin(), 'c1')).rejects.toThrow(/not active/i);
+  });
+
+  it('returns a SafeUser (no passwordHash) for each non-admin role', async () => {
+    for (const role of ['church', 'zoneLeader', 'director', 'firstAid'] as const) {
+      const id = 'id_' + role;
+      await seedTarget({ id, role, username: 'u_' + role });
+      const safe = await svc.previewAccount(admin(), id);
+      expect(safe.id).toBe(id);
+      expect((safe as Record<string, unknown>).passwordHash).toBeUndefined();
+    }
+  });
+});
