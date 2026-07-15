@@ -914,6 +914,42 @@ than reacting to one already-leaked list.
   `false` — does not retroactively flag any existing row; no email-list backfill was needed since,
   unlike CMS, no migration here ever seeded named production accounts with a known password).
 
+## Account preview (read-only impersonation) — deployed 2026-07-15
+
+Admin → Accounts (`RENDER.adminAccounts`) gets a **Preview** (eye) button on every **active
+non-admin** account tile (church / zoneLeader / director / firstAid; never admin). It drops the
+admin into a real, RBAC-scoped session as that account, but **read-only** — every write is blocked
+client-side, so sign-in/out logs, notes, and audited reveals are never touched. Distinct from the
+same-user "At-camp preview" section below, which this composes with. Design + rejected alternatives:
+`docs/superpowers/specs/2026-07-15-account-preview-design.md`; plan:
+`docs/superpowers/plans/2026-07-15-account-preview.md`. `npm run typecheck` clean, `npm run test`
+= **465 pass**, SPA `node --check` OK. `sw.js` `camp-v23`→`camp-v24`. **No migration.**
+
+- **Backend:** `POST /accounts/users/:id/preview` (admin-only) → `AccountService.previewAccount`
+  (validates active + non-admin) then `AuthService.issueTokenFor(id,{mustChangePassword:false})`
+  mints a real scoped token. **`issueTokenFor(userId, actorOverrides?)` is NEW** on `AuthService`
+  (the app had no token-minting-for-another-user path before; `signSession` is module-private); all
+  existing call sites are unaffected. The account controller gained an `auth` dependency (wired in
+  `router.ts`). **No preview flag on the `Actor`** — read-only is enforced entirely client-side
+  (deliberate scope decision: admin-only feature; the client guard reliably prevents the accidental
+  writes that would pollute the audit; the minted token is fully capable server-side).
+- **Frontend (`public/index.html`):** `enterAccountPreview(id)`/`exitAccountPreview()` swap the API
+  token + `ACTOR`, `Cache.clear()`, and rebuild nav/tabs from the swapped actor (real RBAC, no
+  client-side scoping duplication). The admin's own session is stashed in `_previewStash`, mirrored
+  to `localStorage['ycp_preview_stash']` so a mid-preview refresh restores into the preview
+  (restored in `_tryRestoreSession`). The write-guard in `api()` now blocks non-GET when
+  `PREVIEW_MODE || ACCOUNT_PREVIEW`. The preview POST uses `_doFetch` (not `api`) so it isn't
+  self-blocked. `confirmEnterAccountPreview(id)` shows a confirm modal first (looks the account up
+  from `window._allUsers`, not via the `onclick` string).
+- **Mode composition:** `ACCOUNT_PREVIEW` is orthogonal to `PREVIEW_MODE` (both can be true). A
+  generalized banner (`_updatePreviewBanner`, driven by `updateModeUI`) shows "Previewing: NAME
+  (role) — mode · read-only"; when the real global mode is pre-camp it offers a **Switch to at-camp
+  view** toggle (`_togglePreviewMode`) that flips the `PREVIEW_MODE` overlay, giving the pre-camp /
+  at-camp / at-camp-preview views of that account. The existing same-user at-camp preview home card
+  is unchanged.
+- **Also:** `updateModeUI` role badge gained a `firstAid` → "First aid" case (previously fell
+  through to "Church"), now visible because firstAid accounts are previewable.
+
 ## Architecture
 
 ```
@@ -953,9 +989,10 @@ Users in pre-camp mode can tap **"👁 Preview at-camp view"** on the pre-camp h
 - **State:** `PREVIEW_MODE: boolean` (in-memory only, never persisted).
 - **Entry:** `enterPreview()` — sets `PREVIEW_MODE=true`, flips `CAMP_MODE` to `'at-camp'` locally, shows amber `#previewBanner` strip, rebuilds tabs, navigates home.
 - **Exit:** `exitPreview()` — restores `CAMP_MODE` from `SETTINGS.campMode`, removes banner, rebuilds tabs.
-- **Write blocking:** the `api()` function short-circuits any non-GET request while `PREVIEW_MODE` is true — shows a toast and throws. Covers every write in the app without per-screen changes.
-- **Logout safety:** `logout()` clears `PREVIEW_MODE=false` before POSTing to `/auth/logout` so the write guard never blocks logout itself.
+- **Write blocking:** the `api()` function short-circuits any non-GET request while `PREVIEW_MODE` **or `ACCOUNT_PREVIEW`** is true — shows a toast and throws. Covers every write in the app without per-screen changes.
+- **Logout safety:** `logout()` clears `PREVIEW_MODE`/`ACCOUNT_PREVIEW`/`_previewStash` before POSTing to `/auth/logout` so the write guard never blocks logout itself.
 - All roles can enter preview. Preview uses real live data (campers, schedule, devotionals already imported).
+- **Banner is shared with account preview** (see "Account preview" above): `#previewBanner`'s label/toggle/exit are driven by `_updatePreviewBanner()` (called from `updateModeUI`); the Exit button dispatches via `_exitAnyPreview()` to `exitPreview()` (same-user) or `exitAccountPreview()` (account preview).
 
 ## Daily check-in (twice daily)
 

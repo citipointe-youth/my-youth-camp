@@ -113,7 +113,9 @@ Also: `Cache` (313, 30s TTL data cache), `ALLREG/CHURCHES` (~839), `_navToken` (
 | Symbol | ~Line | Owns |
 |---|---|---|
 | `updateModeUI` | 473 | Preview banner + mode chrome |
-| `enterPreview / exitPreview` | 483 / 491 | Client-only at-camp preview (no backend) |
+| `enterPreview / exitPreview` | 483 / 491 | Client-only at-camp **mode** preview, same user (no backend) |
+| `enterAccountPreview / exitAccountPreview / confirmEnterAccountPreview` | grep the name | **Account preview (2026-07-15)** — read-only impersonation of a DIFFERENT login. Swaps API token + `ACTOR`, stashes the admin's session in `_previewStash` (+ `localStorage['ycp_preview_stash']`, restored in `_tryRestoreSession`). Preview POST via `_doFetch` (bypasses the write-guard). `ACCOUNT_PREVIEW` global is orthogonal to `PREVIEW_MODE`. Backend `POST /accounts/users/:id/preview` (`account.controller.preview` → `previewAccount` + `issueTokenFor`). |
+| `_updatePreviewBanner / _togglePreviewMode / _exitAnyPreview` | grep the name | Shared preview banner: label + at-camp overlay toggle (shown only when real global mode is pre-camp) + Exit dispatch. Driven from `updateModeUI`. |
 | `TAB_OF` | 505 | Tab-id → highlighted-tab map. **Wrong tab highlighted = here.** |
 | `_showScreen / _paint / _navTo / go / gotoTab / back` | 513–554 | Router. `_navTo` is **stale-while-revalidate**: shows the previous render (no spinner) on revisits. |
 | `_renderWideNav` | 567 | Desktop sidebar — **admin & director only**. Mode-conditional: at-camp shows Check-in/Search/Notes/Notices; pre-camp shows My Youth. Church Import removed. Data/Records merged into "Data, Reset & Exports". |
@@ -279,7 +281,10 @@ tolerate absence via `?? false`.
 | **`.pill` badge ("View ›" etc.) wraps to two lines on phone** | SPA `.pill` CSS (~123) — needs `white-space:nowrap;flex-shrink:0` (fixed 2026-07-02); a long sibling in the same `.rowsb` was squeezing it below its content width. |
 | **Data tab: phone shown inconsistently / missing leading 0** | SPA `fmtPhone` (~1259) — see Infrastructure table above. |
 | **Data tab: can't sort columns / doesn't default to import order** | SPA `RENDER.data`/`dataApply` (~2906/~2969) — see Pre-camp screens table above. |
-| Write silently blocked, "preview" toast | SPA `api()` preview guard (357) + `enterPreview` (483) |
+| Write silently blocked, "preview" toast | SPA `api()` preview guard (357, now `PREVIEW_MODE\|\|ACCOUNT_PREVIEW`) + `enterPreview` (483) / `enterAccountPreview` |
+| **Preview button missing on an account / "Preview" does nothing** | SPA `RENDER.adminAccounts` `acctTile` `onPreview` (set only for active non-admin; churches need an active login `cu`) → `confirmEnterAccountPreview` → `enterAccountPreview`. Backend `POST /accounts/users/:id/preview` (`account.controller.preview` → `previewAccount` + `issueTokenFor`). |
+| **Writes not blocked during account preview / an audit row appeared** | SPA `api()` guard must read `if(PREVIEW_MODE\|\|ACCOUNT_PREVIEW)`. Read-only is CLIENT-SIDE ONLY by design — the minted token is fully capable server-side. |
+| **Stranded in a preview after refresh / can't get back to admin** | `_previewStash` + `localStorage['ycp_preview_stash']` restore in `_tryRestoreSession`; `_exitAnyPreview`→`exitAccountPreview` restores the stashed admin token. `logout()` clears both preview flags + the stash before its POST. |
 | **Login/every screen 403s with `MUST_CHANGE_PASSWORD`, or a "Set a New Password" screen appears** | `mustChangePassword` gate — **currently DISABLED** (2026-07-11, `MUST_CHANGE_PASSWORD_ENFORCED = false` in both `express-adapter.ts` and `public/index.html`; see CLAUDE.md). If you see this, one of those two constants was flipped back to `true` without the other, or a stale deploy is live — check both are in sync and `sw.js` was bumped. |
 | **Preview at-camp view won't load** | SPA `RENDER.home` `/settings` re-fetch is guarded by `if(!PREVIEW_MODE)` (~636); `enterPreview` (483) |
 | Mode change didn't reach a logged-in user | SPA `RENDER.home` `/settings` re-fetch (~636, skipped in preview); backend `admin.service` |
