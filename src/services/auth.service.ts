@@ -94,6 +94,9 @@ export interface AuthService {
   login(input: unknown): Promise<{ token: string; user: SafeUser }>;
   resolveToken(token: string): Promise<Actor | null>;
   logout(token: string): Promise<void>;
+  /** Mint a real signed session token for an arbitrary active user (admin account preview).
+   *  actorOverrides let the caller force fields on the embedded actor (e.g. mustChangePassword:false). */
+  issueTokenFor(userId: string, actorOverrides?: Partial<Actor>): Promise<string | null>;
 }
 
 export function makeAuthService(users: IUserRepository, settings?: ISettingsRepository): AuthService {
@@ -149,6 +152,12 @@ export function makeAuthService(users: IUserRepository, settings?: ISettingsRepo
 
     async logout(_token: string) {
       // Stateless tokens — logout is handled client-side by discarding the token.
+    },
+
+    async issueTokenFor(userId, actorOverrides) {
+      const user = await users.findById(userId);
+      if (!user || user.status !== 'active') return null;
+      return signSession({ ...toActor(user), ...(actorOverrides ?? {}) }, Date.now() + TOKEN_TTL_MS);
     },
   };
 }

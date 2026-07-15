@@ -284,3 +284,37 @@ describe('toActor()', () => {
     expect(actor.churchId).toBeNull();
   });
 });
+
+describe('AuthService.issueTokenFor', () => {
+  it('mints a token resolveToken accepts, carrying the target actor', async () => {
+    const repo = new InMemoryUserRepository();
+    await repo.init();
+    await seedUser(repo, { id: 'c1', username: 'victory', role: 'church', churchId: 'ch1', churchName: 'Victory' });
+    const svc = makeAuthService(repo);
+    const token = await svc.issueTokenFor('c1');
+    expect(token).toBeTruthy();
+    const actor = await svc.resolveToken(token!);
+    expect(actor?.id).toBe('c1');
+    expect(actor?.role).toBe('church');
+    expect(actor?.churchId).toBe('ch1');
+  });
+
+  it('applies actorOverrides (mustChangePassword:false wins over the user record)', async () => {
+    const repo = new InMemoryUserRepository();
+    await repo.init();
+    await seedUser(repo, { id: 'c1', username: 'victory', role: 'church', mustChangePassword: true });
+    const svc = makeAuthService(repo);
+    const token = await svc.issueTokenFor('c1', { mustChangePassword: false });
+    const actor = await svc.resolveToken(token!);
+    expect(actor?.mustChangePassword).toBe(false);
+  });
+
+  it('returns null for a missing or inactive user', async () => {
+    const repo = new InMemoryUserRepository();
+    await repo.init();
+    await seedUser(repo, { id: 'x1', username: 'off', status: 'inactive' });
+    const svc = makeAuthService(repo);
+    expect(await svc.issueTokenFor('nope')).toBeNull();
+    expect(await svc.issueTokenFor('x1')).toBeNull();
+  });
+});
