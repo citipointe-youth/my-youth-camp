@@ -2916,13 +2916,15 @@ RENDER.adminAccounts=async function(){
       <div style="display:flex;gap:4px;margin-top:auto;flex-wrap:nowrap">
         <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Account Info" aria-label="Account Info" onclick="${o.onName}">${ic('edit')}</button>
         <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="${o.onPass}">${ic('key')}</button>
+        ${o.onPreview?`<button class="iconbtn" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="${o.onPreview}">${ic('preview')}</button>`:''}
         <button class="iconbtn danger" style="flex:1 1 0;min-width:0" title="Delete" aria-label="Delete" onclick="${o.onDel}">${ic('trash')}</button>
       </div></div>`;
   const tileGrid=items=>items.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-top:4px">${items.join('')}</div>`:'<p class="note-hint">None yet.</p>';
   const lr=tileGrid(leaders.map(u=>acctTile({
     title:esc(u.firstName+' '+u.lastName),
     sub:roleLabel(u.role)+(u.username?' · @'+esc(u.username):'')+(u.zone?' · '+esc(u.zone):'')+(u.status==='inactive'?' · inactive':''),
-    onName:`editLeaderName('${u.id}')`,onPass:`changePassword('${u.id}')`,onDel:`delAcct('${u.id}')`
+    onName:`editLeaderName('${u.id}')`,onPass:`changePassword('${u.id}')`,onDel:`delAcct('${u.id}')`,
+    onPreview:u.status!=='inactive'?`confirmEnterAccountPreview('${u.id}')`:''
   })));
   const cr=tileGrid(churches.map(c=>{const cu=users.find(u=>u.role==='church'&&u.churchId===c.id)||{};
     return acctTile({
@@ -2930,7 +2932,8 @@ RENDER.adminAccounts=async function(){
       sub:'Church · '+esc(c.zone||'—')+(cu.username?' · @'+esc(cu.username):'<span style="color:var(--danger)"> · no login</span>'),
       onName:`editChurchName('${c.id}')`,
       onPass:cu.id?`changePassword('${cu.id}')`:`toast('No login account for this church')`,
-      onDel:`delChurch('${c.id}')`
+      onDel:`delChurch('${c.id}')`,
+      onPreview:(cu.id&&cu.status!=='inactive')?`confirmEnterAccountPreview('${cu.id}')`:''
     });}));
   const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option>`;
   paint('adminAccounts',`
