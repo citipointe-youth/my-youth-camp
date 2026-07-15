@@ -47,7 +47,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const auditCtrl = makeAuditController({ auditExport: services.auditExport, settingsRepo: services.settingsRepo });
   const offlineSignInCtrl = makeOfflineSignInController({ offlineSignIn: services.offlineSignIn });
   const exportCtrl = makeExportController({ exportService: services.exportService });
-  const account = makeAccountController({ account: services.account });
+  const account = makeAccountController({ account: services.account, auth: services.auth });
   const settingsCtrl = makeSettingsController({ settings: services.settings });
   const admin = makeAdminController({ admin: services.admin });
 
@@ -197,6 +197,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     // ----- Account management -----
     { method: 'GET', path: '/accounts/users', auth: true, handler: (r) => account.list(r) },
     { method: 'POST', path: '/accounts/users', auth: true, handler: (r) => account.create(r) },
+    { method: 'POST', path: '/accounts/users/:id/preview', auth: true, handler: (r) => account.preview(r) },
     { method: 'PATCH', path: '/accounts/users/:id', auth: true, handler: (r) => account.update(r) },
     { method: 'POST', path: '/accounts/users/password', auth: true, handler: (r) => account.setPassword(r) },
     { method: 'POST', path: '/accounts/me/password', auth: true, allowMustChangePassword: true, handler: (r) => account.changeOwnPassword(r) },
