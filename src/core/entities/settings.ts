@@ -15,8 +15,6 @@ export interface CampSettings {
   // At-camp
   checkInDays: string[];
   accommodationLocked: boolean;
-  tentPrice: number;
-  classroomPrice: number;
   // Account login locks (manual toggles in admin Settings). When true, accounts of that
   // role are blocked at LOGIN only (existing sessions keep working until their token TTL).
   // Default false; admin/director/firstAid are never affected.
