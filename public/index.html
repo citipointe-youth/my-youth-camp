@@ -1452,19 +1452,23 @@ async function renderHomeAtCamp(){
     myAccom=rooms.length?rooms.map(r=>r.name+' — '+(r.gender==='male'?'Guys':'Girls')+' ('+r.n+')').join(' · '):'To be confirmed';
   }catch(e){myAccom='To be confirmed';}}
   const tiles=[];
-  const day1=PREVIEW_MODE?(((SETTINGS&&SETTINGS.campDay)||1)===1):(_realCampDayNumber()===1);
-  tiles.push(day1?`<div class="tile" onclick="go('firstday')"><div class="ic">${ic('check')}</div><div class="l">First Day Sign In</div></div>`:`<div class="tile" onclick="go('testimonies')"><div class="ic">${ic('star')}</div><div class="l">Submit Testimonies</div></div>`);
-  tiles.push(`<div class="tile" onclick="go('myyouth')"><div class="ic">${ic('users')}</div><div class="l">My Youth Details</div></div>`);
-  if(canReadNotes())tiles.push(`<div class="tile" onclick="go('notes')"><div class="ic">${ic('note')}</div><div class="l">Testimonies &amp; Notes</div></div>`);
+  const phase=campPhase();
+  const entryLabel=phase==='signin'?'First Day Sign In':'Daily Check-in';
+  const entryIcon=phase==='signin'?'check':'check';
+  // Unified Sign-in/Check-in entry — one tile, phase-labelled, routes to the Check-in surface.
+  tiles.push(`<div class="tile" onclick="gotoTab('checkin')"><div class="ic">${ic(entryIcon)}</div><div class="l">${entryLabel}</div></div>`);
+  tiles.push(`<div class="tile" onclick="go('testimonies')"><div class="ic">${ic('star')}</div><div class="l">Submit Testimonies</div></div>`);
   tiles.push(`<div class="tile" onclick="go('schedule')"><div class="ic">${ic('calendar')}</div><div class="l">Schedule</div></div>`);
   tiles.push(`<div class="tile" onclick="go('devotional')"><div class="ic">${ic('book')}</div><div class="l">Devotional</div></div>`);
-  // Director's at-camp home hides the Notices tile (they reach notices via the nav tab); church
-  // also has it hidden (admin request); zoneLeader/admin keep the quick tile.
-  if(ACTOR.role!=='director'&&ACTOR.role!=='church')tiles.push(`<div class="tile" onclick="gotoTab('notifs')"><div class="ic">${ic('bell')}</div><div class="l">Notices</div></div>`);
-  if(ACTOR.role==='church'&&!PREVIEW_MODE)tiles.push(`<div class="tile" style="cursor:default"><div class="ic">${ic('classroom')}</div><div class="l">Your Accommodation</div><div class="sub" style="font-size:.62rem;margin-top:2px">${esc(myAccom)}</div></div>`);
-  // Director has no Data tab at-camp (only pre-camp) — surface a direct entry point to the
-  // raw registration data table so the capability is reachable in either mode.
-  if(ACTOR.role==='director')tiles.push(`<div class="tile" onclick="go('data')"><div class="ic">${ic('note')}</div><div class="l">Student Data Table</div></div>`);
+  // Non-church roles keep their existing extra tiles (Notices / Data). Church stays at exactly 4.
+  if(ACTOR.role!=='church'){
+    if(ACTOR.role!=='director')tiles.push(`<div class="tile" onclick="gotoTab('notifs')"><div class="ic">${ic('bell')}</div><div class="l">Notices</div></div>`);
+    if(ACTOR.role==='director')tiles.push(`<div class="tile" onclick="go('data')"><div class="ic">${ic('note')}</div><div class="l">Student Data Table</div></div>`);
+  }
+  // Testimonies & Notes → slim full-width bold link below the grid (not a tile).
+  const notesLinkHtml=canReadNotes()?`<div class="card tap" onclick="go('notes')" style="margin-top:10px"><div class="rowsb"><div style="font-weight:700">${icSm('note')} Testimonies &amp; Notes</div><span style="color:var(--muted)">›</span></div></div>`:'';
+  // Accommodation → one-line strip inside the hero (church, real at-camp only).
+  const accomLineHtml=(ACTOR.role==='church'&&!PREVIEW_MODE)?`<div style="margin-top:8px;color:#cfe0ff;font-size:.78rem">${icSm('classroom')} Your accommodation: ${esc(myAccom)}</div>`:'';
   // PC-7: FAQ/Help is a PRE-CAMP aid only — no FAQ tile in at-camp home for any role.
   // (Admin can still edit FAQ anytime via the Admin console.)
   const notices=(feed||[]).slice(0,3);
@@ -1479,9 +1483,11 @@ async function renderHomeAtCamp(){
   const html=`<div class="hero">${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
     <h2>Hi ${esc(d.greetingName||ACTOR.displayName)}</h2>
     <div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':ACTOR.role==='director'?'Director':ACTOR.role==='zoneLeader'?(esc(ACTOR.zone)+' Zone Leader'):'Church · '+esc(ACTOR.zone)+' Zone'}</div>
+    ${accomLineHtml}
     ${digestHtml}</div>
   ${myDayHtml}
   <div class="tiles">${tiles.join('')}</div>
+  ${notesLinkHtml}
   <div id="homePulse"></div>
   <div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
   <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>`;
