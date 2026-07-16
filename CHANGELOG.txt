@@ -1,6 +1,42 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-16 — FIELD ENCRYPTION AT REST (people/notes sensitive columns)
+-----------------------------------------------------------------------------------
+Backend + migrations only (no SPA change, sw.js not bumped). Design:
+docs/superpowers/specs/2026-07-16-field-encryption-design.md; plan:
+docs/superpowers/plans/2026-07-16-field-encryption.md. Verified: npm run typecheck clean,
+npm run test = 479 pass (14 new: field-crypto 7, people-mapper 4, notes-mapper 3).
+  * NEW src/utils/field-crypto.ts — a pure node:crypto AES-256-GCM codec
+    (encryptField/decryptField/isEncrypted/maybeEncrypt/maybeDecrypt). Self-describing
+    envelope "v1.<keyId>.<iv>.<tag>.<ct>" (base64url parts); every ciphertext is bound via
+    AAD to "<table>:<column>:<id>" so a value can't be swapped between rows/columns.
+    null/undefined/'' always round-trip to null/'' — never stored as ciphertext.
+  * Applied ONLY inside the Supabase row<->entity mappers (supabase.people.ts,
+    supabase.notes.ts) — every other layer (services, in-memory/json persistence, the
+    SPA) is unaware encryption exists. Encrypted people columns: medical_conditions,
+    dietary_requirements, other_medications, medicare_number, blue_card_number,
+    blue_card_expiry, parent_guardian_name, parent_phone, parent_relation, consents.
+    Encrypted notes column: body. text[]/jsonb/date fields moved to new nullable
+    *_enc text columns (migration 022); text scalars are encrypted in place.
+  * Reads decrypt-or-passthrough — a value that isn't the "v1." envelope is treated as
+    legacy plaintext, so the app tolerates a table that's a mix of encrypted and
+    not-yet-backfilled rows during rollout. Writes always encrypt (personColumns/
+    noteColumns) and stop writing the four legacy people columns entirely.
+  * NEW scripts/backfill-field-encryption.ts — idempotent, resumable, order-independent
+    one-off prod job: re-saves every person + note through the encryption-aware repos so
+    all sensitive fields become ciphertext.
+  * Migration 023 (created now, applied to prod only after the backfill completes per the
+    plan's Deployment Runbook) drops the four legacy plaintext people columns; VACUUM FULL
+    afterwards physically purges the dropped/rewritten plaintext from disk.
+  * Key management: FIELD_ENCRYPTION_KEY (base64, 32 bytes, active) + optional
+    FIELD_ENCRYPTION_KEY_ID (default 'k1'); FIELD_ENCRYPTION_KEY_PREV / _PREV_ID (default
+    'k0') for decrypt-only during rotation. See SECURITY-ACTIONS.md "1b" for setup/rotation
+    and the "losing the key = losing the data" warning.
+  * memory/json persistence modes are completely untouched (still plaintext) — the
+    existing ~465 pre-existing tests run in memory mode and pass unchanged, proving
+    services stay oblivious to encryption.
+
 2026-07-03 — BUG-LIST BATCH: AUDIT COLUMNS, DISCOUNT PURPOSE, CONTACTS SAVE, DATA IMPORT NAV
 -----------------------------------------------------------------------------------
 Admin-requested batch of 6 items. SPA + backend (audit-export.service.ts, budget.ts), no
