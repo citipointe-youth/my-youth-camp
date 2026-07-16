@@ -164,6 +164,8 @@ function settings(over: Partial<CampSettings> = {}): CampSettings {
     churchLoginLocked: false,
     zoneLeaderLoginLocked: false,
     churchCheckinTimeRestricted: false,
+    checkinSwitchoverTime: '14:00',
+    checkinPhaseOverride: 'auto',
     campMode: 'pre-camp',
     // Default to exported so tests pass the wipe guard without needing force opts.
     lastExportedAt: NOW,

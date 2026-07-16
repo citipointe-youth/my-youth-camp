@@ -86,6 +86,8 @@ function settings(over: Partial<CampSettings>): CampSettings {
     churchLoginLocked: false,
     zoneLeaderLoginLocked: false,
     churchCheckinTimeRestricted: false,
+    checkinSwitchoverTime: '14:00',
+    checkinPhaseOverride: 'auto',
     campMode: 'pre-camp',
     createdAt: now,
     updatedAt: now,

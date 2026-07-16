@@ -140,6 +140,8 @@ export async function seedAll(container: Container): Promise<void> {
     churchLoginLocked: false,
     zoneLeaderLoginLocked: false,
     churchCheckinTimeRestricted: false,
+    checkinSwitchoverTime: '14:00',
+    checkinPhaseOverride: 'auto',
     campMode: 'pre-camp',
     createdAt: now,
     updatedAt: now,

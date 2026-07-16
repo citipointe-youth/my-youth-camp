@@ -27,6 +27,12 @@ export interface CampSettings {
   // session (day 1 PM) is treated as "current" so churches aren't locked out entirely.
   // zoneLeader/director/admin are never restricted. Default false.
   churchCheckinTimeRestricted: boolean;
+  // Unified arrival→daily switchover (at-camp). Client-side phase model (serverless, no scheduler).
+  // Clock time 'HH:MM' (24h, Brisbane) at which Day-1 arrival sign-in gives way to daily check-in.
+  checkinSwitchoverTime: string;
+  // Manual admin override of the arrival/daily phase. 'auto' = time-driven (the normal case);
+  // 'signin'/'checkin' pin the phase across the app until set back to 'auto'.
+  checkinPhaseOverride: 'auto' | 'signin' | 'checkin';
   // Mode switch
   campMode: CampMode;
   // Temp passwords from the most recent new-year rollover, cleared after export.

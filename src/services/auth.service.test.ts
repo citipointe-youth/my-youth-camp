@@ -16,6 +16,7 @@ function fakeSettings(over: Partial<CampSettings> = {}): ISettingsRepository {
     timezone: 'Australia/Brisbane', checkInDays: [], accommodationLocked: false,
     tentPrice: 80, classroomPrice: 120, churchLoginLocked: false, zoneLeaderLoginLocked: false,
     churchCheckinTimeRestricted: false,
+    checkinSwitchoverTime: '14:00', checkinPhaseOverride: 'auto',
     campMode: 'pre-camp', createdAt: now, updatedAt: now, ...over,
   };
   return {

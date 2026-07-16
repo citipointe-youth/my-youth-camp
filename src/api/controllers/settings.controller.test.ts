@@ -4,6 +4,7 @@ import type { SettingsService } from '../../services/settings.service';
 import type { CampSettings } from '../../core/entities/settings';
 import { SETTINGS_ID } from '../../core/entities/settings';
 import type { HttpRequest } from '../http/types';
+import { UpdateSettingsSchema } from '../../core/validation/content.schema';
 
 function settings(over: Partial<CampSettings> = {}): CampSettings {
   const now = '2026-01-01T00:00:00.000Z';
@@ -12,6 +13,7 @@ function settings(over: Partial<CampSettings> = {}): CampSettings {
     timezone: 'Australia/Brisbane', checkInDays: [], accommodationLocked: false,
     tentPrice: 80, classroomPrice: 120, churchLoginLocked: false, zoneLeaderLoginLocked: false,
     churchCheckinTimeRestricted: false,
+    checkinSwitchoverTime: '14:00', checkinPhaseOverride: 'auto',
     campMode: 'pre-camp', createdAt: now, updatedAt: now, ...over,
   };
 }
@@ -54,5 +56,19 @@ describe('GET /settings — public endpoint redaction (R9 security fix)', () => 
     expect(res['pendingTempPasswordCount']).toBe(0);
     expect(res['campName']).toBe('Summer Camp');
     expect(res['campMode']).toBe('pre-camp');
+  });
+});
+
+describe('UpdateSettingsSchema — check-in switchover fields', () => {
+  it('accepts a valid HH:MM switchover time and a phase override', () => {
+    const parsed = UpdateSettingsSchema.parse({ checkinSwitchoverTime: '14:00', checkinPhaseOverride: 'signin' });
+    expect(parsed.checkinSwitchoverTime).toBe('14:00');
+    expect(parsed.checkinPhaseOverride).toBe('signin');
+  });
+  it('rejects a malformed time', () => {
+    expect(() => UpdateSettingsSchema.parse({ checkinSwitchoverTime: '2pm' })).toThrow();
+  });
+  it('rejects an unknown phase override', () => {
+    expect(() => UpdateSettingsSchema.parse({ checkinPhaseOverride: 'later' })).toThrow();
   });
 });

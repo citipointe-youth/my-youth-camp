@@ -83,6 +83,8 @@ export const UpdateSettingsSchema = z.object({
   churchLoginLocked: z.boolean().optional(),
   zoneLeaderLoginLocked: z.boolean().optional(),
   churchCheckinTimeRestricted: z.boolean().optional(),
+  checkinSwitchoverTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
+  checkinPhaseOverride: z.enum(['auto', 'signin', 'checkin']).optional(),
   campMode: z.enum(CAMP_MODES).optional(),
   tentPrice: z.number().min(0).optional(),
   classroomPrice: z.number().min(0).optional(),
