@@ -531,6 +531,7 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="camper"></section>
     <section class="screen" id="firstday"></section>
     <section class="screen" id="myyouth"></section>
+    <section class="screen" id="students"></section>
     <section class="screen" id="schedule"></section>
     <section class="screen" id="devotional"></section>
     <section class="screen" id="faq"></section>
@@ -1119,9 +1120,9 @@ const TAB_OF={home:'home',people:'people',student:'people',help:'help',
   admin:'admin',adminAccounts:'admin',adminSettings:'admin',adminAccom:'admin',adminData:'admin',
   adminFaqEdit:'admin',atCampInfo:'admin',adminContacts:'admin',
   adminChurchImport:'admin',adminRecords:'admin',adminCloseOut:'admin',adminWizard:'admin',adminStudents:'admin',
-  checkin:'checkin',search:'search',allstudents:'allstudents',records:'records',notifs:'notifs',compose:'notifs',
+  checkin:'checkin',search:'search',students:'students',allstudents:'allstudents',records:'records',notifs:'notifs',compose:'notifs',
   data:'data',
-  camper:'home',myyouth:'home',firstday:'home',schedule:'schedule',devotional:'home',faq:'home',notes:'home',testimonies:'home',budget:'home',accom:'home',import:'import'};
+  camper:'students',myyouth:'students',firstday:'checkin',schedule:'schedule',devotional:'home',faq:'home',notes:'home',testimonies:'home',budget:'home',accom:'home',import:'import'};
 
 function _showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -1231,13 +1232,13 @@ function navModel(role,mode){
   }
   /* at-camp */
   if(role==='church'||role==='zoneLeader')
-    return {tabs:[T('home','home','Home'),_ci(),T('search','search','Search'),T('notifs','bell','Notices')],extras:[]};
+    return {tabs:[T('home','home','Home'),_ci(),T('students','users','Students'),T('notifs','bell','Notices')],extras:[]};
   if(role==='director')
-    return {tabs:[T('home','home','Home'),_ci(),T('search','search','Search'),T('notifs','bell','Notices')],
+    return {tabs:[T('home','home','Home'),_ci(),T('students','users','Students'),T('notifs','bell','Notices')],
             extras:[T('notes','note','Notes')]};
   /* admin at-camp — D2/AC-5: exactly these 6 in the sidebar, in this order.
      Bottom tabs keep Admin (not Notices) to fit 4 slots; the sidebar shows the full 6. */
-  return {tabs:[T('home','home','Home'),_ci(),T('search','search','Search'),T('admin','gear','Admin')],
+  return {tabs:[T('home','home','Home'),_ci(),T('students','users','Students'),T('admin','gear','Admin')],
           extras:[T('notifs','bell','Notices'),T('accom','classroom','Accommodation Allocations')]};
 }
 /* Sidebar order for admin at-camp must be exactly:
@@ -1249,7 +1250,7 @@ function navSidebar(role,mode){
   if(role==='admin'&&mode==='at-camp'){
     const T=(id,icon,label)=>({id,icon,label});
     const ciLabel=(typeof campPhase==='function'&&campPhase()==='signin')?'Sign-in':'Check In';
-    return [T('home','home','Home'),T('checkin','check',ciLabel),T('search','search','Search'),
+    return [T('home','home','Home'),T('checkin','check',ciLabel),T('students','users','Students'),
             T('notifs','bell','Notices'),T('accom','classroom','Accommodation Allocations'),T('admin','gear','Admin Settings')];
   }
   return [...m.tabs,...m.extras];
@@ -2205,8 +2206,47 @@ function drawFaRecords(){
 /* ===== SEARCH ===== */
 RENDER.search=function(){
   if(ACTOR&&ACTOR.role==='firstAid'){renderSearchFirstAid();return;}
-  paint('search',`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Student search</span>${helpTip('Search any camper or leader by name. Tap a result to reveal masked contact details.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a student's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any camper or leader across the camp.</p></div>`,'Search Student Details','Find any camper');
+  _renderOtherChurches('search');
 };
+// Camp-wide contact lookup (masked leader phone reveal) rendered into `screenId`.
+function _renderOtherChurches(screenId){
+  paint(screenId,`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find another church's leader</span>${helpTip('Search any camper or leader by name. Tap a result to reveal masked contact details.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a student's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any camper or leader across the camp.</p></div>`,'Student Search','Find any camper');
+}
+let STUDENTS_SUB='mygroup';
+RENDER.students=async function(){
+  const seg=`<div class="seg" id="studentsSeg" style="margin-bottom:10px">
+      <button class="${STUDENTS_SUB==='mygroup'?'on':''}" onclick="switchStudentsTab('mygroup')">My group</button>
+      <button class="${STUDENTS_SUB==='others'?'on':''}" onclick="switchStudentsTab('others')">Other churches</button>
+    </div><div id="studentsBody"></div>`;
+  // Paint the shell first so the seg is stable, then fill the body for the active sub-tab.
+  paint('students',seg,'Student Search',STUDENTS_SUB==='mygroup'?'Your group':'Find any camper');
+  await _renderStudentsBody();
+};
+async function _renderStudentsBody(){
+  const host=document.getElementById('studentsBody');
+  if(!host)return;
+  if(STUDENTS_SUB==='others'){
+    host.innerHTML=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find another church's leader</span>${helpTip('Search any camper or leader by name. Tap a result to reveal masked contact details.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a student's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any camper or leader across the camp.</p></div>`;
+    return;
+  }
+  // My group: fetch + render the roster into #studentsBody.
+  host.innerHTML='<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>';
+  const page=await api('/campers?pageSize=300');
+  const items=Array.isArray(page)?page:page.items||[];
+  const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
+  const zones=[...new Set(items.map(c=>c.zone))].sort();
+  const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
+  window._myYouthAll=items;
+  host.innerHTML=`<div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="filterMyYouth()"><option value="all">All genders</option><option value="female">Girls</option><option value="male">Guys</option></select><select id="myGradeF" onchange="filterMyYouth()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}<option value="leaders">Leaders</option></select></div><div id="myYouthList"></div>`;
+  filterMyYouth();
+}
+function switchStudentsTab(sub){
+  STUDENTS_SUB=sub;
+  document.querySelectorAll('#studentsSeg button').forEach(b=>b.classList.remove('on'));
+  const idx=sub==='mygroup'?0:1;
+  const btns=document.querySelectorAll('#studentsSeg button');if(btns[idx])btns[idx].classList.add('on');
+  _renderStudentsBody();
+}
 let sT;function doSearch(v){clearTimeout(sT);sT=setTimeout(()=>runSearch(v),200);}
 async function runSearch(v){const box=document.getElementById('results');if(!box)return;
   if(!v.trim()){box.innerHTML='<p class="note-hint">Type a name to find any camper or leader across the camp.</p>';return;}
@@ -2636,8 +2676,11 @@ async function fdConfirmAll(){
   fdDraw();
 }
 
-RENDER.myyouth=async function(){
-  paint('myyouth','<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','My Youth Details','At camp · signed out · late');
+RENDER.myyouth=async function(){ await _renderMyGroup('myyouth'); };
+// My-group roster (At camp / Signed out / Late arrivals) rendered into `screenId`. Used by the
+// legacy `myyouth` screen and by the merged Students tab (screenId='students').
+async function _renderMyGroup(screenId){
+  paint(screenId,'<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','Student Search','At camp · signed out · late');
   const page=await api('/campers?pageSize=300');
   const items=Array.isArray(page)?page:page.items||[];
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
@@ -2645,9 +2688,9 @@ RENDER.myyouth=async function(){
   const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
   window._myYouthAll=items;
   const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not yet arrived. Tap a name to see their details and contacts.')}</div><div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="filterMyYouth()"><option value="all">All genders</option><option value="female">Girls</option><option value="male">Guys</option></select><select id="myGradeF" onchange="filterMyYouth()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}<option value="leaders">Leaders</option></select></div><div id="myYouthList"></div>`;
-  paint('myyouth',base,'My Youth Details','At camp · signed out · late');
+  document.getElementById(screenId).innerHTML=base;
   filterMyYouth();
-};
+}
 function filterMyYouth(){
   const zone=sel('myZoneF')||'all',gen=sel('myGenderF')||'all',gr=sel('myGradeF')||'all';
   const all=(window._myYouthAll||[]).filter(c=>(zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)&&(gr==='all'||(gr==='leaders'?c.kind==='leader':String(c.grade)===gr)));
@@ -2666,19 +2709,32 @@ function filterMyYouth(){
       <div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}${badge}</div>
       <div class="sub">${sub}</div></div><span class="chev">›</span></div>`;
   }
+  const groupByChurch=ACTOR.role==='zoneLeader';
+  function section(title,rows){
+    if(!rows.length)return '';
+    let out=`<h3 class="sec">${title} (${rows.length})</h3>`;
+    if(groupByChurch){
+      const by={};rows.forEach(c=>{(by[c.churchName]||(by[c.churchName]=[])).push(c);});
+      Object.keys(by).sort().forEach(ch=>{
+        out+=`<div class="lbl" style="margin:8px 0 2px">${esc(ch)}</div>`+by[ch].map(myRow).join('');
+      });
+    }else{
+      out+=rows.map(myRow).join('');
+    }
+    return out;
+  }
   let html='';
-  if(atCamp.length){
-    html+=`<h3 class="sec" style="margin-top:4px">At camp (${atCamp.length})</h3>`;
-    html+=atCamp.map(myRow).join('');
-  }
-  if(signedOut.length){
-    html+=`<h3 class="sec">Signed out of camp (${signedOut.length})</h3>`;
-    html+=signedOut.map(myRow).join('');
-  }
+  html+=section('At camp',atCamp);
+  html+=section('Signed out of camp',signedOut);
   if(notArrived.length){
     html+=`<h3 class="sec">Late arrivals (${notArrived.length})</h3>`;
     html+=`<div class="infobox" style="font-size:.8rem;margin-bottom:8px">First Day Sign In is closed. Sign in late arrivals here — tap a name, then “Sign in to camp”. A note is logged automatically.</div>`;
-    html+=notArrived.map(myRow).join('');
+    if(groupByChurch){
+      const by={};notArrived.forEach(c=>{(by[c.churchName]||(by[c.churchName]=[])).push(c);});
+      Object.keys(by).sort().forEach(ch=>{html+=`<div class="lbl" style="margin:8px 0 2px">${esc(ch)}</div>`+by[ch].map(myRow).join('');});
+    }else{
+      html+=notArrived.map(myRow).join('');
+    }
   }
   if(!html)html='<p class="note-hint" style="margin-top:24px;text-align:center">No one matches these filters.</p>';
   el.innerHTML=html;
