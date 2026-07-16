@@ -9,6 +9,49 @@ import type { IPersonRepository } from '../interfaces/entity-repositories';
 import type { Person } from '../../core/entities/person';
 import type { CheckInEntry, SignOutEvent, ElvantoMeta } from '../../core/entities/person';
 import { isCamper } from '../../core/entities/person';
+import { maybeEncrypt, maybeDecrypt } from '../../utils/field-crypto';
+
+const T = 'people';
+const aad = (col: string, id: string): string => `${T}:${col}:${id}`;
+
+const DEFAULT_CONSENTS = (): Person['consents'] => ({
+  medical: { granted: false, timestamp: null },
+  media: { granted: false, timestamp: null },
+  supervision: { granted: false, timestamp: null },
+});
+
+/** Read an encrypted JSON string[] from `<col>_enc`, falling back to the legacy `<col>` array. */
+function readEncArray(row: Record<string, unknown>, col: string, id: string): string[] {
+  const enc = (row[`${col}_enc`] as string | null | undefined) ?? null;
+  if (enc != null) {
+    const s = maybeDecrypt(enc, aad(col, id));
+    return s ? (JSON.parse(s) as string[]) : [];
+  }
+  return (row[col] as string[] | null) ?? [];
+}
+
+/** Encrypt a string[] to a ciphertext string for `<col>_enc` (empty/null → null). */
+function encArray(values: string[] | null | undefined, col: string, id: string): string | null {
+  if (values == null || values.length === 0) return null;
+  return maybeEncrypt(JSON.stringify(values), aad(col, id));
+}
+
+/** Read encrypted consents from `consents_enc`, falling back to legacy jsonb `consents`. */
+function readEncConsents(row: Record<string, unknown>, id: string): Person['consents'] {
+  const enc = (row['consents_enc'] as string | null | undefined) ?? null;
+  if (enc != null) {
+    const s = maybeDecrypt(enc, aad('consents', id));
+    return s ? (JSON.parse(s) as Person['consents']) : DEFAULT_CONSENTS();
+  }
+  return (row['consents'] as Person['consents']) ?? DEFAULT_CONSENTS();
+}
+
+/** Read an encrypted date string from `<col>_enc`, falling back to the legacy `<col>` date. */
+function readEncDate(row: Record<string, unknown>, col: string, id: string): string | null {
+  const enc = (row[`${col}_enc`] as string | null | undefined) ?? null;
+  if (enc != null) return maybeDecrypt(enc, aad(col, id)); // stored as 'YYYY-MM-DD'
+  return dateOnly(row[col]);
+}
 
 // The "Unallocated" sentinel churchId (see src/services/church-allocation.ts —
 // UNALLOCATED_CHURCH_ID; duplicated here, not imported, to keep repositories/
@@ -53,11 +96,12 @@ function toSignOutEvent(row: Record<string, unknown>): SignOutEvent {
 }
 
 /** Build a Person from a `people` row + its already-fetched history rows. */
-function toPerson(
+export function toPerson(
   row: Record<string, unknown>,
   checkIns: CheckInEntry[],
   signOuts: SignOutEvent[],
 ): Person {
+  const id = row['id'] as string;
   return {
     id: row['id'] as string,
     firstName: row['first_name'] as string,
@@ -76,22 +120,18 @@ function toPerson(
     suburb: (row['suburb'] as string | null) ?? null,
     postcode: (row['postcode'] as string | null) ?? null,
     state: (row['state'] as string | null) ?? null,
-    medicalConditions: (row['medical_conditions'] as string[] | null) ?? [],
-    dietaryRequirements: (row['dietary_requirements'] as string[] | null) ?? [],
-    otherMedications: (row['other_medications'] as string | null) ?? null,
-    medicareNumber: (row['medicare_number'] as string | null) ?? null,
+    medicalConditions: readEncArray(row, 'medical_conditions', id),
+    dietaryRequirements: readEncArray(row, 'dietary_requirements', id),
+    otherMedications: maybeDecrypt(row['other_medications'] as string | null, aad('other_medications', id)),
+    medicareNumber: maybeDecrypt(row['medicare_number'] as string | null, aad('medicare_number', id)),
     churchUnlistedNote: (row['church_unlisted_note'] as string | null) ?? null,
     elvantoMeta: (row['elvanto_meta'] as ElvantoMeta | null) ?? null,
-    parentGuardianName: (row['parent_guardian_name'] as string | null) ?? null,
-    parentPhone: (row['parent_phone'] as string | null) ?? null,
-    parentRelation: (row['parent_relation'] as string | null) ?? null,
-    blueCardNumber: (row['blue_card_number'] as string | null) ?? null,
-    blueCardExpiry: dateOnly(row['blue_card_expiry']),
-    consents: (row['consents'] as Person['consents']) ?? {
-      medical: { granted: false, timestamp: null },
-      media: { granted: false, timestamp: null },
-      supervision: { granted: false, timestamp: null },
-    },
+    parentGuardianName: maybeDecrypt(row['parent_guardian_name'] as string | null, aad('parent_guardian_name', id)),
+    parentPhone: maybeDecrypt(row['parent_phone'] as string | null, aad('parent_phone', id)),
+    parentRelation: maybeDecrypt(row['parent_relation'] as string | null, aad('parent_relation', id)),
+    blueCardNumber: maybeDecrypt(row['blue_card_number'] as string | null, aad('blue_card_number', id)),
+    blueCardExpiry: readEncDate(row, 'blue_card_expiry', id),
+    consents: readEncConsents(row, id),
     paymentStatus: row['payment_status'] as Person['paymentStatus'],
     accommodationKind: (row['accommodation_kind'] as Person['accommodationKind']) ?? null,
     accommodationLabel: (row['accommodation_label'] as string | null) ?? null,
@@ -266,7 +306,8 @@ export class SupabasePersonRepository implements IPersonRepository {
 // Column maps + history replacement helpers
 // ---------------------------------------------------------------------------
 
-function personColumns(p: Person): Record<string, unknown> {
+export function personColumns(p: Person): Record<string, unknown> {
+  const id = p.id;
   return {
     id: p.id,
     first_name: p.firstName,
@@ -285,18 +326,18 @@ function personColumns(p: Person): Record<string, unknown> {
     suburb: p.suburb ?? null,
     postcode: p.postcode ?? null,
     state: p.state ?? null,
-    medical_conditions: p.medicalConditions,
-    dietary_requirements: p.dietaryRequirements,
-    other_medications: p.otherMedications ?? null,
-    medicare_number: p.medicareNumber ?? null,
+    medical_conditions_enc: encArray(p.medicalConditions, 'medical_conditions', id),
+    dietary_requirements_enc: encArray(p.dietaryRequirements, 'dietary_requirements', id),
+    other_medications: maybeEncrypt(p.otherMedications ?? null, aad('other_medications', id)),
+    medicare_number: maybeEncrypt(p.medicareNumber ?? null, aad('medicare_number', id)),
     church_unlisted_note: p.churchUnlistedNote ?? null,
     elvanto_meta: p.elvantoMeta ?? null,
-    parent_guardian_name: p.parentGuardianName ?? null,
-    parent_phone: p.parentPhone ?? null,
-    parent_relation: p.parentRelation ?? null,
-    blue_card_number: p.blueCardNumber ?? null,
-    blue_card_expiry: p.blueCardExpiry ?? null,
-    consents: p.consents,
+    parent_guardian_name: maybeEncrypt(p.parentGuardianName ?? null, aad('parent_guardian_name', id)),
+    parent_phone: maybeEncrypt(p.parentPhone ?? null, aad('parent_phone', id)),
+    parent_relation: maybeEncrypt(p.parentRelation ?? null, aad('parent_relation', id)),
+    blue_card_number: maybeEncrypt(p.blueCardNumber ?? null, aad('blue_card_number', id)),
+    blue_card_expiry_enc: maybeEncrypt(p.blueCardExpiry ?? null, aad('blue_card_expiry', id)),
+    consents_enc: maybeEncrypt(JSON.stringify(p.consents), aad('consents', id)),
     payment_status: p.paymentStatus,
     accommodation_kind: p.accommodationKind ?? null,
     accommodation_label: p.accommodationLabel ?? null,
@@ -323,9 +364,9 @@ function personColumns(p: Person): Record<string, unknown> {
 const PERSON_UPDATE_COLS = [
   'first_name', 'last_name', 'gender', 'date_of_birth', 'grade', 'school', 'kind',
   'church_id', 'church_name', 'zone', 'group_id', 'mobile', 'email', 'suburb',
-  'postcode', 'state', 'medical_conditions', 'dietary_requirements', 'other_medications',
+  'postcode', 'state', 'medical_conditions_enc', 'dietary_requirements_enc', 'other_medications',
   'parent_guardian_name', 'parent_phone', 'parent_relation', 'blue_card_number',
-  'blue_card_expiry', 'consents', 'payment_status', 'accommodation_kind',
+  'blue_card_expiry_enc', 'consents_enc', 'payment_status', 'accommodation_kind',
   'accommodation_label', 'registration_type', 'registration_cost', 'discount_code',
   'lifecycle', 'at_camp', 'updated_at',
   // Pre-existing bug fix (unrelated to this change): these three columns were being
