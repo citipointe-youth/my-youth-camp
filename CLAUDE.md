@@ -77,6 +77,22 @@ A deep audit across three areas was completed and all bugs addressed. Key change
 - `person.service.test.ts`: 4 `listMedicalWatch` cases — atCamp filter, departed excluded, church scoping, firstAid access (BUG-12).
 - `admin.characterisation.test.ts`: `BadRequestError` import added; `force:true` alone throws `BadRequestError` for `newYear` (BUG-13).
 
+## Migration files consolidated — 2026-07-16
+
+`supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate
+`004`) into four 4-digit files: `0001_baseline_schema.sql` (full end-state, minus the
+deprecated `settings.tent_price`/`classroom_price` columns, reflecting the encrypted
+`people` shape), `0002_rls.sql` (RLS on all 17 tables — also closes the gap where the
+old `020` never enabled RLS on `allocation_overrides`), `0003_seed.sql` (admin +
+settings singleton, verbatim from the old `002`), and `0004_drop_deprecated_columns.sql`
+(gated drop of the two dead pricing columns). The 24 originals are preserved verbatim in
+`supabase/migrations_archive/` (historical record; outside the CLI's scanned folder).
+Historical prose in this file that cites an old migration number (e.g. "migration `013`
+added `bracket`") still refers to those archived files. Prod was already at the full
+`001`–`023` end-state; it was reconciled via `0002`+`0004` for real + a metadata
+history catch-up. Design: `docs/superpowers/specs/2026-07-16-migration-consolidation-design.md`.
+Next future migration = `0005`.
+
 ## Improvement Initiative — Phases 1–7 deployed (2026-06-28)
 
 A 7-phase improvement program (CMS engineering-maturity patterns onto this app's identity) was

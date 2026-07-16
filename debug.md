@@ -254,8 +254,10 @@ service. **Bugs are almost always in a service.**
 Verification: `npm run typecheck` (clean) · `npm run test` (vitest, 442 pass as of 2026-07-04 —
 this count drifts every batch, treat it as "roughly this many", not exact). Note the two
 deploy-only gotchas in CLAUDE.md (CommonJS tsconfig; anchored `/data/` gitignore) — neither is
-caught by tsc/vitest. Schema migrations `008`–`014` applied to prod; `src/repositories/supabase/*`
-must not reference dropped columns. Migration `013` adds `bracket text` to `classroom_allocations`;
+caught by tsc/vitest. Schema migrations are **consolidated** (2026-07-16) into `supabase/migrations/0001`–`0004`;
+the original `001`–`023` are archived verbatim in `supabase/migrations_archive/`. Prod is at
+the full end-state (incl. field-encryption `022`/`023`). `src/repositories/supabase/*` must not
+reference dropped columns (`tent_price`/`classroom_price` were dropped by `0004`). Migration `013` adds `bracket text` to `classroom_allocations`;
 migration `014` adds `church_login_locked` + `zone_leader_login_locked` (boolean, default false) to
 `settings`. **`supabase.settings` writes ALL settings columns on every save** — if a new settings
 column isn't migrated to prod, every settings save (and mode switch / new-year) fails; reads
