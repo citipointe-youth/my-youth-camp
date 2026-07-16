@@ -3395,10 +3395,32 @@ RENDER.adminSettings=async function(){
       <div><div class="tgl-l">Restrict church check-in to current session ${helpTip('When on, church accounts can only submit the check-in that\'s actually happening right now — not an earlier or later session. Before camp starts, they can still complete the very first session (Mon PM). Zone leaders, directors and admin are never restricted.')}</div><div class="sub">Stops early/late check-ins from church accounts — toggle off any time.</div></div>
       <label class="tgl"><input type="checkbox" id="stChurchCheckinRestrict" ${s.churchCheckinTimeRestricted?'checked':''}><span class="track"></span></label>
     </div>
+    <label style="margin-top:16px">Arrival → daily check-in switchover</label>
+    <div class="two-col">
+      <div><label>Switchover time (Day 1)</label><input class="fld" id="stSwitchover" type="time" value="${esc(s.checkinSwitchoverTime||'14:00')}"></div>
+      <div><label>Phase</label>
+        <div class="seg" id="stPhaseSeg">
+          <button type="button" class="${(s.checkinPhaseOverride||'auto')==='auto'?'on':''}" data-phase="auto" onclick="setPhaseOverride('auto')">Auto</button>
+          <button type="button" class="${s.checkinPhaseOverride==='signin'?'on':''}" data-phase="signin" onclick="setPhaseOverride('signin')">Sign-in</button>
+          <button type="button" class="${s.checkinPhaseOverride==='checkin'?'on':''}" data-phase="checkin" onclick="setPhaseOverride('checkin')">Check-in</button>
+        </div>
+      </div>
+    </div>
+    <p class="note-hint">On Day 1, arrival sign-in switches to daily check-in at the time above. <b>Auto</b> follows that time; <b>Sign-in</b> / <b>Check-in</b> force the phase across the whole app until set back to Auto.</p>
     <button class="btn" style="margin-top:14px" onclick="saveSettings()">Save camp settings</button>
     <p class="note-hint">Setting the start date pre-fills the end date to the 4th day; you can adjust it. Check-in days are generated from the date range automatically — one Morning and one Afternoon session per day.</p></div>`,'Camp settings','Dates & details');
   renderCheckinDaysPreview();
 };
+window._phaseOverride=null;
+function setPhaseOverride(v){
+  // Manual flip changes every live session's entry — confirm before pinning away from Auto.
+  if(v!=='auto'){
+    const proceed=confirm('Force the '+(v==='signin'?'arrival sign-in':'daily check-in')+' phase for everyone until set back to Auto?');
+    if(!proceed)return;
+  }
+  window._phaseOverride=v;
+  document.querySelectorAll('#stPhaseSeg button').forEach(b=>b.classList.toggle('on',b.dataset.phase===v));
+}
 function renderCheckinDaysPreview(){
   const el=document.getElementById('stDaysPreview');if(!el)return;
   const days=_datesBetween(val('stStart'),val('stEnd'));
@@ -3423,7 +3445,9 @@ async function saveSettings(){
     const churchLock=!!document.getElementById('stChurchLock')?.checked;
     const zoneLock=!!document.getElementById('stZoneLock')?.checked;
     const churchCheckinRestrict=!!document.getElementById('stChurchCheckinRestrict')?.checked;
-    await api('/settings',{method:'PATCH',body:{campName:val('stName'),year:Number(val('stYear'))||new Date().getFullYear(),startDate:val('stStart'),endDate:val('stEnd'),timezone:'Australia/Brisbane',checkInDays:days,churchLoginLocked:churchLock,zoneLeaderLoginLocked:zoneLock,churchCheckinTimeRestricted:churchCheckinRestrict}});
+    const switchover=document.getElementById('stSwitchover')?.value||'14:00';
+    const phaseOverride=window._phaseOverride||document.querySelector('#stPhaseSeg button.on')?.dataset.phase||'auto';
+    await api('/settings',{method:'PATCH',body:{campName:val('stName'),year:Number(val('stYear'))||new Date().getFullYear(),startDate:val('stStart'),endDate:val('stEnd'),timezone:'Australia/Brisbane',checkInDays:days,churchLoginLocked:churchLock,zoneLeaderLoginLocked:zoneLock,churchCheckinTimeRestricted:churchCheckinRestrict,checkinSwitchoverTime:switchover,checkinPhaseOverride:phaseOverride}});
     SETTINGS=await api('/settings',{noCache:true});SESSIONS=[];SEL_SESSION=null;SCHED_DAY=null;DEVO_DAY=null;
     toast('Settings saved');
   }catch(e){toast(e.message);}
