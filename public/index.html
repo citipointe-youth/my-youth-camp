@@ -965,6 +965,24 @@ function _realCampDayNumber(){
   if(idx===-1)idx=sorted.length-1;
   return idx+1;
 }
+// Current Brisbane clock time as 'HH:MM' (24h), zero-padded, comparable to checkinSwitchoverTime.
+// formatToParts + the '24'→'00' guard avoids the midnight '24:00' quirk some engines emit.
+function brisbaneNowTime(){
+  const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Australia/Brisbane',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date());
+  let h=(parts.find(p=>p.type==='hour')||{}).value||'00';
+  const m=(parts.find(p=>p.type==='minute')||{}).value||'00';
+  if(h==='24')h='00';
+  return h+':'+m;
+}
+// Which face the unified Sign-in/Check-in surface shows. 'signin' = Day-1 arrival before the
+// switchover; 'checkin' = daily roll-call. Manual override (admin) wins; otherwise time-driven.
+function campPhase(){
+  const o=(SETTINGS&&SETTINGS.checkinPhaseOverride)||'auto';
+  if(o==='signin'||o==='checkin')return o;
+  const day1=PREVIEW_MODE?(((SETTINGS&&SETTINGS.campDay)||1)===1):(_realCampDayNumber()===1);
+  const sw=(SETTINGS&&SETTINGS.checkinSwitchoverTime)||'14:00';
+  return (day1&&brisbaneNowTime()<sw)?'signin':'checkin';
+}
 function updateModeUI(){
   const b=document.getElementById('modeBadge'),r=document.getElementById('roleBadge');
   if(PREVIEW_MODE){b.textContent='Preview';b.style.background='#92400e';b.style.color='#fff';}
