@@ -159,8 +159,6 @@ function settings(over: Partial<CampSettings> = {}): CampSettings {
     timezone: 'Australia/Brisbane',
     checkInDays: [],
     accommodationLocked: false,
-    tentPrice: 80,
-    classroomPrice: 120,
     churchLoginLocked: false,
     zoneLeaderLoginLocked: false,
     churchCheckinTimeRestricted: false,

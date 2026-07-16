@@ -14,7 +14,7 @@ function fakeSettings(over: Partial<CampSettings> = {}): ISettingsRepository {
   const settings: CampSettings = {
     id: SETTINGS_ID, campName: 'Camp', year: 2026, startDate: '2026-07-01', endDate: '2026-07-05',
     timezone: 'Australia/Brisbane', checkInDays: [], accommodationLocked: false,
-    tentPrice: 80, classroomPrice: 120, churchLoginLocked: false, zoneLeaderLoginLocked: false,
+    churchLoginLocked: false, zoneLeaderLoginLocked: false,
     churchCheckinTimeRestricted: false,
     checkinSwitchoverTime: '14:00', checkinPhaseOverride: 'auto',
     campMode: 'pre-camp', createdAt: now, updatedAt: now, ...over,

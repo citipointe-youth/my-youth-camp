@@ -135,8 +135,6 @@ export async function seedAll(container: Container): Promise<void> {
     // Check-in days = each date of the camp (drives the auto AM/PM check-in sessions).
     checkInDays: ['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04'],
     accommodationLocked: false,
-    tentPrice: 80,
-    classroomPrice: 120,
     churchLoginLocked: false,
     zoneLeaderLoginLocked: false,
     churchCheckinTimeRestricted: false,

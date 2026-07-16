@@ -1,4 +1,4 @@
--- 024: Unified arrival→daily check-in switchover (at-camp).
+-- 0005: Unified arrival→daily check-in switchover (at-camp).
 --
 -- Two client-side-driven settings. The SPA computes arrival-vs-daily from these + Brisbane time
 -- (serverless: no scheduler). Backward-compatible & idempotent — existing settings row gets the
