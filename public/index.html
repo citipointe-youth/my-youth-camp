@@ -1211,6 +1211,8 @@ function paint(id,html,t,s){
    broken admin at-camp sidebar — AC-5/D2). The sidebar list = tabs ++ extras, in order. */
 function navModel(role,mode){
   const T=(id,icon,label)=>({id,icon,label});
+  const _ci=()=> (typeof campPhase==='function'&&campPhase()==='signin')
+    ? T('checkin','check','Sign-in') : T('checkin','check','Check-in');
   if(role==='firstAid'){
     // Phase 4: Search is the home (finding a student is the whole job); Records = the first-aider's
     // logged actions; Schedule kept (owner). Medical Watch removed.
@@ -1229,13 +1231,13 @@ function navModel(role,mode){
   }
   /* at-camp */
   if(role==='church'||role==='zoneLeader')
-    return {tabs:[T('home','home','Home'),T('checkin','check','Check-in'),T('search','search','Search'),T('notifs','bell','Notices')],extras:[]};
+    return {tabs:[T('home','home','Home'),_ci(),T('search','search','Search'),T('notifs','bell','Notices')],extras:[]};
   if(role==='director')
-    return {tabs:[T('home','home','Home'),T('checkin','check','Check-in'),T('search','search','Search'),T('notifs','bell','Notices')],
+    return {tabs:[T('home','home','Home'),_ci(),T('search','search','Search'),T('notifs','bell','Notices')],
             extras:[T('notes','note','Notes')]};
   /* admin at-camp — D2/AC-5: exactly these 6 in the sidebar, in this order.
      Bottom tabs keep Admin (not Notices) to fit 4 slots; the sidebar shows the full 6. */
-  return {tabs:[T('home','home','Home'),T('checkin','check','Check-in'),T('search','search','Search'),T('admin','gear','Admin')],
+  return {tabs:[T('home','home','Home'),_ci(),T('search','search','Search'),T('admin','gear','Admin')],
           extras:[T('notifs','bell','Notices'),T('accom','classroom','Accommodation Allocations')]};
 }
 /* Sidebar order for admin at-camp must be exactly:
@@ -1246,7 +1248,8 @@ function navSidebar(role,mode){
   const m=navModel(role,mode);
   if(role==='admin'&&mode==='at-camp'){
     const T=(id,icon,label)=>({id,icon,label});
-    return [T('home','home','Home'),T('checkin','check','Check In'),T('search','search','Search'),
+    const ciLabel=(typeof campPhase==='function'&&campPhase()==='signin')?'Sign-in':'Check In';
+    return [T('home','home','Home'),T('checkin','check',ciLabel),T('search','search','Search'),
             T('notifs','bell','Notices'),T('accom','classroom','Accommodation Allocations'),T('admin','gear','Admin Settings')];
   }
   return [...m.tabs,...m.extras];
@@ -1776,7 +1779,12 @@ function _retryFailedCheckins(){
   toast('Re-tap any row still marked red to check them in');
 }
 
-RENDER.checkin=async function renderCheckin(){
+// Unified entry: one nav id, phase-branched. Arrival sign-in before the switchover, daily after.
+RENDER.checkin=async function(){
+  if(campPhase()==='signin'){ await _renderArrival(); return; }
+  await _renderDailyCheckin();
+};
+async function _renderDailyCheckin(){
   if(SESSIONS.length===0)SESSIONS=await api('/checkin/sessions');
   // When the admin has restricted church check-in to the current session, a church login
   // is always pinned to whatever session is current right now — it can't linger on an
@@ -2522,7 +2530,11 @@ async function sendNotif(){const title=document.getElementById('ntitle').value.t
 /* ===== MY YOUTH at-camp ===== */
 
 /* ===== FIRST DAY SIGN IN ===== */
+// The arrival ("first day sign in") body can render into either the standalone `firstday`
+// screen (legacy/direct) or the unified `checkin` screen (phase==='signin'). fdDraw writes here.
+let _fdScreen='firstday';
 RENDER.firstday=async function(){
+  _fdScreen='firstday';
   paint('firstday','<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','First Day Sign In','Select students to confirm');
   const [camperPage,regList]=await Promise.all([api('/campers?pageSize=300'),api('/registrants')]);
   const campers=(Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student');
@@ -2533,6 +2545,21 @@ RENDER.firstday=async function(){
   window._fdGender='all';window._fdGrade='all';
   fdDraw();
 };
+// Arrival sign-in rendered INTO the unified `checkin` screen (phase==='signin'). Reuses the exact
+// first-day arrival flow (window._fd* state + fdDraw/fdToggle/fdConfirmAll), only redirecting its
+// output to the active `checkin` screen so the tab highlight, Back stack and nav token stay stable.
+async function _renderArrival(){
+  _fdScreen='checkin';
+  paint('checkin','<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','First Day Sign In','Select students to confirm');
+  const [camperPage,regList]=await Promise.all([api('/campers?pageSize=300'),api('/registrants')]);
+  const campers=(Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student');
+  const camperIds=new Set(campers.map(c=>c.id));
+  const registrants=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id));
+  window._fdAll=[...registrants,...campers];
+  window._fdPending=new Set();
+  window._fdGender='all';window._fdGrade='all';
+  fdDraw();
+}
 function fdDraw(){
   const students=window._fdAll||[];
   const notIn=students.filter(c=>!c.atCamp);
@@ -2578,7 +2605,7 @@ function fdDraw(){
     <div id="fdConfirmBar" style="display:${pendingCount>0?'block':'none'};position:sticky;bottom:10px;margin-top:16px">
       <button class="btn" style="background:#16a34a" onclick="fdConfirmAll()">Confirm ${pendingCount} sign-in${pendingCount===1?'':'s'}</button>
     </div>`;
-  const el=document.getElementById('firstday');
+  const el=document.getElementById(_fdScreen);
   if(el)el.innerHTML=html;
   document.getElementById('barT').textContent='First Day Sign In';
   document.getElementById('barS').textContent=(notIn.length-pendingCount)+' remaining';
