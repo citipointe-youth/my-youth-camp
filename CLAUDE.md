@@ -88,9 +88,21 @@ settings singleton, verbatim from the old `002`), and `0004_drop_deprecated_colu
 (gated drop of the two dead pricing columns). The 24 originals are preserved verbatim in
 `supabase/migrations_archive/` (historical record; outside the CLI's scanned folder).
 Historical prose in this file that cites an old migration number (e.g. "migration `013`
-added `bracket`") still refers to those archived files. Prod was already at the full
-`001`–`023` end-state; it was reconciled via `0002`+`0004` for real + a metadata
-history catch-up. Design: `docs/superpowers/specs/2026-07-16-migration-consolidation-design.md`.
+added `bracket`") still refers to those archived files.
+
+**Prod reconciled 2026-07-16 (code) + 2026-07-17 (DB).** The code-ref removal (dropping
+`tentPrice`/`classroomPrice` from the settings entity/schema/seed/mapper + fixtures)
+deployed to `master` first (must precede the column drop). Then against prod
+(`nwfafrgojqkxylbppywo`): `0002` was run and was a **verified no-op** — all 17 tables
+already had RLS on, *including* `allocation_overrides` (so the gap the old `020` left had
+already been closed by the time this ran); `0004` dropped `settings.tent_price`/
+`classroom_price` for real (both were present; 0 remaining after, 21 settings columns
+left); a metadata history catch-up inserted `0001`–`0004` as applied and the old
+timestamp-versioned rows (`005`–`023`) were **pruned**, so `supabase_migrations.
+schema_migrations` now reads exactly `0001`–`0004`. Verified after: settings singleton
+readable, a real admin settings save succeeds. A future `supabase db push` sees all four
+already applied and does nothing. Design:
+`docs/superpowers/specs/2026-07-16-migration-consolidation-design.md`.
 Next future migration = `0005`.
 
 ## Improvement Initiative — Phases 1–7 deployed (2026-06-28)
