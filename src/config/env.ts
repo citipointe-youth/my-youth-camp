@@ -12,6 +12,10 @@ export const env = {
   // JWT_SECRET here. A stale JWT_SECRET key was removed (it was never read, so setting it
   // in a deployment gave a false sense of having secured sessions). Set SESSION_SECRET.
   DATA_DIR: process.env['DATA_DIR'] ?? './data',
+  // Field-level encryption (read directly from process.env by src/utils/field-crypto.ts):
+  //   FIELD_ENCRYPTION_KEY       base64 of a 32-byte key — REQUIRED when PERSISTENCE=supabase
+  //   FIELD_ENCRYPTION_KEY_ID    label for the active key (default 'k1')
+  //   FIELD_ENCRYPTION_KEY_PREV / _PREV_ID   previous key, decrypt-only, during rotation
 } as const;
 
 export type Env = typeof env;

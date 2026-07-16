@@ -4,3 +4,4 @@ export * from './date';
 export * from './logger';
 export * from './mask';
 export * from './csv';
+export * from './field-crypto';
