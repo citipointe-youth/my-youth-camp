@@ -950,6 +950,47 @@ same-user "At-camp preview" section below, which this composes with. Design + re
 - **Also:** `updateModeUI` role badge gained a `firstAid` → "First aid" case (previously fell
   through to "Church"), now visible because firstAid accounts are previewable.
 
+## Field encryption at rest (people/notes sensitive columns) — implemented 2026-07-16
+
+Sensitive `people`/`notes` columns are encrypted at rest with AES-256-GCM so raw DB access
+(incl. Supabase staff/SQL editor) reveals only ciphertext, while every service/export still
+sees plaintext. Design: `docs/superpowers/specs/2026-07-16-field-encryption-design.md`; plan:
+`docs/superpowers/plans/2026-07-16-field-encryption.md`. Backend + migrations only — **no
+SPA change, `sw.js` not bumped**. `npm run typecheck` clean, `npm run test` = **479 pass**
+(14 new). Migrations `022`/`023` + the backfill script are **operator-gated** (see the plan's
+Deployment Runbook) — code alone does not change prod data.
+
+- **Scope + seam:** the codec (`src/utils/field-crypto.ts`, pure `node:crypto`) is called
+  ONLY inside the Supabase row↔entity mappers — `supabase.people.ts` (`toPerson`/
+  `personColumns`) and `supabase.notes.ts` (`toNote`/`noteColumns`). Services, in-memory/json
+  persistence, and the SPA are all unaware encryption exists; `memory`/`json` dev modes stay
+  fully plaintext. Encrypted `people` columns: `medical_conditions`, `dietary_requirements`,
+  `other_medications`, `medicare_number`, `blue_card_number`, `blue_card_expiry`,
+  `parent_guardian_name`, `parent_phone`, `parent_relation`, `consents`. Encrypted `notes`
+  column: `body`.
+- **Envelope:** `v1.<keyId>.<iv_b64url>.<tag_b64url>.<ct_b64url>` — the `v1.` prefix is the
+  "already encrypted?" test (`isEncrypted`), which makes the backfill idempotent and lets
+  reads tolerate a table that's any mix of ciphertext + not-yet-migrated plaintext. Every
+  ciphertext is bound via AAD to `"<table>:<column>:<id>"`, so a value can't be swapped
+  between rows/columns without the decrypt failing (auth-tag check).
+- **Column shape:** `text[]`/`jsonb`/`date` fields (`medical_conditions`,
+  `dietary_requirements`, `consents`, `blue_card_expiry`) move to new nullable `*_enc text`
+  columns (migration `022`) since they can't hold a single ciphertext string in place; plain
+  `text` scalars (`other_medications`, `medicare_number`, `blue_card_number`, `parent_*`,
+  `notes.body`) are encrypted in place. `null`/`undefined`/`''`/`[]` always round-trip to the
+  same empty value — never stored as ciphertext (`maybeEncrypt`/`maybeDecrypt`).
+- **Key management:** `FIELD_ENCRYPTION_KEY` (base64, 32 bytes, active) + optional
+  `FIELD_ENCRYPTION_KEY_ID` (default `k1`); `FIELD_ENCRYPTION_KEY_PREV` / `_PREV_ID` (default
+  `k0`) for decrypt-only during rotation. See `SECURITY-ACTIONS.md` "1b" for generation +
+  the rotation procedure. **Losing the key = losing the data permanently — that is the
+  security property, not a bug.**
+- **Rollout (Deployment Runbook in the plan, operator-gated):** apply `022` → deploy the
+  encryption-aware code (reads decrypt-or-passthrough, writes emit ciphertext) → run
+  `scripts/backfill-field-encryption.ts` (idempotent/resumable, re-saves every person + note
+  through the encryption-aware repos) → verify every row is encrypted → apply `023` (drops
+  the four legacy plaintext `people` columns) → `VACUUM FULL people; VACUUM FULL notes;` to
+  physically purge plaintext from disk. Rollback is safe any time before `023`.
+
 ## Architecture
 
 ```

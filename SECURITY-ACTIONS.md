@@ -7,6 +7,19 @@ In Vercel Environment Variables, set SESSION_SECRET to 64+ random hex chars.
 Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 Without this, anyone can forge auth tokens.
 
+## 1b. Set FIELD_ENCRYPTION_KEY
+Sensitive people/notes columns are encrypted at rest (AES-256-GCM) using this key.
+Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
+Set FIELD_ENCRYPTION_KEY in Vercel Environment Variables (base64, 32 bytes).
+
+⚠️ BACK THIS KEY UP OUT-OF-BAND. If it is lost, every encrypted field (medical,
+dietary, medicare, blue card, parent contacts, consents, note bodies) is PERMANENTLY
+unrecoverable — that is the security property, not a bug. Losing the key = losing the data.
+
+Rotation: set the new key as FIELD_ENCRYPTION_KEY (+ FIELD_ENCRYPTION_KEY_ID), move the
+old one to FIELD_ENCRYPTION_KEY_PREV (+ _PREV_ID), re-run
+scripts/backfill-field-encryption.ts, then remove the PREV key.
+
 ## 2. Lock CORS
 Set CORS_ORIGINS to your exact Vercel URL (e.g. `https://youth-camp-platform.vercel.app`).
 Never leave this as `*` in production.
