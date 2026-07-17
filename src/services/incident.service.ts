@@ -55,6 +55,8 @@ export function makeIncidentService(
           senderId: actor.id,
           senderName: actor.displayName,
           senderRole: actor.role,
+          // Incident summaries can describe a minor — keep them off church/firstAid feeds.
+          leadersOnly: true,
           audienceEstimate: 0,
           expiresAt: null,
           createdAt: nowISO(),

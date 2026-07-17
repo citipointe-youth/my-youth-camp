@@ -12,6 +12,13 @@ export interface Notification {
   senderId: ID;
   senderName: string;
   senderRole: UserRole;
+  /**
+   * When true, this notice is only visible to leadership oversight roles
+   * (zoneLeader/director/admin) and is hidden from church/firstAid feeds even
+   * when its scope is 'camp'. Used for system-raised incident alerts, whose
+   * summaries can describe a minor and must not reach church logins.
+   */
+  leadersOnly?: boolean;
   audienceEstimate: number;
   expiresAt?: ISODateString | null;
   createdAt: ISODateString;

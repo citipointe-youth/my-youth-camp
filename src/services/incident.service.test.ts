@@ -67,6 +67,7 @@ describe('incident.service — logging', () => {
     expect(feed[0]!.priority).toBe('urgent');
     expect(feed[0]!.body).toBe('serious injury — ambulance called'); // summary included
     expect(feed[0]!.title).toContain('Yellow');
+    expect(feed[0]!.leadersOnly).toBe(true); // hidden from church/firstAid feeds (summary can describe a minor)
   });
 
   it('list() returns incidents newest-first', async () => {

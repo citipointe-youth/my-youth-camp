@@ -46,6 +46,11 @@ export function makeNotificationService(
   async function getActorFeed(actor: Actor): Promise<Notification[]> {
     const active = await notifRepo.findActive();
     return active.filter((n) => {
+      // Leaders-only notices (e.g. incident alerts) are never shown to church/firstAid,
+      // regardless of scope — their bodies can describe a minor.
+      if (n.leadersOnly && actor.role !== 'zoneLeader' && actor.role !== 'director' && actor.role !== 'admin') {
+        return false;
+      }
       if (n.scope === 'camp') return true;
       if (n.scope === 'zone') {
         if (actor.role === 'admin' || actor.role === 'director') return true;
@@ -75,6 +80,7 @@ export function makeNotificationService(
         senderId: actor.id,
         senderName: actor.displayName,
         senderRole: actor.role,
+        leadersOnly: false,
         audienceEstimate: audience,
         expiresAt: data.expiresAt ?? null,
         createdAt: nowISO(),
