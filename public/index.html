@@ -575,12 +575,12 @@ textarea{min-height:84px;resize:vertical;}
   <div id="login">
     <h1>My Youth Camp</h1>
     <p>Registration &amp; on-ground management</p>
-    <div class="card">
-      <label>Username</label><input class="fld" id="username" placeholder="username" autocapitalize="none" autocomplete="username" autocorrect="off" spellcheck="false">
-      <label>Password</label><input class="fld" id="password" type="password" autocomplete="current-password">
-      <button class="btn" onclick="doLogin()">Sign in</button>
+    <form class="card" id="loginForm" onsubmit="event.preventDefault();doLogin();return false;">
+      <label>Username</label><input class="fld" id="username" name="username" placeholder="username" inputmode="text" autocapitalize="none" autocomplete="username" autocorrect="off" spellcheck="false">
+      <label>Password</label><input class="fld" id="password" name="password" type="password" autocomplete="current-password">
+      <button class="btn" type="submit">Sign in</button>
       <div class="err" id="loginErr"></div>
-    </div>
+    </form>
     <!-- Demo quick-login: only rendered for the in-memory demo build, injected by
          _initDemoLogin() when /settings reports a demo/seed backend. Never shipped
          with prefilled credentials in production. -->
@@ -1849,6 +1849,65 @@ RENDER.checkin=async function(){
   if(campPhase()==='signin'){ await _renderArrival(); return; }
   await _renderDailyCheckin();
 };
+/* ===== Feature 1 (2026-07-17): preview "everyone already checked in" simulation =====
+   While previewing the at-camp view (PREVIEW_MODE — the pre-camp 👁 toggle, or the at-camp
+   overlay inside an admin account-preview) with the REAL global mode still pre-camp, nobody has
+   actually arrived yet, so the real check-in roster and My-group/roster screens are genuinely
+   empty — a broken-looking demo. This block fakes a populated roster CLIENT-SIDE ONLY, built by
+   re-shaping the real (pre-camp) /registrants list — it never writes anything and never touches
+   the network beyond that read. Exits cleanly: once PREVIEW_MODE ends or the real mode flips to
+   at-camp, `_previewSimActive()` goes false and every screen reads real data again. */
+function _previewSimActive(){
+  return !!(PREVIEW_MODE&&SETTINGS&&SETTINGS.campMode==='pre-camp');
+}
+// Deterministic "not yet checked in" set — the LAST 5 people sorted by surname (then first name),
+// so the same 5 people show as "not signed in" everywhere the simulation is used, and the
+// not-signed-in state is demoed too, not just the all-green happy path.
+function _previewNotCheckedInIds(people){
+  const sorted=[...people].sort((a,b)=>{
+    const an=((a.lastName||'')+' '+(a.firstName||'')).toLowerCase();
+    const bn=((b.lastName||'')+' '+(b.firstName||'')).toLowerCase();
+    return an<bn?-1:an>bn?1:0;
+  });
+  return new Set(sorted.slice(-5).map(p=>p.id));
+}
+// Simulated daily check-in roster, shaped like _renderDailyCheckin's real `roster` array, built
+// from /registrants (non-leader, non-cancelled) instead of the real (empty, pre-camp) session
+// roster.
+function _previewSimRoster(regList){
+  const people=(Array.isArray(regList)?regList:[]).filter(r=>r.kind!=='leader'&&r.status!=='cancelled');
+  const notIn=_previewNotCheckedInIds(people);
+  return people.map(r=>({
+    id:r.id,name:(r.firstName+' '+r.lastName).trim(),
+    church:r.churchName,zone:r.zone,
+    gender:r.gender,grade:r.grade,
+    medicalFlag:(r.medicalConditions&&r.medicalConditions.length>0)||!!r.otherMedications,
+    present:!notIn.has(r.id),
+  }));
+}
+// Simulated CamperDto-shaped list for the My-group/roster screens (_renderMyGroup), built the
+// same way — everyone `atCamp:true` except the same deterministic excluded 5.
+async function _previewSimCampers(){
+  const regList=await api('/registrants').catch(()=>[]);
+  const people=(Array.isArray(regList)?regList:[]).filter(r=>r.status!=='cancelled');
+  const notIn=_previewNotCheckedInIds(people);
+  return people.map(r=>({
+    id:r.id,firstName:r.firstName,lastName:r.lastName,fullName:(r.firstName+' '+r.lastName).trim(),
+    kind:r.kind==='leader'?'leader':'student',
+    churchId:r.churchId,churchName:r.churchName,zone:r.zone,groupId:null,
+    mobile:r.mobile,gender:r.gender,grade:r.grade,dateOfBirth:r.dateOfBirth,
+    accommodationKind:r.accommodationKind,registrationType:r.registrationType,
+    registrationCost:r.registrationCost,discountCode:r.discountCode,discountAmount:r.discountAmount,
+    medicalConditions:r.medicalConditions,dietaryRequirements:r.dietaryRequirements,
+    otherMedications:r.otherMedications,medicareNumber:r.medicareNumber,
+    parentGuardianName:r.parentGuardianName,parentPhone:r.parentPhone,parentRelation:r.parentRelation,
+    consentMedical:r.consentMedical,blueCardNumber:r.blueCardNumber,blueCardExpiry:r.blueCardExpiry,
+    lifecycle:notIn.has(r.id)?'registered':'camper',
+    atCamp:!notIn.has(r.id),
+    checkInHistory:[],signOutHistory:[],
+    createdAt:r.createdAt,updatedAt:r.updatedAt,
+  }));
+}
 async function _renderDailyCheckin(){
   if(SESSIONS.length===0)SESSIONS=await api('/checkin/sessions');
   // When the admin has restricted church check-in to the current session, a church login
@@ -1867,12 +1926,16 @@ async function _renderDailyCheckin(){
   // scoped registrant/camper lists alongside the roster status, same call shape as
   // RENDER.firstday. Both /registrants and /campers are 30s-cached by api(), so selDay/setFilter
   // re-renders don't re-hit the network.
+  // Feature 1: while the preview simulation is active the real session status + camper list are
+  // genuinely empty (nobody's actually arrived pre-camp) — skip those two real fetches and build
+  // the roster from /registrants instead, client-side only.
+  const previewSim=_previewSimActive();
   const [st,regList,camperPage]=await Promise.all([
-    api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status'),
+    previewSim?Promise.resolve({session:null,roster:[]}):api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status'),
     api('/registrants').catch(()=>[]),
-    api('/campers?pageSize=300').catch(()=>[]),
+    previewSim?Promise.resolve([]):api('/campers?pageSize=300').catch(()=>[]),
   ]);
-  const roster=(st.roster||[]).map(r=>({
+  const roster=previewSim?_previewSimRoster(regList):(st.roster||[]).map(r=>({
     id:r.camperId,name:(r.firstName+' '+r.lastName).trim(),
     church:r.church,zone:r.zone,
     gender:r.gender,grade:r.grade,medicalFlag:!!r.medicalFlag,
@@ -1927,10 +1990,13 @@ async function _renderDailyCheckin(){
   // scoped to people already atCamp who haven't logged THIS session yet. Dedup the same way
   // RENDER.firstday does (campers = kind:'student' already-camper records; registrants fill in
   // anyone not yet promoted to a camper record).
+  // Feature 1: the preview simulation already treats everyone (bar the deterministic 5) as
+  // arrived — this section would otherwise list the real (all-unarrived, pre-camp) population
+  // and contradict the roster above it, so it's suppressed while the simulation is active.
   const camperIds=new Set((Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student').map(c=>c.id));
   const nsCampers=(Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student'&&!c.atCamp);
   const nsRegs=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id)&&!c.atCamp);
-  const notSignedIn=[...nsRegs,...nsCampers];
+  const notSignedIn=previewSim?[]:[...nsRegs,...nsCampers];
   const nsRow=c=>{
     const nm=(c.firstName+' '+c.lastName).trim();
     return `<div class="row">
@@ -2302,8 +2368,9 @@ async function _renderStudentsBody(){
   }
   // My group: fetch + render the roster into #studentsBody.
   host.innerHTML='<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>';
-  const page=await api('/campers?pageSize=300');
-  const items=Array.isArray(page)?page:page.items||[];
+  // Feature 1: simulate a populated roster while previewing at-camp from a still-pre-camp
+  // backend — see _previewSimActive()/_previewSimCampers() above (client-side only).
+  const items=_previewSimActive()?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
   const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
@@ -2752,8 +2819,10 @@ RENDER.myyouth=async function(){ await _renderMyGroup('myyouth'); };
 // legacy `myyouth` screen and by the merged Students tab (screenId='students').
 async function _renderMyGroup(screenId){
   paint(screenId,'<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','Student Search','At camp · signed out · late');
-  const page=await api('/campers?pageSize=300');
-  const items=Array.isArray(page)?page:page.items||[];
+  // Feature 1: the real /campers list is genuinely empty pre-camp (nobody's arrived) — while
+  // previewing the at-camp view, build a simulated "everyone but 5 already arrived" list instead
+  // (client-side only) so the roster/search screens demo populated rather than blank.
+  const items=_previewSimActive()?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
   const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
@@ -4403,19 +4472,31 @@ function _clearImport(){_importBatch=null;_importPendingParsed=null;const fi=doc
 // then family-facing info (FAQ/contacts). Each step auto-detects "done" for the green tick,
 // and carries a short plain-language tip (rendered as a helpTip bubble in the checklist).
 const WIZARD_STEPS=[
-  {key:'settings',label:'Camp settings',icon:'gear',screen:'adminSettings',tip:'Set the camp name and dates first — the dates unlock the schedule, devotionals and check-in days.',check:()=>!!(SETTINGS&&SETTINGS.campName&&SETTINGS.startDate)},
-  {key:'churches',label:'Churches',icon:'users',screen:'adminAccounts',tip:'Add every church attending — or let the registration upload auto-create any church it names (zone defaults to Yellow; set its login and zone afterwards via Account Info, which also holds the per-church accommodation override).',check:async()=>{try{const c=await api('/accounts/churches');return(c||[]).length>0;}catch(e){return false;}}},
-  {key:'accounts',label:'Accounts',icon:'users',screen:'adminAccounts',tip:'Create login accounts for church leaders, zone leaders and directors.',check:async()=>{try{const u=await api('/accounts/users');return(u||[]).filter(x=>x.role!=='admin').length>0;}catch(e){return false;}}},
+  {key:'settings',label:'Camp settings',icon:'gear',screen:'adminSettings',summary:'Camp settings — dates, name and check-in switchover.',check:()=>!!(SETTINGS&&SETTINGS.campName&&SETTINGS.startDate)},
+  {key:'churches',label:'Churches',icon:'users',screen:'adminAccounts',summary:'Churches — added automatically from your registration upload, or add one by hand.',check:async()=>{try{const c=await api('/accounts/churches');return(c||[]).length>0;}catch(e){return false;}}},
+  {key:'accounts',label:'Accounts',icon:'users',screen:'adminAccounts',summary:'Accounts — login accounts for church leaders, zone leaders and directors.',check:async()=>{try{const u=await api('/accounts/users');return(u||[]).filter(x=>x.role!=='admin').length>0;}catch(e){return false;}}},
   // Item 5a: sits between Accounts and Accommodation rooms — a camp usually imports its
   // registration export right after accounts exist, before setting up rooms/allocation.
-  {key:'import',label:'Import registrations',icon:'upload',screen:'import',tip:'Upload your registration export (Form/Ticket List/Invoice) to bring in students and leaders.',check:async()=>{if(SETTINGS&&SETTINGS.formImportedAt)return true;try{const r=await api('/registrants');return(r||[]).length>0;}catch(e){return false;}}},
-  {key:'accom',label:'Accommodation rooms',icon:'classroom',screen:'adminAccom',tip:'Set up your sleeping rooms and give each one a capacity.',check:async()=>{try{const b=await api('/accommodation/classrooms');return(b||[]).length>0;}catch(e){return false;}}},
-  {key:'accomAlloc',label:'Accommodation allocation',icon:'home',screen:'accom',tip:'Assign churches to rooms. Eligible groups auto-fill each room to capacity.',check:async()=>{try{const a=await api('/accommodation/allocations');return Object.values(a||{}).some(arr=>Array.isArray(arr)&&arr.some(e=>e&&Number(e.n)>0));}catch(e){return false;}}},
-  // Item 8: these three now route into the merged At-Camp Info screen, pinned to their own sub-tab.
-  {key:'schedule',label:'Schedule',icon:'clock',screen:'atCampInfo',arg:'schedule',tip:'Fill in each day’s activities and times for campers to follow.',check:async()=>{try{const s=await api('/schedule');return(s||[]).length>0;}catch(e){return false;}}},
-  {key:'devos',label:'Devotionals',icon:'book',screen:'atCampInfo',arg:'devos',tip:'Write the daily verse, reflection and prayer for each camp day.',check:async()=>{try{const days=SETTINGS?.checkInDays||[];if(!days.length)return false;const dv=await Promise.all(days.map(d=>api('/devotional/'+d).catch(()=>null)));return dv.some(x=>x&&(x.verse||x.reflection||x.prayer));}catch(e){return false;}}},
-  {key:'faq',label:'FAQ',icon:'help',screen:'atCampInfo',arg:'faq',tip:'Add common questions and answers for families to read before camp.',check:async()=>{try{const f=await api('/faq');return(f||[]).length>0;}catch(e){return false;}}},
-  {key:'contacts',label:'Ministry contacts',icon:'phone',screen:'adminContacts',tip:'Set each church’s leader phone numbers, used for first-aid and emergencies.',check:async()=>{try{const c=await api('/accounts/churches');return(c||[]).some(ch=>{const t=ch.contacts||{};return['male','female'].some(g=>['primary','backup'].some(k=>t[g]&&t[g][k]&&t[g][k].name&&String(t[g][k].name).trim()));});}catch(e){return false;}}},
+  {key:'import',label:'Import registrations',icon:'upload',screen:'import',summary:'Import registrations — upload your Form, Ticket List and Invoice exports.',check:async()=>{if(SETTINGS&&SETTINGS.formImportedAt)return true;try{const r=await api('/registrants');return(r||[]).length>0;}catch(e){return false;}}},
+  {key:'accom',label:'Accommodation rooms',icon:'classroom',screen:'adminAccom',summary:'Accommodation rooms — your sleeping rooms and their capacities.',check:async()=>{try{const b=await api('/accommodation/classrooms');return(b||[]).length>0;}catch(e){return false;}}},
+  {key:'accomAlloc',label:'Accommodation allocation',icon:'home',screen:'accom',summary:'Accommodation allocation — assign churches to rooms, auto-filled to capacity.',check:async()=>{try{const a=await api('/accommodation/allocations');return Object.values(a||{}).some(arr=>Array.isArray(arr)&&arr.some(e=>e&&Number(e.n)>0));}catch(e){return false;}}},
+  // Feature 7 (2026-07-17): Schedule/FAQ/Devotionals merged into ONE step routing to the
+  // already-merged RENDER.atCampInfo screen; done-check = ANY of the three has content.
+  {key:'atCampInfo',label:'At Camp Info',icon:'clock',screen:'atCampInfo',summary:'At Camp Info — schedule, devotionals and FAQ for families and campers.',check:async()=>{
+    try{
+      const days=SETTINGS?.checkInDays||[];
+      const [sched,faq,devos]=await Promise.all([
+        api('/schedule').catch(()=>[]),
+        api('/faq').catch(()=>[]),
+        days.length?Promise.all(days.map(d=>api('/devotional/'+d).catch(()=>null))):Promise.resolve([]),
+      ]);
+      const schedHas=(sched||[]).length>0;
+      const faqHas=(faq||[]).length>0;
+      const devoHas=(devos||[]).some(x=>x&&(x.verse||x.reflection||x.prayer));
+      return schedHas||faqHas||devoHas;
+    }catch(e){return false;}
+  }},
+  {key:'contacts',label:'Ministry contacts',icon:'phone',screen:'adminContacts',summary:'Ministry contacts — each church’s leader phone numbers for first-aid and emergencies.',check:async()=>{try{const c=await api('/accounts/churches');return(c||[]).some(ch=>{const t=ch.contacts||{};return['male','female'].some(g=>['primary','backup'].some(k=>t[g]&&t[g][k]&&t[g][k].name&&String(t[g][k].name).trim()));});}catch(e){return false;}}},
 ];
 // Item 5b: tapping a step remembers it (1-based) so _wizardChipHtml can show "Back to
 // setup (step N of 10)" on wherever that step sends the admin.
@@ -4430,7 +4511,7 @@ RENDER.adminWizard=async function(){
   const steps=WIZARD_STEPS.map((s,i)=>{const done=!!checks[i];
     return `<div class="row" onclick="_wizardGo(${i})" style="cursor:pointer">
       <div class="av" style="background:${done?'#dcfce7':'#f1f5f9'};color:${done?'#16a34a':'#94a3b8'}">${done?icSm('check'):(i+1)}</div>
-      <div style="flex:1;display:flex;align-items:center;gap:7px"><span class="nm">${esc(s.label)}</span>${s.tip?helpTip(s.tip):''}</div>
+      <div style="flex:1;min-width:0"><div class="nm">${esc(s.label)}</div>${s.summary?`<div class="sub">${esc(s.summary)}</div>`:''}</div>
       <span style="color:#94a3b8">${ic('chevron')}</span></div>`;}).join('');
   const allDone=checks.every(Boolean);
   paint('adminWizard',`<div class="card"><div class="lbl" style="margin-top:0">Setup checklist</div>
@@ -4584,8 +4665,8 @@ async function _tryRestoreSession(){
   }
 }
 /* ===== BOOT ===== */
-document.getElementById('password').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
-document.getElementById('username').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+// Enter-to-submit is now handled natively by #loginForm's onsubmit (real <form>, added for iOS
+// PWA Keychain autofill) — no manual keydown listeners needed here, avoids a double doLogin() call.
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('modal').classList.contains('show'))closeModal();});
 _initDemoLogin();_tryRestoreSession();
 
