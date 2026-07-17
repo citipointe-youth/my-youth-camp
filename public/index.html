@@ -543,6 +543,7 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="devotional"></section>
     <section class="screen" id="faq"></section>
     <section class="screen" id="notes"></section>
+    <section class="screen" id="incidents"></section>
     <section class="screen" id="testimonies"></section>
     <section class="screen" id="budget"></section>
     <section class="screen" id="accom"></section>
@@ -1441,9 +1442,9 @@ RENDER.home=async function renderHome(skipModeSync){
       <span style="font-size:1.2rem;color:#d97706">›</span>
     </div>
   </div>`;
-  // Feature 3: Incidents entry for zoneLeader/director/admin (both modes) — a card link
-  // (pre-camp home is card-based, not a tile grid).
-  if(canManageIncident())body+=`<div class="card tap" style="margin-top:12px" onclick="go('incidents')"><div class="rowsb"><div><div style="font-weight:600">${icSm('alert')} Incidents</div><div class="sub">Log &amp; review safeguarding / operational incidents</div></div><span class="pill info">Open ›</span></div></div>`;
+  // Feature 3: Incidents is AT-CAMP ONLY — no incidents happen before camp is live, so the
+  // pre-camp home deliberately shows no Incidents entry (the at-camp home tile is in
+  // renderHomeAtCamp). RENDER.incidents also guards on CAMP_MODE defensively.
   // Notices — latest 3 (feed already loaded in parallel above; expiry handled server-side)
   {const notices=(feed||[]).slice(0,3);
     body+=`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
@@ -3166,7 +3167,8 @@ function setIncSeverity(s){_incSeverity=s;
   ['low','high'].forEach(k=>{const b=document.getElementById('incSev-'+k);if(b)b.className=(k===s?'on':'');});
 }
 RENDER.incidents=async function(){
-  if(!canManageIncident()){go('home');return;}
+  // At-camp only (incidents can't happen before camp is live) + leadership only.
+  if(!canManageIncident()||CAMP_MODE!=='at-camp'){go('home');return;}
   const list=await api('/incidents').catch(()=>[]);
   _incSeverity='low';
   const canDelete=['admin','director'].includes(ACTOR.role);
@@ -3418,18 +3420,24 @@ async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter churc
    old combined login, so one click both migrates and re-issues. Passwords are memorable (Word.##). */
 async function randomizeChurchPasswords(){
   if(!confirm('Re-randomise ALL church login passwords and download the list?\n\nEvery church’s current password will stop working — hand out the new CSV.'))return;
-  try{
-    const rows=await api('/accounts/churches/randomize-passwords',{method:'POST',body:{}});
-    if(!rows||!rows.length){toast('No church accounts to export');await _rAccts();return;}
-    const q=v=>{v=String(v==null?'':v);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
-    const header=['Username','Church','Gender','Password'];
-    const body=rows.map(r=>[r.username,r.church,r.gender==='male'?'Boys':r.gender==='female'?'Girls':r.gender,r.password]);
-    const csv='﻿'+[header,...body].map(r=>r.map(q).join(',')).join('\r\n');
-    const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-    const a=document.createElement('a');a.href=url;a.download=_exportName('church-passwords','csv');
-    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
-    toast('Passwords randomised & exported ('+rows.length+' logins)');await _rAccts();
-  }catch(e){toast(e.message);}
+  // The POST does the whole split+randomise server-side and RETURNS the new passwords. That
+  // response IS the only copy — so once it succeeds we must download the CSV before anything
+  // else can fail. The accounts-list refresh afterwards is cosmetic; a hiccup there must NOT
+  // surface as an error (it previously made a fully-successful randomise look like it failed,
+  // and left the screen showing the pre-split accounts).
+  let rows;
+  try{ rows=await api('/accounts/churches/randomize-passwords',{method:'POST',body:{}}); }
+  catch(e){ toast(e.message||'Could not randomise passwords'); return; }
+  if(!rows||!rows.length){ toast('No church accounts to export'); try{await _rAccts();}catch(_){} return; }
+  const q=v=>{v=String(v==null?'':v);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const header=['Username','Church','Gender','Password'];
+  const body=rows.map(r=>[r.username,r.church,r.gender==='male'?'Boys':r.gender==='female'?'Girls':r.gender,r.password]);
+  const csv='﻿'+[header,...body].map(r=>r.map(q).join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  const a=document.createElement('a');a.href=url;a.download=_exportName('church-passwords','csv');
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  toast('Passwords randomised & exported ('+rows.length+' logins)');
+  try{await _rAccts();}catch(_){/* UI refresh only — export already succeeded */}
 }
 
 /* Bug-7: Bulk Church Update — one form listing every church with its login username (pre-filled)
