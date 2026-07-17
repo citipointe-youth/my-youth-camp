@@ -1442,9 +1442,12 @@ RENDER.home=async function renderHome(skipModeSync){
       <span style="font-size:1.2rem;color:#d97706">›</span>
     </div>
   </div>`;
-  // Feature 3: Incidents is AT-CAMP ONLY — no incidents happen before camp is live, so the
-  // pre-camp home deliberately shows no Incidents entry (the at-camp home tile is in
-  // renderHomeAtCamp). RENDER.incidents also guards on CAMP_MODE defensively.
+  // Feature 3: Incidents entry for zoneLeader/director/admin, pre-camp too — a real
+  // safeguarding/operational incident can happen before camp is physically live (a training
+  // day, a travel mishap, a meeting) and zoneLeader/director have no other console to reach this
+  // screen from, so hiding it pre-camp would leave any pre-camp incident unreviewable/undeletable
+  // until the camp mode switches. (A pre-camp home card, matching the pattern below.)
+  if(canManageIncident())body+=`<div class="card tap" style="margin-top:12px" onclick="go('incidents')"><div class="rowsb"><div><div style="font-weight:600">${icSm('alert')} Incidents</div><div class="sub">Log &amp; review safeguarding / operational incidents</div></div><span class="pill info">Open ›</span></div></div>`;
   // Notices — latest 3 (feed already loaded in parallel above; expiry handled server-side)
   {const notices=(feed||[]).slice(0,3);
     body+=`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
@@ -3126,7 +3129,7 @@ RENDER.notes=async function(presetFilter){
   const notesSubtitle=ACTOR.role==='zoneLeader'?`Your zone: ${esc(ACTOR.zone||'')}`:'All zones · whole camp';
   paint('notes',`<button class="btn alt" onclick="exportNotes()">${icSm('download')} Export (CSV)</button>
     <div class="selrow">${recSel}${zoneSel}</div><div class="selrow">${minSel}</div>
-    <div id="notesList"></div>`,'Testimonies & Student Notes',notesSubtitle);
+    <div id="notesList"></div>`,'Testimonies & Notes',notesSubtitle);
   drawNotes();
 };
 function drawNotes(){
@@ -3167,8 +3170,10 @@ function setIncSeverity(s){_incSeverity=s;
   ['low','high'].forEach(k=>{const b=document.getElementById('incSev-'+k);if(b)b.className=(k===s?'on':'');});
 }
 RENDER.incidents=async function(){
-  // At-camp only (incidents can't happen before camp is live) + leadership only.
-  if(!canManageIncident()||CAMP_MODE!=='at-camp'){go('home');return;}
+  // Leadership only. Reachable in BOTH modes — a real incident can happen pre-camp too, and
+  // zoneLeader/director have no other console from which to review/delete one (see the home
+  // card comment above for the fuller rationale; reverted the at-camp-only gate 2026-07-18).
+  if(!canManageIncident()){go('home');return;}
   const list=await api('/incidents').catch(()=>[]);
   _incSeverity='low';
   const canDelete=['admin','director'].includes(ACTOR.role);
