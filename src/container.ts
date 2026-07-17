@@ -13,6 +13,7 @@ import {
   InMemoryGroupRepository,
   InMemoryNoteRepository,
   InMemoryNotificationRepository,
+  InMemoryIncidentRepository,
   InMemoryScheduleRepository,
   InMemoryDevotionalRepository,
   InMemoryFaqRepository,
@@ -31,6 +32,7 @@ import {
   SupabaseGroupRepository,
   SupabaseNoteRepository,
   SupabaseNotificationRepository,
+  SupabaseIncidentRepository,
   SupabaseScheduleRepository,
   SupabaseDevotionalRepository,
   SupabaseFaqRepository,
@@ -49,6 +51,7 @@ import type {
   IGroupRepository,
   INoteRepository,
   INotificationRepository,
+  IIncidentRepository,
   IScheduleRepository,
   IDevotionalRepository,
   IFaqRepository,
@@ -64,6 +67,7 @@ import type { Zone } from './core/entities/zone';
 import type { Group } from './core/entities/group';
 import type { StudentNote } from './core/entities/note';
 import type { Notification } from './core/entities/notification';
+import type { Incident } from './core/entities/incident';
 import type { ScheduleItem } from './core/entities/schedule';
 import type { Devotional } from './core/entities/devotional';
 import type { FaqItem } from './core/entities/content';
@@ -75,6 +79,7 @@ import { makeSettingsService, type SettingsService } from './services/settings.s
 import { makeAccommodationService, type AccommodationService } from './services/accommodation.service';
 import { makeCheckInService, type CheckInService } from './services/checkin.service';
 import { makeNotificationService, type NotificationService } from './services/notification.service';
+import { makeIncidentService, type IncidentService } from './services/incident.service';
 import { makeSearchService, type SearchService } from './services/search.service';
 import { makeNoteService, type NoteService } from './services/note.service';
 import { makeScheduleService, type ScheduleService } from './services/schedule.service';
@@ -103,6 +108,7 @@ export interface Repositories {
   groups: IGroupRepository;
   notes: INoteRepository;
   notifications: INotificationRepository;
+  incidents: IIncidentRepository;
   schedule: IScheduleRepository;
   devotionals: IDevotionalRepository;
   faqs: IFaqRepository;
@@ -117,6 +123,7 @@ export interface Services {
   accommodation: AccommodationService;
   checkIn: CheckInService;
   notification: NotificationService;
+  incident: IncidentService;
   search: SearchService;
   note: NoteService;
   schedule: ScheduleService;
@@ -162,6 +169,7 @@ export async function buildContainer(): Promise<Container> {
     const groups: IGroupRepository = new SupabaseGroupRepository(sql);
     const notes: INoteRepository = new SupabaseNoteRepository(sql);
     const notifications: INotificationRepository = new SupabaseNotificationRepository(sql);
+    const incidents: IIncidentRepository = new SupabaseIncidentRepository(sql);
     const scheduleRepo: IScheduleRepository = new SupabaseScheduleRepository(sql);
     const devotionals: IDevotionalRepository = new SupabaseDevotionalRepository(sql);
     const faqs: IFaqRepository = new SupabaseFaqRepository(sql);
@@ -170,13 +178,13 @@ export async function buildContainer(): Promise<Container> {
 
     const repos: Repositories = {
       users, churches, allocationOverrides, people, classrooms, allocations,
-      zones, groups, notes, notifications, schedule: scheduleRepo,
+      zones, groups, notes, notifications, incidents, schedule: scheduleRepo,
       devotionals, faqs, settings: settingsRepo, snapshots,
     };
 
     await Promise.all([
       users.init(), churches.init(), allocationOverrides.init(), people.init(), classrooms.init(), allocations.init(),
-      zones.init(), groups.init(), notes.init(), notifications.init(),
+      zones.init(), groups.init(), notes.init(), notifications.init(), incidents.init(),
       scheduleRepo.init(), devotionals.init(), faqs.init(), settingsRepo.init(), snapshots.init(),
     ]);
 
@@ -186,6 +194,7 @@ export async function buildContainer(): Promise<Container> {
     const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
     const checkIn = makeCheckInService(people, settingsRepo);
     const notification = makeNotificationService(notifications, people, churches);
+    const incident = makeIncidentService(incidents, notifications);
     const search = makeSearchService(people, churches);
     const note = makeNoteService(notes, people);
     const schedule = makeScheduleService(scheduleRepo);
@@ -196,7 +205,7 @@ export async function buildContainer(): Promise<Container> {
     const churchImportSvc = makeChurchImportService(users, churches);
     const ticketImportSvc = makeTicketImportService(people, churches);
     const invoiceImportSvc = makeInvoiceImportService(people);
-    const auditExportSvc = makeAuditExportService(people, notes, settingsRepo);
+    const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo);
     const offlineSignInSvc = makeOfflineSignInService(people);
     const account = makeAccountService(users, churches, people);
     const dashboard = makeDashboardService(people, notifications, churches);
@@ -207,7 +216,7 @@ export async function buildContainer(): Promise<Container> {
 
     const services: Services = {
       auth, settings, person: personSvc, accommodation: accommodationSvc,
-      checkIn, notification, search, note, schedule, content,
+      checkIn, notification, incident, search, note, schedule, content,
       importService: importSvc, exportService: exportSvc, allocation, churchImport: churchImportSvc,
       ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
       auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
@@ -249,6 +258,9 @@ export async function buildContainer(): Promise<Container> {
   const notifications: INotificationRepository = new InMemoryNotificationRepository(
     useJson ? makeJsonPersistence<Notification>('notifications.json') : undefined,
   );
+  const incidents: IIncidentRepository = new InMemoryIncidentRepository(
+    useJson ? makeJsonPersistence<Incident>('incidents.json') : undefined,
+  );
   const scheduleRepo: IScheduleRepository = new InMemoryScheduleRepository(
     useJson ? makeJsonPersistence<ScheduleItem>('schedule.json') : undefined,
   );
@@ -276,6 +288,7 @@ export async function buildContainer(): Promise<Container> {
     groups,
     notes,
     notifications,
+    incidents,
     schedule: scheduleRepo,
     devotionals,
     faqs,
@@ -295,6 +308,7 @@ export async function buildContainer(): Promise<Container> {
     groups.init(),
     notes.init(),
     notifications.init(),
+    incidents.init(),
     scheduleRepo.init(),
     devotionals.init(),
     faqs.init(),
@@ -309,6 +323,7 @@ export async function buildContainer(): Promise<Container> {
   const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
   const checkIn = makeCheckInService(people, settingsRepo);
   const notification = makeNotificationService(notifications, people, churches);
+  const incident = makeIncidentService(incidents, notifications);
   const search = makeSearchService(people, churches);
   const note = makeNoteService(notes, people);
   const schedule = makeScheduleService(scheduleRepo);
@@ -319,7 +334,7 @@ export async function buildContainer(): Promise<Container> {
   const churchImportSvc = makeChurchImportService(users, churches);
   const ticketImportSvc = makeTicketImportService(people, churches);
   const invoiceImportSvc = makeInvoiceImportService(people);
-  const auditExportSvc = makeAuditExportService(people, notes, settingsRepo);
+  const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo);
   const offlineSignInSvc = makeOfflineSignInService(people);
   const account = makeAccountService(users, churches, people);
   const dashboard = makeDashboardService(
@@ -350,6 +365,7 @@ export async function buildContainer(): Promise<Container> {
     accommodation: accommodationSvc,
     checkIn,
     notification,
+    incident,
     search,
     note,
     schedule,

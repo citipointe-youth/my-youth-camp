@@ -5,6 +5,7 @@ import { makeNoteService } from './note.service';
 import {
   InMemoryNoteRepository,
   InMemoryPersonRepository,
+  InMemoryIncidentRepository,
   InMemorySettingsRepository,
 } from '../repositories/in-memory';
 import type { Person } from '../core/entities/person';
@@ -40,14 +41,16 @@ const actor: Actor = { id: 'u', role: 'admin', churchId: null, churchName: null,
 
 let people: InMemoryPersonRepository;
 let notes: InMemoryNoteRepository;
+let incidents: InMemoryIncidentRepository;
 let settings: InMemorySettingsRepository;
 let svc: ReturnType<typeof makeAuditExportService>;
 
 beforeEach(async () => {
   people = new InMemoryPersonRepository();
   notes = new InMemoryNoteRepository();
+  incidents = new InMemoryIncidentRepository();
   settings = new InMemorySettingsRepository();
-  await people.init(); await notes.init(); await settings.init();
+  await people.init(); await notes.init(); await incidents.init(); await settings.init();
   await people.save(person());
   const noteSvc = makeNoteService(notes, people);
   await noteSvc.add(actor, {
@@ -55,7 +58,7 @@ beforeEach(async () => {
     body: 'Problem: Sprained ankle\nTreatment: Ice + rest\nFirst-aider: Jo\nBrought by: Sam',
   });
   await noteSvc.add(actor, { camperId: 'cam1', category: 'testimony', body: 'Great week' });
-  svc = makeAuditExportService(people, notes, settings);
+  svc = makeAuditExportService(people, notes, incidents, settings);
 });
 
 async function load(): Promise<ExcelJS.Workbook> {

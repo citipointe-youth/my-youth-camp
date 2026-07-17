@@ -8,6 +8,7 @@ export { SupabaseZoneRepository } from './supabase.zones';
 export { SupabaseGroupRepository } from './supabase.groups';
 export { SupabaseNoteRepository } from './supabase.notes';
 export { SupabaseNotificationRepository } from './supabase.notifications';
+export { SupabaseIncidentRepository } from './supabase.incidents';
 export { SupabaseScheduleRepository } from './supabase.schedule';
 export { SupabaseDevotionalRepository } from './supabase.devotionals';
 export { SupabaseFaqRepository } from './supabase.faqs';

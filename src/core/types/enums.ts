@@ -48,6 +48,11 @@ export type PersonLifecycle = (typeof PERSON_LIFECYCLES)[number];
 export const NOTIFICATION_SCOPES = ['camp', 'zone', 'church'] as const;
 export type NotificationScope = (typeof NOTIFICATION_SCOPES)[number];
 
+// Incident severity (Feature 3). 'low' = just recorded; 'high' = also raises a camp-wide
+// notification to all leaders/directors/admins.
+export const INCIDENT_SEVERITIES = ['low', 'high'] as const;
+export type IncidentSeverity = (typeof INCIDENT_SEVERITIES)[number];
+
 export const NOTIFICATION_PRIORITIES = ['normal', 'urgent'] as const;
 export type NotificationPriority = (typeof NOTIFICATION_PRIORITIES)[number];
 

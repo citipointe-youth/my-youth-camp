@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import type { IPersonRepository, INoteRepository, ISettingsRepository } from '../repositories/interfaces/entity-repositories';
+import type { IPersonRepository, INoteRepository, IIncidentRepository, ISettingsRepository } from '../repositories/interfaces/entity-repositories';
 import type { Person } from '../core/entities/person';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
@@ -106,6 +106,7 @@ function toLocalTs(isoTs: string, tz: string): string {
 export function makeAuditExportService(
   personRepo: IPersonRepository,
   noteRepo: INoteRepository,
+  incidentRepo: IIncidentRepository,
   settingsRepo: ISettingsRepository,
 ): AuditExportService {
   async function getAllData() {
@@ -247,6 +248,24 @@ export function makeAuditExportService(
           p?.gender || '',
           fa.problem, fa.treatment, fa.firstAider, fa.broughtBy,
           toLocalTs(note.createdAt, tz),
+        ]);
+      }
+
+      // ----- Incidents (Feature 3) — summary is decrypted by the repo mapper on read -----
+      const incidents = await incidentRepo.findRecent();
+      const incidentsSheet = wb.addWorksheet('Incidents');
+      incidentsSheet.addRow(['Summary', 'Severity', 'Logged by', 'Logged at', 'Zone']);
+      incidentsSheet.getRow(1).font = { bold: true };
+      incidentsSheet.columns = [
+        { width: 50 }, { width: 12 }, { width: 24 }, { width: 20 }, { width: 12 },
+      ];
+      for (const inc of incidents) {
+        incidentsSheet.addRow([
+          inc.summary,
+          inc.severity === 'high' ? 'High' : 'Low',
+          `${inc.createdByName} (${inc.createdByRole})`,
+          toLocalTs(inc.createdAt, tz),
+          inc.zone ?? '',
         ]);
       }
 

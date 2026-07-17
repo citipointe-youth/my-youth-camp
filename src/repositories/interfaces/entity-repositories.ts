@@ -8,6 +8,7 @@ import type { Zone } from '../../core/entities/zone';
 import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
 import type { Notification } from '../../core/entities/notification';
+import type { Incident } from '../../core/entities/incident';
 import type { ScheduleItem } from '../../core/entities/schedule';
 import type { Devotional } from '../../core/entities/devotional';
 import type { FaqItem } from '../../core/entities/content';
@@ -73,6 +74,11 @@ export interface INotificationRepository extends IRepository<Notification> {
   findByZone(zone: string): Promise<Notification[]>;
   findByChurch(churchId: string): Promise<Notification[]>;
   findActive(): Promise<Notification[]>;
+}
+
+export interface IIncidentRepository extends IRepository<Incident> {
+  /** Incidents newest-first, optionally capped. */
+  findRecent(limit?: number): Promise<Incident[]>;
 }
 
 export interface IScheduleRepository extends IRepository<ScheduleItem> {

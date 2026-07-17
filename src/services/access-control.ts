@@ -22,6 +22,8 @@ export type Action =
   | 'notification:send:camp'
   | 'import:run'
   | 'allocation:manage'
+  // Incidents (Feature 3). Holders can BOTH log and view incidents — zoneLeader + director + admin.
+  | 'incident:manage'
   | 'admin:manage';
 
 const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
@@ -49,6 +51,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'note:read',
     'note:read:firstaid',
     'notification:send:zone',
+    'incident:manage',
   ]),
   director: new Set<Action>([
     'registrant:read',
@@ -67,6 +70,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'notification:send:camp',
     'import:run',
     'allocation:manage',
+    'incident:manage',
   ]),
   admin: new Set<Action>([
     'registrant:read',
@@ -85,6 +89,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'notification:send:camp',
     'import:run',
     'allocation:manage',
+    'incident:manage',
     'admin:manage',
   ]),
   // firstAid: read-only at-camp access PLUS first-aid record logging (Phase 4).

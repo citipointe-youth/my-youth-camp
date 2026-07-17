@@ -864,6 +864,8 @@ function heroMark(){
   </svg>`;
 }
 const canReadNotes=()=>ACTOR&&['zoneLeader','director','admin'].includes(ACTOR.role);
+// Feature 3: incident:manage = zoneLeader + director + admin (all three post AND view).
+const canManageIncident=()=>ACTOR&&['zoneLeader','director','admin'].includes(ACTOR.role);
 /* Notes ON AN INDIVIDUAL PROFILE: church may see notes for its OWN campers (no
    consolidated list — the Notes tab stays zone/director/admin via canReadNotes()).
    Backend GET /notes/camper/:id allows note:write, which church holds + scopes to
@@ -1430,6 +1432,9 @@ RENDER.home=async function renderHome(skipModeSync){
       <span style="font-size:1.2rem;color:#d97706">›</span>
     </div>
   </div>`;
+  // Feature 3: Incidents entry for zoneLeader/director/admin (both modes) — a card link
+  // (pre-camp home is card-based, not a tile grid).
+  if(canManageIncident())body+=`<div class="card tap" style="margin-top:12px" onclick="go('incidents')"><div class="rowsb"><div><div style="font-weight:600">${icSm('alert')} Incidents</div><div class="sub">Log &amp; review safeguarding / operational incidents</div></div><span class="pill info">Open ›</span></div></div>`;
   // Notices — latest 3 (feed already loaded in parallel above; expiry handled server-side)
   {const notices=(feed||[]).slice(0,3);
     body+=`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
@@ -1510,6 +1515,8 @@ async function renderHomeAtCamp(){
     if(ACTOR.role!=='director')tiles.push(`<div class="tile" onclick="gotoTab('notifs')"><div class="ic">${ic('bell')}</div><div class="l">Notices</div></div>`);
     if(ACTOR.role==='director')tiles.push(`<div class="tile" onclick="go('data')"><div class="ic">${ic('note')}</div><div class="l">Student Data Table</div></div>`);
   }
+  // Feature 3: Incidents tile for zoneLeader/director/admin (both modes).
+  if(canManageIncident())tiles.push(`<div class="tile" onclick="go('incidents')"><div class="ic">${ic('alert')}</div><div class="l">Incidents</div></div>`);
   // Testimonies & Notes → slim full-width bold link below the grid (not a tile).
   const notesLinkHtml=canReadNotes()?`<div class="card tap" onclick="go('notes')" style="margin-top:10px"><div class="rowsb"><div style="font-weight:700">${icSm('note')} Testimonies &amp; Notes</div><span style="color:var(--muted)">›</span></div></div>`:'';
   // Accommodation → one-line strip inside the hero (church, real at-camp only).
@@ -2941,7 +2948,7 @@ async function submitTestimony(){const camperId=sel('tmCamper'),leader=val('tmLe
   try{await api('/notes',{method:'POST',body:payload});toast('Testimony submitted');const t=document.getElementById('tmBody');if(t)t.value='';const s=document.getElementById('tmSensitive');if(s)s.checked=false;}catch(e){toast(e.message);}}
 RENDER.notes=async function(presetFilter){
   // /notes/recent returns bare notes (no camper details) — join /campers for name/church/zone/gender/grade.
-  const [notes,page]=await Promise.all([api('/notes/recent'),api('/campers?pageSize=300').catch(()=>[])]);
+  const [notes,page,incidents]=await Promise.all([api('/notes/recent'),api('/campers?pageSize=300').catch(()=>[]),api('/incidents').catch(()=>[])]);
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c;});
   const noteRecs=(notes||[]).map(n=>{const c=cmap[n.camperId]||{};return Object.assign({},n,{camperName:c.firstName?(c.firstName+' '+c.lastName):(n.camperId||'No specific student'),church:c.churchName,zone:c.zone,gender:c.gender,grade:c.grade,cat:n.category||'note'});});
   // AC-8: synthesise "Signed out" records from the attendance data — students no longer at camp
@@ -2952,7 +2959,11 @@ RENDER.notes=async function(presetFilter){
     return {camperName:c.firstName+' '+c.lastName,church:c.churchName,zone:c.zone,gender:c.gender,grade:c.grade,
       cat:'signedout',body:last.reason?('Reason: '+last.reason):'Signed out of camp',authorName:last.leaderName||'—',createdAt:last.timestamp||c.updatedAt};
   });
-  window._notesAll=[...noteRecs,...signedOut].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  // Feature 3: incidents surface here as a read-only "Incidents" record type. The summary is
+  // decrypted server-side; zone (not church) is the only locational field on an incident.
+  const incidentRecs=(incidents||[]).map(i=>({camperName:'Incident'+(i.zone?' · '+i.zone+' Zone':''),church:null,zone:i.zone,gender:null,grade:null,
+    cat:'incident',severity:i.severity,body:i.summary,authorName:i.createdByName,createdAt:i.createdAt}));
+  window._notesAll=[...noteRecs,...signedOut,...incidentRecs].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
   const churches=[...new Set(window._notesAll.map(n=>n.church).filter(Boolean))].sort();
   const zonesPresent=[...new Set(window._notesAll.map(n=>n.zone).filter(Boolean))].sort();
   // AC-8: record filter gains "Signed out".
@@ -2960,7 +2971,7 @@ RENDER.notes=async function(presetFilter){
   // figure) pre-selects a record type instead of always defaulting to "All records".
   const pf=presetFilter||'all';
   const opt=(v,label)=>`<option value="${v}"${pf===v?' selected':''}>${label}</option>`;
-  const recSel=`<div><label>Record</label><select id="ntCat" onchange="drawNotes()">${opt('all','All records')}${opt('testimony','Testimony')}${opt('note','Student note')}${opt('firstaid','First-aid')}${opt('signedout','Signed out')}</select></div>`;
+  const recSel=`<div><label>Record</label><select id="ntCat" onchange="drawNotes()">${opt('all','All records')}${opt('testimony','Testimony')}${opt('note','Student note')}${opt('firstaid','First-aid')}${opt('signedout','Signed out')}${opt('incident','Incidents')}</select></div>`;
   const minSel=`<div><label>Ministry</label><select id="ntChurch" onchange="drawNotes()"><option value="all">All ministries</option>${churches.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></div>`;
   const zoneSel=`<div><label>Zone</label><select id="ntZone" onchange="drawNotes()"><option value="all">All zones</option>${zonesPresent.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select></div>`;
   // AC-7: swap Zone and Ministry positions — Zone first, then Ministry.
@@ -2980,7 +2991,7 @@ function drawNotes(){
   if(ch!=='all')list=list.filter(n=>n.church===ch);
   if(z!=='all')list=list.filter(n=>n.zone===z);
   const box=document.getElementById('notesList');if(!box)return;
-  const badge=c=>c==='testimony'?'<span class="pill info">Testimony</span>':c==='signedout'?'<span class="pill warn">Signed out</span>':c==='firstaid'?'<span class="pill amb">First-aid</span>':'<span class="pill ok">Student note</span>';
+  const badge=c=>c==='testimony'?'<span class="pill info">Testimony</span>':c==='signedout'?'<span class="pill warn">Signed out</span>':c==='firstaid'?'<span class="pill amb">First-aid</span>':c==='incident'?'<span class="pill warn">Incident</span>':'<span class="pill ok">Student note</span>';
   box.innerHTML=list.length?list.map(n=>{const c=n.cat||'note';
     const right=(n.gender)?`<span class="sub" style="white-space:nowrap">${n.grade?'Yr '+n.grade:(n.gender==='male'?'Guys':'Girls')}</span>`:'';
     // First-aid records carry a 4-line body (Problem/Treatment/First-aider/Brought by) — render
@@ -3002,6 +3013,54 @@ async function exportNotes(){
     a.href=url;a.download='testimonies-and-notes-'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
     toast('Exported');
   }catch(e){toast(e.message);}}
+
+/* ===== INCIDENTS (Feature 3) ===== */
+// zoneLeader/director/admin can log AND view incidents. Low = just recorded; High = also
+// raises a camp-wide urgent notice to all leaders/directors/admins (server-side).
+let _incSeverity='low';
+function setIncSeverity(s){_incSeverity=s;
+  ['low','high'].forEach(k=>{const b=document.getElementById('incSev-'+k);if(b)b.className=(k===s?'on':'');});
+}
+RENDER.incidents=async function(){
+  if(!canManageIncident()){go('home');return;}
+  const list=await api('/incidents').catch(()=>[]);
+  _incSeverity='low';
+  const canDelete=['admin','director'].includes(ACTOR.role);
+  const rows=(list||[]).length?list.map(i=>{
+    const sev=i.severity==='high'?'<span class="pill warn">High</span>':'<span class="pill ok">Low</span>';
+    const del=canDelete?`<button class="btn ghost sm" onclick="deleteIncident('${i.id}')">${icSm('trash')}</button>`:'';
+    return `<div class="card"><div class="rowsb" style="align-items:center"><div class="nm">${sev}${i.zone?' <span class="sub">'+esc(i.zone)+' Zone</span>':''}</div>${del}</div>
+      <div style="font-size:.9rem;margin:6px 0;white-space:pre-wrap">${esc(i.summary)}</div>
+      <div class="sub">${esc(i.createdByName||'—')} · ${dtFmt(i.createdAt)}</div></div>`;
+  }).join(''):emptyState('alert','No incidents logged yet.');
+  paint('incidents',`<div class="infobox" style="font-size:.82rem">Log a safeguarding or operational incident. <b>Low</b> is just recorded. <b>High</b> also alerts all leaders, directors and admins with an urgent notice.</div>
+    <div class="card">
+      <label>What happened?</label>
+      <textarea class="fld" id="incSummary" placeholder="Describe the incident — who, what, when, action taken" style="min-height:120px"></textarea>
+      <label style="margin-top:8px">Severity</label>
+      <div class="seg" style="margin-top:4px">
+        <button type="button" class="on" id="incSev-low" onclick="setIncSeverity('low')">Low · record</button>
+        <button type="button" id="incSev-high" onclick="setIncSeverity('high')">High · alert everyone</button>
+      </div>
+      <button class="btn" style="margin-top:12px" onclick="submitIncident()">Log incident</button>
+    </div>
+    <h3 class="sec" style="margin-top:18px">Incidents</h3>
+    <div id="incList">${rows}</div>`,'Incidents','Newest first');
+};
+async function submitIncident(){
+  const summary=val('incSummary');
+  if(!summary){toast('Describe the incident');return;}
+  try{
+    await api('/incidents',{method:'POST',body:{summary,severity:_incSeverity}});
+    toast(_incSeverity==='high'?'Incident logged · everyone notified':'Incident logged');
+    await RENDER.incidents();
+  }catch(e){toast(e.message);}
+}
+async function deleteIncident(id){
+  if(!confirm('Delete this incident? This cannot be undone.'))return;
+  try{await api('/incidents/'+id,{method:'DELETE'});toast('Deleted');await RENDER.incidents();}
+  catch(e){toast(e.message);}
+}
 
 /* ===== ADMIN CONSOLE ===== */
 RENDER.admin=function(){

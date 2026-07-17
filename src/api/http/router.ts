@@ -10,6 +10,7 @@ import { makeCamperController } from '../controllers/camper.controller';
 import { makeCheckInController } from '../controllers/checkin.controller';
 import { makeSearchController } from '../controllers/search.controller';
 import { makeNotificationController } from '../controllers/notification.controller';
+import { makeIncidentController } from '../controllers/incident.controller';
 import { makeScheduleController } from '../controllers/schedule.controller';
 import { makeNoteController } from '../controllers/note.controller';
 import { makeAttendanceController } from '../controllers/attendance.controller';
@@ -35,6 +36,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const checkIn = makeCheckInController({ checkIn: services.checkIn, person: services.person });
   const search = makeSearchController({ search: services.search });
   const notification = makeNotificationController({ notification: services.notification });
+  const incident = makeIncidentController({ incident: services.incident });
   const schedule = makeScheduleController({ schedule: services.schedule });
   const note = makeNoteController({ note: services.note });
   const attendance = makeAttendanceController({ person: services.person });
@@ -144,6 +146,11 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'GET', path: '/notifications/latest', auth: true, handler: (r) => notification.latest(r) },
     { method: 'POST', path: '/notifications', auth: true, handler: (r) => notification.send(r) },
     { method: 'DELETE', path: '/notifications/:id', auth: true, handler: (r) => notification.remove(r) },
+
+    // ----- Incidents (Feature 3) -----
+    { method: 'GET', path: '/incidents', auth: true, handler: (r) => incident.list(r) },
+    { method: 'POST', path: '/incidents', auth: true, handler: (r) => incident.log(r) },
+    { method: 'DELETE', path: '/incidents/:id', auth: true, handler: (r) => incident.remove(r) },
 
     // ----- Schedule -----
     { method: 'GET', path: '/schedule', auth: true, handler: (r) => schedule.get(r) },

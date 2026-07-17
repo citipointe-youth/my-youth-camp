@@ -46,6 +46,14 @@ describe('access-control: can()', () => {
     expect(can(actor('zoneLeader'), 'registrant:read')).toBe(true);
     expect(can(actor('zoneLeader'), 'registrant:write')).toBe(false);
   });
+
+  it('incident:manage is held by zoneLeader/director/admin only (Feature 3)', () => {
+    expect(can(actor('zoneLeader'), 'incident:manage')).toBe(true);
+    expect(can(actor('director'), 'incident:manage')).toBe(true);
+    expect(can(actor('admin'), 'incident:manage')).toBe(true);
+    expect(can(actor('church'), 'incident:manage')).toBe(false);
+    expect(can(actor('firstAid'), 'incident:manage')).toBe(false);
+  });
 });
 
 describe('access-control: assertCan()', () => {

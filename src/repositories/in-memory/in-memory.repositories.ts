@@ -12,6 +12,7 @@ import type { Zone } from '../../core/entities/zone';
 import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
 import type { Notification } from '../../core/entities/notification';
+import type { Incident } from '../../core/entities/incident';
 import type { ScheduleItem } from '../../core/entities/schedule';
 import type { Devotional } from '../../core/entities/devotional';
 import type { FaqItem } from '../../core/entities/content';
@@ -29,6 +30,7 @@ import type {
   IGroupRepository,
   INoteRepository,
   INotificationRepository,
+  IIncidentRepository,
   IScheduleRepository,
   IDevotionalRepository,
   IFaqRepository,
@@ -333,6 +335,25 @@ export class InMemoryNotificationRepository
       .filter((n) => !n.expiresAt || n.expiresAt > now)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map((n) => this.clone(n));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Incidents (Feature 3)
+// ---------------------------------------------------------------------------
+export class InMemoryIncidentRepository
+  extends InMemoryBaseRepository<Incident>
+  implements IIncidentRepository
+{
+  constructor(persistence?: IPersistenceAdapter<Incident>) {
+    super(persistence);
+  }
+
+  async findRecent(limit?: number): Promise<Incident[]> {
+    const sorted = Array.from(this.store.values())
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((i) => this.clone(i));
+    return limit != null ? sorted.slice(0, limit) : sorted;
   }
 }
 
