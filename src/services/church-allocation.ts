@@ -41,14 +41,15 @@ export function matchOverride(
 
 /**
  * The accommodation kind a person should have once placed in a church. Mirrors the Form
- * importer's rule (church accommodation override forces STUDENTS/youth; leaders keep their
- * value). Shared so import-time and allocate-time never diverge.
+ * importer's rule: a church accommodation override forces EVERYONE in the church — students AND
+ * leaders (Bug 2, 2026-07-17) — to that kind. Shared so import-time and allocate-time never
+ * diverge. `_personKind` is retained for call-site compatibility but no longer gates the override.
  */
 export function accommodationKindForChurch(
-  personKind: PersonKind,
+  _personKind: PersonKind,
   currentKind: AccommodationKind | null | undefined,
   churchOverride: AccommodationKind | null | undefined,
 ): AccommodationKind | null {
-  if (personKind === 'youth' && churchOverride) return churchOverride;
+  if (churchOverride) return churchOverride;
   return currentKind ?? null;
 }

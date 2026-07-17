@@ -153,7 +153,12 @@ export function makeDashboardService(
         const nextSession = curIdx >= 0 ? todaySessions[curIdx + 1] ?? null : (todaySessions[0] ?? null);
 
         const notifications = await notifRepo.findActive();
+        const isLeadershipRole =
+          actor.role === 'zoneLeader' || actor.role === 'director' || actor.role === 'admin';
         const relevantNotifs = notifications.filter((n) => {
+          // Leaders-only (incident) alerts never surface to church/firstAid, even at camp scope —
+          // mirrors notification.service.getActorFeed so latestNotification can't leak the summary.
+          if (n.leadersOnly && !isLeadershipRole) return false;
           if (n.scope === 'camp') return true;
           if (n.scope === 'zone') return actor.zone != null && n.zone === actor.zone;
           if (n.scope === 'church') return actor.churchId != null && n.churchId === actor.churchId;

@@ -92,10 +92,15 @@ export function canAccessPerson(
   person: Pick<Person, 'churchId' | 'zone'> & Partial<Pick<Person, 'gender'>>,
 ): boolean {
   if (!canAccessByChurchZone(actor, person)) return false;
-  // Gender-scoped church logins see only same-gender people. A person whose gender is neither
-  // 'male' nor 'female' (i.e. 'other') falls outside both scopes and is not shown to either
-  // gender account — by design (the scope is strictly male/female).
-  if (actor.genderScope && person.gender !== undefined && person.gender !== actor.genderScope) {
+  // Gender-scoped church logins (b-/g-) see only same-gender people. Denial is limited to a
+  // person of the CONCRETE opposite gender — someone recorded as 'other' (or, defensively, with
+  // an unset gender, e.g. a blank Elvanto import) stays visible to BOTH of a church's logins so
+  // no minor is left without a church-level custodian. Admin/director can correct the gender.
+  if (
+    actor.genderScope &&
+    (person.gender === 'male' || person.gender === 'female') &&
+    person.gender !== actor.genderScope
+  ) {
     return false;
   }
   return true;
@@ -173,7 +178,9 @@ export function makePersonService(repo: IPersonRepository): PersonService {
         if (!canAccessChurch(actor, churchId, zone)) {
           return [];
         }
-        return items.filter(isRegistrant);
+        // canAccessChurch is gender-unaware; re-filter through canAccessPerson so a
+        // gender-scoped (b-/g-) login can never pull the other gender via ?churchId.
+        return items.filter(isRegistrant).filter((p) => canAccessPerson(actor, p));
       }
       const all = await scopedAll(actor, {});
       return all.filter(isRegistrant);
@@ -260,9 +267,23 @@ export function makePersonService(repo: IPersonRepository): PersonService {
       // History, atCamp, and createdAt are never patchable; lifecycle is restricted to
       // registered ↔ cancelled (camp-state transitions go via checkIn/signEvent).
       const { id: _i, atCamp: _a, checkInHistory: _ch, signOutHistory: _sh, createdAt: _c, lifecycle, ...safeRest } = patch;
+      // A church login must not reassign a person's church/zone or flip their gender — that would
+      // move the person out of (or tamper across) its scope. Those edits are admin/director/
+      // zoneLeader concerns; churches keep their per-student medical/dietary/contact edits.
+      if (actor.role === 'church') {
+        delete (safeRest as Partial<Person>).gender;
+        delete (safeRest as Partial<Person>).churchId;
+        delete (safeRest as Partial<Person>).churchName;
+        delete (safeRest as Partial<Person>).zone;
+      }
       const nextLifecycle =
         lifecycle === 'cancelled' || lifecycle === 'registered' ? lifecycle : existing.lifecycle;
       const updated: Person = { ...existing, ...safeRest, id: existing.id, lifecycle: nextLifecycle, updatedAt: nowISO() };
+      // Fail-closed: the patched result must still be inside the actor's scope (a zoneLeader/
+      // admin/director changing church/zone can't push a person out of what they may access).
+      if (!canAccessPerson(actor, updated)) {
+        throw new BadRequestError('Cannot move a person outside your scope');
+      }
       const saved = await repo.save(updated);
       invalidateDashboardCache();
       return saved;

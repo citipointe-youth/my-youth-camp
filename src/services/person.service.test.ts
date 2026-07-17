@@ -78,9 +78,12 @@ describe('canAccessPerson', () => {
     expect(canAccessPerson(boys, femaleYouth)).toBe(false);
     expect(canAccessPerson(girls, femaleYouth)).toBe(true);
     expect(canAccessPerson(girls, maleYouth)).toBe(false);
-    // 'other' gender falls outside both male/female scopes by design.
-    expect(canAccessPerson(boys, otherYouth)).toBe(false);
-    expect(canAccessPerson(girls, otherYouth)).toBe(false);
+    // 'other' (or unrecorded) gender is visible to BOTH gender logins so no minor is left without
+    // a church-level custodian (review Finding 3, 2026-07-17). Only a CONCRETE opposite gender is denied.
+    expect(canAccessPerson(boys, otherYouth)).toBe(true);
+    expect(canAccessPerson(girls, otherYouth)).toBe(true);
+    // Defensive: a person object missing gender is not hidden (fail-safe toward visibility).
+    expect(canAccessPerson(boys, { churchId: 'c1', zone: 'Yellow' })).toBe(true);
     // Gender scope never widens church scope: a male person of another church is still denied.
     expect(canAccessPerson(boys, { churchId: 'c2', zone: 'Blue', gender: 'male' })).toBe(false);
   });
@@ -132,6 +135,17 @@ describe('PersonService.listRegistrants (pre-camp view)', () => {
   it('church churchId path returns only that church\'s registrants', async () => {
     const svc = makePersonService(repo);
     expect((await svc.listRegistrants(actor('church', { churchId: 'c1' }), 'c1')).map((p) => p.id)).toEqual(['r1']);
+  });
+
+  it('gender-scoped account cannot pull the other gender via ?churchId (review Finding 1)', async () => {
+    const scoped = new InMemoryPersonRepository();
+    await scoped.init();
+    await scoped.save(person({ id: 'm1', churchId: 'c1', zone: 'Yellow', gender: 'male', lifecycle: 'registered' }));
+    await scoped.save(person({ id: 'f1', churchId: 'c1', zone: 'Yellow', gender: 'female', lifecycle: 'registered' }));
+    const svc = makePersonService(scoped);
+    const boys = actor('church', { churchId: 'c1', genderScope: 'male' });
+    // The ?churchId fast-path must still funnel through gender scope — boys see only the male reg.
+    expect((await svc.listRegistrants(boys, 'c1')).map((p) => p.id)).toEqual(['m1']);
   });
 });
 

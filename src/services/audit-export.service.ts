@@ -119,7 +119,7 @@ export function makeAuditExportService(
 
   return {
     async exportMasterWorkbook(actor) {
-      assertCan(actor, 'camper:read:sensitive');
+      assertCan(actor, 'export:compliance');
 
       const { settings, tz, people, notes } = await getAllData();
       const wb = new ExcelJS.Workbook();
@@ -291,7 +291,7 @@ export function makeAuditExportService(
     },
 
     async exportSignInOutCsv(actor) {
-      assertCan(actor, 'camper:read');
+      assertCan(actor, 'export:compliance');
       const { tz, people } = await getAllData();
       const rows: string[][] = [];
       const { noShows, events } = buildSignInOutTimeline(people);
@@ -323,7 +323,7 @@ export function makeAuditExportService(
     },
 
     async exportCheckInLogCsv(actor) {
-      assertCan(actor, 'camper:read');
+      assertCan(actor, 'export:compliance');
       const { tz, people } = await getAllData();
       const rows: string[][] = [];
       for (const p of people) {

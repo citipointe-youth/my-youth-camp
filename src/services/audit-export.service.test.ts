@@ -229,3 +229,27 @@ describe('audit-export: Feature 4 — leader initials captured in the audit trai
     expect(found).toBe('MR');
   });
 });
+
+describe('audit-export.service — compliance-export RBAC (review Finding A)', () => {
+  function roleActor(role: Actor['role'], over: Partial<Actor> = {}): Actor {
+    return { id: 'u', role, churchId: null, churchName: null, zone: null, displayName: role, ...over };
+  }
+
+  it('church and zoneLeader CANNOT export the camp-wide compliance data', async () => {
+    for (const role of ['church', 'zoneLeader'] as const) {
+      const a = roleActor(role, role === 'church' ? { churchId: 'c1' } : { zone: 'Yellow' });
+      await expect(svc.exportMasterWorkbook(a)).rejects.toThrow();
+      await expect(svc.exportSignInOutCsv(a)).rejects.toThrow();
+      await expect(svc.exportCheckInLogCsv(a)).rejects.toThrow();
+    }
+  });
+
+  it('director and admin CAN export', async () => {
+    for (const role of ['director', 'admin'] as const) {
+      const a = roleActor(role);
+      await expect(svc.exportMasterWorkbook(a)).resolves.toBeInstanceOf(Buffer);
+      await expect(svc.exportSignInOutCsv(a)).resolves.toBeTypeOf('string');
+      await expect(svc.exportCheckInLogCsv(a)).resolves.toBeTypeOf('string');
+    }
+  });
+});

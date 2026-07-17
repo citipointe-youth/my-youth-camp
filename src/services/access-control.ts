@@ -24,6 +24,10 @@ export type Action =
   | 'allocation:manage'
   // Incidents (Feature 3). Holders can BOTH log and view incidents — zoneLeader + director + admin.
   | 'incident:manage'
+  // Camp-wide compliance exports (master audit workbook, sign-in/out + check-in CSV). These bundle
+  // every person's sensitive data (medical, contacts, notes, incidents, temp passwords) across the
+  // whole camp, so they are director + admin ONLY — NOT church/zoneLeader, who hold camper:read*.
+  | 'export:compliance'
   | 'admin:manage';
 
 const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
@@ -71,6 +75,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'import:run',
     'allocation:manage',
     'incident:manage',
+    'export:compliance',
   ]),
   admin: new Set<Action>([
     'registrant:read',
@@ -90,6 +95,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'import:run',
     'allocation:manage',
     'incident:manage',
+    'export:compliance',
     'admin:manage',
   ]),
   // firstAid: read-only at-camp access PLUS first-aid record logging (Phase 4).

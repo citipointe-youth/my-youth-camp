@@ -1,9 +1,23 @@
 import type { HttpRequest } from '../http/types';
 import type { PersonService } from '../../services/person.service';
 import type { Person } from '../../core/entities/person';
+import type { Actor } from '../../core/entities/user';
 import { toCamperDto } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 import { assertCan } from '../../services/access-control';
+import { createLogger } from '../../utils/logger';
+import { maskPhone } from '../../utils/mask';
+
+const logger = createLogger('audit');
+
+// Bug 1: for the first-aid role the parent/guardian phone is masked at the DTO boundary so it is
+// not present in cleartext in the /campers response — first-aid must go through the audited
+// reveal (GET /search/contact/:id/parent) to see the real number. Every other role legitimately
+// needs its own students' parent contact, so they are unaffected.
+function maskParentForFirstAid<T extends { parentPhone: string | null }>(dto: T, actor: Actor): T {
+  if (actor.role !== 'firstAid' || !dto.parentPhone) return dto;
+  return { ...dto, parentPhone: maskPhone(dto.parentPhone) };
+}
 
 export interface CamperControllerServices {
   person: PersonService;
@@ -27,7 +41,7 @@ export function makeCamperController(services: CamperControllerServices) {
         req.query['scope'] === 'all'
           ? await person.list(req.ctx.actor, opts)
           : await person.listCampers(req.ctx.actor, opts);
-      return people.map(toCamperDto);
+      return people.map((p) => maskParentForFirstAid(toCamperDto(p), req.ctx!.actor));
     },
 
     async get(req: HttpRequest) {
@@ -35,7 +49,8 @@ export function makeCamperController(services: CamperControllerServices) {
       const id = req.params['id'];
       if (!id) throw new BadRequestError('Missing id');
       const profile = await person.getProfile(req.ctx.actor, id);
-      return { ...toCamperDto(profile), age: profile.age, lastSignOut: profile.lastSignOut };
+      const dto = maskParentForFirstAid(toCamperDto(profile), req.ctx.actor);
+      return { ...dto, age: profile.age, lastSignOut: profile.lastSignOut };
     },
 
     async update(req: HttpRequest) {
@@ -66,14 +81,19 @@ export function makeCamperController(services: CamperControllerServices) {
       assertCan(req.ctx.actor, 'camper:read:sensitive');
       const id = req.params['id'];
       if (!id) throw new BadRequestError('Missing id');
-      // Access is logged by assertCan succeeding for camper:read:sensitive. The client
-      // already has the medicare number from the CamperDto; this authenticated endpoint IS
-      // the reveal audit trail (this app persists no reveal-audit table). Feature 4 attributes
-      // the reveal to the acting leader's initials (church-account session prefill), falling
-      // back to the actor's display name when no initials were supplied.
+      // This app persists no reveal-audit table; the audit trail is this authenticated
+      // endpoint being hit. Feature 4 attributes the reveal to the acting leader's initials
+      // (church-account session prefill), falling back to the actor's display name. Emit a
+      // real log line so the reveal is actually recorded (returning revealedBy alone recorded
+      // nothing) — captured in the server logs alongside sign-in/out and export events.
       const b = (req.body ?? {}) as { initials?: unknown };
       const initials = typeof b.initials === 'string' ? b.initials.trim() : '';
-      return { ok: true, revealedBy: initials || req.ctx.actor.displayName };
+      const revealedBy = initials || req.ctx.actor.displayName;
+      logger.info(
+        `[audit] medicare revealed for person ${id} by ${req.ctx.actor.role} ${req.ctx.actor.id}` +
+          ` (initials: ${initials || '—'}) from ${req.ip ?? 'unknown'}`,
+      );
+      return { ok: true, revealedBy };
     },
   };
 }

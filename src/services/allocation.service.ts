@@ -87,7 +87,8 @@ export function makeAllocationService(
 
       // Apply church + zone + (student) accommodation override immediately.
       const accommodationKind = accommodationKindForChurch(person.kind, person.accommodationKind, church.accommodationOverride ?? null);
-      const forcedAccom = person.kind === 'youth' && !!church.accommodationOverride;
+      // Bug 2: override applies to leaders too, so any person with a church override is "forced".
+      const forcedAccom = !!church.accommodationOverride;
       await personRepo.save({
         ...person,
         churchId: church.id,

@@ -50,10 +50,12 @@ describe('church-allocation helpers', () => {
     expect(matchOverride([a, b], '')).toBe('ambiguous');
   });
 
-  it('applies a church accommodation override only to youth', () => {
+  it('applies a church accommodation override to everyone — students AND leaders (Bug 2)', () => {
     expect(accommodationKindForChurch('youth', 'tent', 'classroom')).toBe('classroom');
-    expect(accommodationKindForChurch('leader', 'tent', 'classroom')).toBe('tent');
+    // Bug 2 (2026-07-17): a leader in an override church is now forced too (was 'tent').
+    expect(accommodationKindForChurch('leader', 'tent', 'classroom')).toBe('classroom');
     expect(accommodationKindForChurch('youth', 'tent', null)).toBe('tent');
+    expect(accommodationKindForChurch('leader', 'tent', null)).toBe('tent'); // no override → keep own kind
     expect(accommodationKindForChurch('youth', null, null)).toBeNull();
   });
 

@@ -226,7 +226,7 @@ describe('TicketImportService.importTicketsCsv — church override', () => {
     expect(res.warnings.some((w) => w.message.includes('overridden'))).toBe(true);
   });
 
-  it('never overrides a leader', async () => {
+  it('overrides a leader too (Bug 2) — a church override forces everyone', async () => {
     const existing = person({ id: 'p1', firstName: 'Alelia', lastName: 'Ino', churchId: 'c1', kind: 'leader' });
     const { svc, personRepo } = await build(
       [church({ id: 'c1', name: 'Victory', accommodationOverride: 'classroom' })],
@@ -235,7 +235,8 @@ describe('TicketImportService.importTicketsCsv — church override', () => {
     const csv = 'First Name,Last Name,Ticket Type\nAlelia,Ino,Tent';
     await svc.importTicketsCsv(actor('admin'), { csvData: csv });
     const all = await personRepo.findAll();
-    expect(all[0]!.accommodationKind).toBe('tent');
+    // Bug 2 (2026-07-17): the leader is now forced to the church override, not left as 'tent'.
+    expect(all[0]!.accommodationKind).toBe('classroom');
   });
 });
 

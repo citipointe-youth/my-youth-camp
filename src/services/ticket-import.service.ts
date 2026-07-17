@@ -169,8 +169,9 @@ export function makeTicketImportService(
 
           if (match.status === 'matched') {
             const existing = touched.get(match.person.id) ?? match.person;
-            const churchOverride =
-              existing.kind === 'youth' ? churchOverrideById.get(existing.churchId) : undefined;
+            // Bug 2: the church accommodation override applies to EVERYONE in the church
+            // (students AND leaders), not just youth — matches import.service + allocate.
+            const churchOverride = churchOverrideById.get(existing.churchId);
 
             let finalKind: Person['accommodationKind'] = existing.accommodationKind;
             let finalConfidence: Person['accommodationKindConfidence'] = existing.accommodationKindConfidence;

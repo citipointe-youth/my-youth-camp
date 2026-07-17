@@ -1,16 +1,20 @@
 import type { SqlClient } from './client';
 import type { INotificationRepository } from '../interfaces/entity-repositories';
 import type { Notification } from '../../core/entities/notification';
+import { encryptField, maybeDecrypt } from '../../utils/field-crypto';
 
-function toNotif(r: Record<string, unknown>): Notification {
+export function toNotif(r: Record<string, unknown>): Notification {
+  const id = r['id'] as string;
   return {
-    id: r['id'] as string,
+    id,
     scope: r['scope'] as Notification['scope'],
     zone: (r['zone'] as string | null) ?? undefined,
     churchId: (r['church_id'] as string | null) ?? undefined,
     priority: r['priority'] as Notification['priority'],
     title: r['title'] as string,
-    body: r['body'] as string,
+    // Leaders-only (incident) alerts carry a summary that can describe a minor, so their body is
+    // encrypted at rest. maybeDecrypt passes ordinary plaintext broadcast bodies through unchanged.
+    body: maybeDecrypt(r['body'] as string, `notifications:body:${id}`) ?? '',
     senderId: r['sender_id'] as string,
     senderName: r['sender_name'] as string,
     senderRole: r['sender_role'] as Notification['senderRole'],
@@ -18,6 +22,27 @@ function toNotif(r: Record<string, unknown>): Notification {
     audienceEstimate: r['audience_estimate'] as number,
     expiresAt: r['expires_at'] ? (r['expires_at'] as Date).toISOString() : undefined,
     createdAt: (r['created_at'] as Date).toISOString(),
+  };
+}
+
+export function notifColumns(n: Notification): Record<string, unknown> {
+  return {
+    id: n.id,
+    scope: n.scope,
+    zone: n.zone ?? null,
+    church_id: n.churchId ?? null,
+    priority: n.priority,
+    title: n.title,
+    // Encrypt at rest only for leaders-only (incident) alerts, whose body carries a summary
+    // that can describe a minor. Ordinary broadcast bodies stay plaintext (readable by all).
+    body: n.leadersOnly && n.body ? encryptField(n.body, `notifications:body:${n.id}`) : n.body,
+    sender_id: n.senderId,
+    sender_name: n.senderName,
+    sender_role: n.senderRole,
+    leaders_only: n.leadersOnly ?? false,
+    audience_estimate: n.audienceEstimate,
+    expires_at: n.expiresAt ?? null,
+    created_at: n.createdAt,
   };
 }
 
@@ -57,22 +82,7 @@ export class SupabaseNotificationRepository implements INotificationRepository {
 
   async save(n: Notification): Promise<Notification> {
     await this.sql`
-      insert into notifications ${this.sql({
-        id: n.id,
-        scope: n.scope,
-        zone: n.zone ?? null,
-        church_id: n.churchId ?? null,
-        priority: n.priority,
-        title: n.title,
-        body: n.body,
-        sender_id: n.senderId,
-        sender_name: n.senderName,
-        sender_role: n.senderRole,
-        leaders_only: n.leadersOnly ?? false,
-        audience_estimate: n.audienceEstimate,
-        expires_at: n.expiresAt ?? null,
-        created_at: n.createdAt,
-      })}
+      insert into notifications ${this.sql(notifColumns(n))}
       on conflict (id) do update set title = excluded.title, body = excluded.body
     `;
     return n;
