@@ -1169,12 +1169,49 @@ RBAC, gender-account creation, password export, parent-mask, login-form attrs).
   download the whole workbook (all-zone PII, notes, incidents, temp passwords). Now gated on the
   new `export:compliance` capability (review Finding A — a pre-existing hole the Incidents sheet
   widened).
-- **⚠ Rollout note for existing prod churches.** The code + migrations are deployed, but existing
-  prod church logins stay single-account (all-gender) until an admin clicks **"Randomise & export
-  church passwords"** (or the split script is run), which splits them into `b-`/`g-`, retires the
-  old logins, randomises passwords, and produces the CSV to distribute. Deliberately **not**
-  auto-run on deploy — it invalidates every church's current password, so the operator triggers it
-  when ready. Existing signed church sessions keep working to their 12h TTL.
+- **Rollout note for existing prod churches — DONE.** The code + migrations deployed, and the
+  admin ran **"Randomise & export church passwords"** on 2026-07-17/18: all 5 real prod churches
+  are split into `b-`/`g-` logins (10 accounts, 0 unsplit), the legacy combined logins retired,
+  and the CSV distributed.
+
+## Follow-up fixes — 2026-07-17/18 (post-deploy)
+
+Two admin-reported issues after the batch above went live, root-caused against real prod data
+(Supabase `nwfafrgojqkxylbppywo` queries, not guesswork) and a live browser repro. `sw.js`
+`camp-v26`→`camp-v27`→`camp-v28`. `npm run typecheck` clean, `npm run test` = 533 pass throughout.
+
+- **"Randomise & export passwords" showed 'network error' after a successful export (commit
+  `7660ad6`).** Root cause: the operation had actually **succeeded** — prod evidence at the time
+  showed all churches already split with 0 unsplit accounts, and the admin's downloaded CSV was
+  the real, valid output. The error came from `_rAccts()` (a cosmetic accounts-list refresh)
+  running *inside the same `try`* as the export and failing transiently, making a fully
+  successful randomise look broken. `randomizeChurchPasswords()` now downloads the CSV
+  **first** — that response is the only copy of the new passwords, so nothing after it can mask
+  or override a successful export — and the refresh failure is now swallowed separately.
+- **Incidents screen was completely blank (commit `7660ad6`).** Root cause: the Feature 3 batch
+  added `RENDER.incidents` + the home tiles but never added the screen's DOM container — the
+  shell pre-declares a fixed set of `<section class="screen" id="…">` divs (see "Frontend files"
+  below) and there was **no `id="incidents"`**. `paint`/`_showScreen`/`_spinner` all silently
+  no-op when `getElementById(id)` is null, so the form/list/buttons rendered into nothing. Fixed
+  by adding `<section class="screen" id="incidents">` to the shell. This had shipped undetected
+  because unit tests don't touch the DOM — **caught only by a live browser check**, which is why
+  a redeploy affecting the SPA should get at least one visual smoke pass when the Chrome
+  extension is available, not typecheck/test alone.
+- **Incidents access briefly restricted to at-camp only, then reverted (commits `7660ad6` →
+  `756c7b1`).** The same commit that fixed the blank screen also added a `CAMP_MODE!=='at-camp'`
+  gate to `RENDER.incidents` (an admin request: "the incidents menu shouldn't be available
+  pre-camp mode") plus removed the pre-camp home card. This turned out to be **too broad**: the
+  real prod camp was still pre-camp (camp dates are 2026-09-28–10-01), 2 real incidents had
+  already been logged pre-camp before the gate landed, and **zoneLeader/director have no other
+  console** to reach the Incidents screen from — so the gate made any pre-camp incident
+  permanently unreviewable/undeletable until the mode switch, a safeguarding dead-end. Reverted:
+  `RENDER.incidents` is **role-gated only** (`canManageIncident()`, unchanged from the original
+  design) and the pre-camp home card is back. The literal "shouldn't be available pre-camp"
+  request is not implemented as full lockout — flagged to the admin as a deliberate trade-off
+  (declutter vs. safeguarding accessibility); revisit if a lighter-touch decluttering (e.g. a
+  settings-page link, matching the Notices/Data-Import precedent below) is still wanted.
+- **"Testimonies & Student Notes" renamed to "Testimonies & Notes"** (`RENDER.notes`'s `paint()`
+  title, commit `756c7b1`) — admin-requested, cosmetic only.
 
 ## Architecture
 
