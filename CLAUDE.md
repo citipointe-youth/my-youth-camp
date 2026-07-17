@@ -1019,6 +1019,70 @@ Deployment Runbook) — code alone does not change prod data.
   the four legacy plaintext `people` columns) → `VACUUM FULL people; VACUUM FULL notes;` to
   physically purge plaintext from disk. Rollback is safe any time before `023`.
 
+## At-camp leader UX consolidation — deployed 2026-07-17
+
+Collapsed the at-camp leader's three near-identical "find a person" surfaces into two, and
+unified Day-1 arrival sign-in into the daily Check-in surface. Design:
+`docs/superpowers/specs/2026-07-16-at-camp-leader-ux-consolidation-design.md`; plan:
+`docs/superpowers/plans/2026-07-17-at-camp-leader-ux-consolidation.md`. `npm run typecheck`
+clean, `npm run test` = **482 pass**. `sw.js` `camp-v24`→`camp-v25`. **Migration `0005`.**
+
+- **Unified Sign-in/Check-in entry.** One nav id (`checkin`), phase-branched:
+  `campPhase()` (new helper, near `_realCampDayNumber`) returns `'signin'` on Day 1 before a
+  settable switchover time, else `'checkin'`. `RENDER.checkin` is now a thin wrapper that
+  branches to `_renderArrival()` (the old `RENDER.firstday` arrival flow, redirected into the
+  `checkin` screen via a module-level `_fdScreen` var so `fdDraw` can target either screen) or
+  `_renderDailyCheckin()` (the original `RENDER.checkin` body, renamed). Nav tab label/icon
+  ("Sign-in" vs "Check-in") derive from phase via a `_ci()` helper in `navModel`. New
+  `CampSettings` fields: `checkinSwitchoverTime` (`'HH:MM'`, default `'14:00'`) and
+  `checkinPhaseOverride` (`'auto'|'signin'|'checkin'`, default `'auto'`) — admin-editable in
+  Camp Settings (`stSwitchover`/`stPhaseSeg`/`setPhaseOverride`, confirm-gated when forcing away
+  from Auto since it flips every live session's entry).
+- **Students tab** (`RENDER.students`, replaces the at-camp Search tab for
+  church/zoneLeader/director/admin — **first-aid's own `search` screen is untouched**). A `.seg`
+  control hosts **My group** (default — ex-`RENDER.myyouth`/`filterMyYouth`, now grouped by
+  church for zoneLeader) and **Other churches** (ex-`RENDER.search`'s masked-contact lookup, now
+  `_renderOtherChurches`). `TAB_OF` maps `camper`/`myyouth`→`students`, `firstday`→`checkin`.
+  `RENDER.myyouth`/`_renderMyGroup` are kept (the legacy `myyouth` screen/home tile are gone, but
+  the function is harmless dead code, same pattern as other superseded renderers in this file).
+- **4-tile church-leader home.** `renderHomeAtCamp` caps the church role at exactly 4 tiles
+  (unified entry, Submit Testimonies, Schedule, Devotional); "My Youth Details" tile removed
+  (→ Students tab); "Your Accommodation" demoted to a one-line hero strip; "Testimonies & Notes"
+  demoted to a bold slim link below the grid. Other roles keep their existing extra tiles
+  (Notices/Data) — the 4-tile cap is church-specific, not global.
+- **Double-tap-to-open-profile bug: investigated, does NOT reproduce, no fix applied.** The
+  spec's hypothesis was that `openCamper` never claims `_navId`/`_navToken`, so a list screen's
+  stale-while-revalidate refetch finishing after it calls `paint()`→`_showScreen(list)` and
+  steals focus back. Confirmed half the hypothesis (`openCamper` genuinely never claims the nav
+  token) but disproved the other half with a live repro harness (patched `api()` to delay the
+  My-group list's background `/campers` refetch by 1.5s, called `openCamper` mid-delay, checked
+  `document.querySelector('.screen.active')`): the profile stayed open throughout. Reason — the
+  Students-tab refactor above (`_renderMyGroup`/`_renderStudentsBody`) writes the post-fetch list
+  content via a direct `element.innerHTML=` assignment instead of a second `paint()` call, and
+  `paint()` is the only thing that calls `_showScreen()`. No second paint → nothing left to steal
+  focus. If this class of bug resurfaces (e.g. a future list refactor reintroduces a second
+  `paint()` call), `openCamper` claiming `++_navToken; _navId='camper'` before painting is the
+  known-good fix (same pattern as the earlier first-aid `_faScreen()` fix) — just not needed today.
+- **Migration `0005` reconciliation (branch predated the 2026-07-16 consolidation).** This work
+  started on a branch cut before "Migration files consolidated" (above) landed on `master` — its
+  migration was originally authored as `024_...` against the old `001`-`023` numbering, and its
+  backend changes (settings entity/repo/schema/seed/tests) were written before `master`'s
+  `tentPrice`/`classroomPrice` removal. Reconciled by merging `origin/master` into the feature
+  branch before merging to `master`: renumbered the migration file to `0005_...`, resolved 2 trivial
+  test-fixture conflicts (both sides touching the same settings-literal line), verified
+  `tentPrice`/`classroomPrice` fully gone and the new fields intact, then re-ran the full gate.
+  **Applying the migration via the Supabase MCP tool records the history row under a generated
+  timestamp version, not the file's `0005`** — breaks the clean sequence the consolidation
+  established, so a follow-up `update supabase_migrations.schema_migrations set version='0005'
+  where version='<generated timestamp>'` is required after every `apply_migration` call on this
+  project until/unless the tooling is changed to accept an explicit version.
+- **Deploy note:** the GitHub→Vercel webhook did not pick up this push for several minutes (no
+  BUILDING deployment appeared); `vercel deploy --prod --yes` was used as a manual fallback and
+  hit a transient `ECONNRESET` on the first two attempts (ended up moot — the git-triggered
+  deployment eventually landed on its own, confirmed by `source:"git"` on the ready deployment,
+  not `"cli"`). If this recurs, checking `mcp__plugin_vercel_vercel__get_deployment` on the
+  `-git-master-` alias is the fastest way to tell whether it's actually stuck or just slow.
+
 ## Architecture
 
 ```

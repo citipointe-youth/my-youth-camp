@@ -150,7 +150,8 @@ then **parallel-loads** `/home`+`/registrants`+`/notifications`, pre-camp home (
 ### At-camp screens
 | Screen / fn | ~Line | Notes |
 |---|---|---|
-| `RENDER.checkin` | 981 | Daily session check-in. `_ciLabel` 936, `CHECKIN_QUEUE` 946, `drainQueue` 956, `_optimisticState` 975, `rowHtml` ~1481. **Sessions = `settings.checkInDays`×AM/PM** (id `${day}~am`), NOT schedule — see backend `checkin-sessions.ts`. The status path `encodeURIComponent`s the id (the `~` delimiter replaced `#`, which broke the URL → "Endpoint not found"). **(2026-07-02)** `rowHtml` tile decluttered: avatar/initials, med badge, and the always-on grey sync dot removed; Check-in is now a primary solid button (ghost once already checked in) labelled "Check in"/"Check out", bigger than the ghost "Add note" button. Per-row sync state (`_updateSyncDots`/`_markSynced`) is now a harmless no-op — the top `ci-sync` banner is the only sync-status UI. **(2026-07-04, item 3)** a collapsed "Not Signed In (N)" `<details>` at the bottom lists scoped students with `atCamp!==true` (any lifecycle — fetched via `/registrants`+`/campers` alongside the roster status, same dedup as `RENDER.firstday`); each row has a direct "Sign in to camp" button (`signInPrompt`). Hidden when N=0. |
+| `RENDER.checkin` | grep the name | **(2026-07-17)** now a thin phase-branch wrapper: `campPhase()==='signin'` → `_renderArrival()` (Day-1 arrival, ex-`RENDER.firstday` body redirected via `_fdScreen`); else → `_renderDailyCheckin()` (the original body below, renamed — unchanged internally). `_ciLabel` renamed `_ci()` (in `navModel`), `CHECKIN_QUEUE`, `drainQueue`, `_optimisticState`, `rowHtml` — grep each name. **Sessions = `settings.checkInDays`×AM/PM** (id `${day}~am`), NOT schedule — see backend `checkin-sessions.ts`. The status path `encodeURIComponent`s the id (the `~` delimiter replaced `#`, which broke the URL → "Endpoint not found"). **(2026-07-02)** `rowHtml` tile decluttered: avatar/initials, med badge, and the always-on grey sync dot removed; Check-in is now a primary solid button (ghost once already checked in) labelled "Check in"/"Check out", bigger than the ghost "Add note" button. Per-row sync state (`_updateSyncDots`/`_markSynced`) is now a harmless no-op — the top `ci-sync` banner is the only sync-status UI. **(2026-07-04, item 3)** a collapsed "Not Signed In (N)" `<details>` at the bottom lists scoped students with `atCamp!==true` (any lifecycle — fetched via `/registrants`+`/campers` alongside the roster status, same dedup as `RENDER.firstday`); each row has a direct "Sign in to camp" button (`signInPrompt`). Hidden when N=0. |
+| `campPhase() / brisbaneNowTime()` | grep the name, near `_realCampDayNumber` | **(NEW 2026-07-17)** `campPhase()` → `'signin'\|'checkin'`: manual `SETTINGS.checkinPhaseOverride` wins if set, else Day-1-and-before-`SETTINGS.checkinSwitchoverTime` → `'signin'`, else `'checkin'`. Drives `RENDER.checkin`, the Check-in nav tab label, and the church-leader home's first tile. |
 | `_performCheck / confirmCheckOut / doCheck` | 1052 / 1062 / 1086 | Optimistic flip + undo (`undoCheck` 1075) |
 | `notePrompt` | 1087 | Check-in notes |
 | **FIRST AID (Phase 4)** `renderSearchFirstAid / runFaSearch` | ~1375 | firstAid home = student search (no Medical Watch). `_ALLERGY_RE` flags allergy-type dietary items. |
@@ -158,12 +159,13 @@ then **parallel-loads** `/home`+`/registrants`+`/notifications`, pre-camp home (
 | `openFirstAidLog / saveFirstAidLog` | ~1490 | Log-action form → `POST /notes {category:'firstaid'}` (4-line body). |
 | `RENDER.records / drawFaRecords / faRecSeg / exportFaRecords` | grep the name | First-aid records tab (`GET /notes/firstaid`); Today/All + per-student filter. `_faParse` splits the 4-line body. **Export button → `exportFaRecords()`** builds a CSV client-side from `window._faRecsAll` (no backend). |
 | `revealMedicare` | ~1480 | Uses `_currentStudent` (no re-fetch); POSTs the audit reveal. |
-| `RENDER.search / runSearch / reveal` | 1193 / 1198 / 1215 | Contact search + reveal |
+| `RENDER.search / runSearch / reveal` | 1193 / 1198 / 1215 | **firstAid only now** (own `search` tab, untouched). At-camp church/zoneLeader/director/admin route to `RENDER.students` instead — `RENDER.search` still exists and delegates to the shared `_renderOtherChurches('search')` body if ever hit by a non-firstAid actor, but nothing navigates it there post-2026-07-17. |
+| **`RENDER.students(subtab)` (NEW 2026-07-17)** | grep the name | Replaces the at-camp Search tab for church/zoneLeader/director/admin. `.seg` control (`switchStudentsTab`, state in `STUDENTS_SUB`) with **My group** (default, `_renderMyGroup`/`filterMyYouth` — zoneLeader gets church sub-headings within each At-camp/Signed-out/Late-arrivals section) and **Other churches** (`_renderOtherChurches` — masked leader-contact search, same `doSearch`/`runSearch`/`reveal` as old `RENDER.search`). `TAB_OF`: `camper`→`students`, `myyouth`→`students`, `firstday`→`checkin`. |
 | `RENDER.notifs / deleteNotice` | 1218 / 1230 | Notices |
 | `RENDER.compose / sendNotif` | 1302 / 1317 | Send notice (zoneLeader/director/admin) |
 | `RENDER.firstday` | 1328 | Day-1 arrivals (sign-in). Fetches **both** `/registrants` (lifecycle=registered, kind≠leader) and `/campers` (kind=student) in parallel; deduplicates by id so pre-arrival students appear in "not signed in". |
-| `RENDER.myyouth` | 1405 | Leader's youth roster |
-| `openCamper` | 1449 | Camper detail |
+| `RENDER.myyouth` | 1405 | **Legacy — the `myyouth` screen/home tile are gone (2026-07-17, superseded by `RENDER.students`'s My-group sub-tab)**, but the function is kept (harmless dead code, same as other superseded renderers in this file) as a thin wrapper around the now-shared `_renderMyGroup(screenId)`. |
+| `openCamper` | 1449 | Camper detail. Back → Students (`TAB_OF.camper='students'`, 2026-07-17). |
 | `signOutPrompt/Confirm`, `signInPrompt/Confirm` | 1485 / 1509 | **Attendance** (writes atCamp/lifecycle) |
 | `RENDER.schedule` | 1520 | Pure plan view (no location, no check-in pill). `selSchedDay` 1530 |
 | `RENDER.devotional` | 1534 | `selDevoDay` 1547 |
@@ -183,7 +185,7 @@ then **parallel-loads** `/home`+`/registrants`+`/notifications`, pre-camp home (
 | `RENDER.adminRecords` | ~1808 | **Redirects to `adminData`** — all export/close-out content merged there. |
 | `RENDER.adminCloseOut` (+ `doNewYear`) | ~1830 / ~1855 | Back button → `adminData`. |
 | `RENDER.adminSettings / saveSettings` | 1891 / 1916 |
-| ⮑ **Timezone hardcoded** to Australia/Brisbane (field removed); check-in days **auto-derived** from start/end via `_datesBetween`; `renderCheckinDaysPreview`/`onStartDateChange` (start pre-fills end +3 days). Also hosts the two **login-lock toggles** (`stChurchLock`/`stZoneLock` → `churchLoginLocked`/`zoneLeaderLoginLocked`, `.tgl` switch) saved in `saveSettings`. | — |
+| ⮑ **Timezone hardcoded** to Australia/Brisbane (field removed); check-in days **auto-derived** from start/end via `_datesBetween`; `renderCheckinDaysPreview`/`onStartDateChange` (start pre-fills end +3 days). Also hosts the two **login-lock toggles** (`stChurchLock`/`stZoneLock` → `churchLoginLocked`/`zoneLeaderLoginLocked`, `.tgl` switch) saved in `saveSettings`. **(NEW 2026-07-17)** switchover-time input (`stSwitchover` → `checkinSwitchoverTime`) + phase-override `.seg` (`stPhaseSeg`/`setPhaseOverride` → `checkinPhaseOverride`; confirm-gated when forcing away from `'auto'`). | — |
 | `RENDER.adminData` (+ `adminReset`, `adminClear`) | ~1926 | **Merged from Records & Export**: shows compliance export card, close-out card, CSV upload, notifications clear (at-camp), rollover, factory reset. Title = "Data, Reset & Exports". |
 | `RENDER.import / RENDER.adminData` upload card (`_importUploadCardHtml`) + `adminUpload` / `_renderImportPreview` / `_confirmImport` / `_createPhantomChurches` / `_detectImportType` / `_xlsxToCsv` | grep the names | **Redesigned 2026-07-02 (late):** single multi-file field, header auto-detect, combined Form→Ticket→Invoice preview→confirm, Excel via lazy SheetJS, per-source last-imported stamps. Phantom churches still get a per-church create form that re-runs the dry-run. |
 | **Offline Sign-In (NEW 2026-07-04)** — `_offlineSignInCardHtml`/`downloadOfflineSignInTemplate`/`offlineSignInUpload` | grep the names, bottom of `RENDER.import` | Fallback bulk sign-in for churches doing paper/bulk sign-in. Export = `GET /export/offline-signin` (backend `src/services/offline-signin.service.ts`, exceljs); import re-parses the filled sheet client-side via the existing `_readImportFile` pipeline then POSTs raw CSV text to `POST /import/offline-signin`, which matches by First+Last+Church text and bulk-signs-in via `withSignEvent`+`saveMany`. |
@@ -199,20 +201,24 @@ then **parallel-loads** `/home`+`/registrants`+`/notifications`, pre-camp home (
 
 **Bottom-nav tabs** (`buildTabs`, line ~605):
 
+**(2026-07-17)** the at-camp `Search` tab is `Students` for every role except firstAid, and the
+`Check-in` tab label is phase-driven (`_ci()` in `navModel` — reads "Sign-in" before the Day-1
+switchover, else "Check-in"; shown as "Check-in"/"Sign-in" below for brevity):
+
 | Role | pre-camp | at-camp |
 |---|---|---|
-| `church` | Home · My Youth · Help · Notices | Home · Check-in · Search · Notices |
-| `zoneLeader` | Home · My Youth · Help · Notices | Home · Check-in · Search · Notices |
-| `director` | Home · My Youth · **Data** · Help · Notices | Home · Check-in · Search · Notices |
-| `admin` | Home · My Youth · **Data** · Notices · **Admin** | Home · Check-in · Search · **Admin** |
+| `church` | Home · My Youth · Help · Notices | Home · Check-in/Sign-in · **Students** · Notices |
+| `zoneLeader` | Home · My Youth · Help · Notices | Home · Check-in/Sign-in · **Students** · Notices |
+| `director` | Home · My Youth · **Data** · Help · Notices | Home · Check-in/Sign-in · **Students** · Notices |
+| `admin` | Home · My Youth · **Data** · Notices · **Admin** | Home · Check-in/Sign-in · **Students** · **Admin** |
 | `firstAid` | Search · Records · Schedule (**same in both modes**; Search is the landing — Phase 4) | Search · Records · Schedule |
 
 **Desktop wide sidebar** (`_renderWideNav`) — all roles get the sidebar at ≥980px; items from `navSidebar(role,mode)` = `navModel` tabs + extras (admin at-camp uses a dedicated order). Items are **mode-conditional**:
-- **admin at-camp:** Home, Check In, Search, Notices, Accommodation Allocations, Admin Settings
+- **admin at-camp:** Home, Check In/Sign-in, **Students**, Notices, Accommodation Allocations, Admin Settings
 - **admin pre-camp:** Home, My Youth, Data, Notices, Admin, Budget & Costings, Accommodation Allocations
-- **director at-camp:** Home, Check-in, Search, Notices, Notes
+- **director at-camp:** Home, Check-in/Sign-in, **Students**, Notices, Notes
 - **director pre-camp:** Home, My Youth, Data, Help, Notices, Budget & Costings, Accommodation Allocations
-- **church / zoneLeader at-camp:** Home, Check-in, Search, Notices
+- **church / zoneLeader at-camp:** Home, Check-in/Sign-in, **Students**, Notices
 - **church / zoneLeader pre-camp:** Home, My Youth, Help, Notices
 - **firstAid (all modes):** Search, Records, Schedule
 - Bottom tabs hidden (`#tabs{display:none}`) at ≥980px; sidebar is the sole nav.
