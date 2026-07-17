@@ -1213,6 +1213,40 @@ Two admin-reported issues after the batch above went live, root-caused against r
 - **"Testimonies & Student Notes" renamed to "Testimonies & Notes"** (`RENDER.notes`'s `paint()`
   title, commit `756c7b1`) — admin-requested, cosmetic only.
 
+## Testimonies & Notes — incident severity badge + zone accent — deployed 2026-07-18
+
+Admin-requested 2-item batch (leadership screen only — admin/director/zoneLeader; church doesn't
+reach this screen's incident view since `incident:manage` excludes church). **SPA-only**
+(`public/index.html`), no backend/schema change (both `severity` on `Incident` and zone data were
+already present, just not surfaced/joined here). `npm run typecheck` clean, `npm run test` = 533
+pass. `sw.js` `camp-v28`→`camp-v29`.
+
+- **Incident low/high badge.** `drawNotes`'s `badge()` (previously a flat `<span class="pill
+  warn">Incident</span>` for every incident record) now reads `n.severity` — **"Incident · High"**
+  keeps the alarming red `pill warn`, **"Incident · Low"** downgrades to the calmer amber `pill
+  amb`. `severity` was already threaded onto the synthesised `incidentRecs` in `RENDER.notes`
+  (`cat:'incident',severity:i.severity,...`) from `GET /incidents` — it just wasn't read in the
+  badge. `badge()` now takes the whole record `n` instead of just the category string `c` (call
+  site: `badge(n)`, not `badge(c)`).
+- **Zone colour accent (left edge).** New `ZONE_COLORS` (mirrors `ZONES`/backend `ZONE_NAMES` —
+  the zone names literally ARE colours: `Yellow #eab308`, `Blue #4f46e5`, `Black #1e1a3a`, `Red
+  #e11d48`) + `zoneAccentStyle(z)` helper, both near the `ZONES` const (~line 804). Each record
+  card in `drawNotes` gets an inline `style="${zoneAccentStyle(n.zone)}"` — a 4px `border-left`
+  in the zone's colour, same visual pattern `.ncard` already uses for its urgent/zone accents.
+  **Zone resolution, in order:** (1) the attached student's zone (`n.camperId` → `cmap` from the
+  already-fetched `/campers` join — unchanged); (2) for a camper-less general note/testimony,
+  the zone of the church that logged it — `RENDER.notes` now also fetches `GET
+  /accounts/churches` (role-scoped, safe for every role that reaches this screen) and builds
+  `churchZoneById`, looked up via the note's `authorChurchId` (only set when the author is a
+  `church` role — `note.service.ts`'s `authorChurchId: actor.churchId`); (3) no student, no
+  resolvable church (e.g. a general note logged by a director/admin/firstAid/zoneLeader, or an
+  incident with no `zone` set) → **no accent**, plain card, "zone-agnostic" by design.
+  `signedOut`/`incidentRecs` already carried their own `zone` field unchanged (student's zone /
+  the incident's own `zone`, respectively) — only the general-note fallback path is new.
+  **Gotcha avoided:** the new churches fetch in `RENDER.notes` must NOT be named `churches` — a
+  local `const churches` (the distinct church-name list for the Ministry filter dropdown) is
+  already declared later in the same function; the fetched array is named `churchRows` instead.
+
 ## Architecture
 
 ```

@@ -171,7 +171,7 @@ then **parallel-loads** `/home`+`/registrants`+`/notifications`, pre-camp home (
 | `RENDER.devotional` | 1534 | `selDevoDay` 1547 |
 | `RENDER.faq` | 1550 | |
 | `RENDER.testimonies / submitTestimony` | 1556 / 1569 | **Student is optional** — defaults to "No specific student identified" (general testimony). |
-| `RENDER.notes / drawNotes / exportNotes` | 1574 / 1589 / 1603 | Camper-less notes show as "No specific student". |
+| `RENDER.notes / drawNotes / exportNotes` | 1574 / 1589 / 1603 | Camper-less notes show as "No specific student". **(2026-07-18)** `drawNotes`'s `badge(n)` shows incident low/high severity (`n.severity`); each card gets a `zoneAccentStyle(n.zone)` left-border accent (`ZONE_COLORS`, ~line 804) — zone = attached student's zone, else the logging church's zone (`churchZoneById` from a new `GET /accounts/churches` fetch in `RENDER.notes`, keyed by the note's `authorChurchId`), else no accent. |
 
 ### Admin screens (admin role; identical in both modes)
 | Screen / fn | ~Line |
@@ -384,3 +384,11 @@ tolerate absence via `?? false`.
 | **iOS won't offer to autofill the saved password** | SPA login `<form id="loginForm">` (submit→`doLogin`), `autocomplete="username"`/`"current-password"`, stable `name`s. Device-only to confirm; saving a NEW password may not prompt (form never navigates) — autofill of an existing credential is the goal. |
 | **Setup wizard step count / At-Camp-Info merge / no tooltip** | `WIZARD_STEPS` — Schedule/FAQ/Devotionals merged into ONE `atCampInfo` step (done = any has content); now **8 steps**. Each step shows a plain one-sentence `summary` line (the old `helpTip` bubbles are gone). |
 | **Extra white bar at the bottom of the screen** | SPA `.tabs` CSS — `calc(2px + env(safe-area-inset-bottom) * 0.15)` (was full inset ≈1cm). Eyeball on a home-indicator phone. |
+
+### 2026-07-18 fix batch (Testimonies & Notes: incident severity, zone accent)
+
+| Symptom | Go to |
+|---|---|
+| **Incident record on Testimonies & Notes doesn't show Low/High** | `drawNotes`'s `badge(n)` (grep the name, `public/index.html`) — reads `n.severity` (`'high'`→red `pill warn` "Incident · High", else amber `pill amb` "Incident · Low"). `severity` itself comes from `GET /incidents` via `RENDER.notes`'s `incidentRecs` map — check that response has the field before assuming the badge logic is at fault. |
+| **Note/testimony card missing its left-edge zone colour, or has the wrong colour** | `zoneAccentStyle(n.zone)` (near `ZONES`/`ZONE_COLORS`, ~line 804) applied as inline `style` on each card in `drawNotes`. `n.zone` resolution order (set in `RENDER.notes`): attached student's zone (`cmap` from `/campers`) → else the logging church's zone (`churchZoneById`, from a `GET /accounts/churches` fetch, keyed by the note's `authorChurchId`) → else `null` (no accent, by design — "zone-agnostic"). `ZONE_COLORS` must stay in sync with `ZONES`/backend `ZONE_NAMES` (currently Yellow/Blue/Black/Red) if a zone is ever renamed. |
+| **Every card on Testimonies & Notes has no zone colour at all** | Check `RENDER.notes`'s new `GET /accounts/churches` call isn't failing/403ing (it's `.catch(()=>[])`'d, so a failure silently produces an empty `churchZoneById` — check the network tab / server logs, not just this screen). |

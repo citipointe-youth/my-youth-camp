@@ -802,6 +802,11 @@ const GRADES=[7,8,9,10,11,12];
 // (which renamed 'Green'→'Black'). A stale 'Green' here let a director send a zone notice no
 // church/leader could ever receive, and hid the real 'Black' zone from the notice composer.
 const ZONES=['Yellow','Blue','Black','Red'];
+// Literal display colour per zone name (2026-07-18, Testimonies & Notes left-edge accent) —
+// the zone names themselves ARE colours, so this just renders them as such. Zone-agnostic
+// records (no resolvable zone) get no accent — see zoneAccentStyle.
+const ZONE_COLORS={Yellow:'#eab308',Blue:'#4f46e5',Black:'#1e1a3a',Red:'#e11d48'};
+const zoneAccentStyle=z=>ZONE_COLORS[z]?`border-left:4px solid ${ZONE_COLORS[z]};`:'';
 
 /* ===== UTILS ===== */
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -3096,9 +3101,12 @@ async function submitTestimony(){const camperId=sel('tmCamper'),leader=val('tmLe
   try{await api('/notes',{method:'POST',body:payload});toast('Testimony submitted');const t=document.getElementById('tmBody');if(t)t.value='';const s=document.getElementById('tmSensitive');if(s)s.checked=false;}catch(e){toast(e.message);}}
 RENDER.notes=async function(presetFilter){
   // /notes/recent returns bare notes (no camper details) — join /campers for name/church/zone/gender/grade.
-  const [notes,page,incidents]=await Promise.all([api('/notes/recent'),api('/campers?pageSize=300').catch(()=>[]),api('/incidents').catch(()=>[])]);
+  const [notes,page,incidents,churchRows]=await Promise.all([api('/notes/recent'),api('/campers?pageSize=300').catch(()=>[]),api('/incidents').catch(()=>[]),api('/accounts/churches').catch(()=>[])]);
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c;});
-  const noteRecs=(notes||[]).map(n=>{const c=cmap[n.camperId]||{};return Object.assign({},n,{camperName:c.firstName?(c.firstName+' '+c.lastName):(n.camperId||'No specific student'),church:c.churchName,zone:c.zone,gender:c.gender,grade:c.grade,cat:n.category||'note'});});
+  // Left-edge zone accent (2026-07-18): a general note/testimony (no camperId) has no student
+  // to take a zone from, so fall back to the zone of the church that logged it (authorChurchId).
+  const churchZoneById={};(churchRows||[]).forEach(c=>{churchZoneById[c.id]=c.zone;});
+  const noteRecs=(notes||[]).map(n=>{const c=cmap[n.camperId]||{};const zone=c.zone||churchZoneById[n.authorChurchId]||null;return Object.assign({},n,{camperName:c.firstName?(c.firstName+' '+c.lastName):(n.camperId||'No specific student'),church:c.churchName,zone,gender:c.gender,grade:c.grade,cat:n.category||'note'});});
   // AC-8: synthesise "Signed out" records from the attendance data — students no longer at camp
   // (atCamp:false / lifecycle checked_out|departed) with a sign-out event. Each surfaces as a
   // record alongside testimonies/notes, sourced from signOutHistory.
@@ -3139,7 +3147,15 @@ function drawNotes(){
   if(ch!=='all')list=list.filter(n=>n.church===ch);
   if(z!=='all')list=list.filter(n=>n.zone===z);
   const box=document.getElementById('notesList');if(!box)return;
-  const badge=c=>c==='testimony'?'<span class="pill info">Testimony</span>':c==='signedout'?'<span class="pill warn">Signed out</span>':c==='firstaid'?'<span class="pill amb">First-aid</span>':c==='incident'?'<span class="pill warn">Incident</span>':'<span class="pill ok">Student note</span>';
+  // Incidents carry their own low/high severity — surface it in the badge instead of a flat
+  // "Incident" label (high stays the alarming red pill; low reads as a calmer amber).
+  const badge=n=>{const c=n.cat||'note';
+    if(c==='testimony')return '<span class="pill info">Testimony</span>';
+    if(c==='signedout')return '<span class="pill warn">Signed out</span>';
+    if(c==='firstaid')return '<span class="pill amb">First-aid</span>';
+    if(c==='incident')return n.severity==='high'?'<span class="pill warn">Incident · High</span>':'<span class="pill amb">Incident · Low</span>';
+    return '<span class="pill ok">Student note</span>';
+  };
   box.innerHTML=list.length?list.map(n=>{const c=n.cat||'note';
     const right=(n.gender)?`<span class="sub" style="white-space:nowrap">${n.grade?'Yr '+n.grade:(n.gender==='male'?'Guys':'Girls')}</span>`:'';
     // First-aid records carry a 4-line body (Problem/Treatment/First-aider/Brought by) — render
@@ -3151,9 +3167,9 @@ function drawNotes(){
         ${p.treatment?`<div><b style="color:var(--consent-ok-ink)">Treatment:</b> ${esc(p.treatment)}</div>`:''}
         ${p.firstAider?`<div class="sub" style="color:var(--ink-2)">First-aider: ${esc(p.firstAider)}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div>`:''}</div>`;
     }else{bodyHtml=`<div style="font-size:.86rem;color:#475569;margin:4px 0">${esc(n.body)}</div>`;}
-    return `<div class="card"><div class="rowsb" style="align-items:center"><div class="nm">${esc(n.camperName||'—')}</div>${right}</div>
+    return `<div class="card" style="${zoneAccentStyle(n.zone)}"><div class="rowsb" style="align-items:center"><div class="nm">${esc(n.camperName||'—')}</div>${right}</div>
     ${bodyHtml}
-    <div class="sub">${esc(n.authorName)} · ${dtFmt(n.createdAt)}${n.church?' · '+esc(n.church):''} · ${badge(c)}</div></div>`;}).join(''):emptyState('note','No records match these filters.');
+    <div class="sub">${esc(n.authorName)} · ${dtFmt(n.createdAt)}${n.church?' · '+esc(n.church):''} · ${badge(n)}</div></div>`;}).join(''):emptyState('note','No records match these filters.');
 }
 async function exportNotes(){
   try{const csv=await api('/notes/export');if(!csv||typeof csv!=='string'){toast('Nothing to export');return;}
