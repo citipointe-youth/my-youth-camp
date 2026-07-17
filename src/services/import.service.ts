@@ -255,9 +255,10 @@ export function makeImportService(
             accommodationKindRaw === 'classroom' ? 'classroom'
             : accommodationKindRaw === 'tent' ? 'tent'
             : null;
-          // Church accommodation override: STUDENTS of a church with an override always get
-          // the override kind (corrects wrong ticket-type purchases). Leaders keep the CSV value.
-          const churchOverride = kind === 'youth' ? churchOverrideById.get(resolvedChurchId) : undefined;
+          // Church accommodation override: EVERYONE at a church with an override — students
+          // AND leaders — always gets the override kind (corrects wrong ticket-type purchases;
+          // Bug 2, 2026-07-17 — previously students-only, leaders silently kept the CSV value).
+          const churchOverride = churchOverrideById.get(resolvedChurchId);
           const accommodationKind: Person['accommodationKind'] = churchOverride ?? csvAccommodationKind;
           if (churchOverride && csvAccommodationKind && csvAccommodationKind !== churchOverride) {
             warnings.push({

@@ -215,12 +215,13 @@ describe('ImportService.importCsv — church accommodation override', () => {
     expect(res.warnings.some((w) => w.message.includes('overridden'))).toBe(false);
   });
 
-  it('never overrides a LEADER', async () => {
+  it('Bug 2 (2026-07-17): also forces a LEADER to the church override (with a warning) — was students-only', async () => {
     const h = await build([church({ id: 'c1', name: 'Victory', accommodationOverride: 'classroom' })]);
-    await h.svc.importCsv(actor('admin'), { csvData: `${HDR}\nAlelia,Ino,Victory,Female,18+ Leader,Tent` });
+    const res = await h.svc.importCsv(actor('admin'), { csvData: `${HDR}\nAlelia,Ino,Victory,Female,18+ Leader,Tent` });
     const p = (await h.personRepo.findAll())[0]!;
     expect(p.kind).toBe('leader');
-    expect(p.accommodationKind).toBe('tent');
+    expect(p.accommodationKind).toBe('classroom');
+    expect(res.warnings.some((w) => w.message.includes('overridden'))).toBe(true);
   });
 
   it('keeps the CSV kind when the church has no override', async () => {

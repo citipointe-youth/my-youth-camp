@@ -106,7 +106,13 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
 .screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:var(--pad) var(--pad) 26px;display:none;}
 .screen.active{display:block;animation:rise .25s ease;}
 @keyframes rise{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
-.tabs{display:flex;background:#fff;border-top:1px solid var(--line);flex:none;padding:4px 6px calc(4px + env(safe-area-inset-bottom));gap:2px;z-index:20;}
+/* Bug 3 (2026-07-17): the bottom nav was reserving the FULL device safe-area-inset-bottom
+   (≈34px/~1cm on a home-indicator phone) below the tab icons, on top of the tab bar's own
+   white background — read by the owner as an oversized blank white band at the very bottom
+   of the screen. Scaled down to a small fraction of the inset (≈7px/~0.2cm on that same
+   device, ~2px on a device with no inset) — still a non-zero cushion so the icons aren't
+   flush with the true edge, just far smaller than the full safe-area reservation. */
+.tabs{display:flex;background:#fff;border-top:1px solid var(--line);flex:none;padding:4px 6px calc(2px + env(safe-area-inset-bottom) * 0.15);gap:2px;z-index:20;}
 .tab{flex:1;text-align:center;padding:7px 4px 6px;font-size:var(--t-xs);color:var(--muted);cursor:pointer;border:none;background:none;position:relative;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:12px;transition:background .15s,color .15s;}
 .tab .ic{display:block;transition:transform .15s;}
 .tab.on{color:var(--blue);font-weight:700;background:var(--chip);}
@@ -2103,9 +2109,12 @@ async function openStudentInfo(id){
   const scr=_faScreen();
   let c;try{c=await api('/campers/'+id);}catch(e){toast(e.message);return;}
   _currentStudent=c;
-  // Leader contacts (the focus) — masked; fetched in parallel, rendered into #faLead when ready.
+  // Leader contacts (the focus) — shown plainly, no mask/reveal (Bug 1 swap, 2026-07-17).
+  // The parent/guardian contact now carries the mask + audited reveal instead (role 'parent').
   let contacts=[];try{contacts=await api('/search/contacts/'+id);}catch(e){contacts=[];}
-  const prim=contacts.find(x=>x.type==='primary');const back=contacts.find(x=>x.type==='backup');
+  const leaderContacts=contacts.filter(x=>x.role!=='parent');
+  const parentContact=contacts.find(x=>x.role==='parent');
+  const prim=leaderContacts.find(x=>x.type==='primary');const back=leaderContacts.find(x=>x.type==='backup');
   // Merge allergy-type dietary items into the clinical alert; keep the rest for the Dietary card.
   const diet=(c.dietaryRequirements||[]);const allergyDiet=diet.filter(d=>_ALLERGY_RE.test(d));const otherDiet=diet.filter(d=>!_ALLERGY_RE.test(d));
   const alertRows=[
@@ -2122,7 +2131,7 @@ async function openStudentInfo(id){
     : `<div class="fa-consent no">${ic('alert')}<div>Medical consent — Not granted<div class="sub">Reach the leader / parent before treating</div></div></div>`;
   const leadBtn=(ct,cls)=>ct?`<div class="who"><span class="nm">${esc(ct.name)}</span><span class="ptag${cls==='sec'?' sec':''}">${cls==='sec'?'Secondary':'Primary'}</span></div>
       <div class="sub">${esc(c.churchName)} · ${ct.gender==='female'?'Female':'Male'} ${ct.type==='backup'?'backup':'leader'}</div>
-      <button class="btn fa-call" onclick="faRevealLeader('${c.id}','${esc(ct.role)}',this)">${icSm('phone')} ${esc(fmtPhone(ct.phone))}</button>`:'';
+      <a class="btn fa-call" href="tel:${esc(ct.phone)}">${icSm('phone')} ${esc(fmtPhone(ct.phone))}</a>`:'';
   const leadCard=(prim||back)
     ? `<div class="fa-lead"><div class="lh">${icSm('phone')} Ministry leader — contact first</div>
         ${leadBtn(prim,'pri')}${back?`<div style="margin-top:14px">${leadBtn(back,'sec')}</div>`:''}</div>`
@@ -2132,10 +2141,11 @@ async function openStudentInfo(id){
     <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2)">Revealing is logged for the audit trail.</div></div>`:'';
   const dietCard=otherDiet.length?`<div class="card"><div class="lbl" style="margin-top:0">Dietary (non-allergy)</div>
     ${otherDiet.map(d=>`<span class="fa-diet">${esc(d)}</span>`).join('')}</div>`:'';
-  const parent=(c.parentGuardianName||c.parentPhone)?`<div class="fa-last">
+  const parent=(c.parentGuardianName||parentContact)?`<div class="fa-last">
     <div class="lbl">Parent / guardian</div>
     ${c.parentGuardianName?`<div class="kv"><span class="k">${esc(c.parentGuardianName)}${c.parentRelation?' ('+esc(c.parentRelation)+')':''}</span><span class="v"></span></div>`:''}
-    ${c.parentPhone?`<a class="btn fa-parent" href="tel:${esc(c.parentPhone)}">${icSm('phone')} ${esc(fmtPhone(c.parentPhone))}</a>`:''}</div>`:'';
+    ${parentContact?`<button class="btn fa-parent" onclick="faRevealLeader('${c.id}','${esc(parentContact.role)}',this)">${icSm('phone')} ${esc(fmtPhone(parentContact.phone))}</button>
+    <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:4px">Revealing is logged for the audit trail.</div>`:''}</div>`:'';
   paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${_faBackExpr(scr)}">${icSm('arrowl')} Back</button></div>
     <div class="fa-id">${_faBubble(c)}<div><h2>${esc(c.firstName+' '+c.lastName)}</h2>
       <div class="meta">${c.kind==='leader'?'Leader':'Student'+(c.grade?' · Grade '+c.grade:'')} · ${esc(c.churchName)} · ${esc(c.zone)} Zone</div>
@@ -2146,6 +2156,9 @@ async function openStudentInfo(id){
     ${parent}`,'Student Info','');
   _loadStudentRecent(id);
 }
+// Generic masked-contact reveal for the Student Info card. Despite the name (kept for grep
+// continuity with debug.md), it now reveals the PARENT contact ('parent' role) — the leader
+// contacts are shown plainly since the Bug 1 mask/audit swap (2026-07-17).
 async function faRevealLeader(id,role,btn){
   try{const ct=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));
     if(btn)btn.innerHTML=`${icSm('phone')} ${esc(fmtPhone(ct.phone))}`;
@@ -3202,7 +3215,7 @@ async function addAcct(){const role=sel('aR');const nm=val('aName').trim();const
   try{await api('/accounts/users',{method:'POST',body});toast('Account created');await _rAccts();}catch(e){toast(e.message);}}
 const _findUser=id=>(window._allUsers||[]).find(u=>u.id===id)||{};
 const _findChurch=id=>(window._allChurches||[]).find(c=>c.id===id)||{};
-const _OVERRIDE_TIP='When set, EVERY student of this church is switched to this accommodation type on the next registration upload — use it to correct wrong ticket purchases. Leaders are never changed. Leave as "No override" if this ministry deliberately splits ticket types (e.g. seniors buy classroom).';
+const _OVERRIDE_TIP='When set, EVERYONE from this church — students and leaders — is switched to this accommodation type on the next registration upload — use it to correct wrong ticket purchases. Leave as "No override" if this ministry deliberately splits ticket types (e.g. seniors buy classroom).';
 function editLeaderName(id){const u=_findUser(id);
   modal(`<h3>Account Info</h3>
     <label>Name</label><input class="fld" id="enName" placeholder="Full name" value="${esc(((u.firstName||'')+' '+(u.lastName||'')).trim())}">

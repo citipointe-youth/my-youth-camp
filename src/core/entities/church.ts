@@ -12,9 +12,9 @@ export interface Church {
   zone: ZoneName;
   contactPhone?: string;
   /**
-   * Accommodation override — when set, every STUDENT of this church has their
-   * accommodationKind forced to this value at CSV import time (corrects wrong
-   * ticket-type purchases). Leaders are never overridden. Null/absent = no override
+   * Accommodation override — when set, EVERYONE at this church (students AND leaders) has
+   * their accommodationKind forced to this value at CSV import time (corrects wrong
+   * ticket-type purchases; Bug 2, 2026-07-17 — was students-only). Null/absent = no override
    * (churches that deliberately split ticket types leave this unset).
    */
   accommodationOverride?: AccommodationKind | null;
