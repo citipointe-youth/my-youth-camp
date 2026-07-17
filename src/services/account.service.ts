@@ -3,7 +3,7 @@ import type {
   IChurchRepository,
   IPersonRepository,
 } from '../repositories/interfaces/entity-repositories';
-import type { User, SafeUser } from '../core/entities/user';
+import type { User, SafeUser, GenderScope } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
@@ -21,6 +21,30 @@ import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { toSafeUser } from './auth.service';
 import { invalidateDashboardCache } from './dashboard-cache';
+import { memorablePassword } from '../utils/memorable-password';
+
+/** A church login credential row for the Feature 6 password export. */
+export interface ChurchCredential {
+  username: string;
+  church: string;
+  gender: GenderScope;
+  password: string;
+}
+
+/** Turn a church name into a stable, username-safe slug base ('Victory Church' → 'victory-church'). */
+function slugifyUsername(name: string): string {
+  const s = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30);
+  return s || 'church';
+}
+
+/** `b-<slug>` for male, `g-<slug>` for female. */
+function genderUsername(base: string, gender: GenderScope): string {
+  return `${gender === 'male' ? 'b' : 'g'}-${base}`;
+}
 
 export interface AccountService {
   listUsers(actor: Actor): Promise<SafeUser[]>;
@@ -31,7 +55,27 @@ export interface AccountService {
   changeOwnPassword(actor: Actor, input: unknown): Promise<void>;
   /** Flip an account between active/inactive (CMS parity). The admin can't be deactivated. */
   toggleStatus(actor: Actor, id: string): Promise<SafeUser>;
-  createChurchWithAccount(actor: Actor, input: unknown): Promise<{ church: Church; user: SafeUser }>;
+  /**
+   * Create a church PLUS its two gender-scoped logins (Feature 2): `b-<slug>` (male) and
+   * `g-<slug>` (female). Each account gets an auto-generated memorable password (Feature 6),
+   * returned in `credentials` so the admin can hand them out.
+   */
+  createChurchWithAccount(
+    actor: Actor,
+    input: unknown,
+  ): Promise<{ church: Church; users: SafeUser[]; credentials: ChurchCredential[] }>;
+  /**
+   * Idempotent one-off (Feature 2): ensure every existing church has both gender-scoped logins,
+   * creating any that are missing (with a memorable password), and retire the legacy combined
+   * church login. Safe to re-run — existing gender accounts are left untouched.
+   */
+  splitChurchAccounts(actor: Actor): Promise<{ created: ChurchCredential[]; retired: number; churches: number }>;
+  /**
+   * Feature 6: re-randomise EVERY church login's password (creating any missing gender account
+   * and retiring legacy combined logins first) and return the full list for CSV export. Does NOT
+   * set mustChangePassword — these are the churches' real passwords.
+   */
+  randomizeChurchPasswords(actor: Actor): Promise<ChurchCredential[]>;
   listChurches(actor: Actor): Promise<Church[]>;
   updateChurch(actor: Actor, id: string, input: unknown): Promise<Church>;
   deleteUser(actor: Actor, id: string): Promise<{ deleted: string }>;
@@ -45,6 +89,61 @@ export function makeAccountService(
   churchRepo: IChurchRepository,
   personRepo: IPersonRepository,
 ): AccountService {
+  // ----- Feature 2/6 helpers (gender-scoped church logins) -------------------------------
+
+  /** Ensure a username is globally unique, appending -2/-3… on collision with a different user. */
+  async function uniqueUsername(desired: string, allUsers: User[]): Promise<string> {
+    const taken = new Set(allUsers.map((u) => u.username.toLowerCase()));
+    if (!taken.has(desired.toLowerCase())) return desired;
+    for (let n = 2; n < 100; n++) {
+      const candidate = `${desired}-${n}`;
+      if (!taken.has(candidate.toLowerCase())) return candidate;
+    }
+    return `${desired}-${newId('u').slice(-4)}`;
+  }
+
+  /** Create one gender-scoped church login with a fresh memorable password. */
+  async function createGenderAccount(
+    church: Church,
+    gender: GenderScope,
+    slugBase: string,
+    allUsers: User[],
+  ): Promise<{ user: User; credential: ChurchCredential }> {
+    const now = nowISO();
+    const username = await uniqueUsername(genderUsername(slugBase, gender), allUsers);
+    const password = memorablePassword();
+    const user: User = {
+      id: newId('user'),
+      firstName: church.name,
+      lastName: gender === 'male' ? 'Boys' : 'Girls',
+      username,
+      role: 'church',
+      churchId: church.id,
+      churchName: church.name,
+      zone: church.zone,
+      genderScope: gender,
+      status: 'active',
+      passwordHash: await hashPassword(password),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await userRepo.save(user);
+    allUsers.push(user);
+    return { user, credential: { username, church: church.name, gender, password } };
+  }
+
+  /** Delete any legacy combined (non-gender-scoped) church login for a church. Returns count removed. */
+  async function retireLegacyChurchLogins(churchId: string, allUsers: User[]): Promise<number> {
+    let removed = 0;
+    for (const u of allUsers) {
+      if (u.role === 'church' && u.churchId === churchId && (u.genderScope === null || u.genderScope === undefined)) {
+        await userRepo.delete(u.id);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   return {
     async listUsers(actor) {
       assertCan(actor, 'admin:manage');
@@ -73,6 +172,7 @@ export function makeAccountService(
         churchId: data.churchId ?? null,
         churchName: data.churchName ?? null,
         zone: data.zone ?? null,
+        genderScope: data.genderScope ?? null,
         status: data.status ?? 'active',
         passwordHash,
         createdAt: now,
@@ -151,12 +251,12 @@ export function makeAccountService(
       assertCan(actor, 'admin:manage');
       const data = CreateChurchWithAccountSchema.parse(input);
 
-      const existingUser = await userRepo.findByUsername(data.accountUsername);
-      if (existingUser) throw new BadRequestError('Username already in use');
+      const allUsers = await userRepo.findAll();
+      // Slug base for the two gender usernames: the supplied username (legacy field) or the name.
+      const slugBase = slugifyUsername(data.accountUsername ?? data.churchName);
 
       const now = nowISO();
       const churchId = newId('church');
-
       const church: Church = {
         id: churchId,
         name: data.churchName,
@@ -171,25 +271,77 @@ export function makeAccountService(
       };
       await churchRepo.save(church);
 
-      const passwordHash = await hashPassword(data.accountPassword);
-      const user: User = {
-        id: newId('user'),
-        firstName: data.accountFirstName,
-        lastName: data.accountLastName,
-        username: data.accountUsername.toLowerCase(),
-        role: data.accountRole ?? 'church',
-        churchId,
-        churchName: data.churchName,
-        zone: data.zone,
-        status: 'active',
-        passwordHash,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const savedUser = await userRepo.save(user);
+      // Feature 2: a church always gets BOTH gender-scoped logins.
+      const boys = await createGenderAccount(church, 'male', slugBase, allUsers);
+      const girls = await createGenderAccount(church, 'female', slugBase, allUsers);
 
       invalidateDashboardCache(); // new church affects PreCampDashboard.perChurchBreakdown
-      return { church, user: toSafeUser(savedUser) };
+      return {
+        church,
+        users: [toSafeUser(boys.user), toSafeUser(girls.user)],
+        credentials: [boys.credential, girls.credential],
+      };
+    },
+
+    async splitChurchAccounts(actor) {
+      assertCan(actor, 'admin:manage');
+      const churches = await churchRepo.findAll();
+      const allUsers = await userRepo.findAll();
+      const created: ChurchCredential[] = [];
+      let retired = 0;
+
+      for (const church of churches) {
+        const slugBase = slugifyUsername(church.name);
+        for (const gender of ['male', 'female'] as const) {
+          const existing = allUsers.find(
+            (u) => u.role === 'church' && u.churchId === church.id && u.genderScope === gender,
+          );
+          if (!existing) {
+            const { credential } = await createGenderAccount(church, gender, slugBase, allUsers);
+            created.push(credential);
+          }
+        }
+        retired += await retireLegacyChurchLogins(church.id, allUsers);
+      }
+
+      invalidateDashboardCache();
+      return { created, retired, churches: churches.length };
+    },
+
+    async randomizeChurchPasswords(actor) {
+      assertCan(actor, 'admin:manage');
+      const churches = await churchRepo.findAll();
+      const allUsers = await userRepo.findAll();
+      const rows: ChurchCredential[] = [];
+
+      for (const church of churches) {
+        const slugBase = slugifyUsername(church.name);
+        for (const gender of ['male', 'female'] as const) {
+          const existing = allUsers.find(
+            (u) => u.role === 'church' && u.churchId === church.id && u.genderScope === gender,
+          );
+          if (existing) {
+            // Reset to a fresh memorable password. Do NOT set mustChangePassword — this IS the
+            // church's real password.
+            const password = memorablePassword();
+            await userRepo.save({
+              ...existing,
+              passwordHash: await hashPassword(password),
+              mustChangePassword: false,
+              updatedAt: nowISO(),
+            });
+            rows.push({ username: existing.username, church: church.name, gender, password });
+          } else {
+            const { credential } = await createGenderAccount(church, gender, slugBase, allUsers);
+            rows.push(credential);
+          }
+        }
+        await retireLegacyChurchLogins(church.id, allUsers);
+      }
+
+      invalidateDashboardCache();
+      rows.sort((a, b) => a.church.localeCompare(b.church) || a.gender.localeCompare(b.gender));
+      return rows;
     },
 
     async listChurches(actor) {

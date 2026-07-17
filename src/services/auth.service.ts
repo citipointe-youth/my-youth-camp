@@ -81,6 +81,7 @@ export function toActor(user: User): Actor {
     churchName: user.churchName ?? null,
     zone: (user.zone ?? null) as ZoneName | null,
     displayName: `${user.firstName} ${user.lastName}`,
+    genderScope: user.genderScope ?? null,
     mustChangePassword: user.mustChangePassword ?? false,
   };
 }

@@ -54,6 +54,18 @@ export function makeAccountController(services: AccountControllerServices) {
       return services.account.createChurchWithAccount(req.ctx.actor, req.body);
     },
 
+    /** Feature 2: idempotently split every church into b-/g- gender-scoped logins. */
+    async splitChurches(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.account.splitChurchAccounts(req.ctx.actor);
+    },
+
+    /** Feature 6: re-randomise all church login passwords; returns rows for CSV export. */
+    async randomizeChurchPasswords(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.account.randomizeChurchPasswords(req.ctx.actor);
+    },
+
     async listChurches(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.account.listChurches(req.ctx.actor);

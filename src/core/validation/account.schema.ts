@@ -17,6 +17,8 @@ export const CreateUserSchema = z.object({
   churchId: z.string().nullable().optional(),
   churchName: z.string().nullable().optional(),
   zone: z.enum(ZONE_NAMES).nullable().optional(),
+  // Feature 2: gender scope for church logins ('male' → b-<slug>, 'female' → g-<slug>).
+  genderScope: z.enum(['male', 'female']).nullable().optional(),
   password: z.string().min(6),
   status: z.enum(['active', 'inactive']).optional().default('active'),
 });
@@ -32,6 +34,7 @@ export const UpdateUserSchema = z.object({
   churchId: z.string().nullable().optional(),
   churchName: z.string().nullable().optional(),
   zone: z.enum(ZONE_NAMES).nullable().optional(),
+  genderScope: z.enum(['male', 'female']).nullable().optional(),
   status: z.enum(['active', 'inactive']).optional(),
 });
 
@@ -55,11 +58,15 @@ export const CreateChurchWithAccountSchema = z.object({
   churchName: z.string().min(1),
   zone: z.enum(ZONE_NAMES),
   contactPhone: z.string().optional(),
-  // Account for the church's user
-  accountFirstName: z.string().min(1),
-  accountLastName: z.string().min(1),
-  accountUsername: usernameField,
-  accountPassword: z.string().min(6),
+  // Feature 2: a church now always gets TWO gender-scoped logins — b-<slug> (boys) and
+  // g-<slug> (girls). `accountUsername`, when supplied, is the SLUG BASE for those two
+  // usernames (else the church name is slugified). Passwords are auto-generated (Feature 6),
+  // so the legacy `accountPassword`/name fields are optional and no longer drive a single
+  // combined login. They're kept optional for backward-compatibility with older callers.
+  accountFirstName: z.string().optional(),
+  accountLastName: z.string().optional(),
+  accountUsername: usernameField.optional(),
+  accountPassword: z.string().min(6).optional(),
   accountRole: z.enum(['church'] as const).optional().default('church'),
 });
 

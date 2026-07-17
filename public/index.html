@@ -3033,20 +3033,42 @@ RENDER.adminAccounts=async function(){
     onName:`editLeaderName('${u.id}')`,onPass:`changePassword('${u.id}')`,onDel:`delAcct('${u.id}')`,
     onPreview:u.status!=='inactive'?`confirmEnterAccountPreview('${u.id}')`:''
   })));
-  const cr=tileGrid(churches.map(c=>{const cu=users.find(u=>u.role==='church'&&u.churchId===c.id)||{};
-    return acctTile({
-      title:esc(c.name),
-      sub:'Church · '+esc(c.zone||'—')+(cu.username?' · @'+esc(cu.username):'<span style="color:var(--danger)"> · no login</span>'),
-      onName:`editChurchName('${c.id}')`,
-      onPass:cu.id?`changePassword('${cu.id}')`:`toast('No login account for this church')`,
-      onDel:`delChurch('${c.id}')`,
-      onPreview:(cu.id&&cu.status!=='inactive')?`confirmEnterAccountPreview('${cu.id}')`:''
-    });}));
+  // Feature 2: each church now has TWO gender-scoped logins (b-/g-). Render one tile per login.
+  const churchUsers=users.filter(u=>u.role==='church');
+  const genderLabel=g=>g==='male'?'Boys':g==='female'?'Girls':'';
+  const churchTileItems=[];
+  churches.forEach(c=>{
+    const accts=churchUsers.filter(u=>u.churchId===c.id)
+      .sort((a,b)=>String(a.genderScope||'').localeCompare(String(b.genderScope||'')));
+    if(!accts.length){
+      churchTileItems.push(acctTile({
+        title:esc(c.name),
+        sub:'Church · '+esc(c.zone||'—')+'<span style="color:var(--danger)"> · no login</span>',
+        onName:`editChurchName('${c.id}')`,
+        onPass:`toast('No login account for this church')`,
+        onDel:`delChurch('${c.id}')`,
+        onPreview:''
+      }));
+      return;
+    }
+    accts.forEach(cu=>{const g=genderLabel(cu.genderScope);
+      churchTileItems.push(acctTile({
+        title:esc(c.name)+(g?' · '+g:''),
+        sub:'Church · '+esc(c.zone||'—')+(cu.username?' · @'+esc(cu.username):'')+(cu.status==='inactive'?' · inactive':''),
+        onName:`editChurchName('${c.id}')`,
+        onPass:`changePassword('${cu.id}')`,
+        onDel:`delChurch('${c.id}')`,
+        onPreview:(cu.status!=='inactive')?`confirmEnterAccountPreview('${cu.id}')`:''
+      }));
+    });
+  });
+  const cr=tileGrid(churchTileItems);
   const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option>`;
   paint('adminAccounts',`
     <div class="card"><div class="lbl" style="margin-top:0">Leadership accounts</div>${lr}</div>
     <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('You do not usually need to add churches by hand — any church named in a registration upload is auto-created (zone defaults to Yellow; add its login + zone afterwards via Account Info). Account Info also holds the per-church accommodation override, which corrects wrong ticket types at the next upload.')}</div>
-      <button class="btn ghost sm" onclick="bulkChurchUpdate()">${icSm('key')} Bulk Church Update</button></div>${cr}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" onclick="randomizeChurchPasswords()">${icSm('key')} Randomise &amp; export passwords</button>
+      <button class="btn ghost sm" onclick="bulkChurchUpdate()">${icSm('key')} Bulk Church Update</button></div></div>${cr}</div>
     <div class="card"><div class="lbl" style="margin-top:0">Add leadership account</div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Name</label><input class="fld" id="aName" placeholder="Full name" style="flex:1"></div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Username</label><input class="fld" id="aE" placeholder="e.g. yr10leaders" style="flex:1" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
@@ -3059,8 +3081,8 @@ RENDER.adminAccounts=async function(){
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Church name</label><input class="fld" id="ncName" placeholder="e.g. Northside" style="flex:1"></div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Zone</label><div style="flex:1">${zoneSel('ncZone')}</div></div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Username</label><input class="fld" id="ncUser" placeholder="e.g. northside (letters, numbers, . _ -)" style="flex:1" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off"></div>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Password</label><input class="fld" id="ncPass" placeholder="min 6 chars" style="flex:1"></div>
-      <button class="btn" onclick="addChurch()" style="margin-top:10px;width:100%">Create church + account</button></div>`,'Accounts & churches','Admin');
+      <p class="note-hint" style="margin:6px 0 0">Two logins are created — <b>b-username</b> (boys) and <b>g-username</b> (girls). Passwords are auto-generated; use “Randomise &amp; export passwords” above to retrieve them.</p>
+      <button class="btn" onclick="addChurch()" style="margin-top:10px;width:100%">Create church + accounts</button></div>`,'Accounts & churches','Admin');
 };
 function aRoleChange(){
   const r=document.getElementById('aR').value;
@@ -3134,27 +3156,51 @@ async function delAcct(id){if(!confirm("Delete this account?"))return;
   try{await api("/accounts/users/"+id,{method:"DELETE"});toast("Account deleted");await _rAccts();}catch(e){toast(e.message);}}
 async function delChurch(id){if(!confirm("Delete this church and its login account?"))return;
   try{await api("/accounts/churches/"+id,{method:"DELETE"});toast("Church deleted");await _rAccts();}catch(e){toast(e.message);}}
-async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter church name + login username');return;}if(val('ncPass').length<6){toast('Password 6+ chars');return;}
+async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter church name + login username');return;}
   const username=val('ncUser');
   if(!/^[A-Za-z0-9._-]{2,40}$/.test(username)){toast('Username: letters, numbers, . _ - only (min 2 chars)');return;}
   const name=val('ncName');
-  const body={churchName:name,zone:sel('ncZone'),accountFirstName:name,accountLastName:'Team',accountUsername:username,accountPassword:val('ncPass')};
-  try{await api('/accounts/churches',{method:'POST',body});toast('Church created');await _rAccts();}catch(e){toast(e.message);}}
+  // Feature 2: the church gets TWO gender-scoped logins (b-/g-) derived from this username; the
+  // typed password is not used — each account is given a memorable password. Use "Randomise &
+  // export passwords" to retrieve them.
+  const body={churchName:name,zone:sel('ncZone'),accountUsername:username};
+  try{await api('/accounts/churches',{method:'POST',body});toast('Church created — boys/girls logins added. Use “Randomise & export passwords” to get their passwords.');await _rAccts();}catch(e){toast(e.message);}}
+/* Feature 6: re-randomise EVERY church login's password and download the list as a CSV
+   (username, church, gender, password). Also creates any missing b-/g- account and retires the
+   old combined login, so one click both migrates and re-issues. Passwords are memorable (Word.##). */
+async function randomizeChurchPasswords(){
+  if(!confirm('Re-randomise ALL church login passwords and download the list?\n\nEvery church’s current password will stop working — hand out the new CSV.'))return;
+  try{
+    const rows=await api('/accounts/churches/randomize-passwords',{method:'POST',body:{}});
+    if(!rows||!rows.length){toast('No church accounts to export');await _rAccts();return;}
+    const q=v=>{v=String(v==null?'':v);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+    const header=['Username','Church','Gender','Password'];
+    const body=rows.map(r=>[r.username,r.church,r.gender==='male'?'Boys':r.gender==='female'?'Girls':r.gender,r.password]);
+    const csv='﻿'+[header,...body].map(r=>r.map(q).join(',')).join('\r\n');
+    const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    const a=document.createElement('a');a.href=url;a.download=_exportName('church-passwords','csv');
+    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    toast('Passwords randomised & exported ('+rows.length+' logins)');await _rAccts();
+  }catch(e){toast(e.message);}
+}
 
 /* Bug-7: Bulk Church Update — one form listing every church with its login username (pre-filled)
    and a password field. Save applies all changed usernames + any entered passwords at once;
    a blank password leaves that church's password unchanged. */
 function bulkChurchUpdate(){
   const churches=(window._allChurches||[]);const users=(window._allUsers||[]);
+  const gLbl=g=>g==='male'?'Boys':g==='female'?'Girls':'';
   const rows=churches.map(c=>{
-    const cu=users.find(u=>u.role==='church'&&u.churchId===c.id);
-    if(!cu)return `<div style="padding:8px 0;border-top:1px solid var(--line)"><div style="font-weight:700;font-size:.82rem;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div><div class="sub" style="color:var(--danger)">No login account — add one first.</div></div>`;
-    return `<div style="padding:8px 0;border-top:1px solid var(--line)">
-      <div style="font-weight:700;font-size:.82rem;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div>
+    // Feature 2: a church has two gender-scoped logins (b-/g-) — list a row for each.
+    const accts=users.filter(u=>u.role==='church'&&u.churchId===c.id)
+      .sort((a,b)=>String(a.genderScope||'').localeCompare(String(b.genderScope||'')));
+    if(!accts.length)return `<div style="padding:8px 0;border-top:1px solid var(--line)"><div style="font-weight:700;font-size:.82rem;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div><div class="sub" style="color:var(--danger)">No login account — add one first.</div></div>`;
+    return accts.map(cu=>{const g=gLbl(cu.genderScope);return `<div style="padding:8px 0;border-top:1px solid var(--line)">
+      <div style="font-weight:700;font-size:.82rem;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}${g?' · '+g:''}</div>
       <div style="display:flex;gap:6px">
         <input class="fld" data-bcu="${cu.id}" data-cur="${esc(cu.username||'')}" value="${esc(cu.username||'')}" placeholder="username" autocapitalize="none" autocorrect="off" spellcheck="false" style="flex:1;margin:0">
         <input class="fld" data-bcp="${cu.id}" type="text" placeholder="new password (blank = keep)" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" style="flex:1;margin:0">
-      </div></div>`;
+      </div></div>`;}).join('');
   }).join('');
   modal(`<h3>Bulk Church Update</h3>
     <p class="sub" style="margin:2px 0 6px">Update usernames and passwords for several churches at once. The username is pre-filled — edit any you want to change. Leave a password blank to keep the current one.</p>

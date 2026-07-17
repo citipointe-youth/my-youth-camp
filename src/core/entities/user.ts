@@ -1,6 +1,14 @@
 import type { ID, ISODateString } from '../types/common';
 import type { UserRole, ZoneName } from '../types/enums';
 
+/**
+ * Gender scope for a church login (Feature 2, 2026-07-17). Every church is split into two
+ * gender-scoped accounts — `b-<slug>` ('male') and `g-<slug>` ('female'). A gender-scoped
+ * account sees ONLY same-gender people (students AND leaders) of its church. `null`/absent =
+ * not scoped = sees all genders (every non-church role, and any legacy account).
+ */
+export type GenderScope = 'male' | 'female';
+
 export interface User {
   id: ID;
   firstName: string;
@@ -17,6 +25,11 @@ export interface User {
   churchId?: string | null;
   churchName?: string | null;
   zone?: ZoneName | null;
+  /**
+   * Gender scope for church logins (Feature 2). Set on `b-`/`g-` church accounts; `null`/absent
+   * for every other role. See {@link GenderScope}. Enforced in `canAccessPerson`.
+   */
+  genderScope?: GenderScope | null;
   status: 'active' | 'inactive';
   passwordHash?: string;
   /**
@@ -39,6 +52,12 @@ export interface Actor {
   churchName: string | null;
   zone: ZoneName | null;
   displayName: string;
+  /**
+   * Gender scope for church logins (Feature 2). Embedded in the signed session token and
+   * enforced in `canAccessPerson` (registrant/roster/search/dashboard scoping). `null`/absent
+   * on every non-church actor.
+   */
+  genderScope?: GenderScope | null;
   /** See User.mustChangePassword. Embedded in the signed session token. */
   mustChangePassword?: boolean;
 }

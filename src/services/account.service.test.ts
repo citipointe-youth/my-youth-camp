@@ -8,7 +8,7 @@ import {
 import type { Actor, User } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
 import type { Person } from '../core/entities/person';
-import { hashPassword } from '../utils/crypto';
+import { hashPassword, verifyPassword } from '../utils/crypto';
 import { UnauthorizedError } from '../core/errors/app-error';
 
 // ---------------------------------------------------------------------------
@@ -224,5 +224,113 @@ describe('AccountService.previewAccount', () => {
       expect(safe.id).toBe(id);
       expect((safe as Record<string, unknown>).passwordHash).toBeUndefined();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Feature 2 + 6 — gender-scoped church accounts (b-/g-) + memorable passwords.
+// ---------------------------------------------------------------------------
+
+describe('AccountService — gender-scoped church accounts', () => {
+  let users: InMemoryUserRepository;
+  let churches: InMemoryChurchRepository;
+  let people: InMemoryPersonRepository;
+  let svc: AccountService;
+
+  beforeEach(async () => {
+    users = new InMemoryUserRepository();
+    churches = new InMemoryChurchRepository();
+    people = new InMemoryPersonRepository();
+    await Promise.all([users.init(), churches.init(), people.init()]);
+    svc = makeAccountService(users, churches, people);
+  });
+
+  it('createChurchWithAccount creates BOTH gender-scoped logins with memorable passwords', async () => {
+    const res = await svc.createChurchWithAccount(admin(), {
+      churchName: 'Victory Church',
+      zone: 'Yellow',
+      accountUsername: 'victory',
+    });
+    expect(res.users).toHaveLength(2);
+    const all = await users.findAll();
+    const churchUsers = all.filter((u) => u.role === 'church');
+    expect(churchUsers).toHaveLength(2);
+    const male = churchUsers.find((u) => u.genderScope === 'male');
+    const female = churchUsers.find((u) => u.genderScope === 'female');
+    expect(male?.username).toBe('b-victory');
+    expect(female?.username).toBe('g-victory');
+    // Memorable Word.## passwords in the credentials, and they actually authenticate.
+    expect(res.credentials).toHaveLength(2);
+    for (const c of res.credentials) {
+      expect(c.password).toMatch(/^[A-Z][a-z]+\.\d{2}$/);
+    }
+    const maleCred = res.credentials.find((c) => c.gender === 'male');
+    expect(maleCred?.username).toBe('b-victory');
+    expect(await verifyPassword(maleCred!.password, male!.passwordHash!)).toBe(true);
+    // No mustChangePassword flag on these (they are the real passwords).
+    expect(male?.mustChangePassword).toBeFalsy();
+  });
+
+  it('slugifies the church name when no username base is supplied', async () => {
+    await svc.createChurchWithAccount(admin(), { churchName: "St Mary's Youth", zone: 'Blue' });
+    const churchUsers = (await users.findAll()).filter((u) => u.role === 'church');
+    expect(churchUsers.map((u) => u.username).sort()).toEqual(['b-st-mary-s-youth', 'g-st-mary-s-youth']);
+  });
+
+  it('splitChurchAccounts creates missing gender logins and retires the legacy combined login (idempotent)', async () => {
+    // A pre-existing church with an OLD combined login (no gender scope).
+    const c = church({ id: 'c1', name: 'Grace Point', zone: 'Black' });
+    await churches.save(c);
+    await users.save({
+      id: 'legacy', firstName: 'Grace', lastName: 'Point', username: 'gracepoint', role: 'church',
+      churchId: 'c1', churchName: 'Grace Point', zone: 'Black', status: 'active',
+      passwordHash: await hashPassword('oldpassword'), createdAt: NOW, updatedAt: NOW,
+    });
+
+    const r1 = await svc.splitChurchAccounts(admin());
+    expect(r1.churches).toBe(1);
+    expect(r1.retired).toBe(1);
+    expect(r1.created).toHaveLength(2);
+
+    const after = await users.findAll();
+    expect(after.find((u) => u.id === 'legacy')).toBeUndefined(); // legacy retired
+    const churchUsers = after.filter((u) => u.role === 'church');
+    expect(churchUsers).toHaveLength(2);
+    expect(churchUsers.map((u) => u.genderScope).sort()).toEqual(['female', 'male']);
+
+    // Idempotent: a second run creates nothing and retires nothing.
+    const r2 = await svc.splitChurchAccounts(admin());
+    expect(r2.created).toHaveLength(0);
+    expect(r2.retired).toBe(0);
+    expect((await users.findAll()).filter((u) => u.role === 'church')).toHaveLength(2);
+  });
+
+  it('randomizeChurchPasswords resets every church login and returns export rows', async () => {
+    await svc.createChurchWithAccount(admin(), { churchName: 'Victory', zone: 'Yellow', accountUsername: 'victory' });
+    const before = (await users.findAll()).filter((u) => u.role === 'church').map((u) => u.passwordHash);
+
+    const rows = await svc.randomizeChurchPasswords(admin());
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.gender).sort()).toEqual(['female', 'male']);
+    for (const r of rows) {
+      expect(r.password).toMatch(/^[A-Z][a-z]+\.\d{2}$/);
+      expect(r.church).toBe('Victory');
+    }
+    // Hashes changed; the new passwords authenticate; no mustChangePassword set.
+    const after = (await users.findAll()).filter((u) => u.role === 'church');
+    expect(after.map((u) => u.passwordHash).sort()).not.toEqual(before.sort());
+    for (const u of after) {
+      const row = rows.find((r) => r.username === u.username)!;
+      expect(await verifyPassword(row.password, u.passwordHash!)).toBe(true);
+      expect(u.mustChangePassword).toBeFalsy();
+    }
+  });
+
+  it('randomizeChurchPasswords also back-fills gender accounts for a church that has none', async () => {
+    await churches.save(church({ id: 'c9', name: 'Northside', zone: 'Red' }));
+    const rows = await svc.randomizeChurchPasswords(admin());
+    expect(rows).toHaveLength(2);
+    const churchUsers = (await users.findAll()).filter((u) => u.role === 'church');
+    expect(churchUsers.map((u) => u.username).sort()).toEqual(['b-northside', 'g-northside']);
   });
 });

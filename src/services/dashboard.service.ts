@@ -78,12 +78,9 @@ export function makeDashboardService(
       if (settings.campMode === 'pre-camp') {
         // Pre-camp dashboard
         const allPersons = await personRepo.findAll();
-        const scoped = allPersons.filter((p) => {
-          if (!isRegistrant(p)) return false;
-          if (actor.role === 'admin' || actor.role === 'director') return true;
-          if (actor.role === 'zoneLeader') return actor.zone != null && p.zone === actor.zone;
-          return p.churchId === actor.churchId;
-        });
+        // Scope through canAccessPerson (the single RBAC chokepoint) so gender-scoped church
+        // logins (Feature 2) see only their gender's registrants here too.
+        const scoped = allPersons.filter((p) => isRegistrant(p) && canAccessPerson(actor, p));
 
         const noBlueCardCount = scoped.filter((p) => p.kind === 'leader' && p.blueCardNumber == null).length;
 

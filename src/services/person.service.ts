@@ -77,8 +77,31 @@ export interface PersonService {
   listMedicalWatch(actor: Actor): Promise<Person[]>;
 }
 
-/** True if the actor may access a person, by role + church/zone (mirrors canAccessCamper). */
-export function canAccessPerson(actor: Actor, person: Pick<Person, 'churchId' | 'zone'>): boolean {
+/**
+ * True if the actor may access a person, by role + church/zone (mirrors canAccessCamper),
+ * AND — for a gender-scoped church login (Feature 2) — by gender.
+ *
+ * This is the single chokepoint for gender scoping: `list`/`get`/roster (checkin.service),
+ * search (search.service) and the dashboards (dashboard.service) all filter through here, so a
+ * `b-<church>` account sees only male people of its church and `g-<church>` only female — for
+ * students AND leaders alike. When the caller doesn't carry a gender (e.g. the pre-create scope
+ * check passes only churchId/zone) the gender narrowing is skipped for that field.
+ */
+export function canAccessPerson(
+  actor: Actor,
+  person: Pick<Person, 'churchId' | 'zone'> & Partial<Pick<Person, 'gender'>>,
+): boolean {
+  if (!canAccessByChurchZone(actor, person)) return false;
+  // Gender-scoped church logins see only same-gender people. A person whose gender is neither
+  // 'male' nor 'female' (i.e. 'other') falls outside both scopes and is not shown to either
+  // gender account — by design (the scope is strictly male/female).
+  if (actor.genderScope && person.gender !== undefined && person.gender !== actor.genderScope) {
+    return false;
+  }
+  return true;
+}
+
+function canAccessByChurchZone(actor: Actor, person: Pick<Person, 'churchId' | 'zone'>): boolean {
   switch (actor.role) {
     case 'admin':
     case 'director':
@@ -177,7 +200,7 @@ export function makePersonService(repo: IPersonRepository): PersonService {
 
     async create(actor, input) {
       assertCan(actor, 'registrant:write');
-      if (!canAccessPerson(actor, { churchId: input.churchId, zone: input.zone })) {
+      if (!canAccessPerson(actor, { churchId: input.churchId, zone: input.zone, gender: input.gender })) {
         throw new BadRequestError('Cannot create a person outside your scope');
       }
       const now = nowISO();

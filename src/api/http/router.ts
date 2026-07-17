@@ -204,6 +204,8 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'DELETE', path: '/accounts/users/:id', auth: true, handler: (r) => account.deleteUser(r) },
     { method: 'GET', path: '/accounts/churches', auth: true, handler: (r) => account.listChurches(r) },
     { method: 'POST', path: '/accounts/churches', auth: true, handler: (r) => account.createChurch(r) },
+    { method: 'POST', path: '/accounts/churches/split', auth: true, handler: (r) => account.splitChurches(r) },
+    { method: 'POST', path: '/accounts/churches/randomize-passwords', auth: true, handler: (r) => account.randomizeChurchPasswords(r) },
     { method: 'PATCH', path: '/accounts/churches/:id', auth: true, handler: (r) => account.updateChurch(r) },
     { method: 'DELETE', path: '/accounts/churches/:id', auth: true, handler: (r) => account.deleteChurch(r) },
   ];

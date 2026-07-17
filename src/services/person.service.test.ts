@@ -66,6 +66,36 @@ describe('canAccessPerson', () => {
     expect(canAccessPerson(actor('church', { churchId: 'c1' }), p)).toBe(true);
     expect(canAccessPerson(actor('church', { churchId: 'c2' }), p)).toBe(false);
   });
+
+  it('gender-scoped church accounts (Feature 2) see only same-gender people', () => {
+    const boys = actor('church', { churchId: 'c1', genderScope: 'male' });
+    const girls = actor('church', { churchId: 'c1', genderScope: 'female' });
+    const maleYouth = { churchId: 'c1', zone: 'Yellow', gender: 'male' as const };
+    const femaleYouth = { churchId: 'c1', zone: 'Yellow', gender: 'female' as const };
+    const otherYouth = { churchId: 'c1', zone: 'Yellow', gender: 'other' as const };
+
+    expect(canAccessPerson(boys, maleYouth)).toBe(true);
+    expect(canAccessPerson(boys, femaleYouth)).toBe(false);
+    expect(canAccessPerson(girls, femaleYouth)).toBe(true);
+    expect(canAccessPerson(girls, maleYouth)).toBe(false);
+    // 'other' gender falls outside both male/female scopes by design.
+    expect(canAccessPerson(boys, otherYouth)).toBe(false);
+    expect(canAccessPerson(girls, otherYouth)).toBe(false);
+    // Gender scope never widens church scope: a male person of another church is still denied.
+    expect(canAccessPerson(boys, { churchId: 'c2', zone: 'Blue', gender: 'male' })).toBe(false);
+  });
+
+  it('a non-gender-scoped church account still sees all genders of its church', () => {
+    const combined = actor('church', { churchId: 'c1' });
+    expect(canAccessPerson(combined, { churchId: 'c1', zone: 'Yellow', gender: 'male' })).toBe(true);
+    expect(canAccessPerson(combined, { churchId: 'c1', zone: 'Yellow', gender: 'female' })).toBe(true);
+  });
+
+  it('gender scope does not restrict director/admin/zoneLeader (only church logins carry it)', () => {
+    // These roles never have a genderScope set; verify scope-less access is unchanged.
+    expect(canAccessPerson(actor('admin'), { churchId: 'c1', zone: 'Yellow', gender: 'male' })).toBe(true);
+    expect(canAccessPerson(actor('zoneLeader', { zone: 'Yellow' }), { churchId: 'c1', zone: 'Yellow', gender: 'female' })).toBe(true);
+  });
 });
 
 describe('PersonService.list (all lifecycles, role-scoped)', () => {
