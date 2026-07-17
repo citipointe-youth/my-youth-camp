@@ -1083,6 +1083,99 @@ clean, `npm run test` = **482 pass**. `sw.js` `camp-v24`→`camp-v25`. **Migrati
   not `"cli"`). If this recurs, checking `mcp__plugin_vercel_vercel__get_deployment` on the
   `-git-master-` alias is the fastest way to tell whether it's actually stuck or just slow.
 
+## Feature batch — gender accounts, incidents, initials, passwords + bug fixes — 2026-07-17
+
+Large admin-requested batch (7 features + 3 bugs), built by parallel subagents then hardened by
+three code-review passes. **Migrations `0006`/`0007`/`0008` applied to prod** (additive; history
+reconciled to `0001`–`0008`). `sw.js` `camp-v25`→`camp-v26`. `npm run typecheck` clean, `npm run
+test` = **533 pass**. Verified end-to-end against a running instance (incident isolation, export
+RBAC, gender-account creation, password export, parent-mask, login-form attrs).
+
+- **Feature 2 — gender-scoped church logins (`b-`/`g-`).** Every church now has **two** logins:
+  `b-<slug>` (scoped to the church's **male** students **and** male leaders) and `g-<slug>`
+  (female). `users.gender_scope` (`'male'|'female'|null`, migration `0006`) rides the session
+  `Actor`; enforced in **one place** — `canAccessPerson` (`person.service.ts`) narrows by gender,
+  and every read path (registrant list incl. the `?churchId` fast-path, roster, search,
+  dashboard, accommodation) funnels through it. `createChurchWithAccount` creates BOTH accounts;
+  `splitChurchAccounts` (idempotent) back-fills + retires the legacy combined login;
+  `scripts/split-church-accounts.ts` + `POST /accounts/churches/split` expose it. **Scope rule:**
+  only a person of the *concrete opposite* gender is denied — someone recorded `'other'` or with
+  an unset gender is visible to **both** logins so no minor is left without a custodian (review
+  Finding 3). A church login also **cannot reassign a person's church/gender/zone** via PATCH, and
+  `update()` re-asserts scope on the patched result (fail-closed, Finding 4). Legacy accounts /
+  non-church roles have `gender_scope=null` = see all genders.
+- **Feature 6 — memorable randomised church passwords + export.** `src/utils/memorable-password.ts`
+  → `Word.##` (capitalised noun + 2 digits, e.g. `Donkey.68`; ≥6 chars). Auto-generated on
+  church-account creation AND re-generated for ALL church logins by an admin **"Randomise & export
+  church passwords"** button (`POST /accounts/churches/randomize-passwords`, **admin-only**) that
+  also splits/retires legacy logins and returns `{username,church,gender,password}` rows the SPA
+  downloads as CSV. `mustChangePassword` is deliberately **never** set (these are the real handed-
+  out passwords). ⚠ Keyspace is small (~10k) — mitigated by the login rate-limiter; fine for a
+  short-lived camp, revisit if longer-lived (review Finding 5).
+- **Feature 3 — Incidents.** `Incident` entity + `incidents` table (migration `0007`); `summary`
+  is **encrypted at rest** (AES-256-GCM envelope in `supabase.incidents.ts`, exactly like
+  `notes.body` — child-safety data). New `incident:manage` capability = **zoneLeader + director +
+  admin** (post AND view; delete = admin/director only). Home tile + `RENDER.incidents` (summary
+  textarea + low/high toggle + newest-first list). **Low** = recorded only; **high** = also raises
+  an **urgent notification carrying the summary** to all zone leaders/directors/admins. That
+  notification is **leaders-only** (`Notification.leadersOnly`, migration `0008`): filtered out of
+  church/firstAid feeds in `notification.service.getActorFeed` **and** the duplicate filter in
+  `dashboard.service` `latestNotification` (Finding C), and its **body is encrypted at rest** in
+  `supabase.notifications.ts` when `leadersOnly` (Finding B — the summary must not sit plaintext in
+  `notifications.body`). Incidents also appear as an **"Incidents" option in the Notes-page
+  Record-filter** (read-only, leadership only) and get their own **sheet in the audit workbook**.
+- **Feature 4 — leader initials + audit capture (church accounts only).** After login a church
+  account (incl. `b-`/`g-`) is prompted (skippable) for the leader's initials, stored per-account
+  in `localStorage['ycp_initials_<username>']`, shown as a header `✎` badge, and used to seed the
+  existing `LAST_LEADER` prefill (sign-in/out + note forms). Initials ride existing fields into the
+  audit trail — `CheckInEntry.leaderId` (daily check-in), `SignOutEvent.leaderName` (sign-out) —
+  and surface as a **"Leader Initials"** column in the export. **Reveals now log for real:**
+  medicare + masked-contact reveals emit an `[audit]` log line with actor id + initials (Finding
+  D — previously they returned `revealedBy` but recorded nothing; this app has no reveal-audit
+  table, the log line IS the trail). **No migration** (reuses existing fields).
+- **Feature 1 — preview auto check-in (SPA, client-side only).** In the 👁 at-camp preview overlay
+  (`PREVIEW_MODE`) while the real mode is pre-camp, everyone-except-a-deterministic-5 shows as
+  checked in so the roster + Students list look populated. Simulation lives at the read/render
+  boundary — `_previewSimActive`/`_previewCanonicalPeople`/`_previewNotCheckedInIds` (last-5 by
+  surname, floored to 0 for ≤5-person camps)/`_previewIsPresent`/`_previewLocalFlips` — and is
+  applied consistently to the roster, the My-group/Students list, AND `openCamper`'s presence
+  render (so drilling in doesn't contradict the row). Check-in taps flip **locally only** (no
+  `CHECKIN_QUEUE`, no false "didn't save" banner). **Never fires a network write** (the `api()`
+  `PREVIEW_MODE||ACCOUNT_PREVIEW` guard remains the backstop).
+- **Feature 5 — iOS PWA login autofill.** The login card is a real `<form id="loginForm">`
+  (submit → `doLogin()`), username has `autocomplete="username"`+`autocapitalize="none"`, password
+  `autocomplete="current-password"`+`type="password"`, both with stable `name`. Enables iOS
+  Keychain autofill of a saved credential (device-only to fully confirm).
+- **Feature 7 — setup wizard.** The separate Schedule/FAQ/Devotionals steps are merged into ONE
+  **"At Camp Info"** step (`go('atCampInfo')`, done = any of the three has content) — **8 steps**
+  now. Each step's `helpTip` tooltip is replaced by a plain **one-sentence summary** line.
+- **Bug 1 — first-aid contact masking swapped.** The **leader** number now shows **plainly**
+  (`resolveContacts` returns it unmasked, no reveal); the **parent** number is masked behind the
+  audited reveal (`revealContact(…, 'parent')`, gated `camper:read:sensitive`). Crucially the
+  parent phone is also masked in the **`/campers` DTO for the firstAid role**
+  (`camper.controller.maskParentForFirstAid`) so it isn't returned in cleartext at all (Finding 1
+  from the SPA review — the reveal would otherwise be illusory). Other roles' parent contact is
+  unchanged.
+- **Bug 2 — accommodation override applies to leaders too.** The church accommodation override now
+  forces **everyone** in the church (students AND leaders) on **all** paths — Form import
+  (`import.service`), Ticket-List import (`ticket-import.service`), and manual allocation
+  (`accommodationKindForChurch` in `church-allocation.ts`, used by `allocation.service`). The
+  earlier commit only fixed the Form path (review Finding 3).
+- **Bug 3 — bottom white bar.** `.tabs` reserved the full `env(safe-area-inset-bottom)`; reduced to
+  `calc(2px + env(safe-area-inset-bottom) * 0.15)`. CSS-only — eyeball on a home-indicator phone.
+- **New capability `export:compliance` (director+admin).** The camp-wide compliance exports (master
+  audit workbook + sign-in/out + check-in CSV, `audit-export.service`) were gated on
+  `camper:read:sensitive`/`camper:read`, which **church/zoneLeader hold** — so a church login could
+  download the whole workbook (all-zone PII, notes, incidents, temp passwords). Now gated on the
+  new `export:compliance` capability (review Finding A — a pre-existing hole the Incidents sheet
+  widened).
+- **⚠ Rollout note for existing prod churches.** The code + migrations are deployed, but existing
+  prod church logins stay single-account (all-gender) until an admin clicks **"Randomise & export
+  church passwords"** (or the split script is run), which splits them into `b-`/`g-`, retires the
+  old logins, randomises passwords, and produces the CSV to distribute. Deliberately **not**
+  auto-run on deploy — it invalidates every church's current password, so the operator triggers it
+  when ready. Existing signed church sessions keep working to their 12h TTL.
+
 ## Architecture
 
 ```
