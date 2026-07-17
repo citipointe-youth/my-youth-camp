@@ -28,7 +28,7 @@ export function makeCheckInController(services: CheckInControllerServices) {
 
     async checkIn(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
-      const b = req.body as { camperId?: string; sessionId?: string; type?: 'in' | 'out' };
+      const b = req.body as { camperId?: string; sessionId?: string; type?: 'in' | 'out'; initials?: string };
       if (!b.camperId) throw new BadRequestError('Missing camperId');
       if (!b.sessionId) throw new BadRequestError('Missing sessionId');
       if (!b.type) throw new BadRequestError('Missing type');
@@ -40,11 +40,16 @@ export function makeCheckInController(services: CheckInControllerServices) {
       const session = sessions.find((s) => s.id === b.sessionId);
       const sessionLabel = session?.label ?? b.sessionId;
 
+      // Feature 4: capture the acting leader's initials (church-account session prefill) in
+      // the daily check-in audit entry. Reuses the existing free-text `leaderId` field — no
+      // new column. Falls back to the account id when no initials were supplied (e.g. a
+      // non-church role, which never gets the initials prompt).
+      const actorInitials = typeof b.initials === 'string' ? b.initials.trim() : '';
       await services.person.checkIn(req.ctx.actor, b.camperId, {
         sessionId: b.sessionId,
         sessionLabel,
         type: b.type,
-        leaderId: req.ctx.actor.id,
+        leaderId: actorInitials || req.ctx.actor.id,
         timestamp: nowISO(),
       });
       return { ok: true };

@@ -155,7 +155,7 @@ describe('audit-export: sign-in/out log running totals (chronological across stu
     const csv = await svc.exportSignInOutCsv(actor);
     const lines = csv.trim().split('\n');
     expect(lines[0]).toBe(
-      'First Name,Last Name,Church,Zone,Gender,Grade,Event Type,Timestamp (local),Reason,Parents Met,Authorised By,Total Students Signed In,Total Leaders Signed In',
+      'First Name,Last Name,Church,Zone,Gender,Grade,Event Type,Timestamp (local),Reason,Parents Met,Authorised By,Leader Initials,Total Students Signed In,Total Leaders Signed In',
     );
     // 4 real events (cam1 has none — it was only ever noted, not signed) in chronological order.
     const dataRows = lines.slice(1);
@@ -181,5 +181,48 @@ describe('audit-export: sign-in/out log running totals (chronological across stu
     const lastRow = sheet.getRow(sheet.rowCount).values as unknown[];
     const lastCells = lastRow.map((v) => (v == null ? '' : v));
     expect(lastCells.slice(-2)).toEqual([0, 2]); // final row (youth1 out) matches the CSV totals
+  });
+});
+
+describe('audit-export: Feature 4 — leader initials captured in the audit trail', () => {
+  it('Sign-in & Sign-out Log surfaces the leader initials (SignOutEvent.leaderName) in a Leader Initials column', async () => {
+    await people.save(person({
+      id: 'y2', firstName: 'Ivy', lastName: 'Ng', kind: 'youth', lifecycle: 'checked_out', atCamp: false,
+      signOutHistory: [
+        { id: 's1', type: 'out', leaderName: 'SD', reason: 'picked up', parentsMet: true, authorId: 'acct-1', timestamp: '2026-07-02T09:00:00.000Z' },
+      ],
+    }));
+    const wb = await load();
+    const sheet = wb.getWorksheet('Sign-in & Sign-out Log')!;
+    const header = (sheet.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    const initialsCol = header.indexOf('Leader Initials');
+    expect(initialsCol).toBeGreaterThan(-1);
+    // Find Ivy's row and assert the initials cell carries 'SD' (not the account id 'acct-1').
+    let found = '';
+    sheet.eachRow((r) => {
+      const cells = (r.values as unknown[]).map((v) => String(v ?? ''));
+      if (cells.includes('Ivy Ng')) found = cells[initialsCol] ?? '';
+    });
+    expect(found).toBe('SD');
+  });
+
+  it('Daily Check-in Log Leader (Initials) column carries CheckInEntry.leaderId (initials)', async () => {
+    await people.save(person({
+      id: 'y3', firstName: 'Max', lastName: 'Roe', kind: 'youth', lifecycle: 'arrived', atCamp: true,
+      checkInHistory: [
+        { id: 'ci1', sessionId: '2026-07-02~am', sessionLabel: 'Wed AM', type: 'in', leaderId: 'MR', timestamp: '2026-07-02T08:00:00.000Z' },
+      ],
+    }));
+    const wb = await load();
+    const sheet = wb.getWorksheet('Daily Check-in Log')!;
+    const header = (sheet.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    const leaderCol = header.indexOf('Leader (Initials)');
+    expect(leaderCol).toBeGreaterThan(-1);
+    let found = '';
+    sheet.eachRow((r) => {
+      const cells = (r.values as unknown[]).map((v) => String(v ?? ''));
+      if (cells.includes('Max Roe')) found = cells[leaderCol] ?? '';
+    });
+    expect(found).toBe('MR');
   });
 });

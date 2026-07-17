@@ -45,6 +45,8 @@ interface SignLogEvent {
   reason: string;
   parentsMet: boolean;
   authorId: string;
+  /** Feature 4: the acting leader's initials/name captured at sign-in/out time (SignOutEvent.leaderName). */
+  leaderInitials: string;
 }
 
 interface SignLogEventWithTotals extends SignLogEvent {
@@ -72,6 +74,7 @@ function buildSignInOutTimeline(people: Person[]): { noShows: Person[]; events: 
         reason: ev.reason || '',
         parentsMet: !!ev.parentsMet,
         authorId: ev.authorId,
+        leaderInitials: ev.leaderName || '',
       });
     }
   }
@@ -155,7 +158,7 @@ export function makeAuditExportService(
       signLog.addRow([
         'Student', 'Church', 'Zone', 'Gender', 'Grade',
         'Event Type', 'Timestamp (local)', 'Reason', 'Parents Met', 'Authorised By',
-        'Total Students Signed In', 'Total Leaders Signed In',
+        'Leader Initials', 'Total Students Signed In', 'Total Leaders Signed In',
       ]);
       signLog.getRow(1).font = { bold: true };
 
@@ -179,14 +182,17 @@ export function makeAuditExportService(
           e.reason,
           e.parentsMet ? 'Yes' : '',
           e.authorId,
+          e.leaderInitials,
           e.studentsSignedIn,
           e.leadersSignedIn,
         ]);
       }
 
       // ----- Daily Check-in Log -----
+      // The 'Leader (Initials)' column carries CheckInEntry.leaderId, which Feature 4 populates
+      // with the acting leader's initials (church-account session), falling back to the account id.
       const checkinLog = wb.addWorksheet('Daily Check-in Log');
-      checkinLog.addRow(['Student', 'Church', 'Zone', 'Session', 'Type', 'Timestamp (local)', 'Leader']);
+      checkinLog.addRow(['Student', 'Church', 'Zone', 'Session', 'Type', 'Timestamp (local)', 'Leader (Initials)']);
       checkinLog.getRow(1).font = { bold: true };
       for (const p of people) {
         for (const ci of p.checkInHistory) {
@@ -273,7 +279,7 @@ export function makeAuditExportService(
       for (const p of noShows) {
         rows.push([
           p.firstName, p.lastName, p.churchName, p.zone, p.gender, String(p.grade ?? ''),
-          'Registered — Did Not Attend', '', '', '', '', '', '',
+          'Registered — Did Not Attend', '', '', '', '', '', '', '',
         ]);
       }
       for (const e of events) {
@@ -284,6 +290,7 @@ export function makeAuditExportService(
           e.reason,
           e.parentsMet ? 'Yes' : '',
           e.authorId,
+          e.leaderInitials,
           String(e.studentsSignedIn),
           String(e.leadersSignedIn),
         ]);
@@ -291,7 +298,7 @@ export function makeAuditExportService(
       return toCsvString(
         ['First Name', 'Last Name', 'Church', 'Zone', 'Gender', 'Grade',
           'Event Type', 'Timestamp (local)', 'Reason', 'Parents Met', 'Authorised By',
-          'Total Students Signed In', 'Total Leaders Signed In'],
+          'Leader Initials', 'Total Students Signed In', 'Total Leaders Signed In'],
         rows,
       );
     },
@@ -310,7 +317,7 @@ export function makeAuditExportService(
         }
       }
       return toCsvString(
-        ['First Name', 'Last Name', 'Church', 'Zone', 'Session', 'Type', 'Timestamp (local)', 'Leader ID'],
+        ['First Name', 'Last Name', 'Church', 'Zone', 'Session', 'Type', 'Timestamp (local)', 'Leader (Initials)'],
         rows,
       );
     },

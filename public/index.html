@@ -513,6 +513,7 @@ textarea{min-height:84px;resize:vertical;}
     <div class="bar-actions">
       <div class="mode-badge" id="modeBadge"></div>
       <div class="mode-badge" id="dayBadge" onclick="switchDay()" style="cursor:pointer;display:none" title="Tap to switch camp day"></div>
+      <div class="role-badge" id="initialsBadge" style="display:none;cursor:pointer" title="Your initials — tap to change" onclick="promptInitials(true)"></div>
       <div class="role-badge" id="roleBadge"></div>
       <div class="sign-out" onclick="logout()">Sign out</div>
     </div>
@@ -751,6 +752,44 @@ let ACCOUNT_PREVIEW=false;
 let _previewStash=null; // { token, actor } — the admin's own session while account-previewing
 let SESSIONS=[],SEL_SESSION=null,FILTER={gender:'all',grade:'all',church:'all',zone:'all'};
 let LAST_LEADER='';
+// Feature 4 (2026-07-17): per-account leader initials. Church accounts (incl. the gender-scoped
+// b-/g- logins) are prompted for these after login; they pre-fill the sign-in / sign-out / note
+// forms and are captured in the audit trail on every action (check-in, sign-in/out, reveals).
+// EXTENDS the existing LAST_LEADER prefill — we seed LAST_LEADER from the stored initials so the
+// existing "Your name (leader)" fields all pick them up rather than adding a parallel prefill.
+let LEADER_INITIALS='';
+function _isChurchAccount(){return !!(ACTOR&&ACTOR.role==='church');}
+function _initialsKey(){return 'ycp_initials_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
+function _updateInitialsBadge(){
+  const el=document.getElementById('initialsBadge');if(!el)return;
+  if(_isChurchAccount()){el.style.display='';el.textContent=LEADER_INITIALS?('✎ '+LEADER_INITIALS):'Set initials';}
+  else{el.style.display='none';}
+}
+function _loadLeaderInitials(){
+  if(!_isChurchAccount()){LEADER_INITIALS='';_updateInitialsBadge();return;}
+  try{LEADER_INITIALS=localStorage.getItem(_initialsKey())||'';}catch(_){LEADER_INITIALS='';}
+  if(LEADER_INITIALS&&!LAST_LEADER)LAST_LEADER=LEADER_INITIALS; // seed the shared prefill
+  _updateInitialsBadge();
+}
+function _saveLeaderInitials(v){
+  LEADER_INITIALS=(v||'').trim().slice(0,6);
+  try{if(LEADER_INITIALS)localStorage.setItem(_initialsKey(),LEADER_INITIALS);else localStorage.removeItem(_initialsKey());}catch(_){}
+  if(LEADER_INITIALS)LAST_LEADER=LEADER_INITIALS; // keep the shared prefill in step
+  _updateInitialsBadge();
+}
+// Skippable initials prompt. `force` (header control) always shows it; the post-login
+// auto-prompt passes no force and only shows when nothing is stored yet.
+function promptInitials(force){
+  if(!_isChurchAccount())return;
+  if(!force&&LEADER_INITIALS)return;
+  modal(`<h3>Your initials</h3>
+    <p class="sub" style="margin:4px 0 10px">Add your initials so sign-in, sign-out, check-in and note records show who did them. Saved on this device for this login — change or skip anytime from the header.</p>
+    <label>Initials</label><input class="fld" id="liInit" maxlength="6" value="${esc(LEADER_INITIALS||'')}" placeholder="e.g. SD" autocomplete="off" autocapitalize="characters">
+    <button class="btn" style="margin-top:10px" onclick="_confirmInitials()">Save</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Skip</button>`);
+  setTimeout(()=>{const e=document.getElementById('liInit');if(e)e.focus();},50);
+}
+function _confirmInitials(){_saveLeaderInitials(val('liInit'));closeModal();toast(LEADER_INITIALS?('Initials set: '+LEADER_INITIALS):'Initials cleared');}
 const GRADES=[7,8,9,10,11,12];
 // Zone names — MUST match backend ZONE_NAMES (src/core/types/enums.ts) and migration 011
 // (which renamed 'Green'→'Black'). A stale 'Green' here let a director send a zone notice no
@@ -901,6 +940,9 @@ async function doLogin(){
     document.getElementById('stage').style.display='block';
     document.getElementById('tabs').style.display='';  // let CSS media query control visibility
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
+    // Feature 4: church accounts get the skippable initials prompt on fresh login.
+    _loadLeaderInitials();
+    if(_isChurchAccount()&&!LEADER_INITIALS)promptInitials(false);
   }catch(e){if(err){err.textContent=e.message;err.style.display='block';}else toast(e.message);}
 }
 function logout(){
@@ -942,6 +984,8 @@ async function submitChangePassword(){
     document.getElementById('stage').style.display='block';
     document.getElementById('tabs').style.display='';
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
+    _loadLeaderInitials();
+    if(_isChurchAccount()&&!LEADER_INITIALS)promptInitials(false);
   }catch(e){_mcpErr(e.message);}
 }
 // Brisbane-anchored "today" (YYYY-MM-DD), mirroring the backend's zonedNow(). The camp's
@@ -1007,6 +1051,7 @@ function updateModeUI(){
       }
     }else db.style.display='none';
   }
+  _updateInitialsBadge();
   _updatePreviewBanner();
 }
 /* ===== AT-CAMP PREVIEW ===== */
@@ -1759,7 +1804,7 @@ async function drainQueue(){
   while(CHECKIN_QUEUE.length>0){
     const entry=CHECKIN_QUEUE[0];
     try{
-      await api('/checkin',{method:'POST',body:{camperId:entry.camperId,sessionId:entry.sessionId,type:entry.type}});
+      await api('/checkin',{method:'POST',body:{camperId:entry.camperId,sessionId:entry.sessionId,type:entry.type,initials:LEADER_INITIALS}});
       CHECKIN_QUEUE.shift();_markSynced(entry.camperId);
     }catch(e){
       if(!navigator.onLine)break; // wait for online event
@@ -2095,7 +2140,7 @@ async function openStudentInfo(id){
   _loadStudentRecent(id);
 }
 async function faRevealLeader(id,role,btn){
-  try{const ct=await api('/search/contact/'+id+'/'+encodeURIComponent(role));
+  try{const ct=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));
     if(btn)btn.innerHTML=`${icSm('phone')} ${esc(fmtPhone(ct.phone))}`;
     toast(ct.name+': '+fmtPhone(ct.phone));
   }catch(e){toast(e.message);}
@@ -2112,7 +2157,7 @@ async function revealMedicare(id){
   const el=document.getElementById('mcn');
   const c=_currentStudent&&_currentStudent.id===id?_currentStudent:null;
   try{
-    await api('/campers/'+id+'/reveal-medicare',{method:'POST',body:{}});
+    await api('/campers/'+id+'/reveal-medicare',{method:'POST',body:{initials:LEADER_INITIALS}});
     if(el)el.textContent=(c&&c.medicareNumber)||'—';
   }catch(e){toast(e.message);}
 }
@@ -2271,7 +2316,7 @@ async function runSearch(v){const box=document.getElementById('results');if(!box
         ${back?`<button class="btn alt sm" style="flex:1" onclick="reveal('${c.id}','${esc(back.role)}')">Secondary</button>`:''}
       </div></div>`;}).join(''):'<p class="note-hint">No camper matches.</p>';
   }catch(e){toast(e.message);}}
-async function reveal(id,role){try{const c=await api('/search/contact/'+id+'/'+encodeURIComponent(role));toast(c.name+': '+fmtPhone(c.phone));}catch(e){toast(e.message);}}
+async function reveal(id,role){try{const c=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));toast(c.name+': '+fmtPhone(c.phone));}catch(e){toast(e.message);}}
 
 /* ===== NOTICES ===== */
 RENDER.notifs=async function(){
@@ -2811,7 +2856,7 @@ async function signOutConfirm(){const d=window._soDraft;if(!d)return;
 function signInPrompt(id,name,isLeader){
   const who=isLeader?'leader':'youth';
   modal(`<h3>Sign in · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this ${who} back IN to camp.</p>
-    <label>Your initials</label><input class="fld" id="siInit" placeholder="e.g. SD" maxlength="6">
+    <label>Your initials</label><input class="fld" id="siInit" placeholder="e.g. SD" maxlength="6" value="${esc(LEADER_INITIALS||LAST_LEADER||'')}">
     <button class="btn" onclick="signInConfirm('${id}')">Sign in</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
@@ -4459,6 +4504,7 @@ async function _tryRestoreSession(){
     document.getElementById('stage').style.display='block';
     document.getElementById('tabs').style.display='';  // let CSS media query control visibility
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
+    _loadLeaderInitials(); // restore the badge/prefill; no auto-prompt on a silent session restore
   }catch(e){
     if(e&&e.code==='MUST_CHANGE_PASSWORD'){_showChangePasswordGate();return;}
     TOKEN=null;ACTOR=null;

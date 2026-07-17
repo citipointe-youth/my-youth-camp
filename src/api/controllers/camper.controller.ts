@@ -66,10 +66,14 @@ export function makeCamperController(services: CamperControllerServices) {
       assertCan(req.ctx.actor, 'camper:read:sensitive');
       const id = req.params['id'];
       if (!id) throw new BadRequestError('Missing id');
-      // Access is logged by assertCan succeeding for camper:read:sensitive.
-      // A 204 response confirms the reveal was authorised — the client already has the
-      // medicare number from the CamperDto; this endpoint creates the audit trail.
-      return null;
+      // Access is logged by assertCan succeeding for camper:read:sensitive. The client
+      // already has the medicare number from the CamperDto; this authenticated endpoint IS
+      // the reveal audit trail (this app persists no reveal-audit table). Feature 4 attributes
+      // the reveal to the acting leader's initials (church-account session prefill), falling
+      // back to the actor's display name when no initials were supplied.
+      const b = (req.body ?? {}) as { initials?: unknown };
+      const initials = typeof b.initials === 'string' ? b.initials.trim() : '';
+      return { ok: true, revealedBy: initials || req.ctx.actor.displayName };
     },
   };
 }
