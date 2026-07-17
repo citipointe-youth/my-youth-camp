@@ -1067,6 +1067,7 @@ function enterPreview(){
   if(SETTINGS&&SETTINGS.campMode!=='pre-camp'){toast('Already in at-camp mode');return;}
   PREVIEW_MODE=true;
   CAMP_MODE='at-camp';
+  _previewLocalFlips={}; // fix 4: a fresh preview session starts with no local-only flips
   SESSIONS=[];SEL_SESSION=null; // reset so check-in fetches fresh sessions
   document.getElementById('previewBanner').classList.add('show');
   updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
@@ -1074,6 +1075,7 @@ function enterPreview(){
 function exitPreview(){
   PREVIEW_MODE=false;
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
+  _previewLocalFlips={};
   SESSIONS=[];SEL_SESSION=null;
   document.getElementById('previewBanner').classList.remove('show');
   updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
@@ -1124,6 +1126,7 @@ function _togglePreviewMode(){
   if((SETTINGS&&SETTINGS.campMode)!=='pre-camp')return;
   if(PREVIEW_MODE){PREVIEW_MODE=false;CAMP_MODE='pre-camp';}
   else{PREVIEW_MODE=true;CAMP_MODE='at-camp';}
+  _previewLocalFlips={}; // fix 4: don't leak local-only flips across a preview on/off toggle
   SESSIONS=[];SEL_SESSION=null;
   updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
 }
@@ -1860,10 +1863,27 @@ RENDER.checkin=async function(){
 function _previewSimActive(){
   return !!(PREVIEW_MODE&&SETTINGS&&SETTINGS.campMode==='pre-camp');
 }
-// Deterministic "not yet checked in" set — the LAST 5 people sorted by surname (then first name),
-// so the same 5 people show as "not signed in" everywhere the simulation is used, and the
-// not-signed-in state is demoed too, not just the all-green happy path.
+// Fix 2 (review 2026-07-17): a SINGLE canonical population — every non-cancelled person the
+// account can see, leaders included — so every screen the simulation touches (roster,
+// My-group/students, openCamper) computes "who's not checked in" over the exact same people.
+// Previously _previewSimRoster (non-leader-filtered) and _previewSimCampers (leader-inclusive)
+// each ran _previewNotCheckedInIds over their OWN filtered list, so the two screens could
+// disagree about which 5 individuals were unarrived.
+function _previewCanonicalPeople(regList){
+  return (Array.isArray(regList)?regList:[]).filter(r=>r.status!=='cancelled');
+}
+// Fix 4 (review 2026-07-17): local-only visual flips from tapping a simulated check-in row (see
+// _performCheck) — never sent to the backend, cleared whenever preview is (re-)entered.
+let _previewLocalFlips={};
+// Deterministic "not yet checked in" set — the LAST 5 people (by surname, then first name) in
+// the given (canonical) population, so the same individuals show as "not signed in" everywhere
+// the simulation is used, and the not-signed-in state is demoed too, not just the all-green
+// happy path.
+// Fix 3 (review 2026-07-17): small-camp floor — slice(-5) with no floor marked EVERYONE
+// unarrived once the population dropped to 5 or fewer (the opposite of the intended "mostly
+// present, a few stragglers"). Below 6 people, hold nobody back: everyone shows checked in.
 function _previewNotCheckedInIds(people){
+  if(people.length<=5)return new Set();
   const sorted=[...people].sort((a,b)=>{
     const an=((a.lastName||'')+' '+(a.firstName||'')).toLowerCase();
     const bn=((b.lastName||'')+' '+(b.firstName||'')).toLowerCase();
@@ -1871,27 +1891,40 @@ function _previewNotCheckedInIds(people){
   });
   return new Set(sorted.slice(-5).map(p=>p.id));
 }
+// Applies any local-only check-in-row flips (fix 4) on top of the deterministic simulated
+// state — present when NOT in the canonical not-checked-in set, unless locally flipped.
+function _previewIsPresent(id,notIn){
+  return Object.prototype.hasOwnProperty.call(_previewLocalFlips,id)?_previewLocalFlips[id]:!notIn.has(id);
+}
 // Simulated daily check-in roster, shaped like _renderDailyCheckin's real `roster` array, built
 // from /registrants (non-leader, non-cancelled) instead of the real (empty, pre-camp) session
 // roster.
 function _previewSimRoster(regList){
-  const people=(Array.isArray(regList)?regList:[]).filter(r=>r.kind!=='leader'&&r.status!=='cancelled');
-  const notIn=_previewNotCheckedInIds(people);
+  // Fix 2: notIn is computed over the canonical (leader-inclusive) population, THEN the roster
+  // is filtered down to non-leaders for display — so a person's not-checked-in status here
+  // always matches their status on the My-group/openCamper screens, even though leaders never
+  // appear in this particular roster.
+  const canonical=_previewCanonicalPeople(regList);
+  const notIn=_previewNotCheckedInIds(canonical);
+  const people=canonical.filter(r=>r.kind!=='leader');
   return people.map(r=>({
     id:r.id,name:(r.firstName+' '+r.lastName).trim(),
     church:r.churchName,zone:r.zone,
     gender:r.gender,grade:r.grade,
     medicalFlag:(r.medicalConditions&&r.medicalConditions.length>0)||!!r.otherMedications,
-    present:!notIn.has(r.id),
+    present:_previewIsPresent(r.id,notIn),
   }));
 }
 // Simulated CamperDto-shaped list for the My-group/roster screens (_renderMyGroup), built the
 // same way — everyone `atCamp:true` except the same deterministic excluded 5.
 async function _previewSimCampers(){
   const regList=await api('/registrants').catch(()=>[]);
-  const people=(Array.isArray(regList)?regList:[]).filter(r=>r.status!=='cancelled');
+  // Fix 2: same canonical population + same notIn computation as _previewSimRoster/openCamper.
+  const people=_previewCanonicalPeople(regList);
   const notIn=_previewNotCheckedInIds(people);
-  return people.map(r=>({
+  return people.map(r=>{
+    const present=_previewIsPresent(r.id,notIn);
+    return {
     id:r.id,firstName:r.firstName,lastName:r.lastName,fullName:(r.firstName+' '+r.lastName).trim(),
     kind:r.kind==='leader'?'leader':'student',
     churchId:r.churchId,churchName:r.churchName,zone:r.zone,groupId:null,
@@ -1902,11 +1935,11 @@ async function _previewSimCampers(){
     otherMedications:r.otherMedications,medicareNumber:r.medicareNumber,
     parentGuardianName:r.parentGuardianName,parentPhone:r.parentPhone,parentRelation:r.parentRelation,
     consentMedical:r.consentMedical,blueCardNumber:r.blueCardNumber,blueCardExpiry:r.blueCardExpiry,
-    lifecycle:notIn.has(r.id)?'registered':'camper',
-    atCamp:!notIn.has(r.id),
+    lifecycle:present?'camper':'registered',
+    atCamp:present,
     checkInHistory:[],signOutHistory:[],
     createdAt:r.createdAt,updatedAt:r.updatedAt,
-  }));
+  };});
 }
 async function _renderDailyCheckin(){
   if(SESSIONS.length===0)SESSIONS=await api('/checkin/sessions');
@@ -2030,6 +2063,17 @@ function selDay(id){SEL_SESSION=id;RENDER.checkin();}
 function setFilter(k,v){FILTER[k]=v;if(k==='zone')FILTER.church='all';RENDER.checkin();}
 
 function _performCheck(camperId,type,name){
+  // Fix 4 (review 2026-07-17, MEDIUM-LOW): during the preview simulation there is no real
+  // check-in session — the api() write-guard blocks the POST `_queueEntry` would fire, so the
+  // row never actually flipped AND drainQueue's caught error ticked up `_checkinFailed`, so a
+  // false "N check-in(s) didn't save — tap to retry" banner accumulated. Flip the row LOCALLY
+  // ONLY (no queue, no network) and bail before any of that.
+  if(_previewSimActive()){
+    _previewLocalFlips[camperId]=(type==='in');
+    toast(type==='in'?'Checked in (preview)':'Checked out (preview)');
+    RENDER.checkin();
+    return;
+  }
   // Check-out no longer asks for confirmation — reaching this point already required
   // actively opening the "Done" section and tapping the row, which is deliberate enough.
   // Optimistic flip
@@ -2881,16 +2925,34 @@ function filterMyYouth(){
 }
 async function openCamper(id,push=true){
   const p=await api('/campers/'+id);let notesHtml='';const lead=p.kind==='leader';
-  const lastSignOut=(p.signOutHistory||[]).filter(e=>e.type==='out').slice(-1)[0]||null;
+  // Fix 1 (review 2026-07-17, HIGH): the REAL /campers/:id fetch above still reflects the
+  // genuine pre-camp backend state (atCamp:false, empty sign-in history) even when the preview
+  // simulation is showing this person as checked-in on the roster/My-group screens — drilling in
+  // used to always render "Signed out" + a "Sign in to camp (late arrival)" button, contradicting
+  // the row that was just tapped. Recompute presence the SAME way those screens do (fix 2/3's
+  // canonical not-checked-in set, via `_previewIsPresent` so a fix-4 local flip is honoured too)
+  // and use that for RENDERING ONLY — `p` itself is never mutated and nothing is sent to the
+  // backend, so this adds no persistence and no network write beyond the harmless /registrants
+  // GET (already cached/fired elsewhere on this screen). Excluded-5 people fall through
+  // unchanged (atCamp stays the real, already-false value) and still render as not-arrived.
+  let atCamp=p.atCamp;
+  if(_previewSimActive()){
+    try{
+      const regList=await api('/registrants').catch(()=>[]);
+      const notIn=_previewNotCheckedInIds(_previewCanonicalPeople(regList));
+      atCamp=_previewIsPresent(id,notIn);
+    }catch(e){}
+  }
+  const lastSignOut=atCamp?null:(p.signOutHistory||[]).filter(e=>e.type==='out').slice(-1)[0]||null;
   if(canReadCamperNotes()){try{const notes=await api('/notes/camper/'+id);
     notesHtml=`<div class="h3">Notes</div>${notes.length?notes.map(n=>`<div class="noteitem">${n.sensitive?`<span class="pill warn" style="margin-bottom:4px">${icSm('alert')} Sensitive</span> `:''}${esc(n.body)}<div class="meta">${n.category&&n.category!=='note'?esc(n.category)+' · ':''}${esc(n.authorName)} · ${dtFmt(n.createdAt)}</div></div>`).join(''):'<p class="sub">No notes.</p>'}`;
   }catch(e){}}
   const camp=`<div class="card"><div class="h3" style="margin-top:0">Camp attendance</div>
-    <div class="kv"><span class="k">Status</span><span class="v">${p.atCamp?'<span class="pill ok">Signed in</span>':'<span class="pill warn">Signed out</span>'}</span></div>
-    ${!p.atCamp&&lastSignOut?`<div class="kv"><span class="k">Signed out by</span><span class="v">${esc(lastSignOut.leaderName)}</span></div>
+    <div class="kv"><span class="k">Status</span><span class="v">${atCamp?'<span class="pill ok">Signed in</span>':'<span class="pill warn">Signed out</span>'}</span></div>
+    ${!atCamp&&lastSignOut?`<div class="kv"><span class="k">Signed out by</span><span class="v">${esc(lastSignOut.leaderName)}</span></div>
     <div class="kv"><span class="k">Reason</span><span class="v">${esc(lastSignOut.reason||'—')}</span></div>
     <div class="kv"><span class="k">Parents met</span><span class="v">${lastSignOut.parentsMet?'Yes':'No'}</span></div>`:''}
-    ${p.atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
+    ${atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
   const fullName=p.fullName||p.firstName+' '+p.lastName;
   document.getElementById('camper').innerHTML=`<div class="detail-hd"><div class="av-lg">${initials(fullName)}</div>
     <h2>${esc(fullName)}</h2><div style="color:#cfe0ff;font-size:.82rem">${esc(p.zone)} Zone · ${lead?'Leader (18+)':'Grade '+p.grade}</div></div>
@@ -4499,7 +4561,8 @@ const WIZARD_STEPS=[
   {key:'contacts',label:'Ministry contacts',icon:'phone',screen:'adminContacts',summary:'Ministry contacts — each church’s leader phone numbers for first-aid and emergencies.',check:async()=>{try{const c=await api('/accounts/churches');return(c||[]).some(ch=>{const t=ch.contacts||{};return['male','female'].some(g=>['primary','backup'].some(k=>t[g]&&t[g][k]&&t[g][k].name&&String(t[g][k].name).trim()));});}catch(e){return false;}}},
 ];
 // Item 5b: tapping a step remembers it (1-based) so _wizardChipHtml can show "Back to
-// setup (step N of 10)" on wherever that step sends the admin.
+// setup (step N of 8)" on wherever that step sends the admin (8 steps since the At-Camp-Info
+// merge folded Schedule/Devotionals/FAQ into one step — was 10).
 function _wizardGo(i){
   const s=WIZARD_STEPS[i];if(!s)return;
   sessionStorage.setItem('ycp_wizardReturn',String(i+1));
