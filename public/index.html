@@ -231,6 +231,9 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .seg{display:flex;background:var(--chip);border-radius:14px;padding:4px;gap:4px;margin-bottom:12px;}
 .seg button{flex:1;border:none;background:none;padding:9px 4px;border-radius:10px;font-size:var(--t-sm);font-weight:700;color:var(--muted);cursor:pointer;transition:background .15s,color .15s,box-shadow .15s;font-family:inherit;}
 .seg button.on{background:#fff;color:var(--blue);box-shadow:0 2px 8px rgba(79,70,229,.15);}
+/* Check-in session picker can grow to 8-13 buttons on a normal-length camp — scroll instead of squeezing labels unreadable. */
+#dayseg{overflow-x:auto;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;flex-wrap:nowrap;}
+#dayseg button{flex:0 0 auto;min-width:68px;scroll-snap-align:start;}
 .filters{display:flex;gap:8px;margin-bottom:11px;}
 .filters select{flex:1;font-size:var(--t-sm);padding:8px 10px;}
 .ncard{background:#fff;border:1px solid var(--line);border-left:4px solid var(--lav-2);border-radius:14px;padding:12px 14px;margin-bottom:9px;}
@@ -260,6 +263,9 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .fa-alert .tag{font-size:var(--t-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--alert-ink);background:#fff;border:1px solid var(--alert-bd);padding:3px 7px;border-radius:6px;flex:none;min-width:72px;text-align:center;}
 .fa-alert .b{font-weight:700;font-size:var(--t-sm);}
 .fa-calm{font-size:var(--t-sm);color:var(--ink-2);font-weight:600;}
+/* Quiet counterpart to .fa-alert for reassuring ("nothing flagged") cases — same shell as .fa-lead, kept generic since it's not leader-specific. */
+.fa-neutral{border:1.5px solid var(--lav);background:var(--card);border-radius:var(--r);padding:var(--s4);margin-bottom:var(--s3);box-shadow:var(--shadow-sm);}
+.fa-neutral .ah{display:flex;align-items:center;gap:8px;font-weight:800;color:var(--ink-2);font-size:var(--t-h3);margin-bottom:var(--s2);}
 .fa-consent{display:flex;align-items:center;gap:11px;border-radius:var(--r);padding:13px var(--s4);margin-bottom:var(--s3);font-weight:800;}
 .fa-consent .ic-svg{flex:none;}
 .fa-consent.yes{background:var(--consent-ok-bg);border:1px solid var(--consent-ok-bd);color:var(--consent-ok-ink);}
@@ -380,7 +386,7 @@ textarea{min-height:84px;resize:vertical;}
 /* ── Reusable help tooltip (?) — works on hover (desktop) and tap (mobile via .open) ──
    Use helpTip('plain text') in any markup. Written for leaders who didn't build the app. */
 .htip{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid var(--blue);background:var(--chip);color:var(--blue);font-size:11px;font-weight:800;line-height:1;cursor:pointer;position:relative;padding:0;font-family:inherit;vertical-align:middle;flex:0 0 auto;}
-.htip-pop{position:absolute;z-index:200;top:calc(100% + 8px);left:50%;transform:translateX(-50%);width:max-content;max-width:240px;background:#1e1b4b;color:#fff;border-radius:10px;padding:9px 11px;font-size:.74rem;line-height:1.45;font-weight:500;text-transform:none;letter-spacing:normal;text-align:left;box-shadow:0 10px 28px rgba(20,16,60,.32);opacity:0;visibility:hidden;transition:opacity .12s;white-space:normal;}
+.htip-pop{position:absolute;z-index:200;top:calc(100% + 8px);left:50%;transform:translateX(-50%);width:max-content;max-width:240px;background:#1e1b4b;color:#fff;border-radius:10px;padding:9px 11px;font-size:var(--t-xs);line-height:1.45;font-weight:500;text-transform:none;letter-spacing:normal;text-align:left;box-shadow:0 10px 28px rgba(20,16,60,.32);opacity:0;visibility:hidden;transition:opacity .12s;white-space:normal;}
 .htip-pop::before{content:"";position:absolute;bottom:100%;left:50%;transform:translateX(-50%);border:6px solid transparent;border-bottom-color:#1e1b4b;}
 .htip:hover .htip-pop,.htip.open .htip-pop{opacity:1;visibility:visible;}
 /* Keep the bubble on-screen near the right edge (e.g. icon at end of a heading row). */
@@ -405,7 +411,9 @@ textarea{min-height:84px;resize:vertical;}
 .gradepill{font-size:var(--t-micro);font-weight:800;background:#eef2f8;color:#475569;border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
 .err{background:#fde2e1;color:#7f1d1d;border-radius:10px;padding:9px 12px;font-size:var(--t-sm);margin-top:8px;display:none;}
 /* Login is white-background / purple-text to match the in-app theme (was dark gradient). */
-#login,#mcpGate{position:absolute;inset:0;background:#fff;display:flex;flex-direction:column;justify-content:center;padding:28px;z-index:60;}
+#login,#mcpGate{position:absolute;inset:0;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;z-index:60;}
+/* Match .app's own containment discipline (460-820px stepped) instead of stretching edge-to-edge on wide screens. */
+#login>*,#mcpGate>*{width:100%;max-width:420px;}
 #login h1,#mcpGate h1{color:var(--violet);font-size:1.85rem;text-align:center;margin-bottom:5px;letter-spacing:-.03em;font-weight:800;}
 #login p,#mcpGate p{color:var(--purple);text-align:center;font-size:var(--t-sm);margin-bottom:22px;font-weight:600;}
 #login .card,#mcpGate .card{background:#fff;border:1px solid var(--line);box-shadow:0 14px 40px rgba(124,58,237,.12);border-radius:20px;}
@@ -935,7 +943,7 @@ function _initDemoLogin(){
   if(!_isDemoHost())return;
   const box=document.getElementById('demoLogin');if(!box)return;
   const accts=[['victory','Church (Victory)'],['gracepoint','Church (Grace Point)'],['yellowzone','Zone Leader'],['director','Director'],['admin','Admin']];
-  box.innerHTML=`<p style="color:#9cc0ff;font-size:.68rem;margin:12px 0 4px;text-align:center;font-weight:700;text-transform:uppercase;letter-spacing:.08em">Quick login · demo</p>
+  box.innerHTML=`<p style="color:#9cc0ff;font-size:var(--t-2xs);margin:12px 0 4px;text-align:center;font-weight:700;text-transform:uppercase;letter-spacing:.08em">Quick login · demo</p>
     <div class="quick">${accts.map(([u,l])=>`<button onclick="quick('${u}')">${l}</button>`).join('')}</div>`;
 }
 function quick(u){document.getElementById('username').value=u;document.getElementById('password').value='demo1234';doLogin();}
@@ -1044,14 +1052,14 @@ function campPhase(){
 }
 function updateModeUI(){
   const b=document.getElementById('modeBadge'),r=document.getElementById('roleBadge');
-  if(PREVIEW_MODE){b.textContent='Preview';b.style.background='#92400e';b.style.color='#fff';}
-  else if(CAMP_MODE==='at-camp'){b.textContent='At Camp';b.style.background='#16a34a';b.style.color='#fff';}
-  else{b.textContent='Pre-Camp';b.style.background='#9333ea';b.style.color='#fff';}
+  if(PREVIEW_MODE){b.textContent='Preview';b.style.background='#92400e';b.style.color='var(--card)';}
+  else if(CAMP_MODE==='at-camp'){b.textContent='At Camp';b.style.background='#16a34a';b.style.color='var(--card)';}
+  else{b.textContent='Pre-Camp';b.style.background='var(--purple)';b.style.color='var(--card)';}
   if(r&&ACTOR)r.textContent=ACTOR.role==='admin'?'Admin':ACTOR.role==='director'?'Director':ACTOR.role==='firstAid'?'First aid':ACTOR.role==='zoneLeader'?'Zone·'+ACTOR.zone:'Church';
   const db=document.getElementById('dayBadge');
   if(db){
     if(CAMP_MODE==='at-camp'){
-      db.style.display='';db.style.background='#4f46e5';db.style.color='#fff';
+      db.style.display='';db.style.background='var(--blue)';db.style.color='var(--card)';
       if(PREVIEW_MODE){
         // Lead-up-to-camp preview: still a manual, pressable toggle between Day 1/Day 2 so an
         // admin can eyeball both views before the real thing starts.
@@ -1162,6 +1170,9 @@ function _applyModeChange(mode){
   if(SETTINGS)SETTINGS.campMode=mode;
   SESSIONS=[];SEL_SESSION=null; // mode-specific data must be refetched
   updateModeUI();buildTabs();
+  // This function only runs when a REAL change was just detected (the mode===CAMP_MODE guard
+  // above already dedupes it) — safe to always announce, no separate one-time flag needed.
+  toast('Camp switched to '+(mode==='at-camp'?'At Camp':'Pre-Camp')+' mode');
   const cur=STACK[STACK.length-1]||'home';
   const tabs=new Set(navModel(ACTOR.role,CAMP_MODE).tabs.map(t=>t.id));
   const owner=TAB_OF[cur]||cur;
@@ -1219,7 +1230,7 @@ async function _navTo(id,arg){
   const hasContent=el&&el.innerHTML.trim()!==''&&!el.querySelector('.loading');
   if(hasContent)_showScreen(id);else _spinner(id);
   try{ if(RENDER[id]) await RENDER[id](arg,tok); }
-  catch(e){ if(!_stale(tok)) { const el2=document.getElementById(id); if(el2)el2.innerHTML='<p class="note-hint">'+esc(e.message||'Something went wrong')+'</p>'; } }
+  catch(e){ if(!_stale(tok)) { const el2=document.getElementById(id); if(el2)el2.innerHTML='<p class="err" style="display:block">'+esc(e.message||'Something went wrong')+'</p>'; } }
 }
 async function go(id,arg){STACK.push(id);await _navTo(id,arg);}
 async function gotoTab(id){
@@ -1240,8 +1251,8 @@ function _wizardChipHtml(id){
   const step=sessionStorage.getItem('ycp_wizardReturn');
   if(!step)return '';
   if(typeof WIZARD_STEPS==='undefined'||!WIZARD_STEPS.some(s=>s.screen===id))return '';
-  return `<div class="card" style="background:#ede9fe;border:1px solid #c4b5fd;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;margin-bottom:10px;cursor:pointer" onclick="go('adminWizard')">
-    <span style="font-size:.82rem;font-weight:600;color:#5b21b6">${icSm('arrowr')} Back to setup (step ${esc(step)} of ${WIZARD_STEPS.length})</span>
+  return `<div class="card" style="background:var(--chip);border:1px solid var(--lav-2);display:flex;justify-content:space-between;align-items:center;padding:8px 12px;margin-bottom:10px;cursor:pointer" onclick="go('adminWizard')">
+    <span style="font-size:.82rem;font-weight:600;color:var(--violet-d)">${icSm('arrowr')} Back to setup (step ${esc(step)} of ${WIZARD_STEPS.length})</span>
   </div>`;
 }
 function paint(id,html,t,s){
@@ -1274,6 +1285,9 @@ function paint(id,html,t,s){
    broken admin at-camp sidebar — AC-5/D2). The sidebar list = tabs ++ extras, in order. */
 function navModel(role,mode){
   const T=(id,icon,label)=>({id,icon,label});
+  // Tab id stays 'checkin' regardless of phase — only the visible label swaps between
+  // 'Sign-in' and 'Check-in'. Intentional (keeps STACK/routing stable across the swap);
+  // don't assume a search for "sign-in" will find this tab by id.
   const _ci=()=> (typeof campPhase==='function'&&campPhase()==='signin')
     ? T('checkin','check','Sign-in') : T('checkin','check','Check-in');
   if(role==='firstAid'){
@@ -1415,7 +1429,7 @@ RENDER.home=async function renderHome(skipModeSync){
   if(isWide)body+=`<div class="card tap" onclick="go('budget')"><div class="rowsb"><div><div style="font-weight:600">Budget &amp; costings</div><div class="sub">Camper fees by accommodation</div></div><span class="pill info">View ›</span></div></div>`;
   if(isWide)body+=`<div class="card tap" onclick="go('accom')"><div class="rowsb"><div><div style="font-weight:600">Accommodation allocations</div><div class="sub">Spaces &amp; per-church spot allocation</div></div><span class="pill info">View ›</span></div></div>`;
   body+=`<div class="card"><div class="rowsb"><div class="lbl" style="margin:0">${isWide?'Camp registrations':'Your registrations'}</div><b>${h.totalRegistrants||0}</b></div>
-    <div class="rowsb" style="margin-top:6px"><span class="sub" style="font-size:.74rem">${h.totalCampers||0} campers · ${h.totalLeaders||0} leaders</span></div></div>`;
+    <div class="rowsb" style="margin-top:6px"><span class="sub" style="font-size:var(--t-xs)">${h.totalCampers||0} campers · ${h.totalLeaders||0} leaders</span></div></div>`;
   // `regs` (/registrants) loaded in parallel above — used by both the wide by-ministry table and the church accommodation summary.
   if(isWide){
     // By-ministry M/F split — aggregate from /registrants (the /home + /breakdown DTOs carry no gender split)
@@ -1438,13 +1452,13 @@ RENDER.home=async function renderHome(skipModeSync){
   // Bug-2 follow-up: the church/zoneLeader "Accommodation registrations" card was removed —
   // the 4-tile band at the top of the home screen now covers tent vs classroom for every role.
   // At-camp preview entry card — shown in pre-camp to all roles
-  body+=`<div class="card tap" style="margin-top:18px;background:linear-gradient(135deg,#fef3c7,#fffbeb);border:1.5px solid #fcd34d" onclick="enterPreview()">
+  body+=`<div class="card tap" style="margin-top:18px;background:linear-gradient(135deg,#fef3c7,var(--alert-bg));border:1.5px solid #fcd34d" onclick="enterPreview()">
     <div class="rowsb">
       <div>
         <div style="font-weight:700;font-size:.94rem;color:#92400e">${ic('preview')} Preview at-camp view</div>
-        <div class="sub" style="color:#b45309;margin-top:2px">See what the app looks like during camp — read only</div>
+        <div class="sub" style="color:var(--warn);margin-top:2px">See what the app looks like during camp — read only</div>
       </div>
-      <span style="font-size:1.2rem;color:#d97706">›</span>
+      <span style="font-size:var(--t-h2);color:#d97706">›</span>
     </div>
   </div>`;
   // Feature 3: Incidents entry for zoneLeader/director/admin, pre-camp too — a real
@@ -1605,7 +1619,7 @@ function _checkUrgentNoticesFromFeed(feed){
   modal(`<div style="text-align:center;padding:8px 0 4px">
     <div style="font-size:2rem;color:var(--rose)">${icLg('urgent')}</div>
     <h3 style="color:#dc2626;margin:6px 0">${esc(n.title)}</h3>
-    <p style="color:#7f1d1d;font-size:.9rem;margin:0 0 14px">${esc(n.body)}</p>
+    <p style="color:#7f1d1d;font-size:var(--t-body);margin:0 0 14px">${esc(n.body)}</p>
     <button class="btn" style="background:#dc2626" onclick="_ackUrgent('${n.id}')">Acknowledged</button>
   </div>`);
 }
@@ -1621,9 +1635,9 @@ function _ackUrgent(id){
 function renderMyDay(d){
   const DUE=d.checkInsDue||0;
   const sess=d.currentSession;
-  return sess&&DUE>0?`<div class="card" style="border:1px solid #fbbf24;background:#fffbeb">
+  return sess&&DUE>0?`<div class="card" style="border:1px solid #fbbf24;background:var(--alert-bg)">
     <div class="lbl" style="margin-top:0;color:#92400e">Your day · ${esc(sess.label)}</div>
-    <div style="font-weight:800;font-size:1.4rem;color:#b45309">${DUE} still to check in</div>
+    <div style="font-weight:800;font-size:var(--t-h1);color:var(--warn)">${DUE} still to check in</div>
     <button class="btn sm" style="margin-top:8px" onclick="gotoTab('checkin')">Go to Check-in ${icSm('arrowr')}</button></div>`:'';
 }
 // Item 4: zoneLeader's roster is already scoped to their own zone (single zone), so the old
@@ -1677,7 +1691,7 @@ function fmtPhone(phone){
 }
 function telLink(phone){
   if(!phone)return esc(phone||'');
-  return `<a href="tel:${esc(phone)}" style="color:#4f46e5">${esc(fmtPhone(phone))}</a>`;
+  return `<a href="tel:${esc(phone)}" style="color:var(--blue)">${esc(fmtPhone(phone))}</a>`;
 }
 
 /* ===== PRE-CAMP MY YOUTH ===== */
@@ -1737,7 +1751,7 @@ function accDisplay(s){
 function personRow(s){
   const isL=s.kind==='leader';
   const flag=(isL&&!s.blueCardCollected);
-  const dot=flag?`<span style="width:8px;height:8px;border-radius:50%;background:#e11d48;display:inline-block;margin-left:6px"></span>`:'';
+  const dot=flag?`<span style="width:8px;height:8px;border-radius:50%;background:var(--rose);display:inline-block;margin-left:6px"></span>`:'';
   const tags=[];
   if(isL)tags.push(s.blueCardCollected?'<span class="pill ok">'+icSm('check')+' Blue card</span>':'<span class="pill warn">No blue card</span>');
   if(s.medicalConditions&&s.medicalConditions.length)tags.push(`<span class="pill info">${icSm('medical')} ${esc(s.medicalConditions.join(', '))}</span>`);
@@ -1772,7 +1786,7 @@ function _paintPerson(s){
   const isL=s.kind==='leader';
   const body=`<div class="detail-hd"><div class="av-lg">${initials(s.firstName+' '+s.lastName)}</div>
     <h2>${esc(s.firstName+' '+s.lastName)}</h2>
-    <div style="color:#cfe0ff;font-size:.82rem">${esc(s.churchName)} · ${esc(s.zone)} Zone · ${isL?'Leader (18+)':'Grade '+s.grade}</div></div>
+    <div style="color:#cfe0ff;font-size:.82rem">${esc(s.churchName)} · ${esc(s.zone)} Zone · ${isL?'Leader (18+)':'Grade '+(s.grade||'—')}</div></div>
     <div class="card">
       <div class="kv2"><span class="k">Accommodation</span><span class="v">${esc(accDisplay(s))}</span></div>
       ${isL?'':`<div class="kv2"><span class="k">Dietary</span><span class="v">${esc((s.dietaryRequirements||[]).join(', ')||'—')}</span></div>
@@ -2057,7 +2071,7 @@ async function _renderDailyCheckin(){
     ${syncBanner}
     <div class="card" style="display:flex;justify-content:space-between;align-items:center">
       <div><div class="nm">${esc(label)} check-in ${helpTip('Tap a name to mark that person present for this session; tap again to undo. Pick a different session with the buttons up top.')}</div><div class="sub">Still need ${dueShown}${list.length!==roster.length?' · filtered':''}</div></div>
-      ${dueShown>0?`<div style="text-align:right"><div style="font-weight:800;font-size:1.4rem;line-height:1;color:#b45309">${dueShown}</div><div class="sub" style="font-size:.68rem">not yet in</div></div>`:''}
+      ${dueShown>0?`<div style="text-align:right"><div style="font-weight:800;font-size:var(--t-h1);line-height:1;color:var(--warn)">${dueShown}</div><div class="sub" style="font-size:var(--t-2xs)">not yet in</div></div>`:''}
     </div>
     ${completionBanner}
     ${dueList.map(c=>rowHtml(c,true)).join('')}
@@ -2095,8 +2109,8 @@ function _performCheck(camperId,type,name){
 }
 function _showUndoToast(type){
   let el=document.getElementById('undoToast');
-  if(!el){el=document.createElement('div');el.id='undoToast';el.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;border-radius:10px;padding:10px 18px;display:flex;align-items:center;gap:10px;z-index:9999;font-size:.9rem';document.body.appendChild(el);}
-  el.innerHTML=`${icSm('check')} ${type==='out'?'Checked out':'Checked in'} <button onclick="undoCheck()" style="background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-size:.85rem;font-family:inherit;font-weight:700">Undo</button>`;
+  if(!el){el=document.createElement('div');el.id='undoToast';el.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1e293b;color:var(--card);border-radius:10px;padding:10px 18px;display:flex;align-items:center;gap:10px;z-index:9999;font-size:var(--t-body)';document.body.appendChild(el);}
+  el.innerHTML=`${icSm('check')} ${type==='out'?'Checked out':'Checked in'} <button onclick="undoCheck()" style="background:var(--blue);color:var(--card);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-size:.85rem;font-family:inherit;font-weight:700">Undo</button>`;
   el.style.display='flex';
 }
 function _hideUndoToast(){const el=document.getElementById('undoToast');if(el)el.style.display='none';}
@@ -2133,8 +2147,8 @@ function reviewNote(camperId,name){
   modal(`<h3>Review note</h3><div class="card" style="margin:6px 0 10px">
     <div class="sub">Student</div><div class="nm">${esc(name)}</div>
     ${leader?`<div class="sub" style="margin-top:7px">Logged by</div><div class="nm">${esc(leader)}</div>`:''}
-    <div class="sub" style="margin-top:7px">Note</div><div style="font-size:.9rem">${esc(body)}</div>
-    ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:.9rem">${icSm('alert')} Sensitive — hidden from church logins</div>`:''}</div>
+    <div class="sub" style="margin-top:7px">Note</div><div style="font-size:var(--t-body)">${esc(body)}</div>
+    ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:var(--t-body)">${icSm('alert')} Sensitive — hidden from church logins</div>`:''}</div>
     <button class="btn" onclick="confirmNote('${camperId}')">Confirm &amp; submit</button>
     <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(name)}')">‹ Edit</button>`);
 }
@@ -2174,7 +2188,7 @@ function faResultRow(c){
   const hasMed=(c.medicalConditions||[]).length>0||c.otherMedications||(c.dietaryRequirements||[]).some(d=>_ALLERGY_RE.test(d));
   const showPresence=CAMP_MODE==='at-camp';
   const offSite=showPresence&&!c.atCamp;
-  const flag=offSite?` <span class="pill" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca">${icSm('alert')} Not on site</span>`:'';
+  const flag=offSite?` <span class="pill warn" style="border:1px solid #fecaca">${icSm('alert')} Not on site</span>`:'';
   const grade=c.grade?` · Yr ${c.grade}`:(c.kind==='leader'?' · Leader':'');
   const presence=showPresence?(offSite?'<span style="color:var(--danger);font-weight:700">signed out / not on site</span>':'on site'):'';
   const metaBits=[esc(c.churchName||''),esc(c.zone||'')+' Zone',presence].filter(Boolean).join(' · ');
@@ -2184,38 +2198,47 @@ function faResultRow(c){
     <div class="sub" style="color:var(--ink-2)">${metaBits}${grade}</div></div>
     <span style="color:var(--lav-2)">${ic('chevron')}</span></div>`;
 }
-/* FA2: All Students — first-aider picks a church, then filters by gender (buttons) and grade
-   (dropdown). Lists students AND leaders for that church (anyone registered, any presence state);
-   tapping opens the same Student Info card. Data = /campers?scope=all (camp-wide, role-scoped). */
+/* FA2: All Students — camp-wide fallback for when search-by-name isn't enough (e.g. "kid near
+   tent 4", no known name). Renders the FULL roster on open, then narrows by whichever of
+   church/zone/gender/grade the first-aider actually sets — church is one optional filter among
+   several, not a prerequisite. Lists students AND leaders (anyone registered, any presence
+   state); tapping opens the same Student Info card. Data = /campers?scope=all (camp-wide,
+   role-scoped). No pagination/virtualization: a flat map/join of a few hundred simple rows is
+   fine on a modern phone; this app has no lazy-render pattern anywhere else. */
 let _asGender='all';
 RENDER.allstudents=async function(){
-  let all;try{all=await api('/campers?scope=all');}catch(e){paint('allstudents','<p class="note-hint">'+esc(e.message)+'</p>','All Students','First Aid');return;}
+  let all;try{all=await api('/campers?scope=all');}catch(e){paint('allstudents','<p class="err" style="display:block">'+esc(e.message)+'</p>','All Students','First Aid');return;}
   all=(all||[]).filter(c=>c.lifecycle!=='cancelled');
   window._allStu=all;
   const cmap={};all.forEach(c=>{if(c.churchId)cmap[c.churchId]=c.churchName;});
   const churches=Object.entries(cmap).map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name));
   const grades=[...new Set(all.map(c=>c.grade).filter(g=>g!=null))].sort((a,b)=>a-b);
   _asGender='all';
-  const churchSel=`<div><label>Church ${helpTip('Pick a church to see its registered students and leaders. People not on site show in red.')}</label><select id="asChurch" onchange="drawAllStudents()"><option value="">Choose a church…</option>${churches.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>`;
+  const churchSel=`<div><label>Church ${helpTip('Narrow to one church, or leave as "All churches" to see everyone camp-wide. People not on site show in red.')}</label><select id="asChurch" onchange="drawAllStudents()"><option value="">All churches</option>${churches.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>`;
+  const zoneSelEl=`<div><label>Zone</label><select id="asZone" onchange="drawAllStudents()"><option value="all">All zones</option>${ZONE_OPTS.map(z=>`<option value="${z}">${z}</option>`).join('')}</select></div>`;
   const gradeSel=`<div><label>Grade</label><select id="asGrade" onchange="drawAllStudents()"><option value="all">All grades</option>${grades.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}</select></div>`;
   const genderBtns=`<div class="fa-seg" id="asGender">
     <button class="on" data-g="all" onclick="_asSetGender('all')">All</button>
     <button data-g="male" onclick="_asSetGender('male')">Guys</button>
     <button data-g="female" onclick="_asSetGender('female')">Girls</button></div>`;
-  paint('allstudents',`<div class="selrow">${churchSel}</div>${genderBtns}<div class="selrow">${gradeSel}</div>
-    <div id="asList"><p class="note-hint">Choose a church to see its students and leaders.</p></div>`,'All Students','First Aid');
+  paint('allstudents',`<div class="selrow">${churchSel}${zoneSelEl}</div>${genderBtns}<div class="selrow">${gradeSel}</div>
+    <div id="asList"></div>`,'All Students','First Aid');
+  drawAllStudents();
 };
 function _asSetGender(g){_asGender=g;document.querySelectorAll('#asGender button').forEach(b=>b.classList.toggle('on',b.dataset.g===g));drawAllStudents();}
 function drawAllStudents(){
   const box=document.getElementById('asList');if(!box)return;
   const cid=sel('asChurch')||'';
-  if(!cid){box.innerHTML='<p class="note-hint">Choose a church to see its students and leaders.</p>';return;}
   const gr=sel('asGrade')||'all';
-  let list=(window._allStu||[]).filter(c=>c.churchId===cid);
+  const zn=sel('asZone')||'all';
+  const filtersApplied=!!cid||_asGender!=='all'||gr!=='all'||zn!=='all';
+  let list=window._allStu||[];
+  if(cid)list=list.filter(c=>c.churchId===cid);
   if(_asGender!=='all')list=list.filter(c=>c.gender===_asGender);
   if(gr!=='all')list=list.filter(c=>String(c.grade)===gr);
+  if(zn!=='all')list=list.filter(c=>c.zone===zn);
   list.sort((a,b)=>(a.lastName||'').localeCompare(b.lastName||'')||(a.firstName||'').localeCompare(b.firstName||''));
-  box.innerHTML=list.length?list.map(faResultRow).join(''):'<p class="note-hint">No one matches these filters.</p>';
+  box.innerHTML=list.length?list.map(faResultRow).join(''):(filtersApplied?'<p class="note-hint">No one matches these filters.</p>':'<p class="note-hint">No students or leaders found.</p>');
 }
 let _currentStudent=null;
 /* The first-aid detail flow (Student Info + Log action) is painted onto whichever first-aid
@@ -2244,7 +2267,7 @@ async function openStudentInfo(id){
   const alert=alertRows.length
     ? `<div class="fa-alert"><div class="ah">${icSm('medical')} Medical alert</div>
         ${alertRows.map(r=>`<div class="row"><span class="tag">${esc(r.tag)}</span><span class="b">${esc(r.b)}</span></div>`).join('')}</div>`
-    : `<div class="fa-alert"><div class="ah">${icSm('check')} No medical conditions recorded</div><div class="fa-calm">Nothing flagged for this student.</div></div>`;
+    : `<div class="fa-neutral"><div class="ah">${icSm('check')} No medical conditions recorded</div><div class="fa-calm">Nothing flagged for this student.</div></div>`;
   const consent=c.consentMedical
     ? `<div class="fa-consent yes">${ic('check')}<div>Medical consent — Granted<div class="sub">OK to administer first aid</div></div></div>`
     : `<div class="fa-consent no">${ic('alert')}<div>Medical consent — Not granted<div class="sub">Reach the leader / parent before treating</div></div></div>`;
@@ -2254,7 +2277,7 @@ async function openStudentInfo(id){
   const leadCard=(prim||back)
     ? `<div class="fa-lead"><div class="lh">${icSm('phone')} Ministry leader — contact first</div>
         ${leadBtn(prim,'pri')}${back?`<div style="margin-top:14px">${leadBtn(back,'sec')}</div>`:''}</div>`
-    : `<div class="fa-lead"><div class="lh">${icSm('phone')} Ministry leader</div><div class="sub" style="color:var(--warn)">No leader contact set — ask admin to add one.</div></div>`;
+    : `<div class="fa-alert"><div class="ah">${icSm('phone')} No leader contact on file</div><div class="fa-calm" style="color:var(--alert-ink)">Ask admin to add one before relying on this contact.</div></div>`;
   const medicare=c.medicareNumber?`<div class="card"><div class="lbl" style="margin-top:0">Medicare</div>
     <div class="kv"><span class="k">Number</span><span class="v" id="mcn" style="cursor:pointer;color:var(--blue)" onclick="revealMedicare('${c.id}')">[tap to show]</span></div>
     <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2)">Revealing is logged for the audit trail.</div></div>`:'';
@@ -2347,7 +2370,7 @@ let _faRecFilter='today';
 RENDER.records=async function(){
   let recs=[],page=[];
   try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=100'),api('/campers?pageSize=300').catch(()=>[])]);}
-  catch(e){paint('records','<p class="note-hint">'+esc(e.message)+'</p>','First-aid records','');return;}
+  catch(e){paint('records','<p class="err" style="display:block">'+esc(e.message)+'</p>','First-aid records','');return;}
   window._faRecsAll=recs||[];
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c.firstName+' '+c.lastName+(c.grade?' · Gr '+c.grade:'');});window._faCamperMap=cmap;
   paint('records',`<div class="search" style="padding:9px 14px"><span>${ic('search')}</span><input id="faRecQ" placeholder="Filter by student…" oninput="drawFaRecords()" aria-label="Filter records"></div>
@@ -2450,7 +2473,7 @@ async function runSearch(v){const box=document.getElementById('results');if(!box
       ${med.map(m=>`<span class="med">${esc(m)}</span> `).join('')}
       ${prim?`<div class="kv"><span class="k">Primary leader</span><span class="v">${esc(prim.name)} · ${telLink(prim.phone)}</span></div>`:''}
       ${back?`<div class="kv"><span class="k">Secondary leader</span><span class="v">${esc(back.name)} · ${telLink(back.phone)}</span></div>`:''}
-      ${!prim&&!back?'<div class="sub" style="color:#b45309">No leader contact set — ask admin to add one.</div>':''}
+      ${!prim&&!back?'<div class="sub" style="color:var(--warn)">No leader contact set — ask admin to add one.</div>':''}
       <div style="display:flex;gap:8px;margin-top:9px">
         ${prim?`<button class="btn sm" style="flex:1" onclick="reveal('${c.id}','${esc(prim.role)}')">${icSm('phone')} Call primary</button>`:''}
         ${back?`<button class="btn alt sm" style="flex:1" onclick="reveal('${c.id}','${esc(back.role)}')">Secondary</button>`:''}
@@ -2466,7 +2489,7 @@ RENDER.notifs=async function(){
   paint('notifs',`${canSend?`<button class="btn" onclick="go('compose')">${ic('edit')} Send a notice</button>`:`<p class="note-hint">Church accounts receive notices; zone leaders &amp; directors send.</p>`}
     ${feed.length?'':`<p class="note-hint">No ${CAMP_MODE==='pre-camp'?'pre-camp':'camp'} notices yet. Directors and Zone Leaders can post camp, zone or church updates here.</p>`}${feed.map(n=>`<div class="ncard ${n.priority==='urgent'?'urgent':n.scope==='zone'?'zone':''}">
       <div class="ntop"><span class="ntag">${n.scope==='camp'?icSm('diamond')+' Camp-wide':n.scope==='church'?'Church':esc(n.zone||'')+' Zone'}</span>
-      ${n.priority==='urgent'?'<span class="ntag" style="background:#fdecec;color:#b91c1c">Urgent</span>':''}
+      ${n.priority==='urgent'?'<span class="ntag" style="background:#fdecec;color:var(--danger)">Urgent</span>':''}
       <span class="ntime">${timeFmt(n.createdAt)}</span></div>
       <div class="ntitle">${esc(n.title)}</div><div class="nbody">${esc(n.body)}</div>
       <div class="rowsb" style="align-items:center;margin-top:6px"><div class="nfrom" style="margin:0">— ${esc(n.senderName)}</div>${canDelete?`<button class="btn ghost sm" onclick="deleteNotice('${n.id}')">Delete</button>`:''}</div></div>`).join('')}`,'Notices',CAMP_MODE==='pre-camp'?'Pre-camp updates':'Camp &amp; zone updates');
@@ -2681,7 +2704,7 @@ function drawAccom(){
     const used=entries.reduce((s,e)=>s+e.n,0);const rem=rm.capacity-used;
     const roomGender=entries.length?gByKey[entries[0].key].gender:null;
     const addable=roomGender?availGroups.filter(g=>g.gender===roomGender):availGroups;
-    const chips=entries.map(e=>{const g=gByKey[e.key];return `<div class="rowsb" style="align-items:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-top:6px"><span style="font-size:.7rem;line-height:1.3">${esc(g.church)} — ${g.label} (${e.n})</span><button class="btn ghost sm" onclick="removeAlloc('${rm.id}','${e.key}')">Remove</button></div>`;}).join('');
+    const chips=entries.map(e=>{const g=gByKey[e.key];return `<div class="rowsb" style="align-items:center;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-top:6px"><span style="font-size:var(--t-micro);line-height:1.3">${esc(g.church)} — ${g.label} (${e.n})</span><button class="btn ghost sm" onclick="removeAlloc('${rm.id}','${e.key}')">Remove</button></div>`;}).join('');
     const addSel=(rem>0&&addable.length)?`<select onchange="addAlloc('${rm.id}',this.value);this.value=''" style="width:100%;margin-top:8px"><option value="">+ Add ministry…</option>${addable.map(g=>`<option value="${g.key}">${esc(g.church)} — ${g.label} (${g.avail} left)</option>`).join('')}</select>`:(rem<=0?`<div class="sub" style="margin-top:8px">Room full.</div>`:`<div class="sub" style="margin-top:8px">${roomGender?'No more '+(roomGender==='male'?'Guys':'Girls')+' groups to add.':'All eligible groups are allocated.'}</div>`);
     const tone=used?'ok':'info';const lbl=used+'/'+rm.capacity;
     return `<div class="card"><div class="rowsb"><div style="font-weight:600">${icSm('classroom')} ${esc(rm.name)} <span class="sub">· cap ${rm.capacity}</span></div><span class="pill ${tone}">${lbl}</span></div>${chips}${addSel}</div>`;
@@ -2964,10 +2987,10 @@ async function openCamper(id,push=true){
     ${atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
   const fullName=p.fullName||p.firstName+' '+p.lastName;
   document.getElementById('camper').innerHTML=`<div class="detail-hd"><div class="av-lg">${initials(fullName)}</div>
-    <h2>${esc(fullName)}</h2><div style="color:#cfe0ff;font-size:.82rem">${esc(p.zone)} Zone · ${lead?'Leader (18+)':'Grade '+p.grade}</div></div>
+    <h2>${esc(fullName)}</h2><div style="color:#cfe0ff;font-size:.82rem">${esc(p.zone)} Zone · ${lead?'Leader (18+)':'Grade '+(p.grade||'—')}</div></div>
     <div class="card">
       <div class="kv"><span class="k">Church</span><span class="v">${esc(p.churchName)}</span></div>
-      <div class="kv"><span class="k">${lead?'Mobile':'Student mobile'}</span><span class="v"><a href="tel:${esc(p.mobile||'')}" style="color:#4f46e5;text-decoration:none">${esc(fmtPhone(p.mobile)||'—')}</a></span></div>
+      <div class="kv"><span class="k">${lead?'Mobile':'Student mobile'}</span><span class="v"><a href="tel:${esc(p.mobile||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(p.mobile)||'—')}</a></span></div>
       ${lead?'':`<div class="kv"><span class="k">Medical</span><span class="v">${(p.medicalConditions||[]).join(', ')||'—'}</span></div>
       <div class="kv"><span class="k">Dietary</span><span class="v">${(p.dietaryRequirements||[]).join(', ')||'—'}</span></div>
       ${p.otherMedications?`<div class="kv"><span class="k">Medication</span><span class="v">${esc(p.otherMedications)}</span></div>`:''}`}
@@ -2976,7 +2999,7 @@ async function openCamper(id,push=true){
     ${camp}
     ${lead?'':`<div class="card"><div class="h3" style="margin-top:0">Parent / guardian</div>
       <div class="kv"><span class="k">Name</span><span class="v">${esc(p.parentGuardianName||'—')}${p.parentRelation?' ('+esc(p.parentRelation)+')':''}</span></div>
-      <div class="kv"><span class="k">Phone</span><span class="v"><a href="tel:${esc(p.parentPhone||'')}" style="color:#4f46e5;text-decoration:none">${esc(fmtPhone(p.parentPhone)||'—')}</a></span></div></div>`}
+      <div class="kv"><span class="k">Phone</span><span class="v"><a href="tel:${esc(p.parentPhone||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(p.parentPhone)||'—')}</a></span></div></div>`}
     ${notesHtml}
     ${canReadCamperNotes()&&['arrived','checked_out','departed'].includes(p.lifecycle)?`<button class="btn alt" style="margin-top:12px;width:100%" onclick="notePrompt('${id}','${esc(fullName)}')">${icSm('note')} Add a note</button>`:''}`;
   const camperEl=document.getElementById('camper');
@@ -3006,7 +3029,7 @@ function signOutReview(id,name,isLeader){
   modal(`<h3>Review sign-out</h3><div class="card" style="margin:6px 0 10px">
     <div class="sub">${isLeader?'Leader':'Student'}</div><div class="nm">${esc(name)}</div>
     <div class="sub" style="margin-top:7px">Signed out by</div><div class="nm">${esc(leader)}</div>
-    <div class="sub" style="margin-top:7px">Reason</div><div style="font-size:.9rem">${esc(reason)}</div>
+    <div class="sub" style="margin-top:7px">Reason</div><div style="font-size:var(--t-body)">${esc(reason)}</div>
     ${isLeader?'':`<div class="sub" style="margin-top:7px">Parents met</div><div class="nm">${pm?'Yes':'No'}</div>`}</div>
     <button class="btn red" onclick="signOutConfirm()">Confirm &amp; sign out</button>
     <button class="btn ghost" style="margin-top:6px" onclick="signOutPrompt('${id}','${esc(name)}',${!!isLeader})">‹ Edit</button>`);
@@ -3045,11 +3068,11 @@ RENDER.devotional=async function(){
   const d=await api('/devotional/'+DEVO_DAY).catch(()=>null);
   const days=SETTINGS?.checkInDays||[];
   const daySeg=days.length>1?`<div class="seg">${days.map(dy=>`<button class="${dy===DEVO_DAY?'on':''}" onclick="selDevoDay('${dy}')">${new Date(dy+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',timeZone:'UTC'})}</button>`).join('')}</div>`:'';
-  paint('devotional',daySeg+(d?`<div class="hero" style="background:radial-gradient(130% 130% at 100% 0%,#06b6d4,#1e1b4b 78%)">
+  paint('devotional',daySeg+(d?`<div class="hero" style="background:radial-gradient(130% 130% at 100% 0%,var(--teal),var(--navy) 78%)">
     <div class="k">Verse of the day</div><h2 style="font-size:1.06rem;line-height:1.5;font-weight:700">"${esc(d.verse)}"</h2>
-    <div style="color:#a5f3fc;font-size:.84rem;font-weight:700;margin-top:6px">${esc(d.reference)}</div></div>
+    <div style="color:#a5f3fc;font-size:var(--t-sm);font-weight:700;margin-top:6px">${esc(d.reference)}</div></div>
     <div class="card"><div class="h3" style="margin-top:0">Reflection</div><p style="font-size:.92rem;color:#374151;line-height:1.65">${esc(d.reflection)}</p></div>
-    <div class="card" style="background:#f5f3ff;border-color:#ddd6fe"><div class="h3" style="margin-top:0;color:#5b21b6">Prayer</div><p style="font-size:.92rem;color:#3730a3;line-height:1.65;font-style:italic">${esc(d.prayer)}</p></div>`
+    <div class="card" style="background:var(--tint);border-color:var(--lav)"><div class="h3" style="margin-top:0;color:var(--violet-d)">Prayer</div><p style="font-size:.92rem;color:var(--violet-dd);line-height:1.65;font-style:italic">${esc(d.prayer)}</p></div>`
     :'<p class="note-hint">No devotional set for this day.</p>'),'Daily Devotional',dayLong(DEVO_DAY));
 };
 function selDevoDay(d){DEVO_DAY=d;RENDER.devotional();}
@@ -3197,7 +3220,7 @@ RENDER.incidents=async function(){
     const sev=i.severity==='high'?'<span class="pill warn">High</span>':'<span class="pill ok">Low</span>';
     const del=canDelete?`<button class="btn ghost sm" onclick="deleteIncident('${i.id}')">${icSm('trash')}</button>`:'';
     return `<div class="card"><div class="rowsb" style="align-items:center"><div class="nm">${sev}${i.zone?' <span class="sub">'+esc(i.zone)+' Zone</span>':''}</div>${del}</div>
-      <div style="font-size:.9rem;margin:6px 0;white-space:pre-wrap">${esc(i.summary)}</div>
+      <div style="font-size:var(--t-body);margin:6px 0;white-space:pre-wrap">${esc(i.summary)}</div>
       <div class="sub">${esc(i.createdByName||'—')} · ${dtFmt(i.createdAt)}</div></div>`;
   }).join(''):emptyState('alert','No incidents logged yet.');
   paint('incidents',`<div class="infobox" style="font-size:.82rem">Log a safeguarding or operational incident. <b>Low</b> is just recorded. <b>High</b> also alerts all leaders, directors and admins with an urgent notice.</div>
@@ -3244,6 +3267,8 @@ RENDER.admin=function(){
   // People & churches = Accounts & churches, Ministry contacts.
   // Data = Data Import, Data Export/Reset (+ Individual Student Data Edit, at-camp only —
   // not explicitly listed in the request but there's no other home for it in this console).
+  // Reviewed 2026-07-18 (frontend assessment, two independent passes): grouping is considered
+  // settled — please don't reactively reshuffle again without a deliberate pass.
   paint('admin',`<div class="infobox">Admin console — configure camp here year-round.</div>
     <div class="h3" style="margin:14px 0 6px">Camp setup</div>
     <div class="tiles">
@@ -3264,13 +3289,19 @@ RENDER.admin=function(){
     </div>`,'Admin console','Back office');
 };
 
-async function switchMode(){
+function switchMode(){
   const newMode=CAMP_MODE==='pre-camp'?'at-camp':'pre-camp';
   const label=newMode==='at-camp'?'AT CAMP (live operations)':'PRE-CAMP (registration prep)';
   const changes=newMode==='at-camp'
     ?'Everyone moves to live camp operations — daily check-in, notices and sign-out. Pre-camp registration tiles are hidden.'
-    :'Everyone moves back to pre-camp prep — registrations, payments and accommodation.\n\n⚠️ Anyone currently signed in at camp (students and leaders) will be automatically signed out.';
-  if(!confirm('Switch the whole app to '+label+'?\n\n'+changes))return;
+    :'Everyone moves back to pre-camp prep — registrations, payments and accommodation.<br><br>⚠️ Anyone currently signed in at camp (students and leaders) will be automatically signed out.';
+  modal(`<h3>Switch the whole app to ${esc(label)}?</h3>
+    <p class="sub" style="margin:8px 0 14px">${changes}</p>
+    <button class="btn" onclick="_switchModeConfirmed('${newMode}','${esc(label)}')">Switch mode</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+}
+async function _switchModeConfirmed(newMode,label){
+  closeModal();
   try{
     await api('/admin/mode',{method:'POST',body:{campMode:newMode}});
     CAMP_MODE=newMode;SETTINGS.campMode=newMode;
@@ -3289,8 +3320,8 @@ RENDER.adminAccounts=async function(){
   const leaders=users.filter(u=>leaderRoles.includes(u.role));
   const roleLabel=r=>r==='zoneLeader'?'Zone leader':r==='firstAid'?'First aid':r==='director'?'Director':r;
   const acctTile=o=>`<div class="tile" style="align-items:stretch;text-align:left;padding:12px;min-height:unset;cursor:default;gap:0">
-      <div style="font-weight:700;font-size:.84rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px">${o.title}</div>
-      <div style="font-size:.7rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px">${o.sub}</div>
+      <div style="font-weight:700;font-size:var(--t-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px">${o.title}</div>
+      <div style="font-size:var(--t-micro);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px">${o.sub}</div>
       <div style="display:flex;gap:4px;margin-top:auto;flex-wrap:nowrap">
         <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Account Info" aria-label="Account Info" onclick="${o.onName}">${ic('edit')}</button>
         <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="${o.onPass}">${ic('key')}</button>
@@ -3623,7 +3654,7 @@ RENDER.adminCloseOut=async function(){
   let defaultsSaved=null;
   try{const s=await api('/settings');if(s&&s.defaultsSavedAt)defaultsSaved=dtFmt(s.defaultsSavedAt);}catch(e){}
   const defItem=defaultsSaved
-    ? `<div class="kv" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:9px 11px;margin-bottom:12px"><span class="k" style="color:#065f46">${icSm('check')} Defaults saved</span><span class="v" style="color:#065f46">${esc(defaultsSaved)}</span></div>`
+    ? `<div class="kv" style="background:var(--consent-ok-bg);border:1px solid #a7f3d0;border-radius:10px;padding:9px 11px;margin-bottom:12px"><span class="k" style="color:#065f46">${icSm('check')} Defaults saved</span><span class="v" style="color:#065f46">${esc(defaultsSaved)}</span></div>`
     : `<div class="warnbox" style="margin-bottom:12px">${icSm('alert')} <b>Defaults not saved yet.</b> Run <b>Save Defaults</b> on the Data screen before rolling over — the rollover restores from that baseline. <button class="btn alt sm" style="margin-top:6px" onclick="go('adminData')">Go to Data</button></div>`;
   paint('adminCloseOut',`
     <div style="padding:12px 0 4px"><button class="btn ghost sm" onclick="go('adminData')">${icSm('arrowl')} Back</button></div>
@@ -3652,7 +3683,6 @@ function onCloseOutConfirmChange(){
 }
 async function doNewYear(){
   const year=(SETTINGS&&SETTINGS.year)?SETTINGS.year+1:new Date().getFullYear()+1;
-  if(!confirm('Roll over to year '+year+'? This cannot be undone.'))return;
   try{
     const s=await api('/admin/new-year',{method:'POST',body:{
       year,force:true,confirmWipe:'I understand this cannot be undone',
@@ -3665,7 +3695,7 @@ async function doNewYear(){
       // guard). They are shown here AND retained for the NEXT compliance export ("Temp
       // Passwords" tab, included once then cleared) — so they're recoverable if this modal
       // is dismissed. Copy them now and share securely.
-      pwHtml='<div class="card" style="background:#f0fdf4;border:1px solid #86efac"><div class="lbl" style="margin-top:0;color:#166534">Temp passwords for restored accounts</div>'+
+      pwHtml='<div class="card" style="background:var(--consent-ok-bg);border:1px solid #86efac"><div class="lbl" style="margin-top:0;color:#166534">Temp passwords for restored accounts</div>'+
         temps.map(t=>`<div class="kv"><span class="k">${esc(t.username)}</span><span class="v" style="font-family:monospace">${esc(t.tempPassword)}</span></div>`).join('')+
         '<p class="note-hint" style="color:#166534">Copy these now and share securely. They are also retained for your next compliance export (a "Temp Passwords" tab, included once then cleared). Leaders use them to sign in, then set their own password.</p></div>';
     }
@@ -3702,7 +3732,7 @@ RENDER.adminSettings=async function(){
       <div><label>End date (YYYY-MM-DD)</label><input class="fld" id="stEnd" type="date" value="${esc(s.endDate||'')}" onchange="renderCheckinDaysPreview()"></div>
     </div>
     <label>At-camp check-in days (auto-generated)</label>
-    <div id="stDaysPreview" class="sub" style="background:#f5f3ff;border-radius:10px;padding:9px 11px;font-size:.8rem;color:#5b21b6"></div>
+    <div id="stDaysPreview" class="sub" style="background:var(--tint);border-radius:10px;padding:9px 11px;font-size:.8rem;color:var(--violet-d)"></div>
     <!-- PC-4: tent/classroom price fields removed. Registration fees come from the uploaded
          data (per-registrant Cost), surfaced in Budget — not from settings. -->
     <label style="margin-top:16px">Account access</label>
@@ -3919,7 +3949,7 @@ async function _loadImportStamps(){
   const box=document.getElementById('impLastUploads');if(!box)return;
   let s=null;try{s=await api('/settings');}catch(e){}
   const row=(label,ts)=>`<div class="kv" style="padding:2px 0"><span class="k">${label}</span><span class="v">${ts?dtFmt(ts):'<span style="color:var(--muted)">Not yet imported</span>'}</span></div>`;
-  box.innerHTML=`<div class="lbl" style="margin-top:0;font-size:.7rem;color:var(--muted)">Last imported</div>${row('Form',s&&s.formImportedAt)}${row('Ticket List',s&&s.ticketsImportedAt)}${row('Invoice',s&&s.invoicesImportedAt)}`;
+  box.innerHTML=`<div class="lbl" style="margin-top:0;font-size:var(--t-micro);color:var(--muted)">Last imported</div>${row('Form',s&&s.formImportedAt)}${row('Ticket List',s&&s.ticketsImportedAt)}${row('Invoice',s&&s.invoicesImportedAt)}`;
 }
 
 /* ===== ADMIN DATA ===== */
@@ -4013,7 +4043,7 @@ async function offlineSignInUpload(){
     const unmatchedList=r.unmatched&&r.unmatched.length?`<p class="note-hint" style="text-align:left;margin-top:6px">Not matched: ${r.unmatched.map(esc).join(', ')}</p>`:'';
     if(box){box.innerHTML=`<div class="callbox">${icSm('check')} ${bits.join(' · ')}</div>${unmatchedList}`;}
     toast('Offline sign-in applied');
-  }catch(e){if(box)box.innerHTML='<p class="note-hint">'+esc(e.message||'Import failed')+'</p>';else toast(e.message||'Import failed');}
+  }catch(e){if(box)box.innerHTML='<p class="err" style="display:block">'+esc(e.message||'Import failed')+'</p>';else toast(e.message||'Import failed');}
   finally{input.value='';}
 }
 
@@ -4063,7 +4093,7 @@ function _renderAllocCards(){
         <div>
           <div style="font-weight:600">${esc(o.personName)}</div>
           <div class="sub">${esc(o.formChurch||'—')} → <b>${esc(o.assignedChurchName)}</b></div>
-          <div class="sub" style="font-size:.7rem;color:var(--muted)">${o.kind==='unallocated'?'Allocated from unlisted':'Overridden'} · ${esc(o.createdBy)} · ${dtFmt(o.updatedAt)}</div>
+          <div class="sub" style="font-size:var(--t-micro);color:var(--muted)">${o.kind==='unallocated'?'Allocated from unlisted':'Overridden'} · ${esc(o.createdBy)} · ${dtFmt(o.updatedAt)}</div>
         </div>
         <button class="btn ghost" onclick="undoOverride('${esc(o.id)}')">Undo</button>
       </div>
@@ -4396,9 +4426,21 @@ function adminNewYear(){
     <button class="btn" onclick="closeModal();go('adminRecords')">Go to Records &amp; Export ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
-async function adminReset(){
-  if(!confirm('FULL RESET — wipe to bare.\n\nThis permanently deletes EVERY church, EVERY login account (except this admin), and ALL registrants, campers, notes, notifications, and the saved setup scaffold (accommodation, FAQ, schedule, devotionals). Only this admin account and the camp settings remain.\n\nThis is NOT the year rollover (that keeps your churches & scaffold). It cannot be undone, and you will be signed out immediately.'))return;
-  if(prompt('Type exactly: I understand this cannot be undone')!=='I understand this cannot be undone'){toast('Reset cancelled — confirmation text did not match');return;}
+function adminReset(){
+  modal(`<h3>FULL RESET — wipe to bare</h3>
+    <p class="sub" style="margin:8px 0 14px">This permanently deletes EVERY church, EVERY login account (except this admin), and ALL registrants, campers, notes, notifications, and the saved setup scaffold (accommodation, FAQ, schedule, devotionals). Only this admin account and the camp settings remain.<br><br>This is NOT the year rollover (that keeps your churches &amp; scaffold). It cannot be undone, and you will be signed out immediately.</p>
+    <label>Type exactly: I understand this cannot be undone</label>
+    <input class="fld" id="resetConfirmText" oninput="onResetConfirmChange()" placeholder="I understand this cannot be undone" autocomplete="off">
+    <button class="btn red" id="resetConfirmBtn" disabled style="margin-top:10px" onclick="_adminResetConfirmed()">Confirm full reset</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+}
+function onResetConfirmChange(){
+  const v=document.getElementById('resetConfirmText')?.value||'';
+  const btn=document.getElementById('resetConfirmBtn');
+  if(btn)btn.disabled=(v!=='I understand this cannot be undone');
+}
+async function _adminResetConfirmed(){
+  closeModal();
   try{
     await api('/admin/reset',{method:'POST',body:{force:true,confirmWipe:'I understand this cannot be undone'}});
     alert('Full reset complete. Signing out.');logout();
@@ -4441,7 +4483,7 @@ function _renderImportUnknown(unknown){
   const rows=unknown.map((u,i)=>`<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
     <div style="font-weight:700">${esc(u.name)}</div>
     <div class="sub" style="margin:2px 0 6px">Couldn't identify this file. Columns found: ${esc(u.headers.slice(0,8).join(', '))}${u.headers.length>8?'…':''}</div>
-    <label style="font-size:.7rem">Treat as</label>
+    <label style="font-size:var(--t-micro)">Treat as</label>
     <select class="fld" id="impUnk_${i}"><option value="">— skip this file —</option><option value="form">Form</option><option value="tickets">Ticket List</option><option value="invoices">Invoice</option></select>
   </div>`).join('');
   box.innerHTML=`<div class="warnbox">${icSm('alert')} ${unknown.length} file${unknown.length===1?'':'s'} not recognised as a Form, Ticket List or Invoice export. Pick a type (or skip), then continue.</div>
@@ -4480,12 +4522,12 @@ async function _renderImportPreview(){
   // Per-file summary cards.
   const cards=results.map(({b,r,err})=>{
     if(err)return `<div class="warnbox">${esc(b.name)} (${IMPORT_TYPES[b.type].label}): ${esc(err)}</div>`;
-    const del=r.deleted?` \xb7 <b style="color:#b91c1c">${r.deleted} to delete</b>`:'';
+    const del=r.deleted?` \xb7 <b style="color:var(--danger)">${r.deleted} to delete</b>`:'';
     // A Ticket/Invoice orphan/unmatched warning is misleading while an unrun Form sits in the same
     // batch (matches only happen once the Form is committed first), so suppress it in that case.
     const extra=(b.type!=='form'&&formInBatch)?`<span style="color:var(--muted)">Matches finalise after the Form import runs first.</span>`:_importExtraLine(b.type,r);
     const errs=(r.errors||[]);
-    const errList=errs.length?`<div style="margin-top:4px">${errs.slice(0,8).map(e=>`<div style="color:#b91c1c;font-size:.76rem">Row ${e.row}: ${esc(e.message)}</div>`).join('')}${errs.length>8?`<div class="sub">+${errs.length-8} more error${errs.length-8===1?'':'s'}</div>`:''}</div>`:'';
+    const errList=errs.length?`<div style="margin-top:4px">${errs.slice(0,8).map(e=>`<div style="color:var(--danger);font-size:.76rem">Row ${e.row}: ${esc(e.message)}</div>`).join('')}${errs.length>8?`<div class="sub">+${errs.length-8} more error${errs.length-8===1?'':'s'}</div>`:''}</div>`:'';
     return `<div style="border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px">
       <div class="rowsb" style="align-items:center"><b style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.name)}</b><span class="pill info" style="flex:none">${IMPORT_TYPES[b.type].label}</span></div>
       <div class="sub" style="margin-top:2px">${r.created} to add \xb7 ${r.updated} to update \xb7 ${r.skipped} to skip${del} \xb7 ${errs.length} error${errs.length===1?'':'s'}</div>
@@ -4502,9 +4544,9 @@ async function _renderImportPreview(){
     const rows=phantoms.map((n,i)=>`<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
       <div style="font-weight:700;margin-bottom:6px">${esc(n)}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <div style="flex:1;min-width:130px"><label style="font-size:.7rem">Zone</label>${zoneSel('pzZone_'+i)}</div>
-        <div style="flex:2;min-width:140px"><label style="font-size:.7rem">Username</label><input class="fld" id="pzUser_${i}" value="${esc(autoUser(n))}" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
-        <div style="flex:2;min-width:140px"><label style="font-size:.7rem">Password (min 6)</label><input class="fld" id="pzPass_${i}" placeholder="min 6 chars"></div>
+        <div style="flex:1;min-width:130px"><label style="font-size:var(--t-micro)">Zone</label>${zoneSel('pzZone_'+i)}</div>
+        <div style="flex:2;min-width:140px"><label style="font-size:var(--t-micro)">Username</label><input class="fld" id="pzUser_${i}" value="${esc(autoUser(n))}" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
+        <div style="flex:2;min-width:140px"><label style="font-size:var(--t-micro)">Password (min 6)</label><input class="fld" id="pzPass_${i}" placeholder="min 6 chars"></div>
       </div></div>`).join('');
     phantomHtml=`<div class="warnbox">${icSm('alert')} ${phantoms.length} unrecognised church${phantoms.length===1?'':'es'} in the Form file — set zone, username &amp; password to create them first:</div>
       ${rows}
@@ -4695,7 +4737,7 @@ RENDER.adminContacts=async function(){
     const pair=(lbl,n,p,nv,pv)=>`<label>${lbl}</label><div style="display:flex;gap:6px"><input class="fld" id="${n}" placeholder="Name" value="${esc(nv||'')}"><input class="fld" id="${p}" placeholder="Phone" value="${esc(pv||'')}"></div>`;
     return `<div class="card" style="padding:0;overflow:hidden">
       <div class="rowsb" style="padding:13px 14px;cursor:pointer" onclick="toggleContactCard('${c.id}')">
-        <div style="min-width:0"><div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div><div class="sub" style="font-size:.74rem">${esc(c.zone||'—')}</div></div>
+        <div style="min-width:0"><div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div><div class="sub" style="font-size:var(--t-xs)">${esc(c.zone||'—')}</div></div>
         <div style="display:flex;align-items:center;gap:8px;flex:none">
           <span class="pill ${pill}" id="contactPill_${c.id}">${filled}/4 Contacts</span>
           <span id="contactChev_${c.id}" style="display:inline-flex;transition:transform .15s;color:var(--muted)">${ic('chevron')}</span>
