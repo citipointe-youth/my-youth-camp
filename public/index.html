@@ -2184,9 +2184,13 @@ function faResultRow(c){
     <div class="sub" style="color:var(--ink-2)">${metaBits}${grade}</div></div>
     <span style="color:var(--lav-2)">${ic('chevron')}</span></div>`;
 }
-/* FA2: All Students — first-aider picks a church, then filters by gender (buttons) and grade
-   (dropdown). Lists students AND leaders for that church (anyone registered, any presence state);
-   tapping opens the same Student Info card. Data = /campers?scope=all (camp-wide, role-scoped). */
+/* FA2: All Students — camp-wide fallback for when search-by-name isn't enough (e.g. "kid near
+   tent 4", no known name). Renders the FULL roster on open, then narrows by whichever of
+   church/zone/gender/grade the first-aider actually sets — church is one optional filter among
+   several, not a prerequisite. Lists students AND leaders (anyone registered, any presence
+   state); tapping opens the same Student Info card. Data = /campers?scope=all (camp-wide,
+   role-scoped). No pagination/virtualization: a flat map/join of a few hundred simple rows is
+   fine on a modern phone; this app has no lazy-render pattern anywhere else. */
 let _asGender='all';
 RENDER.allstudents=async function(){
   let all;try{all=await api('/campers?scope=all');}catch(e){paint('allstudents','<p class="note-hint">'+esc(e.message)+'</p>','All Students','First Aid');return;}
@@ -2196,26 +2200,31 @@ RENDER.allstudents=async function(){
   const churches=Object.entries(cmap).map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name));
   const grades=[...new Set(all.map(c=>c.grade).filter(g=>g!=null))].sort((a,b)=>a-b);
   _asGender='all';
-  const churchSel=`<div><label>Church ${helpTip('Pick a church to see its registered students and leaders. People not on site show in red.')}</label><select id="asChurch" onchange="drawAllStudents()"><option value="">Choose a church…</option>${churches.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>`;
+  const churchSel=`<div><label>Church ${helpTip('Narrow to one church, or leave as "All churches" to see everyone camp-wide. People not on site show in red.')}</label><select id="asChurch" onchange="drawAllStudents()"><option value="">All churches</option>${churches.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>`;
+  const zoneSelEl=`<div><label>Zone</label><select id="asZone" onchange="drawAllStudents()"><option value="all">All zones</option>${ZONE_OPTS.map(z=>`<option value="${z}">${z}</option>`).join('')}</select></div>`;
   const gradeSel=`<div><label>Grade</label><select id="asGrade" onchange="drawAllStudents()"><option value="all">All grades</option>${grades.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}</select></div>`;
   const genderBtns=`<div class="fa-seg" id="asGender">
     <button class="on" data-g="all" onclick="_asSetGender('all')">All</button>
     <button data-g="male" onclick="_asSetGender('male')">Guys</button>
     <button data-g="female" onclick="_asSetGender('female')">Girls</button></div>`;
-  paint('allstudents',`<div class="selrow">${churchSel}</div>${genderBtns}<div class="selrow">${gradeSel}</div>
-    <div id="asList"><p class="note-hint">Choose a church to see its students and leaders.</p></div>`,'All Students','First Aid');
+  paint('allstudents',`<div class="selrow">${churchSel}${zoneSelEl}</div>${genderBtns}<div class="selrow">${gradeSel}</div>
+    <div id="asList"></div>`,'All Students','First Aid');
+  drawAllStudents();
 };
 function _asSetGender(g){_asGender=g;document.querySelectorAll('#asGender button').forEach(b=>b.classList.toggle('on',b.dataset.g===g));drawAllStudents();}
 function drawAllStudents(){
   const box=document.getElementById('asList');if(!box)return;
   const cid=sel('asChurch')||'';
-  if(!cid){box.innerHTML='<p class="note-hint">Choose a church to see its students and leaders.</p>';return;}
   const gr=sel('asGrade')||'all';
-  let list=(window._allStu||[]).filter(c=>c.churchId===cid);
+  const zn=sel('asZone')||'all';
+  const filtersApplied=!!cid||_asGender!=='all'||gr!=='all'||zn!=='all';
+  let list=window._allStu||[];
+  if(cid)list=list.filter(c=>c.churchId===cid);
   if(_asGender!=='all')list=list.filter(c=>c.gender===_asGender);
   if(gr!=='all')list=list.filter(c=>String(c.grade)===gr);
+  if(zn!=='all')list=list.filter(c=>c.zone===zn);
   list.sort((a,b)=>(a.lastName||'').localeCompare(b.lastName||'')||(a.firstName||'').localeCompare(b.firstName||''));
-  box.innerHTML=list.length?list.map(faResultRow).join(''):'<p class="note-hint">No one matches these filters.</p>';
+  box.innerHTML=list.length?list.map(faResultRow).join(''):(filtersApplied?'<p class="note-hint">No one matches these filters.</p>':'<p class="note-hint">No students or leaders found.</p>');
 }
 let _currentStudent=null;
 /* The first-aid detail flow (Student Info + Log action) is painted onto whichever first-aid
