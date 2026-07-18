@@ -382,6 +382,8 @@ textarea{min-height:84px;resize:vertical;}
 .fa-seg{display:flex;gap:6px;margin-bottom:10px;}
 .fa-seg button{flex:1;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:10px;padding:8px;font-weight:700;font-family:inherit;font-size:var(--t-sm);cursor:pointer;}
 .fa-seg button.on{background:var(--chip);border-color:var(--blue);color:var(--blue);}
+.fa-seg.wrap{flex-wrap:wrap;}
+.fa-seg.wrap button{flex:0 0 auto;padding:8px 14px;}
 @media(min-width:540px){.statband-4{grid-template-columns:repeat(4,1fr);}}
 /* ── Reusable help tooltip (?) — works on hover (desktop) and tap (mobile via .open) ──
    Use helpTip('plain text') in any markup. Written for leaders who didn't build the app. */
@@ -2193,7 +2195,6 @@ function faResultRow(c){
   const presence=showPresence?(offSite?'<span style="color:var(--danger);font-weight:700">signed out / not on site</span>':'on site'):'';
   const metaBits=[esc(c.churchName||''),esc(c.zone||'')+' Zone',presence].filter(Boolean).join(' · ');
   return `<div class="row" onclick="openStudentInfo('${c.id}')">
-    ${_faBubble(c)}
     <div style="flex:1;min-width:0"><div class="nm">${esc((c.firstName||'')+' '+(c.lastName||''))}${hasMed?' <span class="pill" style="background:var(--alert-bg);color:var(--alert-ink);border:1px solid var(--alert-bd)">medical</span>':''}${flag}</div>
     <div class="sub" style="color:var(--ink-2)">${metaBits}${grade}</div></div>
     <span style="color:var(--lav-2)">${ic('chevron')}</span></div>`;
@@ -2206,6 +2207,7 @@ function faResultRow(c){
    role-scoped). No pagination/virtualization: a flat map/join of a few hundred simple rows is
    fine on a modern phone; this app has no lazy-render pattern anywhere else. */
 let _asGender='all';
+let _asGrade='all';
 RENDER.allstudents=async function(){
   let all;try{all=await api('/campers?scope=all');}catch(e){paint('allstudents','<p class="err" style="display:block">'+esc(e.message)+'</p>','All Students','First Aid');return;}
   all=(all||[]).filter(c=>c.lifecycle!=='cancelled');
@@ -2214,28 +2216,31 @@ RENDER.allstudents=async function(){
   const churches=Object.entries(cmap).map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name));
   const grades=[...new Set(all.map(c=>c.grade).filter(g=>g!=null))].sort((a,b)=>a-b);
   _asGender='all';
+  _asGrade='all';
   const churchSel=`<div><label>Church ${helpTip('Narrow to one church, or leave as "All churches" to see everyone camp-wide. People not on site show in red.')}</label><select id="asChurch" onchange="drawAllStudents()"><option value="">All churches</option>${churches.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>`;
   const zoneSelEl=`<div><label>Zone</label><select id="asZone" onchange="drawAllStudents()"><option value="all">All zones</option>${ZONE_OPTS.map(z=>`<option value="${z}">${z}</option>`).join('')}</select></div>`;
-  const gradeSel=`<div><label>Grade</label><select id="asGrade" onchange="drawAllStudents()"><option value="all">All grades</option>${grades.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}</select></div>`;
   const genderBtns=`<div class="fa-seg" id="asGender">
     <button class="on" data-g="all" onclick="_asSetGender('all')">All</button>
     <button data-g="male" onclick="_asSetGender('male')">Guys</button>
     <button data-g="female" onclick="_asSetGender('female')">Girls</button></div>`;
-  paint('allstudents',`<div class="selrow">${churchSel}${zoneSelEl}</div>${genderBtns}<div class="selrow">${gradeSel}</div>
+  const gradeBtns=`<div class="fa-seg wrap" id="asGradeBtns">
+    <button class="on" data-g="all" onclick="_asSetGrade('all')">All grades</button>
+    ${grades.map(g=>`<button data-g="${g}" onclick="_asSetGrade('${g}')">Yr ${g}</button>`).join('')}</div>`;
+  paint('allstudents',`<div class="selrow">${churchSel}${zoneSelEl}</div>${genderBtns}${gradeBtns}
     <div id="asList"></div>`,'All Students','First Aid');
   drawAllStudents();
 };
 function _asSetGender(g){_asGender=g;document.querySelectorAll('#asGender button').forEach(b=>b.classList.toggle('on',b.dataset.g===g));drawAllStudents();}
+function _asSetGrade(g){_asGrade=g;document.querySelectorAll('#asGradeBtns button').forEach(b=>b.classList.toggle('on',b.dataset.g===g));drawAllStudents();}
 function drawAllStudents(){
   const box=document.getElementById('asList');if(!box)return;
   const cid=sel('asChurch')||'';
-  const gr=sel('asGrade')||'all';
   const zn=sel('asZone')||'all';
-  const filtersApplied=!!cid||_asGender!=='all'||gr!=='all'||zn!=='all';
+  const filtersApplied=!!cid||_asGender!=='all'||_asGrade!=='all'||zn!=='all';
   let list=window._allStu||[];
   if(cid)list=list.filter(c=>c.churchId===cid);
   if(_asGender!=='all')list=list.filter(c=>c.gender===_asGender);
-  if(gr!=='all')list=list.filter(c=>String(c.grade)===gr);
+  if(_asGrade!=='all')list=list.filter(c=>String(c.grade)===_asGrade);
   if(zn!=='all')list=list.filter(c=>c.zone===zn);
   list.sort((a,b)=>(a.lastName||'').localeCompare(b.lastName||'')||(a.firstName||'').localeCompare(b.firstName||''));
   box.innerHTML=list.length?list.map(faResultRow).join(''):(filtersApplied?'<p class="note-hint">No one matches these filters.</p>':'<p class="note-hint">No students or leaders found.</p>');
