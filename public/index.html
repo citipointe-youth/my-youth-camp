@@ -1170,6 +1170,9 @@ function _applyModeChange(mode){
   if(SETTINGS)SETTINGS.campMode=mode;
   SESSIONS=[];SEL_SESSION=null; // mode-specific data must be refetched
   updateModeUI();buildTabs();
+  // This function only runs when a REAL change was just detected (the mode===CAMP_MODE guard
+  // above already dedupes it) — safe to always announce, no separate one-time flag needed.
+  toast('Camp switched to '+(mode==='at-camp'?'At Camp':'Pre-Camp')+' mode');
   const cur=STACK[STACK.length-1]||'home';
   const tabs=new Set(navModel(ACTOR.role,CAMP_MODE).tabs.map(t=>t.id));
   const owner=TAB_OF[cur]||cur;
