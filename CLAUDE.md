@@ -1247,6 +1247,80 @@ pass. `sw.js` `camp-v28`→`camp-v29`.
   local `const churches` (the distinct church-name list for the Ministry filter dropdown) is
   already declared later in the same function; the fetched array is named `churchRows` instead.
 
+## Frontend fixes batch — two-pass UX review — deployed 2026-07-19
+
+Two independent frontend reviews (own pass + a blind second-opinion subagent, combined into
+one published artifact) produced 14 findings, prioritised Now/Next/Later. Plan written to
+`docs/FRONTEND-FIXES-PLAN-2026-07-18.md` before implementation; owner pre-authorized the full
+batch (all 3 tiers) including deploy, so this shipped in one session rather than the usual
+review-then-approve cadence. **SPA-only** (`public/index.html`), no backend/schema change.
+`npm run typecheck` clean, `npm run test` = 2132 pass. `sw.js` `camp-v29`→`camp-v30`.
+Multiple pieces were built in parallel by isolated Sonnet subagents (git worktrees, merged
+sequentially to avoid stomping each other in this single 4,800-line file) — see the commit
+history on the (now-merged, deleted) `frontend-fixes` branch for the individual subagent
+commits if you need the granular diffs.
+
+- **Grade null bug.** `'Grade '+p.grade`/`'Grade '+s.grade` (Student Info + My Youth heroes,
+  the two highest-traffic profile screens) now guard with `||'—'`, matching the pattern already
+  used elsewhere in the file.
+- **Check-in session picker overflow.** `#dayseg` (the twice-daily session picker — 8-13
+  buttons on a normal 5-7 day camp, not the 4-day/6-session test camp this was originally
+  missed on) now scrolls + snaps instead of squeezing labels unreadable past ~6 sessions.
+- **First Aid alert-box severity was backwards.** "No medical conditions" (reassuring) used to
+  render in the same loud amber `.fa-alert` box as a real medical flag; "no leader contact on
+  file" (the actually actionable gap) rendered in the quiet `.fa-lead` card. Swapped: reassuring
+  cases now use a new `.fa-neutral` shell (same box as `.fa-lead`, generic name since it's not
+  leader-specific); "no leader contact" now uses `.fa-alert`.
+- **3 highest-blast-radius `confirm()`/`prompt()` sites → in-page modal** (`switchMode`,
+  `adminReset` full-wipe, `doNewYear` rollover) — the app's own `.sheet`/`#modal` system was
+  already good where used (Account Preview), native dialogs block the JS thread and one was
+  confirmed to freeze a tab solid during testing. `adminReset`'s type-to-confirm text ("I
+  understand this cannot be undone") now lives in the modal with a disabled-until-exact-match
+  button, mirroring the close-out screen's existing 3-checkbox pattern. `doNewYear`'s
+  `confirm()` was **deleted outright, not modalised** — its only caller (`RENDER.adminCloseOut`)
+  already gates the trigger button behind those same 3 checkboxes, so the native dialog was
+  pure redundancy. The other 13 `confirm()`/`prompt()` call-sites in the file are unchanged
+  (out of scope by design — see the plan doc for the full list).
+- **First Aid "All Students" no longer requires picking a church first.** `RENDER.allstudents`
+  renders the full camp-wide roster on open (church/zone[new]/gender/grade all optional
+  filters now, church no longer a prerequisite). **No pagination/virtualization added** — this
+  app has no lazy-render pattern anywhere else, and a flat `.map().join('')` of a few hundred
+  simple rows is expected to be fine; flag it if a real 400+-person camp shows jank on-device,
+  it's an easy follow-up if actually needed.
+- **Design-token dedup pass.** ~35 of the ~200 hardcoded hex-color/font-size literals scattered
+  through the JS template strings were tokenized onto existing `--root` tokens — deliberately
+  conservative (pure 1:1 value substitution only; ambiguous near-matches were left alone rather
+  than force-mapped, to guarantee zero rendering change). "Not on site" pill now uses the
+  existing `.pill.warn` modifier instead of a hand-rolled inline style.
+- **Mode-switch now announces itself.** `_applyModeChange()` (the function both the cross-tab
+  `storage` listener and the on-refocus `visibilitychange` handler funnel through) used to
+  update the UI silently; it now toasts "Camp switched to At Camp/Pre-Camp mode". The function's
+  existing `mode===CAMP_MODE` guard already means it only ever runs on a genuine change, so no
+  separate one-time/dedup flag was needed.
+- **Two review findings turned out to be non-issues on investigation** (documented rather than
+  silently dropped, since the original report is still published and shouldn't be treated as
+  gospel by a future session): (1) the review's "unify the two day computations" concern —
+  `_realCampDayNumber()` (real at-camp) vs `SETTINGS.campDay` (the `PREVIEW_MODE`-only manual
+  toggle) are deliberately separate, already documented at their declaration, and never both
+  active at once — no drift risk. (2) the review's "add optimistic UI to check-in" — check-in
+  already has a full optimistic-update implementation (`CHECKIN_QUEUE`, `drainQueue`,
+  `_optimisticState`, a failure-retry banner, a 4s undo window — see the `B-1`-tagged comments),
+  added in an earlier batch after the review's source material was written.
+- **Also fixed while auditing error states:** 4 genuine fetch-failure `catch` blocks (`_navTo`,
+  `RENDER.allstudents`, `RENDER.records`, `offlineSignInUpload`) were using the muted
+  `.note-hint` style instead of the alarm-styled `.err` class. **Correction to the original
+  finding:** `.err` turned out to be used *only* by the two login-form errors before this,
+  not an established general-error system app-wide — so this was a small, targeted extension of
+  `.err`'s usage, not a "restore consistency" fix. `.err` defaults to `display:none` (built for
+  the static login-error divs, toggled via JS) — the 4 new usages needed an explicit
+  `style="display:block"` since they're freshly-created elements, not toggled ones.
+- Admin console tile grouping and the check-in tab id/label drift were **documented, not
+  changed** (both were explicit Now/Next-tier decisions to leave alone — see the plan doc).
+- **Deliberately out of scope for this session:** live browser/device testing — the owner is
+  doing a manual phone pass themselves afterward, specifically on the session picker at 8+
+  sessions, the full unfiltered 400+-entry roster, the First Aid alert box, and the new
+  confirm-modal flow (see `docs/FRONTEND-FIXES-PLAN-2026-07-18.md`'s checklist).
+
 ## Architecture
 
 ```
