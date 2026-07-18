@@ -231,6 +231,9 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .seg{display:flex;background:var(--chip);border-radius:14px;padding:4px;gap:4px;margin-bottom:12px;}
 .seg button{flex:1;border:none;background:none;padding:9px 4px;border-radius:10px;font-size:var(--t-sm);font-weight:700;color:var(--muted);cursor:pointer;transition:background .15s,color .15s,box-shadow .15s;font-family:inherit;}
 .seg button.on{background:#fff;color:var(--blue);box-shadow:0 2px 8px rgba(79,70,229,.15);}
+/* Check-in session picker can grow to 8-13 buttons on a normal-length camp — scroll instead of squeezing labels unreadable. */
+#dayseg{overflow-x:auto;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;flex-wrap:nowrap;}
+#dayseg button{flex:0 0 auto;min-width:68px;scroll-snap-align:start;}
 .filters{display:flex;gap:8px;margin-bottom:11px;}
 .filters select{flex:1;font-size:var(--t-sm);padding:8px 10px;}
 .ncard{background:#fff;border:1px solid var(--line);border-left:4px solid var(--lav-2);border-radius:14px;padding:12px 14px;margin-bottom:9px;}
@@ -260,6 +263,9 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .fa-alert .tag{font-size:var(--t-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--alert-ink);background:#fff;border:1px solid var(--alert-bd);padding:3px 7px;border-radius:6px;flex:none;min-width:72px;text-align:center;}
 .fa-alert .b{font-weight:700;font-size:var(--t-sm);}
 .fa-calm{font-size:var(--t-sm);color:var(--ink-2);font-weight:600;}
+/* Quiet counterpart to .fa-alert for reassuring ("nothing flagged") cases — same shell as .fa-lead, kept generic since it's not leader-specific. */
+.fa-neutral{border:1.5px solid var(--lav);background:var(--card);border-radius:var(--r);padding:var(--s4);margin-bottom:var(--s3);box-shadow:var(--shadow-sm);}
+.fa-neutral .ah{display:flex;align-items:center;gap:8px;font-weight:800;color:var(--ink-2);font-size:var(--t-h3);margin-bottom:var(--s2);}
 .fa-consent{display:flex;align-items:center;gap:11px;border-radius:var(--r);padding:13px var(--s4);margin-bottom:var(--s3);font-weight:800;}
 .fa-consent .ic-svg{flex:none;}
 .fa-consent.yes{background:var(--consent-ok-bg);border:1px solid var(--consent-ok-bd);color:var(--consent-ok-ink);}
@@ -405,7 +411,9 @@ textarea{min-height:84px;resize:vertical;}
 .gradepill{font-size:var(--t-micro);font-weight:800;background:#eef2f8;color:#475569;border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
 .err{background:#fde2e1;color:#7f1d1d;border-radius:10px;padding:9px 12px;font-size:var(--t-sm);margin-top:8px;display:none;}
 /* Login is white-background / purple-text to match the in-app theme (was dark gradient). */
-#login,#mcpGate{position:absolute;inset:0;background:#fff;display:flex;flex-direction:column;justify-content:center;padding:28px;z-index:60;}
+#login,#mcpGate{position:absolute;inset:0;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;z-index:60;}
+/* Match .app's own containment discipline (460-820px stepped) instead of stretching edge-to-edge on wide screens. */
+#login>*,#mcpGate>*{width:100%;max-width:420px;}
 #login h1,#mcpGate h1{color:var(--violet);font-size:1.85rem;text-align:center;margin-bottom:5px;letter-spacing:-.03em;font-weight:800;}
 #login p,#mcpGate p{color:var(--purple);text-align:center;font-size:var(--t-sm);margin-bottom:22px;font-weight:600;}
 #login .card,#mcpGate .card{background:#fff;border:1px solid var(--line);box-shadow:0 14px 40px rgba(124,58,237,.12);border-radius:20px;}
@@ -1219,7 +1227,7 @@ async function _navTo(id,arg){
   const hasContent=el&&el.innerHTML.trim()!==''&&!el.querySelector('.loading');
   if(hasContent)_showScreen(id);else _spinner(id);
   try{ if(RENDER[id]) await RENDER[id](arg,tok); }
-  catch(e){ if(!_stale(tok)) { const el2=document.getElementById(id); if(el2)el2.innerHTML='<p class="note-hint">'+esc(e.message||'Something went wrong')+'</p>'; } }
+  catch(e){ if(!_stale(tok)) { const el2=document.getElementById(id); if(el2)el2.innerHTML='<p class="err" style="display:block">'+esc(e.message||'Something went wrong')+'</p>'; } }
 }
 async function go(id,arg){STACK.push(id);await _navTo(id,arg);}
 async function gotoTab(id){
@@ -1274,6 +1282,9 @@ function paint(id,html,t,s){
    broken admin at-camp sidebar — AC-5/D2). The sidebar list = tabs ++ extras, in order. */
 function navModel(role,mode){
   const T=(id,icon,label)=>({id,icon,label});
+  // Tab id stays 'checkin' regardless of phase — only the visible label swaps between
+  // 'Sign-in' and 'Check-in'. Intentional (keeps STACK/routing stable across the swap);
+  // don't assume a search for "sign-in" will find this tab by id.
   const _ci=()=> (typeof campPhase==='function'&&campPhase()==='signin')
     ? T('checkin','check','Sign-in') : T('checkin','check','Check-in');
   if(role==='firstAid'){
@@ -1772,7 +1783,7 @@ function _paintPerson(s){
   const isL=s.kind==='leader';
   const body=`<div class="detail-hd"><div class="av-lg">${initials(s.firstName+' '+s.lastName)}</div>
     <h2>${esc(s.firstName+' '+s.lastName)}</h2>
-    <div style="color:#cfe0ff;font-size:.82rem">${esc(s.churchName)} · ${esc(s.zone)} Zone · ${isL?'Leader (18+)':'Grade '+s.grade}</div></div>
+    <div style="color:#cfe0ff;font-size:.82rem">${esc(s.churchName)} · ${esc(s.zone)} Zone · ${isL?'Leader (18+)':'Grade '+(s.grade||'—')}</div></div>
     <div class="card">
       <div class="kv2"><span class="k">Accommodation</span><span class="v">${esc(accDisplay(s))}</span></div>
       ${isL?'':`<div class="kv2"><span class="k">Dietary</span><span class="v">${esc((s.dietaryRequirements||[]).join(', ')||'—')}</span></div>
@@ -2189,7 +2200,7 @@ function faResultRow(c){
    tapping opens the same Student Info card. Data = /campers?scope=all (camp-wide, role-scoped). */
 let _asGender='all';
 RENDER.allstudents=async function(){
-  let all;try{all=await api('/campers?scope=all');}catch(e){paint('allstudents','<p class="note-hint">'+esc(e.message)+'</p>','All Students','First Aid');return;}
+  let all;try{all=await api('/campers?scope=all');}catch(e){paint('allstudents','<p class="err" style="display:block">'+esc(e.message)+'</p>','All Students','First Aid');return;}
   all=(all||[]).filter(c=>c.lifecycle!=='cancelled');
   window._allStu=all;
   const cmap={};all.forEach(c=>{if(c.churchId)cmap[c.churchId]=c.churchName;});
@@ -2244,7 +2255,7 @@ async function openStudentInfo(id){
   const alert=alertRows.length
     ? `<div class="fa-alert"><div class="ah">${icSm('medical')} Medical alert</div>
         ${alertRows.map(r=>`<div class="row"><span class="tag">${esc(r.tag)}</span><span class="b">${esc(r.b)}</span></div>`).join('')}</div>`
-    : `<div class="fa-alert"><div class="ah">${icSm('check')} No medical conditions recorded</div><div class="fa-calm">Nothing flagged for this student.</div></div>`;
+    : `<div class="fa-neutral"><div class="ah">${icSm('check')} No medical conditions recorded</div><div class="fa-calm">Nothing flagged for this student.</div></div>`;
   const consent=c.consentMedical
     ? `<div class="fa-consent yes">${ic('check')}<div>Medical consent — Granted<div class="sub">OK to administer first aid</div></div></div>`
     : `<div class="fa-consent no">${ic('alert')}<div>Medical consent — Not granted<div class="sub">Reach the leader / parent before treating</div></div></div>`;
@@ -2254,7 +2265,7 @@ async function openStudentInfo(id){
   const leadCard=(prim||back)
     ? `<div class="fa-lead"><div class="lh">${icSm('phone')} Ministry leader — contact first</div>
         ${leadBtn(prim,'pri')}${back?`<div style="margin-top:14px">${leadBtn(back,'sec')}</div>`:''}</div>`
-    : `<div class="fa-lead"><div class="lh">${icSm('phone')} Ministry leader</div><div class="sub" style="color:var(--warn)">No leader contact set — ask admin to add one.</div></div>`;
+    : `<div class="fa-alert"><div class="ah">${icSm('phone')} No leader contact on file</div><div class="fa-calm" style="color:var(--alert-ink)">Ask admin to add one before relying on this contact.</div></div>`;
   const medicare=c.medicareNumber?`<div class="card"><div class="lbl" style="margin-top:0">Medicare</div>
     <div class="kv"><span class="k">Number</span><span class="v" id="mcn" style="cursor:pointer;color:var(--blue)" onclick="revealMedicare('${c.id}')">[tap to show]</span></div>
     <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2)">Revealing is logged for the audit trail.</div></div>`:'';
@@ -2347,7 +2358,7 @@ let _faRecFilter='today';
 RENDER.records=async function(){
   let recs=[],page=[];
   try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=100'),api('/campers?pageSize=300').catch(()=>[])]);}
-  catch(e){paint('records','<p class="note-hint">'+esc(e.message)+'</p>','First-aid records','');return;}
+  catch(e){paint('records','<p class="err" style="display:block">'+esc(e.message)+'</p>','First-aid records','');return;}
   window._faRecsAll=recs||[];
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c.firstName+' '+c.lastName+(c.grade?' · Gr '+c.grade:'');});window._faCamperMap=cmap;
   paint('records',`<div class="search" style="padding:9px 14px"><span>${ic('search')}</span><input id="faRecQ" placeholder="Filter by student…" oninput="drawFaRecords()" aria-label="Filter records"></div>
@@ -2964,7 +2975,7 @@ async function openCamper(id,push=true){
     ${atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
   const fullName=p.fullName||p.firstName+' '+p.lastName;
   document.getElementById('camper').innerHTML=`<div class="detail-hd"><div class="av-lg">${initials(fullName)}</div>
-    <h2>${esc(fullName)}</h2><div style="color:#cfe0ff;font-size:.82rem">${esc(p.zone)} Zone · ${lead?'Leader (18+)':'Grade '+p.grade}</div></div>
+    <h2>${esc(fullName)}</h2><div style="color:#cfe0ff;font-size:.82rem">${esc(p.zone)} Zone · ${lead?'Leader (18+)':'Grade '+(p.grade||'—')}</div></div>
     <div class="card">
       <div class="kv"><span class="k">Church</span><span class="v">${esc(p.churchName)}</span></div>
       <div class="kv"><span class="k">${lead?'Mobile':'Student mobile'}</span><span class="v"><a href="tel:${esc(p.mobile||'')}" style="color:#4f46e5;text-decoration:none">${esc(fmtPhone(p.mobile)||'—')}</a></span></div>
@@ -3244,6 +3255,8 @@ RENDER.admin=function(){
   // People & churches = Accounts & churches, Ministry contacts.
   // Data = Data Import, Data Export/Reset (+ Individual Student Data Edit, at-camp only —
   // not explicitly listed in the request but there's no other home for it in this console).
+  // Reviewed 2026-07-18 (frontend assessment, two independent passes): grouping is considered
+  // settled — please don't reactively reshuffle again without a deliberate pass.
   paint('admin',`<div class="infobox">Admin console — configure camp here year-round.</div>
     <div class="h3" style="margin:14px 0 6px">Camp setup</div>
     <div class="tiles">
@@ -4013,7 +4026,7 @@ async function offlineSignInUpload(){
     const unmatchedList=r.unmatched&&r.unmatched.length?`<p class="note-hint" style="text-align:left;margin-top:6px">Not matched: ${r.unmatched.map(esc).join(', ')}</p>`:'';
     if(box){box.innerHTML=`<div class="callbox">${icSm('check')} ${bits.join(' · ')}</div>${unmatchedList}`;}
     toast('Offline sign-in applied');
-  }catch(e){if(box)box.innerHTML='<p class="note-hint">'+esc(e.message||'Import failed')+'</p>';else toast(e.message||'Import failed');}
+  }catch(e){if(box)box.innerHTML='<p class="err" style="display:block">'+esc(e.message||'Import failed')+'</p>';else toast(e.message||'Import failed');}
   finally{input.value='';}
 }
 
