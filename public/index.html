@@ -3286,13 +3286,19 @@ RENDER.admin=function(){
     </div>`,'Admin console','Back office');
 };
 
-async function switchMode(){
+function switchMode(){
   const newMode=CAMP_MODE==='pre-camp'?'at-camp':'pre-camp';
   const label=newMode==='at-camp'?'AT CAMP (live operations)':'PRE-CAMP (registration prep)';
   const changes=newMode==='at-camp'
     ?'Everyone moves to live camp operations — daily check-in, notices and sign-out. Pre-camp registration tiles are hidden.'
-    :'Everyone moves back to pre-camp prep — registrations, payments and accommodation.\n\n⚠️ Anyone currently signed in at camp (students and leaders) will be automatically signed out.';
-  if(!confirm('Switch the whole app to '+label+'?\n\n'+changes))return;
+    :'Everyone moves back to pre-camp prep — registrations, payments and accommodation.<br><br>⚠️ Anyone currently signed in at camp (students and leaders) will be automatically signed out.';
+  modal(`<h3>Switch the whole app to ${esc(label)}?</h3>
+    <p class="sub" style="margin:8px 0 14px">${changes}</p>
+    <button class="btn" onclick="_switchModeConfirmed('${newMode}','${esc(label)}')">Switch mode</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+}
+async function _switchModeConfirmed(newMode,label){
+  closeModal();
   try{
     await api('/admin/mode',{method:'POST',body:{campMode:newMode}});
     CAMP_MODE=newMode;SETTINGS.campMode=newMode;
@@ -3674,7 +3680,6 @@ function onCloseOutConfirmChange(){
 }
 async function doNewYear(){
   const year=(SETTINGS&&SETTINGS.year)?SETTINGS.year+1:new Date().getFullYear()+1;
-  if(!confirm('Roll over to year '+year+'? This cannot be undone.'))return;
   try{
     const s=await api('/admin/new-year',{method:'POST',body:{
       year,force:true,confirmWipe:'I understand this cannot be undone',
@@ -4418,9 +4423,21 @@ function adminNewYear(){
     <button class="btn" onclick="closeModal();go('adminRecords')">Go to Records &amp; Export ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
-async function adminReset(){
-  if(!confirm('FULL RESET — wipe to bare.\n\nThis permanently deletes EVERY church, EVERY login account (except this admin), and ALL registrants, campers, notes, notifications, and the saved setup scaffold (accommodation, FAQ, schedule, devotionals). Only this admin account and the camp settings remain.\n\nThis is NOT the year rollover (that keeps your churches & scaffold). It cannot be undone, and you will be signed out immediately.'))return;
-  if(prompt('Type exactly: I understand this cannot be undone')!=='I understand this cannot be undone'){toast('Reset cancelled — confirmation text did not match');return;}
+function adminReset(){
+  modal(`<h3>FULL RESET — wipe to bare</h3>
+    <p class="sub" style="margin:8px 0 14px">This permanently deletes EVERY church, EVERY login account (except this admin), and ALL registrants, campers, notes, notifications, and the saved setup scaffold (accommodation, FAQ, schedule, devotionals). Only this admin account and the camp settings remain.<br><br>This is NOT the year rollover (that keeps your churches &amp; scaffold). It cannot be undone, and you will be signed out immediately.</p>
+    <label>Type exactly: I understand this cannot be undone</label>
+    <input class="fld" id="resetConfirmText" oninput="onResetConfirmChange()" placeholder="I understand this cannot be undone" autocomplete="off">
+    <button class="btn red" id="resetConfirmBtn" disabled style="margin-top:10px" onclick="_adminResetConfirmed()">Confirm full reset</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+}
+function onResetConfirmChange(){
+  const v=document.getElementById('resetConfirmText')?.value||'';
+  const btn=document.getElementById('resetConfirmBtn');
+  if(btn)btn.disabled=(v!=='I understand this cannot be undone');
+}
+async function _adminResetConfirmed(){
+  closeModal();
   try{
     await api('/admin/reset',{method:'POST',body:{force:true,confirmWipe:'I understand this cannot be undone'}});
     alert('Full reset complete. Signing out.');logout();
