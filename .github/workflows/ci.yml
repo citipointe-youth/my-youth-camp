@@ -1,7 +1,9 @@
 name: CI
 
-# Runs typecheck, tests and a dependency audit on every push / PR.
-# Ready for when this folder gets its own GitHub remote (it is not a git repo yet).
+# Runs typecheck, tests and a dependency audit on every push to master / PR.
+# This repo auto-deploys to Vercel on push to master via the GitHub integration; this
+# workflow runs alongside that deploy, not as a gate — a CI failure here does not block
+# or delay the Vercel deploy (the owner has chosen to leave deploys ungated).
 
 on:
   push:

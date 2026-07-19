@@ -91,6 +91,14 @@ function parseCsvRow(row: string): string[] {
 export function toCsvRow(values: string[]): string {
   return values
     .map((v) => {
+      // Spreadsheet formula-injection guard: Excel/Sheets/LibreOffice execute a cell
+      // whose first character is = + - @ (or tolerate a leading tab/CR before it) as a
+      // formula, so an imported value like `=HYPERLINK(...)` in a name/medical field
+      // would run when an exported CSV is opened. Neutralize by prefixing a literal
+      // apostrophe (the standard treat-as-text marker) before the quoting logic runs.
+      if (/^[=+\-@\t\r]/.test(v)) {
+        v = `'${v}`;
+      }
       if (v.includes(',') || v.includes('"') || v.includes('\n')) {
         return `"${v.replace(/"/g, '""')}"`;
       }

@@ -1,5 +1,6 @@
 import type { HttpRequest } from '../http/types';
 import type { SearchService } from '../../services/search.service';
+import { toCamperDto } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 import { createLogger } from '../../utils/logger';
 
@@ -15,7 +16,11 @@ export function makeSearchController(services: SearchControllerServices) {
       if (!req.ctx) throw new UnauthorizedError();
       const q = req.query['q'];
       if (!q) throw new BadRequestError('Missing search query');
-      return services.search.search(req.ctx.actor, q);
+      // Audit 2026-07-19: the service returns the full Person entity internally; never
+      // serialize it in a bulk response — strip to the list CamperDto (no medicareNumber,
+      // no dateOfBirth; hasMedicare boolean instead, same as GET /campers).
+      const results = await services.search.search(req.ctx.actor, q);
+      return results.map((r) => ({ ...r, camper: toCamperDto(r.camper) }));
     },
 
     async resolveContacts(req: HttpRequest) {

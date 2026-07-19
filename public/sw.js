@@ -1,4 +1,4 @@
-const CACHE = 'camp-v31';
+const CACHE = 'camp-v32';
 const APP_SHELL = ['/'];
 
 // API paths that must NEVER be served from cache. GOTCHA (from connection-made-simple):
@@ -9,7 +9,7 @@ const APP_SHELL = ['/'];
 // (export ADDED — the SPA downloads /export/audit, /export/registrants, /export/signin-out;
 //  without it these fell through to cache-first and could serve stale HTML — the documented
 //  API_RE gotcha. Verified against src/api/http/router.ts route prefixes.)
-const API_RE = /^\/(auth|home|settings|admin|registrants|accommodation|campers|checkin|attendance|notes|search|notifications|schedule|faq|devotional|import|export|accounts|health|setup)(\/|$|\?)/;
+const API_RE = /^\/(auth|home|settings|admin|registrants|accommodation|campers|checkin|attendance|notes|search|notifications|schedule|faq|devotional|import|export|accounts|health|setup|incidents)(\/|$|\?)/;
 
 self.addEventListener('install', (e) => {
   e.waitUntil(

@@ -82,13 +82,22 @@ A deep audit across three areas was completed and all bugs addressed. Key change
 `supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate
 `004`) into four 4-digit files: `0001_baseline_schema.sql` (full end-state, minus the
 deprecated `settings.tent_price`/`classroom_price` columns, reflecting the encrypted
-`people` shape), `0002_rls.sql` (RLS on all 17 tables — also closes the gap where the
-old `020` never enabled RLS on `allocation_overrides`), `0003_seed.sql` (admin +
-settings singleton, verbatim from the old `002`), and `0004_drop_deprecated_columns.sql`
-(gated drop of the two dead pricing columns). The 24 originals are preserved verbatim in
-`supabase/migrations_archive/` (historical record; outside the CLI's scanned folder).
-Historical prose in this file that cites an old migration number (e.g. "migration `013`
-added `bracket`") still refers to those archived files.
+`people` shape), `0002_rls.sql` (RLS on all 18 tables — 17 enabled directly in that file
+at the time of this consolidation, plus `incidents` (migration `0007`, added after) —
+also closes the gap where the old `020` never enabled RLS on `allocation_overrides`),
+`0003_seed.sql` (admin + settings singleton, verbatim from the old `002`), and
+`0004_drop_deprecated_columns.sql` (gated drop of the two dead pricing columns). The 24
+originals are preserved verbatim in `supabase/migrations_archive/` (historical record;
+outside the CLI's scanned folder). Historical prose in this file that cites an old
+migration number (e.g. "migration `013` added `bracket`") still refers to those
+archived files.
+
+**Migrations have since progressed to `0008`** (`0005` unified check-in/sign-in entry,
+`0006` gender-scoped church accounts, `0007` incidents — the table that brought the count
+to 18, RLS enabled in that same migration — `0008` leaders-only notifications); next
+migration = `0009` (revokes the public/anon/authenticated execute grant on the
+Supabase-provisioned `rls_auto_enable()` event-trigger function and codifies that
+function + its `ensure_rls` trigger in a tracked migration for the first time).
 
 **Prod reconciled 2026-07-16 (code) + 2026-07-17 (DB).** The code-ref removal (dropping
 `tentPrice`/`classroomPrice` from the settings entity/schema/seed/mapper + fixtures)

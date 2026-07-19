@@ -65,17 +65,41 @@ describe('Feature 4: daily check-in threads leader initials into CheckInEntry.le
 });
 
 describe('Feature 4: reveals attribute to the leader initials', () => {
-  it('revealMedicare returns revealedBy = supplied initials', async () => {
-    const ctrl = makeCamperController({ person: {} as unknown as PersonService });
-    const res = await ctrl.revealMedicare(reqOf({ params: { id: 'p1' }, body: { initials: 'SD' } }, adminActor)) as { ok: boolean; revealedBy: string };
+  // revealMedicare now loads the person through the access-checked service path
+  // (person.get runs canAccessPerson) and is the ONLY endpoint returning the
+  // cleartext medicare number — the list/detail DTOs carry just hasMedicare.
+  function personWith(medicareNumber: string | null): PersonService {
+    return { get: async () => ({ id: 'p1', medicareNumber }) } as unknown as PersonService;
+  }
+
+  it('revealMedicare returns revealedBy = supplied initials AND the medicare number', async () => {
+    const ctrl = makeCamperController({ person: personWith('1234 56789 0') });
+    const res = await ctrl.revealMedicare(reqOf({ params: { id: 'p1' }, body: { initials: 'SD' } }, adminActor)) as { ok: boolean; revealedBy: string; medicareNumber: string | null };
     expect(res.ok).toBe(true);
     expect(res.revealedBy).toBe('SD');
+    expect(res.medicareNumber).toBe('1234 56789 0');
   });
 
   it('revealMedicare falls back to the actor display name when no initials given', async () => {
-    const ctrl = makeCamperController({ person: {} as unknown as PersonService });
+    const ctrl = makeCamperController({ person: personWith('1234 56789 0') });
     const res = await ctrl.revealMedicare(reqOf({ params: { id: 'p1' }, body: {} }, adminActor)) as { revealedBy: string };
     expect(res.revealedBy).toBe('Admin User');
+  });
+
+  it('revealMedicare returns medicareNumber: null when none is on file', async () => {
+    const ctrl = makeCamperController({ person: personWith(null) });
+    const res = await ctrl.revealMedicare(reqOf({ params: { id: 'p1' }, body: {} }, adminActor)) as { medicareNumber: string | null };
+    expect(res.medicareNumber).toBeNull();
+  });
+
+  it('revealMedicare propagates the access-checked getter throwing (out-of-scope person)', async () => {
+    const person = {
+      get: async () => { throw new Error('Person not found'); },
+    } as unknown as PersonService;
+    const ctrl = makeCamperController({ person });
+    await expect(
+      ctrl.revealMedicare(reqOf({ params: { id: 'p-other-church' }, body: {} }, adminActor)),
+    ).rejects.toThrow('Person not found');
   });
 
   it('revealContact attaches revealedBy from the initials query param', async () => {

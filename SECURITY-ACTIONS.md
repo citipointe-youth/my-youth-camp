@@ -54,11 +54,20 @@ set passwords by hand any more.
 - If that modal is dismissed, they are **retained for the next compliance export**: run
   Admin → Records & Export → Download audit workbook; the "Temp Passwords" tab lists
   username + temp password. They are included **once** and then cleared from settings.
-- Share each temp password securely with its church/zone leader. Leaders log in with it
-  and are **required** to set their own password before reaching anything else in the
-  app (`mustChangePassword`, 2026-07-11 — this used to be advisory only; it's now
-  enforced server-side, not just a "should"). Admin → Accounts can also reset any
-  account's password, which carries the same requirement.
+- Share each temp password securely with its church/zone leader. **The forced-password-
+  change gate is currently DISABLED** (`MUST_CHANGE_PASSWORD_ENFORCED = false` in
+  `src/api/http/express-adapter.ts`, by owner decision on 2026-07-11, same day it
+  shipped — see `CLAUDE.md` "Forced password change"). The `mustChangePassword` flag is
+  still set on these accounts and on any admin-set password, but nothing currently
+  blocks a leader from using it indefinitely without ever changing it — a temp/admin-set
+  password is **not** force-rotated on first login. Because of this, operational
+  discipline is required in the meantime: choose strong, non-shared temp passwords and
+  ask each leader to rotate their password manually after first login. Admin → Accounts
+  can also reset any account's password (same non-enforced flag).
+
+  Separately, note that changing a password does **not** currently revoke that user's
+  existing signed session tokens — a session issued before a reset/rotation stays valid
+  until its own 12h TTL expires, regardless of any password change made in the meantime.
 
 Note: the temp passwords live in plaintext in `settings.lastTempPasswords` only between
 rollover and the first export-or-view, then are wiped. Treat the audit workbook (which

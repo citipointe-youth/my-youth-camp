@@ -62,3 +62,38 @@ describe('toCsvRow / toCsvString', () => {
     expect(toCsvString(['x', 'y'], [['1', '2'], ['3', '4']])).toBe('﻿x,y\n1,2\n3,4');
   });
 });
+
+describe('toCsvRow spreadsheet formula-injection guard', () => {
+  it("prefixes ' to a leading = (formula), before quoting", () => {
+    // Contains commas/quotes, so the apostrophe-prefixed value is then quoted normally.
+    expect(toCsvRow(['=HYPERLINK("http://evil.example","click")'])).toBe(
+      '"\'=HYPERLINK(""http://evil.example"",""click"")"',
+    );
+  });
+  it("prefixes ' to a leading +", () => {
+    expect(toCsvRow(['+1'])).toBe("'+1");
+  });
+  it("prefixes ' to a leading -", () => {
+    expect(toCsvRow(['-1'])).toBe("'-1");
+  });
+  it("prefixes ' to a leading @", () => {
+    expect(toCsvRow(['@x'])).toBe("'@x");
+  });
+  it("prefixes ' to a leading tab", () => {
+    expect(toCsvRow(['\t=1+1'])).toBe("'\t=1+1");
+  });
+  it("prefixes ' to a leading carriage return", () => {
+    expect(toCsvRow(['\r=1+1'])).toBe("'\r=1+1");
+  });
+  it('leaves normal values untouched', () => {
+    expect(toCsvRow(['Ada', 'Lovelace', '0411 928 301', '2010-05-01', ''])).toBe(
+      'Ada,Lovelace,0411 928 301,2010-05-01,',
+    );
+  });
+  it('does not touch interior formula characters', () => {
+    expect(toCsvRow(['a=b', 'x+y'])).toBe('a=b,x+y');
+  });
+  it('guards every field in toCsvString rows, not just the first', () => {
+    expect(toCsvString(['x', 'y'], [['=cmd', 'ok']])).toBe("﻿x,y\n'=cmd,ok");
+  });
+});

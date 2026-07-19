@@ -2,7 +2,7 @@ import type { HttpRequest } from '../http/types';
 import type { PersonService } from '../../services/person.service';
 import type { Person } from '../../core/entities/person';
 import type { Actor } from '../../core/entities/user';
-import { toCamperDto } from '../dto/person.dto';
+import { toCamperDto, toCamperDetailDto } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 import { assertCan } from '../../services/access-control';
 import { createLogger } from '../../utils/logger';
@@ -49,7 +49,9 @@ export function makeCamperController(services: CamperControllerServices) {
       const id = req.params['id'];
       if (!id) throw new BadRequestError('Missing id');
       const profile = await person.getProfile(req.ctx.actor, id);
-      const dto = maskParentForFirstAid(toCamperDto(profile), req.ctx.actor);
+      // Detail dto: single access-checked fetch, so dateOfBirth may ride along.
+      // medicareNumber never does — only the audited reveal below returns it.
+      const dto = maskParentForFirstAid(toCamperDetailDto(profile), req.ctx.actor);
       return { ...dto, age: profile.age, lastSignOut: profile.lastSignOut };
     },
 
@@ -81,6 +83,12 @@ export function makeCamperController(services: CamperControllerServices) {
       assertCan(req.ctx.actor, 'camper:read:sensitive');
       const id = req.params['id'];
       if (!id) throw new BadRequestError('Missing id');
+      // Audit 2026-07-19: this endpoint is the ONLY place the cleartext medicare number is
+      // ever serialized — the list AND detail DTOs carry just a hasMedicare boolean. Load
+      // through the access-checked service path (person.get runs canAccessPerson), so a
+      // caller can never reveal someone outside their church/zone/gender scope — an
+      // inaccessible person throws NotFound before anything is logged or returned.
+      const p = await person.get(req.ctx.actor, id);
       // This app persists no reveal-audit table; the audit trail is this authenticated
       // endpoint being hit. Feature 4 attributes the reveal to the acting leader's initials
       // (church-account session prefill), falling back to the actor's display name. Emit a
@@ -93,7 +101,7 @@ export function makeCamperController(services: CamperControllerServices) {
         `[audit] medicare revealed for person ${id} by ${req.ctx.actor.role} ${req.ctx.actor.id}` +
           ` (initials: ${initials || '—'}) from ${req.ip ?? 'unknown'}`,
       );
-      return { ok: true, revealedBy };
+      return { ok: true, revealedBy, medicareNumber: p.medicareNumber ?? null };
     },
   };
 }

@@ -1,9 +1,11 @@
-// ⚠️ UNVERIFIED SCAFFOLDING — see src/repositories/supabase/README.md.
+// PRODUCTION Supabase people repository — the live store behind PERSISTENCE=supabase
+// (my-youth-camp.vercel.app). It holds minors' PII: sensitive columns (medicare number,
+// medical/dietary data, parent contacts, blue card, consents) are encrypted at rest via
+// AES-256-GCM in the row↔entity mappers below (see src/utils/field-crypto.ts).
 //
-// Reference implementation for the unified `people` table (design D2) with hybrid
-// mapping (D4): scalar columns on `people`, JSONB `consents`, and the check-in /
-// sign-out histories hydrated from CHILD TABLES (check_in_history, sign_out_history).
-// This is the pattern the other Supabase repos should follow. NOT compiled or run.
+// Unified `people` table (design D2) with hybrid mapping (D4): scalar columns on
+// `people`, encrypted `*_enc` columns, and the check-in / sign-out histories hydrated
+// from CHILD TABLES (check_in_history, sign_out_history).
 import type { SqlClient, TxClient } from './client';
 import type { IPersonRepository } from '../interfaces/entity-repositories';
 import type { Person } from '../../core/entities/person';
@@ -261,14 +263,14 @@ export class SupabasePersonRepository implements IPersonRepository {
 
   // --- writes ----------------------------------------------------------------
 
-  /** Upsert the `people` row + REPLACE its history child rows in one transaction. */
+  /** Upsert the `people` row + append any new history child rows in one transaction. */
   async save(person: Person): Promise<Person> {
     await this.sql.begin(async (tx: TxClient) => {
       await tx`
         insert into people ${tx(personColumns(person))}
         on conflict (id) do update set ${tx(personColumns(person), ...PERSON_UPDATE_COLS)}
       `;
-      await replaceHistories(tx, person);
+      await appendHistories(tx, person);
     });
     return person;
   }
@@ -283,7 +285,7 @@ export class SupabasePersonRepository implements IPersonRepository {
           insert into people ${tx(personColumns(p))}
           on conflict (id) do update set ${tx(personColumns(p), ...PERSON_UPDATE_COLS)}
         `;
-        await replaceHistories(tx, p);
+        await appendHistories(tx, p);
       }
     });
     return people;
@@ -378,9 +380,20 @@ const PERSON_UPDATE_COLS = [
   'amount_paid', 'fees_amount', 'tax_amount', 'needs_review', 'needs_review_reason',
 ] as const;
 
-/** Delete + reinsert a person's history child rows (authoritative replace). */
-async function replaceHistories(tx: TxClient, p: Person): Promise<void> {
-  await tx`delete from check_in_history where person_id = ${p.id}`;
+/**
+ * Append a person's history child rows additively (INSERT … ON CONFLICT DO NOTHING).
+ *
+ * History entries are immutable, append-only audit events: ids are unique (both child
+ * tables have `id text primary key`), a row is never edited after creation, and no
+ * domain flow removes an individual entry — entries only disappear when the person row
+ * itself is deleted (ON DELETE CASCADE) or on reset/new-year (deleteAll).
+ *
+ * This used to DELETE-then-reinsert the whole history from the in-memory copy, which
+ * meant two concurrent writers to the same person could silently drop an entry the
+ * other had just appended (lost update on a check-in/sign-out audit record). Inserting
+ * only rows that don't already exist keeps concurrently appended entries intact.
+ */
+async function appendHistories(tx: TxClient, p: Person): Promise<void> {
   if (p.checkInHistory.length > 0) {
     await tx`insert into check_in_history ${tx(
       p.checkInHistory.map((e) => ({
@@ -392,9 +405,8 @@ async function replaceHistories(tx: TxClient, p: Person): Promise<void> {
         leader_id: e.leaderId,
         timestamp: e.timestamp,
       })),
-    )}`;
+    )} on conflict (id) do nothing`;
   }
-  await tx`delete from sign_out_history where person_id = ${p.id}`;
   if (p.signOutHistory.length > 0) {
     await tx`insert into sign_out_history ${tx(
       p.signOutHistory.map((e) => ({
@@ -407,7 +419,7 @@ async function replaceHistories(tx: TxClient, p: Person): Promise<void> {
         author_id: e.authorId,
         timestamp: e.timestamp,
       })),
-    )}`;
+    )} on conflict (id) do nothing`;
   }
 }
 

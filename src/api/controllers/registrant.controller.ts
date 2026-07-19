@@ -1,7 +1,7 @@
 import type { HttpRequest } from '../http/types';
 import type { PersonService } from '../../services/person.service';
 import type { Person } from '../../core/entities/person';
-import { toRegistrantDto } from '../dto/person.dto';
+import { toRegistrantDto, toRegistrantDetailDto } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 
 export interface RegistrantControllerServices {
@@ -22,7 +22,8 @@ export function makeRegistrantController(services: RegistrantControllerServices)
       if (!req.ctx) throw new UnauthorizedError();
       const id = req.params['id'];
       if (!id) throw new BadRequestError('Missing id');
-      return toRegistrantDto(await person.get(req.ctx.actor, id));
+      // Detail dto: single access-checked fetch, so dateOfBirth may ride along.
+      return toRegistrantDetailDto(await person.get(req.ctx.actor, id));
     },
 
     async create(req: HttpRequest) {

@@ -1953,11 +1953,11 @@ async function _previewSimCampers(){
     id:r.id,firstName:r.firstName,lastName:r.lastName,fullName:(r.firstName+' '+r.lastName).trim(),
     kind:r.kind==='leader'?'leader':'student',
     churchId:r.churchId,churchName:r.churchName,zone:r.zone,groupId:null,
-    mobile:r.mobile,gender:r.gender,grade:r.grade,dateOfBirth:r.dateOfBirth,
+    mobile:r.mobile,gender:r.gender,grade:r.grade,
     accommodationKind:r.accommodationKind,registrationType:r.registrationType,
     registrationCost:r.registrationCost,discountCode:r.discountCode,discountAmount:r.discountAmount,
     medicalConditions:r.medicalConditions,dietaryRequirements:r.dietaryRequirements,
-    otherMedications:r.otherMedications,medicareNumber:r.medicareNumber,
+    otherMedications:r.otherMedications,hasMedicare:r.hasMedicare,
     parentGuardianName:r.parentGuardianName,parentPhone:r.parentPhone,parentRelation:r.parentRelation,
     consentMedical:r.consentMedical,blueCardNumber:r.blueCardNumber,blueCardExpiry:r.blueCardExpiry,
     lifecycle:present?'camper':'registered',
@@ -2283,7 +2283,7 @@ async function openStudentInfo(id){
     ? `<div class="fa-lead"><div class="lh">${icSm('phone')} Ministry leader — contact first</div>
         ${leadBtn(prim,'pri')}${back?`<div style="margin-top:14px">${leadBtn(back,'sec')}</div>`:''}</div>`
     : `<div class="fa-alert"><div class="ah">${icSm('phone')} No leader contact on file</div><div class="fa-calm" style="color:var(--alert-ink)">Ask admin to add one before relying on this contact.</div></div>`;
-  const medicare=c.medicareNumber?`<div class="card"><div class="lbl" style="margin-top:0">Medicare</div>
+  const medicare=c.hasMedicare?`<div class="card"><div class="lbl" style="margin-top:0">Medicare</div>
     <div class="kv"><span class="k">Number</span><span class="v" id="mcn" style="cursor:pointer;color:var(--blue)" onclick="revealMedicare('${c.id}')">[tap to show]</span></div>
     <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2)">Revealing is logged for the audit trail.</div></div>`:'';
   const dietCard=otherDiet.length?`<div class="card"><div class="lbl" style="margin-top:0">Dietary (non-allergy)</div>
@@ -2322,10 +2322,9 @@ async function _loadStudentRecent(id){
 }
 async function revealMedicare(id){
   const el=document.getElementById('mcn');
-  const c=_currentStudent&&_currentStudent.id===id?_currentStudent:null;
   try{
-    await api('/campers/'+id+'/reveal-medicare',{method:'POST',body:{initials:LEADER_INITIALS}});
-    if(el)el.textContent=(c&&c.medicareNumber)||'—';
+    const res=await api('/campers/'+id+'/reveal-medicare',{method:'POST',body:{initials:LEADER_INITIALS}});
+    if(el)el.textContent=(res&&res.medicareNumber)||'—';
   }catch(e){toast(e.message);}
 }
 /* Parse a first-aid record body (4 labelled lines) back into its parts for display. */
@@ -2996,8 +2995,8 @@ async function openCamper(id,push=true){
     <div class="card">
       <div class="kv"><span class="k">Church</span><span class="v">${esc(p.churchName)}</span></div>
       <div class="kv"><span class="k">${lead?'Mobile':'Student mobile'}</span><span class="v"><a href="tel:${esc(p.mobile||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(p.mobile)||'—')}</a></span></div>
-      ${lead?'':`<div class="kv"><span class="k">Medical</span><span class="v">${(p.medicalConditions||[]).join(', ')||'—'}</span></div>
-      <div class="kv"><span class="k">Dietary</span><span class="v">${(p.dietaryRequirements||[]).join(', ')||'—'}</span></div>
+      ${lead?'':`<div class="kv"><span class="k">Medical</span><span class="v">${esc((p.medicalConditions||[]).join(', ')||'—')}</span></div>
+      <div class="kv"><span class="k">Dietary</span><span class="v">${esc((p.dietaryRequirements||[]).join(', ')||'—')}</span></div>
       ${p.otherMedications?`<div class="kv"><span class="k">Medication</span><span class="v">${esc(p.otherMedications)}</span></div>`:''}`}
       <!-- AC-6: consents line removed from the profile UI (consent data is kept in the model/DTO). -->
     </div>

@@ -4,6 +4,13 @@ import { isCamper } from '../../core/entities/person';
 /**
  * The JSON shape /registrants returns — the SPA's pre-camp My Youth screen reads
  * these fields bare. Keep these names stable.
+ *
+ * PRIVACY RULE (audit 2026-07-19): the LIST/BULK DTOs (`RegistrantDto`/`CamperDto`)
+ * must NEVER carry `medicareNumber` or `dateOfBirth` — they are mapped over entire
+ * rosters and would ship every minor's medicare number + DOB to every login.
+ * `hasMedicare` is a boolean so the UI can show a "tap to reveal" affordance; the
+ * cleartext number is returned ONLY by the audited POST /campers/:id/reveal-medicare.
+ * The access-checked single-person DETAIL DTOs below may add `dateOfBirth` back.
  */
 export interface RegistrantDto {
   id: string;
@@ -28,12 +35,12 @@ export interface RegistrantDto {
   blueCardNumber: string | null;
   blueCardExpiry: string | null;
   email: string | null;
-  dateOfBirth: string | null;
   suburb: string | null;
   postcode: string | null;
   state: string | null;
   otherMedications: string | null;
-  medicareNumber: string | null;
+  /** Whether a medicare number is on file — the value itself is only available via the audited reveal endpoint. */
+  hasMedicare: boolean;
   churchUnlistedNote: string | null;
   parentRelation: string | null;
   consentMedical: boolean;
@@ -55,7 +62,15 @@ export interface RegistrantDto {
   updatedAt: string;
 }
 
-/** The JSON shape /campers returns — the SPA's at-camp screens read these bare. */
+/** Single-person GET /registrants/:id — an access-checked fetch, so it may carry dateOfBirth. Still no medicareNumber. */
+export interface RegistrantDetailDto extends RegistrantDto {
+  dateOfBirth: string | null;
+}
+
+/**
+ * The JSON shape /campers returns — the SPA's at-camp screens read these bare.
+ * LIST/BULK dto: no `medicareNumber`, no `dateOfBirth` (see the privacy rule above).
+ */
 export interface CamperDto {
   id: string;
   firstName: string;
@@ -69,7 +84,6 @@ export interface CamperDto {
   mobile: string | null;
   gender: Person['gender'];
   grade: Person['grade'];
-  dateOfBirth: string | null;
   accommodationKind: Person['accommodationKind'];
   registrationType: string | null;
   registrationCost: number | null;
@@ -78,7 +92,8 @@ export interface CamperDto {
   medicalConditions: string[];
   dietaryRequirements: string[];
   otherMedications: string | null;
-  medicareNumber: string | null;
+  /** Whether a medicare number is on file — the value itself is only available via the audited reveal endpoint. */
+  hasMedicare: boolean;
   parentGuardianName: string | null;
   parentPhone: string | null;
   parentRelation: string | null;
@@ -91,6 +106,11 @@ export interface CamperDto {
   signOutHistory: Person['signOutHistory'];
   createdAt: string;
   updatedAt: string;
+}
+
+/** Single-person GET /campers/:id — an access-checked fetch, so it may carry dateOfBirth. Still no medicareNumber. */
+export interface CamperDetailDto extends CamperDto {
+  dateOfBirth: string | null;
 }
 
 /** Check-in roster entry the SPA reads from /checkin/status. */
@@ -131,12 +151,11 @@ export function toRegistrantDto(p: Person): RegistrantDto {
     blueCardNumber: p.blueCardNumber ?? null,
     blueCardExpiry: p.blueCardExpiry ?? null,
     email: p.email ?? null,
-    dateOfBirth: p.dateOfBirth ?? null,
     suburb: p.suburb ?? null,
     postcode: p.postcode ?? null,
     state: p.state ?? null,
     otherMedications: p.otherMedications ?? null,
-    medicareNumber: p.medicareNumber ?? null,
+    hasMedicare: p.medicareNumber != null,
     churchUnlistedNote: p.churchUnlistedNote ?? null,
     parentRelation: p.parentRelation ?? null,
     consentMedical: p.consents.medical?.granted ?? false,
@@ -159,6 +178,11 @@ export function toRegistrantDto(p: Person): RegistrantDto {
   };
 }
 
+/** Detail (single-person, access-checked) view: the list dto plus dateOfBirth. */
+export function toRegistrantDetailDto(p: Person): RegistrantDetailDto {
+  return { ...toRegistrantDto(p), dateOfBirth: p.dateOfBirth ?? null };
+}
+
 export function toCamperDto(p: Person): CamperDto {
   return {
     id: p.id,
@@ -173,7 +197,6 @@ export function toCamperDto(p: Person): CamperDto {
     mobile: p.mobile ?? null,
     gender: p.gender,
     grade: p.grade ?? null,
-    dateOfBirth: p.dateOfBirth ?? null,
     accommodationKind: p.accommodationKind ?? null,
     registrationType: p.registrationType ?? null,
     registrationCost: p.registrationCost ?? null,
@@ -182,7 +205,7 @@ export function toCamperDto(p: Person): CamperDto {
     medicalConditions: p.medicalConditions,
     dietaryRequirements: p.dietaryRequirements,
     otherMedications: p.otherMedications ?? null,
-    medicareNumber: p.medicareNumber ?? null,
+    hasMedicare: p.medicareNumber != null,
     parentGuardianName: p.parentGuardianName ?? null,
     parentPhone: p.parentPhone ?? null,
     parentRelation: p.parentRelation ?? null,
@@ -196,6 +219,11 @@ export function toCamperDto(p: Person): CamperDto {
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
+}
+
+/** Detail (single-person, access-checked) view: the list dto plus dateOfBirth. */
+export function toCamperDetailDto(p: Person): CamperDetailDto {
+  return { ...toCamperDto(p), dateOfBirth: p.dateOfBirth ?? null };
 }
 
 export function toRosterEntry(p: Person, sessionId: string): RosterEntry {

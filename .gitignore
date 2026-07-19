@@ -11,3 +11,8 @@ dist/
 .vercel/
 .DS_Store
 supabase/.temp/
+
+# secrets — never commit real env files (DATABASE_URL, SESSION_SECRET, FIELD_ENCRYPTION_KEY)
+.env
+.env.*
+!.env.example
