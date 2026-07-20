@@ -4,6 +4,11 @@
 
 Guidance for Claude Code when working in this package. Read this before editing.
 
+> **📋 Check `docs/PLANNED-IMPROVEMENTS.md` every time you read this file.** It holds an
+> approved-but-unbuilt design (discount codes → "paid in full" budget classification) and a
+> list of topics the owner wants questioned/scoped in a future session (editor initials, sign-in
+> UX, time-lock behavior outside camp dates, etc). Keep flagging it here until it's cleared out.
+
 ## What this is
 
 A **combined** youth camp management platform that merges two previously separate apps:
@@ -28,7 +33,8 @@ in-memory to a real Supabase backend is done and serving traffic.
 | **Login** | `admin` (username, not email); password set in the DB post-deploy |
 
 Trackers: **`CHANGELOG.txt`** (phase-by-phase + KNOWN RISKS), `docs/PROGRAM-LOG.md` (initiative log),
-`docs/PROGRAM-SUMMARY.md`, `docs/CODE-QUALITY-LOG.md`, `docs/archive/` (historical).
+`docs/PROGRAM-SUMMARY.md`, `docs/CODE-QUALITY-LOG.md`, `docs/PLANNED-IMPROVEMENTS.md` (approved-but-
+unbuilt designs + topics queued for future brainstorming), `docs/archive/` (historical).
 
 ### ⚠️ Two deploy-only gotchas — DON'T regress these (neither is caught by `tsc`/`vitest`)
 1. **`tsconfig` must emit CommonJS** (`module: CommonJS`, `moduleResolution: Node`). Switching
