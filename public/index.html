@@ -938,14 +938,17 @@ function closeModal(){
 }
 /* confirmSheet — async, Promise<boolean> replacement for the blocking native confirm(). Built on
    the same .sheet/#modal system the ad-hoc conversions (switchMode/adminReset) already use. Resolves
-   true on confirm, false on cancel/Escape/backdrop dismissal. `body` is trusted HTML (callers esc()
-   any dynamic values); `danger` styles the confirm button red. */
+   true on confirm, false on cancel/Escape/backdrop dismissal. `body` is auto-escaped plain text
+   (use `bodyRaw` for pre-trusted markup, mirroring td/tdRaw); `danger` styles the confirm button red. */
 function confirmSheet(opts){
   const o=opts||{};
   return new Promise(resolve=>{
+    // Guard: if a prior confirmSheet() is somehow still pending, resolve it as cancel before
+    // replacing the resolver — otherwise that Promise would hang forever.
+    if(_confirmResolver){const prev=_confirmResolver;_confirmResolver=null;prev(false);}
     _confirmResolver=resolve;
     modal(`<h3>${esc(o.title||'Are you sure?')}</h3>
-      ${o.body?`<p class="sub" style="margin:8px 0 14px">${o.body}</p>`:''}
+      ${o.body?`<p class="sub" style="margin:8px 0 14px">${esc(o.body)}</p>`:o.bodyRaw?`<p class="sub" style="margin:8px 0 14px">${o.bodyRaw}</p>`:''}
       <button class="btn${o.danger?' red':''}" onclick="_confirmSheetPick(true)">${esc(o.confirmLabel||'Confirm')}</button>
       <button class="btn ghost" style="margin-top:6px" onclick="_confirmSheetPick(false)">${esc(o.cancelLabel||'Cancel')}</button>`);
   });
