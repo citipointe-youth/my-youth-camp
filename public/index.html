@@ -1368,10 +1368,12 @@ function navModel(role,mode){
     if(role==='director')
       return {tabs:[T('home','home','Home'),T('people','users','My Youth'),T('data','note','Data'),T('help','help','Help'),T('notifs','bell','Notices')],
               extras:[T('budget','star','Budget & Costings'),T('accom','classroom','Accommodation Allocations')]};
-    /* admin pre-camp — Notices replaced by Data Import (bug 6); Notices is still reachable via
-       a button on Admin Settings (bug 5), pre-camp only. */
+    /* admin pre-camp — bottom nav (phone) keeps Data Import in Notices' old slot (bug 6);
+       Notices is also reachable via a button on Admin Settings (bug 5). The desktop sidebar
+       (2026-07-20) additionally gets a dedicated Notices extra — sidebar has room where the
+       4-slot phone bottom nav doesn't. */
     return {tabs:[T('home','home','Home'),T('people','users','My Youth'),T('data','note','Data'),T('import','upload','Data Import'),T('admin','gear','Admin')],
-            extras:[T('budget','star','Budget & Costings'),T('accom','classroom','Accommodation Allocations')]};
+            extras:[T('notifs','bell','Notices'),T('budget','star','Budget & Costings'),T('accom','classroom','Accommodation Allocations')]};
   }
   /* at-camp */
   if(role==='church'||role==='zoneLeader')
@@ -1528,12 +1530,9 @@ RENDER.home=async function renderHome(skipModeSync){
       <span style="font-size:var(--t-h2);color:#d97706">›</span>
     </div>
   </div>`;
-  // Feature 3: Incidents entry for zoneLeader/director/admin, pre-camp too — a real
-  // safeguarding/operational incident can happen before camp is physically live (a training
-  // day, a travel mishap, a meeting) and zoneLeader/director have no other console to reach this
-  // screen from, so hiding it pre-camp would leave any pre-camp incident unreviewable/undeletable
-  // until the camp mode switches. (A pre-camp home card, matching the pattern below.)
-  if(canManageIncident())body+=`<div class="card tap" style="margin-top:12px" onclick="go('incidents')"><div class="rowsb"><div><div style="font-weight:600">${icSm('alert')} Incidents</div><div class="sub">Log &amp; review safeguarding / operational incidents</div></div><span class="pill info">Open ›</span></div></div>`;
+  // Incidents card deliberately NOT shown on the pre-camp home (admin request, 2026-07-20) —
+  // this removes pre-camp zoneLeader/director/admin's only route to RENDER.incidents;
+  // pre-camp incident logging is unreachable until at-camp mode.
   // Notices — latest 3 (feed already loaded in parallel above; expiry handled server-side)
   {const notices=(feed||[]).slice(0,3);
     body+=`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
