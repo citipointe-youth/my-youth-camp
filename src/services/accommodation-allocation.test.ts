@@ -193,4 +193,45 @@ describe('tent distribution (7 per tent, leaders separate)', () => {
     expect(tentsFor(7)).toBe(1);
     expect(tentsFor(8)).toBe(2);
   });
+
+  it('folds a classroom-preference person into tents when their church is under 75%', () => {
+    // c2 is 25% classroom (1 of 4) — computeGroups excludes it entirely (see above); the
+    // one classroom-kind person must still land in the tent count, not vanish.
+    const people = [
+      occ({ churchId: 'c2', gender: 'female', kind: 'leader', accommodationKind: 'classroom' }),
+      occ({ churchId: 'c2', accommodationKind: 'tent' }),
+      occ({ churchId: 'c2', accommodationKind: 'tent' }),
+      occ({ churchId: 'c2', accommodationKind: 'tent' }),
+    ];
+    expect(computeGroups(people)).toEqual([]);
+    const dist = tentDistribution(people);
+    const c2 = dist.find((d) => d.churchId === 'c2')!;
+    expect(c2.f.ld).toBe(1);       // the classroom-preference female leader, folded in
+    expect(c2.m.stu).toBe(3);      // the 3 already-tent-kind males
+  });
+
+  it('does NOT fold a classroom-preference person in once their church clears 75%', () => {
+    const people = [
+      occ({ churchId: 'c1', gender: 'male', accommodationKind: 'classroom' }),
+      occ({ churchId: 'c1', gender: 'male', accommodationKind: 'classroom' }),
+      occ({ churchId: 'c1', gender: 'male', accommodationKind: 'classroom' }),
+      occ({ churchId: 'c1', gender: 'male', accommodationKind: 'tent' }),
+    ]; // 75% classroom — eligible
+    const dist = tentDistribution(people);
+    const c1 = dist.find((d) => d.churchId === 'c1')!;
+    expect(c1.m.stu).toBe(1);      // only the genuinely tent-kind person
+    expect(computeGroups(people).find((g) => g.key === 'c1|male')!.n).toBe(3);
+  });
+
+  it('ignores a cancelled classroom-preference person even at a sub-75% church', () => {
+    const people = [
+      occ({ churchId: 'c2', accommodationKind: 'classroom', lifecycle: 'cancelled' }),
+      occ({ churchId: 'c2', accommodationKind: 'tent' }),
+      occ({ churchId: 'c2', accommodationKind: 'tent' }),
+      occ({ churchId: 'c2', accommodationKind: 'tent' }),
+    ];
+    const dist = tentDistribution(people);
+    const c2 = dist.find((d) => d.churchId === 'c2')!;
+    expect(c2.m.stu).toBe(3);      // the cancelled person never appears
+  });
 });

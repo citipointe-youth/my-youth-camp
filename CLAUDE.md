@@ -1330,6 +1330,45 @@ commits if you need the granular diffs.
   sessions, the full unfiltered 400+-entry roster, the First Aid alert box, and the new
   confirm-modal flow (see `docs/FRONTEND-FIXES-PLAN-2026-07-18.md`'s checklist).
 
+## Accommodation fold-in fix + override relocation — deployed 2026-07-20
+
+Admin-requested batch of 3 items, found while testing against a realistic sample data set
+(`../Sample Data New/*-2026-07-16-v2.csv`) where **no church cleared the 75% classroom
+threshold**. **SPA + backend** (`src/services/accommodation-allocation.ts`), no schema/migration
+change. `npm run typecheck` clean, `npm run test` = 554 pass (3 new
+`accommodation-allocation.test.ts` cases).
+
+- **Root-cause bug (this is what broke "girls' leader counts"):** a church under the 75%
+  classroom-eligibility threshold got **no classroom group** (correct, unchanged), but its
+  classroom-*preference* people were never folded into Tent City either — `tentDistribution`
+  only counted a literal `accommodationKind==='tent'`. With the realistic sample data (every
+  church landed 31–67%, well under 75%), this meant every church's classroom-preference people —
+  students **and leaders**, both genders — were invisible on the whole Accommodation Allocations
+  screen. Confirmed against the real sample: 10 of 12 imported leaders were female, several
+  classroom-kind, and they simply didn't appear anywhere until this fix.
+  - Fix: `isEligible`/`tallyChurches` (backend) is now the single eligibility check shared by
+    `computeGroups` (unchanged behaviour — still excludes ineligible churches from classroom
+    groups) and `tentDistribution`, which now folds in anyone whose personal
+    `accommodationKind==='classroom'` but whose church isn't eligible. SPA `tentDist` mirrors
+    this exactly (calls `accomChurches` first for the eligibility check, same as
+    `accomGroups` does). Verified end-to-end against the real sample data: every registered
+    person now reconciles to either a classroom group or a tent count — zero silently dropped.
+- **Pending-allocation table split.** The old single "Classrooms (Pending Allocation)" table
+  mixed two different states (eligible groups still awaiting a room, and ineligible
+  under-75% churches). `drawAccom` now renders two sections: **"Classrooms (Pending
+  Allocation)"** (eligible-but-unplaced groups, plus anyone with no accommodation type
+  recorded yet — also previously invisible) and a new **"Under 75% — Moved to Tents"**
+  section beneath it, whose rows now say the person is counted in Tent City below rather than
+  the old, inaccurate "not allocated". Tooltips on both headings (and the Tent City help
+  tooltip) updated to match.
+- **Ministry accommodation override relocated.** `Church.accommodationOverride` (tent/classroom/
+  no override) used to be set inside the church's **Account Info** modal
+  (`editChurchName`/`saveChurchName`). It's now a dedicated "Accommodation overrides" card on
+  **Admin → Accommodation setup** (`RENDER.adminAccom`, `saveChurchOverride` — instant per-row
+  save via the existing `PATCH /accounts/churches/:id` endpoint, no backend change). The Account
+  Info modal shows a one-line pointer to the new location instead; the Accounts screen's
+  Churches tooltip was updated to match.
+
 ## Architecture
 
 ```
@@ -1457,7 +1496,7 @@ The SPA was forked from an earlier demo and had drifted onto the demo's **MockAP
 - **Check-in status** = `{session, roster:[{camperId,firstName,lastName,church,zone,gender,grade,medicalFlag,checkedIn,lastEntry}], checkedInCount, totalCount}` — roster now includes gender/grade/medicalFlag directly (no second `/campers` fetch needed).
 - **Attendance** is `POST /attendance/sign-in|sign-out` with a `camperId` body (not `/campers/:id/sign-*`). Notes for a camper = `GET /notes/camper/:id`. Search reveal = `GET /search/contact/:camperId/:role` (role like `male-primary`).
 - **`/home`** DTO differs by mode: pre-camp has `totalCampers/totalLeaders/noBlueCardCount/accommodationSummary[]/perChurchBreakdown[]` (no gender split, no church `code`, no `expected`); the by-ministry M/F table and church code are derived client-side from `/registrants` and `/accounts/churches`.
-- **Accommodation (reworked 2026-06-27 to match the prototype):** classroom **rooms** (`/accommodation/classrooms`, name+capacity) + an **allocation map** (`GET/PATCH /accommodation/allocations` = `{roomId:[{key:"churchId|gender", n}]}`) + eligible-group helper (`/accommodation/groups`) + church-facing `/accommodation/church-rooms/:churchId`. Allocatable **groups** = per church×gender (students **and** leaders pooled together) where **≥75% of that church's campers are classroom-kind**; the SPA **auto-fills** a room to capacity (remainder shown as "unallocated"), rooms are **single-gender** (enforced in the service via `validateAllocations` AND the SPA dropdown), and un-allocate cascades freed people into other rooms. **Tents** are not allocated — `tentDistribution` auto-buckets tent-kind campers into **7-person tents, students and leaders separate** (display only). The old `AccommodationBlock` + per-church `reservations` model is **gone** (DB tables dropped in migration `004`). **(SUPERSEDED 2026-06-29 — see "Improvement Initiative" above):** `CampSettings.tentPrice/classroomPrice` are now **deprecated/unused** — removed from the Settings UI; Budget reads per-registrant `registrationCost`, not settings. The eligible-group logic now also **splits a church×gender pool >50 into `7-9`/`10-12` brackets** (PC-10). Pure logic + types: `src/services/accommodation-allocation.ts`. The church "Your accommodation" home tile is shown **only in real at-camp** (`campMode==='at-camp' && !PREVIEW_MODE`).
+- **Accommodation (reworked 2026-06-27 to match the prototype):** classroom **rooms** (`/accommodation/classrooms`, name+capacity) + an **allocation map** (`GET/PATCH /accommodation/allocations` = `{roomId:[{key:"churchId|gender", n}]}`) + eligible-group helper (`/accommodation/groups`) + church-facing `/accommodation/church-rooms/:churchId`. Allocatable **groups** = per church×gender (students **and** leaders pooled together) where **≥75% of that church's campers are classroom-kind**; the SPA **auto-fills** a room to capacity (remainder shown as "unallocated"), rooms are **single-gender** (enforced in the service via `validateAllocations` AND the SPA dropdown), and un-allocate cascades freed people into other rooms. **Tents** are not allocated — `tentDistribution` auto-buckets tent-kind campers into **7-person tents, students and leaders separate** (display only). **(2026-07-20)** also folds in anyone whose `accommodationKind==='classroom'` but whose church is under the 75% threshold (see "Accommodation fold-in fix" below) — nobody is left uncounted just because their church didn't clear the classroom eligibility bar. The old `AccommodationBlock` + per-church `reservations` model is **gone** (DB tables dropped in migration `004`). **(SUPERSEDED 2026-06-29 — see "Improvement Initiative" above):** `CampSettings.tentPrice/classroomPrice` are now **deprecated/unused** — removed from the Settings UI; Budget reads per-registrant `registrationCost`, not settings. The eligible-group logic now also **splits a church×gender pool >50 into `7-9`/`10-12` brackets** (PC-10). Pure logic + types: `src/services/accommodation-allocation.ts`. The church "Your accommodation" home tile is shown **only in real at-camp** (`campMode==='at-camp' && !PREVIEW_MODE`).
 - **Notes** require a `camperId`; a **testimony** is a note with `category:'testimony'` (so the testimonies screen picks a student). `/notes/recent` has no camper details (joined from `/campers`); `/notes/export` returns a **CSV string** (downloaded directly) with a Category column.
 - **Admin paths**: `/accounts/users`, `/accounts/churches`, `/admin/defaults`, `DELETE /admin/notifications`, `/import/csv` (body `{csvData}`, CSV only), `/devotional/:day` (path param). Passwords are **min 8**. Church create needs `churchName`+`zone`+`account*` fields only. (Password edits use `POST /accounts/users/password` `{userId,password}`.)
 

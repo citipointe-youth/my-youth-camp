@@ -55,6 +55,13 @@ interface ChurchTally {
 
 function newGender(): GenderTally { return { cls: 0, youth79: 0, youth1012: 0, youthOther: 0, leaders: 0 }; }
 
+// A church qualifies for classroom groups only once 75%+ of its (non-cancelled) people are
+// classroom-kind. Below that, its classroom-kind people have no room to be placed in — see
+// `tentDistribution`, which folds them into the tent counts instead of leaving them uncounted.
+function isEligible(c: Pick<ChurchTally, 'total' | 'classroom'>): boolean {
+  return c.total > 0 && c.classroom / c.total >= ELIGIBLE_RATIO;
+}
+
 function tallyChurches(occupants: readonly AllocationOccupant[]): Map<string, ChurchTally> {
   const by = new Map<string, ChurchTally>();
   for (const o of occupants) {
@@ -106,8 +113,7 @@ function groupsForGender(
 export function computeGroups(occupants: readonly AllocationOccupant[]): AllocationGroup[] {
   const groups: AllocationGroup[] = [];
   for (const c of tallyChurches(occupants).values()) {
-    const eligible = c.total > 0 && c.classroom / c.total >= ELIGIBLE_RATIO;
-    if (!eligible) continue;
+    if (!isEligible(c)) continue;
     groups.push(...groupsForGender(c, 'male', c.male));
     groups.push(...groupsForGender(c, 'female', c.female));
   }
@@ -159,10 +165,18 @@ export interface TentChurch {
 }
 
 export function tentDistribution(occupants: readonly AllocationOccupant[]): TentChurch[] {
+  // A person whose personal preference is 'classroom' still ends up in a tent if their
+  // church never reached the 75% eligibility threshold (no room group exists for them) —
+  // fold those in here so they're always counted somewhere, never silently dropped.
+  const churchTallies = tallyChurches(occupants);
   const by = new Map<string, TentChurch>();
   for (const o of occupants) {
-    if (o.accommodationKind !== 'tent') continue;
     if (o.lifecycle === 'cancelled') continue;
+    const tally = churchTallies.get(o.churchId);
+    const churchEligible = tally != null && isEligible(tally);
+    const isTentBound = o.accommodationKind === 'tent'
+      || (o.accommodationKind === 'classroom' && !churchEligible);
+    if (!isTentBound) continue;
     let c = by.get(o.churchId);
     if (!c) {
       c = { churchId: o.churchId, church: o.churchName, m: { stu: 0, ld: 0 }, f: { stu: 0, ld: 0 } };

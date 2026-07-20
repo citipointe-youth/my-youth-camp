@@ -2719,11 +2719,13 @@ function _bracketOfGrade(g){if(g==null)return null;if(g>=7&&g<=9)return '7-9';if
 function accomChurches(regs){
   const by={};
   (regs||[]).filter(r=>r.status!=='cancelled').forEach(r=>{
-    const c=by[r.churchId]||(by[r.churchId]={id:r.churchId,name:r.churchName,total:0,classroom:0,
+    const c=by[r.churchId]||(by[r.churchId]={id:r.churchId,name:r.churchName,total:0,classroom:0,none:0,
       male:{cls:0,y79:0,y1012:0,yOther:0,ld:0},female:{cls:0,y79:0,y1012:0,yOther:0,ld:0}});
     c.total++;
     if(r.accommodationKind==='classroom'){c.classroom++;const g=r.gender==='male'?c.male:c.female;g.cls++;
-      if(r.kind==='leader')g.ld++;else{const b=_bracketOfGrade(r.grade);if(b==='7-9')g.y79++;else if(b==='10-12')g.y1012++;else g.yOther++;}}});
+      if(r.kind==='leader')g.ld++;else{const b=_bracketOfGrade(r.grade);if(b==='7-9')g.y79++;else if(b==='10-12')g.y1012++;else g.yOther++;}}
+    else if(r.accommodationKind!=='tent')c.none++;   // no accommodation type recorded yet
+  });
   return by;
 }
 function _accomGenderGroups(c,gender,g){
@@ -2759,7 +2761,17 @@ async function removeAlloc(roomId,key){const rooms=window._accomRooms||[];const 
   let freed=entry.n;a[roomId]=(a[roomId]||[]).filter(e=>e.key!==key);
   for(const rm of rooms){if(rm.id===roomId)continue;const arr=a[rm.id];if(!arr)continue;const ex=arr.find(e=>e.key===key);if(!ex)continue;const used=arr.reduce((s,e)=>s+e.n,0);const rem=rm.capacity-used;if(rem>0&&freed>0){const add=Math.min(rem,freed);ex.n+=add;freed-=add;}}
   try{await api('/accommodation/allocations',{method:'PATCH',body:{allocations:a}});window._accomAlloc=await api('/accommodation/allocations');drawAccom();}catch(e){toast(e.message);}}
-function tentDist(regs){const by={};(regs||[]).filter(r=>r.accommodationKind==='tent').forEach(r=>{const c=by[r.churchId]||(by[r.churchId]={name:r.churchName,m:{stu:0,ld:0},f:{stu:0,ld:0}});const g=r.gender==='male'?c.m:c.f;if(r.kind==='leader')g.ld++;else g.stu++;});return by;}
+// Mirrors src/services/accommodation-allocation.ts tentDistribution: a classroom-preference
+// person still lands in a tent if their church never reached the 75% eligibility threshold
+// (no room group exists for them there) — folded in here so nobody is silently uncounted.
+function tentDist(regs){const by={},churches=accomChurches(regs);
+  (regs||[]).filter(r=>r.status!=='cancelled').forEach(r=>{
+    const cc=churches[r.churchId];const elig=!!cc&&cc.total>0&&cc.classroom/cc.total>=0.75;
+    const isTent=r.accommodationKind==='tent'||(r.accommodationKind==='classroom'&&!elig);
+    if(!isTent)return;
+    const c=by[r.churchId]||(by[r.churchId]={name:r.churchName,m:{stu:0,ld:0},f:{stu:0,ld:0}});
+    const g=r.gender==='male'?c.m:c.f;if(r.kind==='leader')g.ld++;else g.stu++;});
+  return by;}
 function drawAccom(){
   const regs=window._accomRegs||[],rooms=window._accomRooms||[],alloc=window._accomAlloc||{};
   const groups=accomGroups(regs);
@@ -2777,17 +2789,24 @@ function drawAccom(){
     const tone=used?'ok':'info';const lbl=used+'/'+rm.capacity;
     return `<div class="card"><div class="rowsb"><div style="font-weight:600">${icSm('classroom')} ${esc(rm.name)} <span class="sub">· cap ${rm.capacity}</span></div><span class="pill ${tone}">${lbl}</span></div>${chips}${addSel}</div>`;
   }).join(''):'<p class="note-hint">No classroom rooms yet — add them in Admin → Accommodation.</p>';
-  const out=[];
+  // Two separate lists (previously one merged table): groups still waiting on a room spot
+  // (incl. anyone with no accommodation type recorded yet) vs. ministries under the 75%
+  // classroom threshold, whose people are auto-counted in Tent City below instead.
   const by=accomChurches(regs);
+  const pendingOut=[];
+  Object.values(by).forEach(c=>{if(c.none>0)pendingOut.push([c.name,'No preference',c.none,'Accommodation type not recorded']);});
+  availGroups.forEach(g=>pendingOut.push([g.church,g.label,g.avail,g.avail<g.n?(g.avail+' of '+g.n+' to allocate'):'Awaiting a room']));
+  const tentedOut=[];
   Object.values(by).forEach(c=>{const elig=c.total>0&&c.classroom/c.total>=0.75;
-    if(!elig&&c.classroom>0)out.push([c.name,'Classroom',c.classroom,'Under 75% — not allocated']);});
-  availGroups.forEach(g=>out.push([g.church,g.label,g.avail,g.avail<g.n?(g.avail+' of '+g.n+' to allocate'):'Awaiting a room']));
+    if(!elig&&c.classroom>0)tentedOut.push([c.name,'Classroom',c.classroom,'Counted in Tent City below']);});
   // Cell padding is applied to EVERY column (not just the first) so the columns don't crowd
   // together on a narrow phone; the count is right-aligned and the Status column gets the slack.
-  const table=out.length?`<table style="width:100%;border-collapse:collapse;font-size:.82rem">
+  const accomTable=(rows,emptyMsg)=>rows.length?`<table style="width:100%;border-collapse:collapse;font-size:.82rem">
     <tr style="text-align:left;color:var(--muted)"><th style="padding:7px 12px 7px 4px">Ministry</th><th style="padding:7px 12px">Group</th><th style="padding:7px 12px;text-align:right">#</th><th style="padding:7px 4px 7px 12px">Status</th></tr>
-    ${out.map(r=>`<tr style="border-top:1px solid var(--line)"><td style="padding:7px 12px 7px 4px">${esc(r[0])}</td><td style="padding:7px 12px">${esc(r[1])}</td><td style="padding:7px 12px;text-align:right">${r[2]}</td><td style="padding:7px 4px 7px 12px"><span class="sub">${esc(r[3])}</span></td></tr>`).join('')}
-  </table>`:'<p class="note-hint">Everyone is allocated</p>';
+    ${rows.map(r=>`<tr style="border-top:1px solid var(--line)"><td style="padding:7px 12px 7px 4px">${esc(r[0])}</td><td style="padding:7px 12px">${esc(r[1])}</td><td style="padding:7px 12px;text-align:right">${r[2]}</td><td style="padding:7px 4px 7px 12px"><span class="sub">${esc(r[3])}</span></td></tr>`).join('')}
+  </table>`:`<p class="note-hint">${emptyMsg}</p>`;
+  const table=accomTable(pendingOut,'Everyone is allocated');
+  const tentedTable=accomTable(tentedOut,'No ministries are under the 75% threshold');
   const td=tentDist(regs);
   // Tent City table (PC-11 owner rework): Ministry centred between the headcount columns
   // (Students / Leaders, left) and the tent-count columns (Student Tents / Leader Tents,
@@ -2814,7 +2833,7 @@ function drawAccom(){
   // Double the gap between the male and female sections (~18px → ~40px).
   // Bug-11: a help icon on the FIRST Tent City heading explains the automatic tent logic to a
   // leader who didn't build the app.
-  const tentHelp=helpTip('Tent-kind registrants are grouped by church and gender, then split into tents of up to 7 — students and leaders separately. Filled automatically.',{left:true});
+  const tentHelp=helpTip('Tent-kind registrants — plus anyone from a below-75% ministry who chose classroom — are grouped by church and gender, then split into tents of up to 7, students and leaders separately. Filled automatically.',{left:true});
   const tentBlocks=[tentTable('m','Male'),tentTable('f','Female')].filter(Boolean);
   if(tentBlocks.length)tentBlocks[0]=tentBlocks[0].replace('</h3>',' '+tentHelp+'</h3>');
   const tentHtml=tentBlocks.map((b,i)=>`<div style="margin-top:${i===0?18:40}px">${b}</div>`).join('');
@@ -2823,7 +2842,8 @@ function drawAccom(){
   // tile pattern), 1→N columns by width, instead of a single fixed column.
   const roomGrid=rooms.length?`<div class="accom-rooms">${roomCards}</div>`:roomCards;
   box.innerHTML=`<h3 class="sec" style="margin-top:2px">Classrooms ${helpTip('Sleeping rooms you set up, each with a capacity. Single-gender, auto-filled to capacity. A church qualifies only when 75%+ of its campers chose classroom.',{left:true})}</h3>${roomGrid}
-    <h3 class="sec">Classrooms (Pending Allocation) ${helpTip('Groups still needing a classroom spot, or not eligible. “Under 75%” means too few of that church\'s campers chose classroom, so they go to tents.',{left:true})}</h3>${table}
+    <h3 class="sec">Classrooms (Pending Allocation) ${helpTip('Groups that qualified for a classroom (75%+ of the ministry chose classroom) but haven\'t been placed in a room yet, plus anyone with no accommodation type recorded yet.',{left:true})}</h3>${table}
+    <h3 class="sec" style="margin-top:20px">Under 75% — Moved to Tents ${helpTip('Fewer than 75% of this ministry chose classroom, so everyone from it is automatically counted in Tent City below instead of waiting on a room.',{left:true})}</h3>${tentedTable}
     ${tentHtml||'<p class="note-hint" style="margin-top:14px">Tent City auto-distribution appears once registrants have a tent accommodation kind set.</p>'}`;
 }
 RENDER.compose=function(){
@@ -3436,7 +3456,7 @@ RENDER.adminAccounts=async function(){
   const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option>`;
   paint('adminAccounts',`
     <div class="card"><div class="lbl" style="margin-top:0">Leadership accounts</div>${lr}</div>
-    <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('You do not usually need to add churches by hand — any church named in a registration upload is auto-created (zone defaults to Yellow; add its login + zone afterwards via Account Info). Account Info also holds the per-church accommodation override, which corrects wrong ticket types at the next upload.')}</div>
+    <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('You do not usually need to add churches by hand — any church named in a registration upload is auto-created (zone defaults to Yellow; add its login + zone afterwards via Account Info). The per-church accommodation override (which corrects wrong ticket types at the next upload) is set in Admin → Accommodation setup.')}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" onclick="randomizeChurchPasswords()">${icSm('key')} Randomise &amp; export passwords</button>
       <button class="btn ghost sm" onclick="bulkChurchUpdate()">${icSm('key')} Bulk Church Update</button></div></div>${cr}</div>
     <div class="card"><div class="lbl" style="margin-top:0">Add leadership account</div>
@@ -3490,7 +3510,7 @@ async function saveLeaderName(id,role){const nm=val('enName').trim();const sp=nm
     body.username=username;
   }
   try{await api('/accounts/users/'+id,{method:'PATCH',body});closeModal();toast('Saved');await _rAccts();}catch(e){toast(e.message);}}
-const _accOvSel=(id,s)=>`<select id="${id}"><option value=""${!s?' selected':''}>No override</option><option value="tent"${s==='tent'?' selected':''}>Tent</option><option value="classroom"${s==='classroom'?' selected':''}>Classroom</option></select>`;
+const _accOvSel=(id,s,onchange)=>`<select id="${id}"${onchange?` onchange="${onchange}"`:''}><option value=""${!s?' selected':''}>No override</option><option value="tent"${s==='tent'?' selected':''}>Tent</option><option value="classroom"${s==='classroom'?' selected':''}>Classroom</option></select>`;
 function editChurchName(id){const c=_findChurch(id);
   const cu=(window._allUsers||[]).find(u=>u.role==='church'&&u.churchId===id)||{};
   modal(`<h3>Account Info</h3>
@@ -3498,13 +3518,12 @@ function editChurchName(id){const c=_findChurch(id);
     <div class="warnbox" style="margin-top:8px">${icSm('alert')} Must match the registration export exactly — registrations are matched by name.</div>
     ${cu.id?`<label>Username</label><input class="fld" id="ecnUser" value="${esc(cu.username||'')}" autocapitalize="none" autocorrect="off" spellcheck="false">`:'<p class="note-hint" style="margin:6px 0 0">No login account for this church yet.</p>'}
     <label>Zone ${helpTip('Changing zone here does not move students already imported for this church — they keep their current zone until you re-upload the registration CSV.')}</label>${zoneSel('ecnZone',c.zone)}
-    <label>Accommodation override ${helpTip(_OVERRIDE_TIP)}</label>${_accOvSel('ecnOv',c.accommodationOverride)}
+    <p class="note-hint" style="margin-top:8px">Accommodation override has moved to Admin → Accommodation setup.</p>
     <button class="btn" style="margin-top:10px" onclick="saveChurchName('${id}','${cu.id||''}')">Save</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);}
 async function saveChurchName(id,userId){const name=val('ecnName');if(!name){toast('Enter a church name');return;}
-  const accommodationOverride=sel('ecnOv')||null;
   try{
-    await api('/accounts/churches/'+id,{method:'PATCH',body:{name,zone:sel('ecnZone'),accommodationOverride}});
+    await api('/accounts/churches/'+id,{method:'PATCH',body:{name,zone:sel('ecnZone')}});
     if(userId){
       const cu=_findUser(userId);const username=val('ecnUser').trim();
       if(username!==(cu.username||'')){
@@ -3625,7 +3644,7 @@ async function _rSched(){const el=document.getElementById('stage');const y=el?el
 
 /* ===== ADMIN ACCOMMODATION (classroom rooms) ===== */
 RENDER.adminAccom=async function(){
-  const rooms=await api('/accommodation/classrooms');
+  const [rooms,churches]=await Promise.all([api('/accommodation/classrooms'),api('/accounts/churches')]);
   window._adminRooms=rooms||[];
   const tiles=(rooms||[]).map(rm=>`
     <div class="tile" style="align-items:stretch;text-align:left;padding:12px;min-height:unset;cursor:default">
@@ -3639,6 +3658,11 @@ RENDER.adminAccom=async function(){
       </div>
     </div>`).join('')||'<p class="note-hint">No classroom rooms yet.</p>';
   const tileGrid=rooms&&rooms.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:4px">${tiles}</div>`:tiles;
+  const overrideRows=(churches||[]).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(c=>`
+    <div class="rowsb" style="align-items:center;padding:8px 4px;border-top:1px solid var(--line)">
+      <span style="font-size:var(--t-sm)">${esc(c.name)}</span>
+      <span style="flex:none">${_accOvSel('aco_'+c.id,c.accommodationOverride,`saveChurchOverride('${c.id}',this.value)`)}</span>
+    </div>`).join('')||'<p class="note-hint">No churches yet.</p>';
   paint('adminAccom',`<div class="infobox">Classrooms have a name &amp; capacity. Tent City is auto-distributed (7 per tent) — no setup needed.</div>
     <div class="card"><h3 class="sec" style="margin-top:0">Classrooms</h3>${tileGrid}</div>
     <div class="card"><div class="lbl" style="margin-top:0">Add a room</div>
@@ -3646,8 +3670,11 @@ RENDER.adminAccom=async function(){
         <div style="flex:2;min-width:110px"><label style="font-size:.72rem">Name</label><input class="fld" id="nrName" placeholder="e.g. Room 5"></div>
         <div style="flex:1;min-width:60px"><label style="font-size:.72rem">Cap</label><input class="fld" id="nrCap" type="number" inputmode="numeric" min="0" value="8"></div>
         <button class="btn sm" onclick="addRoom()" style="flex:none;align-self:flex-end">Add</button>
-      </div></div>`,'Accommodation setup','Classrooms');
+      </div></div>
+    <div class="card"><h3 class="sec" style="margin-top:0">Accommodation overrides ${helpTip(_OVERRIDE_TIP)}</h3>${overrideRows}</div>`,'Accommodation setup','Classrooms');
 };
+async function saveChurchOverride(id,value){
+  try{await api('/accounts/churches/'+id,{method:'PATCH',body:{accommodationOverride:value||null}});toast('Saved');}catch(e){toast(e.message);}}
 async function saveRoom(id){const el=document.getElementById('stage');const y=el?el.scrollTop:0;
   try{await api('/accommodation/classrooms/'+id,{method:'PATCH',body:{name:val('rn_'+id),capacity:Number(val('rc_'+id))||0}});toast('Saved');await RENDER.adminAccom();if(el)el.scrollTop=y;}catch(e){toast(e.message);}}
 async function delRoom(id){if(!await confirmSheet({title:'Delete this room?',body:'Its allocations will be cleared.',confirmLabel:'Delete',danger:true}))return;
