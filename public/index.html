@@ -1195,7 +1195,7 @@ const TAB_OF={home:'home',people:'people',student:'people',help:'help',
   admin:'admin',adminAccounts:'admin',adminSettings:'admin',adminAccom:'admin',adminData:'admin',
   adminFaqEdit:'admin',atCampInfo:'admin',adminContacts:'admin',
   adminChurchImport:'admin',adminRecords:'admin',adminCloseOut:'admin',adminWizard:'admin',adminStudents:'admin',
-  checkin:'checkin',search:'search',students:'students',allstudents:'allstudents',records:'records',notifs:'notifs',compose:'notifs',
+  checkin:'checkin',search:'search',students:'students',allstudents:'allstudents',records:'records',notifs:'home',compose:'notifs',
   data:'data',
   camper:'students',myyouth:'students',firstday:'checkin',schedule:'schedule',devotional:'home',faq:'home',notes:'home',testimonies:'home',budget:'home',accom:'home',import:'import'};
 
@@ -1203,7 +1203,11 @@ function _showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   const el=document.getElementById(id);if(el)el.classList.add('active');
   document.getElementById('bar').classList.toggle('canback',STACK.length>1);
-  const tab=TAB_OF[id];
+  // Prefer a live bottom-tab matching the screen itself — some screens (e.g. notifs) ARE a
+  // real bottom tab for most roles but sidebar-only (no data-tab button) for others, so only
+  // fall back to TAB_OF's owner when this role/mode has no bottom-tab button for the screen.
+  const hasOwnTab=!!document.querySelector(`.tab[data-tab="${id}"]`);
+  const tab=hasOwnTab?id:TAB_OF[id];
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',!!(tab&&t.dataset.tab===tab)));
 }
 function _paint(id,html,t,s){
@@ -4362,10 +4366,12 @@ function stuApply(){
     if(q&&!(s.firstName+' '+s.lastName).toLowerCase().includes(q))return false;
     return true;
   }).sort((a,b)=>a.lastName.localeCompare(b.lastName)||a.firstName.localeCompare(b.firstName));
-  const td=v=>`<td style="border-bottom:1px solid var(--line);padding:6px 8px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis">${v}</td>`;
+  const td=v=>`<td style="border-bottom:1px solid var(--line);padding:6px 8px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(v||'—')}</td>`;
+  // tdRaw skips esc() — only for cells built entirely from enum-like fields / trusted markup (Status).
+  const tdRaw=html=>`<td style="border-bottom:1px solid var(--line);padding:6px 8px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis">${html}</td>`;
   const accLbl=k=>k==='tent'?'Tent':k==='classroom'?'Classroom':'—';
   const body=rows.map(s=>`<tr onclick="stuEdit('${s.id}')" style="cursor:pointer">
-    ${td(esc(s.lastName+', '+s.firstName))}${td(esc(s.churchName||'—'))}${td(s.grade??'—')}${td(esc(s.gender==='male'?'M':s.gender==='female'?'F':'—'))}${td(esc(accLbl(s.accommodationKind)))}${td(s.atCamp?'<span class="pill ok">At camp</span>':'<span class="pill info">Registered</span>')}
+    ${td(s.lastName+', '+s.firstName)}${td(s.churchName)}${td(s.grade??'—')}${td(s.gender==='male'?'M':s.gender==='female'?'F':'—')}${td(accLbl(s.accommodationKind))}${tdRaw(s.atCamp?'<span class="pill ok">At camp</span>':'<span class="pill info">Registered</span>')}
   </tr>`).join('');
   const hdr=['Name','Church','Gr','M/F','Accom','Status'];
   const t=document.getElementById('stuTbl');
