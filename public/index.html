@@ -574,7 +574,7 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="adminContacts"></section>
   </div>
   <nav class="tabs" id="tabs" style="display:none"></nav>
-  <div class="modal" id="modal" onclick="if(event.target===this)closeModal()"><div class="sheet" id="sheet"></div></div>
+  <div class="modal" id="modal" role="dialog" aria-modal="true" onclick="if(event.target===this)closeModal()"><div class="sheet" id="sheet"></div></div>
   <div class="ig-wrap" id="impGuide" onclick="if(event.target===this)closeImportGuide()" role="dialog" aria-label="How to export from Elvanto">
     <div class="ig-card">
       <div class="ig-hd"><span class="t">Exporting from Elvanto</span><button class="ig-x" onclick="closeImportGuide()" aria-label="Close">&times;</button></div>
@@ -820,6 +820,13 @@ const zoneAccentStyle=z=>ZONE_COLORS[z]?`border-left:4px solid ${ZONE_COLORS[z]}
 
 /* ===== UTILS ===== */
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* jsq() — JS-STRING escaper for values interpolated into a single-quoted JS-string argument
+   inside a (double-quoted) inline onclick="fn('…')". esc() alone is NOT enough there: esc turns
+   ' into &#39;, which the HTML parser decodes back to a literal ' BEFORE the JS runs — so a name
+   like O'Brien (or a crafted x');alert(1)//) breaks out of the JS string. Wrap such args as
+   esc(jsq(name)): jsq first makes them JS-string-safe (\' \\ \n …), then esc keeps the HTML
+   attribute layer safe. Order matters — jsq inner, esc outer. IDs are UUIDs and don't need this. */
+const jsq=s=>String(s==null?'':s).replace(/[\\'"\n\r<]/g,c=>({'\\':'\\\\',"'":"\\'",'"':'\\"','\n':'\\n','\r':'\\r','<':'\\x3c'}[c]));
 const initials=n=>String(n||'').split(' ').filter(Boolean).map(w=>w[0]).join('').slice(0,2).toUpperCase()||'\u2013';
 const val=id=>{const e=document.getElementById(id);return e?e.value.trim():'';};
 const sel=id=>{const e=document.getElementById(id);return e?e.value:'';};
@@ -895,8 +902,59 @@ const canManageIncident=()=>ACTOR&&['zoneLeader','director','admin'].includes(AC
 const canReadCamperNotes=()=>ACTOR&&['church','zoneLeader','director','admin'].includes(ACTOR.role);
 let tT;
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),2400);}
-function modal(html){document.getElementById('sheet').innerHTML=html;document.getElementById('modal').classList.add('show');}
-function closeModal(){document.getElementById('modal').classList.remove('show');}
+let _modalReturnFocus=null;      // element focused before the modal opened (restored on close)
+let _confirmResolver=null;       // pending confirmSheet() Promise resolver (see confirmSheet)
+function modal(html){
+  const m=document.getElementById('modal');
+  // Only capture the return-focus target on the FIRST open — multi-step modals (note→review→note,
+  // sign-out prompt→review→prompt) re-call modal() while already shown; keep the original opener.
+  if(!m.classList.contains('show'))_modalReturnFocus=document.activeElement;
+  document.getElementById('sheet').innerHTML=html;
+  m.classList.add('show');
+  _focusFirstInModal();
+}
+function _focusFirstInModal(){
+  const sheet=document.getElementById('sheet');if(!sheet)return;
+  const f=sheet.querySelector('input:not([type=hidden]),textarea,select,button,[href],[tabindex]:not([tabindex="-1"])');
+  if(f){try{f.focus();}catch(_){}}
+  else{sheet.setAttribute('tabindex','-1');try{sheet.focus();}catch(_){}}
+}
+function _trapModalTab(e){
+  const sheet=document.getElementById('sheet');if(!sheet)return;
+  const all=sheet.querySelectorAll('input:not([type=hidden]),textarea,select,button,[href],[tabindex]:not([tabindex="-1"])');
+  const f=Array.prototype.filter.call(all,el=>!el.disabled&&el.offsetParent!==null);
+  if(!f.length){e.preventDefault();sheet.setAttribute('tabindex','-1');sheet.focus();return;}
+  const first=f[0],last=f[f.length-1];
+  if(e.shiftKey){if(document.activeElement===first||!sheet.contains(document.activeElement)){e.preventDefault();last.focus();}}
+  else if(document.activeElement===last||!sheet.contains(document.activeElement)){e.preventDefault();first.focus();}
+}
+function closeModal(){
+  document.getElementById('modal').classList.remove('show');
+  // If a confirmSheet() is awaiting a decision and the modal was dismissed some other way
+  // (Escape, backdrop click, a plain closeModal in a button handler), treat it as "cancel".
+  if(_confirmResolver){const r=_confirmResolver;_confirmResolver=null;r(false);}
+  if(_modalReturnFocus&&typeof _modalReturnFocus.focus==='function'){try{_modalReturnFocus.focus();}catch(_){}}
+  _modalReturnFocus=null;
+}
+/* confirmSheet — async, Promise<boolean> replacement for the blocking native confirm(). Built on
+   the same .sheet/#modal system the ad-hoc conversions (switchMode/adminReset) already use. Resolves
+   true on confirm, false on cancel/Escape/backdrop dismissal. `body` is trusted HTML (callers esc()
+   any dynamic values); `danger` styles the confirm button red. */
+function confirmSheet(opts){
+  const o=opts||{};
+  return new Promise(resolve=>{
+    _confirmResolver=resolve;
+    modal(`<h3>${esc(o.title||'Are you sure?')}</h3>
+      ${o.body?`<p class="sub" style="margin:8px 0 14px">${o.body}</p>`:''}
+      <button class="btn${o.danger?' red':''}" onclick="_confirmSheetPick(true)">${esc(o.confirmLabel||'Confirm')}</button>
+      <button class="btn ghost" style="margin-top:6px" onclick="_confirmSheetPick(false)">${esc(o.cancelLabel||'Cancel')}</button>`);
+  });
+}
+function _confirmSheetPick(v){
+  const r=_confirmResolver;_confirmResolver=null;   // null FIRST so closeModal() doesn't also resolve
+  closeModal();
+  if(r)r(v);
+}
 /* helpTip(text[,opts]) — a small "?" bubble explaining a feature in plain language for a leader
    who didn't design the app. Shows on hover (desktop) and on tap (mobile). `opts.left` anchors the
    bubble to the right edge so it doesn't run off-screen when the icon ends a heading row. */
@@ -1670,7 +1728,7 @@ async function renderOversightPulse(){
       const pct=g.total?Math.round(g.done/g.total*100):0;
       const amber=pct<PULSE_AMBER_PCT;
       const label=byChurch?esc(g.label):esc(g.label)+' Zone';
-      const tap=byChurch?` onclick="_pulseGoToChurch('${esc(g.label)}')" style="cursor:pointer"`:'';
+      const tap=byChurch?` onclick="_pulseGoToChurch('${esc(jsq(g.label))}')" style="cursor:pointer"`:'';
       return `<div style="margin-bottom:8px"${tap}>
         <div style="display:flex;justify-content:space-between;font-size:.8rem"><span>${label}</span><span>${g.done}/${g.total}</span></div>
         <div class="bar7${amber?' amber':''}"><i style="width:${pct}%"></i></div></div>`;
@@ -1763,7 +1821,7 @@ function personRow(s){
   if(s.medicalConditions&&s.medicalConditions.length)tags.push(`<span class="pill info">${icSm('medical')} ${esc(s.medicalConditions.join(', '))}</span>`);
   if(!tags.length)tags.push('<span class="pill ok">All good</span>');
   const tag=isL?'<span class="lead-tag">LEADER</span>':`<span class="gradepill">Gr ${s.grade}</span>`;
-  return `<div class="row" onclick="openPerson('${s.id}')"><div class="av ${esc(s.gender)}">${initials(s.firstName+' '+s.lastName)}</div>
+  return `<div class="row" role="button" tabindex="0" onclick="openPerson('${s.id}')"><div class="av ${esc(s.gender)}">${initials(s.firstName+' '+s.lastName)}</div>
     <div style="flex:1;min-width:0"><div class="nm">${esc(s.firstName+' '+s.lastName)}${tag}${dot}</div>
     <div class="sub">${esc(accDisplay(s))}${_isWideRole()?' · '+esc(s.churchName):''}</div>
     <div class="pills" style="margin-top:5px">${tags.join('')}</div></div><span class="chev">›</span></div>`;
@@ -2026,13 +2084,13 @@ async function _renderDailyCheckin(){
   const zoneSelOpts=zonesOpt.map(z=>`<option value="${z}" ${z===FILTER.zone?'selected':''}>${z==='all'?'All zones':z+' Zone'}</option>`).join('');
   const churchSelOpts=churchesOpt.map(ch=>`<option value="${esc(ch)}" ${ch===FILTER.church?'selected':''}>${ch==='all'?'All churches':esc(ch)}</option>`).join('');
   function rowHtml(c,isDue){
-    return `<div class="row${c.present?' checked':''}" onclick="_performCheck('${c.id}','${c.present?'out':'in'}','${esc(c.name)}')">
+    return `<div class="row${c.present?' checked':''}" role="button" tabindex="0" onclick="_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')">
       <div style="flex:1;min-width:0">
         <div class="nm">${esc(c.name)}</div>
         <div class="sub">${esc(c.church||c.zone)}${c.grade?' · Yr '+c.grade:''}</div>
       </div>
-      <button class="btn ghost sm" style="z-index:1;flex:none" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(c.name)}')">Add note</button>
-      <button class="btn ${c.present?'ghost ':''}sm" style="z-index:1;flex:none;padding:10px 18px;font-size:var(--t-sm)" aria-label="${c.present?'Check out':'Check in'}" onclick="event.stopPropagation();_performCheck('${c.id}','${c.present?'out':'in'}','${esc(c.name)}')">${c.present?'Check out':'Check in'}</button>
+      <button class="btn ghost sm" style="z-index:1;flex:none" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(jsq(c.name))}')">Add note</button>
+      <button class="btn ${c.present?'ghost ':''}sm" style="z-index:1;flex:none;padding:10px 18px;font-size:var(--t-sm)" aria-label="${c.present?'Check out':'Check in'}" onclick="event.stopPropagation();_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')">${c.present?'Check out':'Check in'}</button>
     </div>`;
   }
   const completionBanner=dueShown===0?`<div class="card" style="background:#dcfce7;border:1px solid #16a34a;text-align:center;padding:18px 12px">
@@ -2063,7 +2121,7 @@ async function _renderDailyCheckin(){
     const nm=(c.firstName+' '+c.lastName).trim();
     return `<div class="row">
       <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div><div class="sub">${esc(c.churchName||'')}${c.grade?' · Yr '+c.grade:''}</div></div>
-      <button class="btn ghost sm" style="flex:none" onclick="signInPrompt('${c.id}','${esc(nm)}',false)">Sign in to camp</button>
+      <button class="btn ghost sm" style="flex:none" onclick="signInPrompt('${c.id}','${esc(jsq(nm))}',false)">Sign in to camp</button>
     </div>`;
   };
   const notSignedInSection=notSignedIn.length>0?`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Not Signed In · ${notSignedIn.length}</summary>
@@ -2140,7 +2198,7 @@ function notePrompt(camperId,name){
     <label>Note</label><textarea id="noteBody" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
     <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this note from church logins on the student's profile.</div></div>
     <label class="tgl"><input type="checkbox" id="noteSensitive" ${d.sensitive?'checked':''}><span class="track"></span></label></div>
-    <button class="btn" style="margin-top:10px" onclick="reviewNote('${camperId}','${esc(name)}')">Review ${icSm('arrowr')}</button>
+    <button class="btn" style="margin-top:10px" onclick="reviewNote('${camperId}','${esc(jsq(name))}')">Review ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
 function reviewNote(camperId,name){
@@ -2156,7 +2214,7 @@ function reviewNote(camperId,name){
     <div class="sub" style="margin-top:7px">Note</div><div style="font-size:var(--t-body)">${esc(body)}</div>
     ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:var(--t-body)">${icSm('alert')} Sensitive — hidden from church logins</div>`:''}</div>
     <button class="btn" onclick="confirmNote('${camperId}')">Confirm &amp; submit</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(name)}')">‹ Edit</button>`);
+    <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(jsq(name))}')">‹ Edit</button>`);
 }
 async function confirmNote(camperId){const d=window._draft;if(!d)return;
   // Backend attributes the note to the logged-in actor; the typed leader name is folded into the body.
@@ -2198,7 +2256,7 @@ function faResultRow(c){
   const grade=c.grade?` · Yr ${c.grade}`:(c.kind==='leader'?' · Leader':'');
   const presence=showPresence?(offSite?'<span style="color:var(--danger);font-weight:700">signed out / not on site</span>':'on site'):'';
   const metaBits=[esc(c.churchName||''),esc(c.zone||'')+' Zone',presence].filter(Boolean).join(' · ');
-  return `<div class="row" onclick="openStudentInfo('${c.id}')">
+  return `<div class="row" role="button" tabindex="0" onclick="openStudentInfo('${c.id}')">
     <div style="flex:1;min-width:0"><div class="nm">${esc((c.firstName||'')+' '+(c.lastName||''))}${hasMed?' <span class="pill" style="background:var(--alert-bg);color:var(--alert-ink);border:1px solid var(--alert-bd)">medical</span>':''}${flag}</div>
     <div class="sub" style="color:var(--ink-2)">${metaBits}${grade}</div></div>
     <span style="color:var(--lav-2)">${ic('chevron')}</span></div>`;
@@ -2295,7 +2353,7 @@ async function openStudentInfo(id){
   const parent=(c.parentGuardianName||parentContact)?`<div class="fa-last">
     <div class="lbl">Parent / guardian</div>
     ${c.parentGuardianName?`<div class="kv"><span class="k">${esc(c.parentGuardianName)}${c.parentRelation?' ('+esc(c.parentRelation)+')':''}</span><span class="v"></span></div>`:''}
-    ${parentContact?`<button class="btn fa-parent" onclick="faRevealLeader('${c.id}','${esc(parentContact.role)}',this)">${icSm('phone')} ${esc(fmtPhone(parentContact.phone))}</button>
+    ${parentContact?`<button class="btn fa-parent" onclick="faRevealLeader('${c.id}','${esc(jsq(parentContact.role))}',this)">${icSm('phone')} ${esc(fmtPhone(parentContact.phone))}</button>
     <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:4px">Revealing is logged for the audit trail.</div>`:''}</div>`:'';
   paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${_faBackExpr(scr)}">${icSm('arrowl')} Back</button></div>
     <div class="fa-id">${_faBubble(c)}<div><h2>${esc(c.firstName+' '+c.lastName)}</h2>
@@ -2483,8 +2541,8 @@ async function runSearch(v){const box=document.getElementById('results');if(!box
       ${back?`<div class="kv"><span class="k">Secondary leader</span><span class="v">${esc(back.name)} · ${telLink(back.phone)}</span></div>`:''}
       ${!prim&&!back?'<div class="sub" style="color:var(--warn)">No leader contact set — ask admin to add one.</div>':''}
       <div style="display:flex;gap:8px;margin-top:9px">
-        ${prim?`<button class="btn sm" style="flex:1" onclick="reveal('${c.id}','${esc(prim.role)}')">${icSm('phone')} Call primary</button>`:''}
-        ${back?`<button class="btn alt sm" style="flex:1" onclick="reveal('${c.id}','${esc(back.role)}')">Secondary</button>`:''}
+        ${prim?`<button class="btn sm" style="flex:1" onclick="reveal('${c.id}','${esc(jsq(prim.role))}')">${icSm('phone')} Call primary</button>`:''}
+        ${back?`<button class="btn alt sm" style="flex:1" onclick="reveal('${c.id}','${esc(jsq(back.role))}')">Secondary</button>`:''}
       </div></div>`;}).join(''):'<p class="note-hint">No camper matches.</p>';
   }catch(e){toast(e.message);}}
 async function reveal(id,role){try{const c=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));toast(c.name+': '+fmtPhone(c.phone));}catch(e){toast(e.message);}}
@@ -2502,7 +2560,7 @@ RENDER.notifs=async function(){
       <div class="ntitle">${esc(n.title)}</div><div class="nbody">${esc(n.body)}</div>
       <div class="rowsb" style="align-items:center;margin-top:6px"><div class="nfrom" style="margin:0">— ${esc(n.senderName)}</div>${canDelete?`<button class="btn ghost sm" onclick="deleteNotice('${n.id}')">Delete</button>`:''}</div></div>`).join('')}`,'Notices',CAMP_MODE==='pre-camp'?'Pre-camp updates':'Camp &amp; zone updates');
 };
-async function deleteNotice(id){if(!confirm('Delete this notice for everyone?'))return;try{await api('/notifications/'+id,{method:'DELETE'});toast('Notice deleted');RENDER.notifs();}catch(e){toast(e.message);}}
+async function deleteNotice(id){if(!await confirmSheet({title:'Delete this notice for everyone?',confirmLabel:'Delete',danger:true}))return;try{await api('/notifications/'+id,{method:'DELETE'});toast('Notice deleted');RENDER.notifs();}catch(e){toast(e.message);}}
 
 /* ===== BUDGET (director/admin) =====
    Tent/classroom prices come from Camp settings; the backend has no fee-tier, so every
@@ -2786,7 +2844,7 @@ async function sendNotif(){const title=document.getElementById('ntitle').value.t
   let p={priority:window._pri,title,body};
   if(window._aud==='camp')p.scope='camp';else if(window._aud==='myzone'){p.scope='zone';p.zone=ACTOR.zone;}
   else{p.scope='zone';p.zone=document.getElementById('zoneSel').value;}
-  if(p.scope==='camp'||window._pri==='urgent'){if(!confirm('Send '+(window._pri==='urgent'?'URGENT ':'')+(p.scope==='camp'?'camp-wide':p.zone+' zone')+' notice?'))return;}
+  if(p.scope==='camp'||window._pri==='urgent'){if(!await confirmSheet({title:'Send '+(window._pri==='urgent'?'URGENT ':'')+(p.scope==='camp'?'camp-wide':p.zone+' zone')+' notice?',confirmLabel:'Send'}))return;}
   try{await api('/notifications',{method:'POST',body:p});toast('Delivered');back();}catch(e){toast(e.message);}}
 
 /* ===== MY YOUTH at-camp ===== */
@@ -2841,10 +2899,10 @@ function fdDraw(){
     if(done){
       // AC-2: an already-signed-in student can be signed OUT here to correct a mistake.
       const nm=(c.firstName+' '+c.lastName).replace(/'/g,"\\'");
-      return `<div class="row" style="cursor:pointer" onclick="signOutPrompt('${c.id}','${esc(nm)}')">${av}${info}<span class="pill ok">${icSm('check')} In</span><button class="btn ghost sm" style="flex:none" onclick="event.stopPropagation();signOutPrompt('${c.id}','${esc(nm)}')">Sign out</button></div>`;
+      return `<div class="row" role="button" tabindex="0" style="cursor:pointer" onclick="signOutPrompt('${c.id}','${esc(jsq(nm))}')">${av}${info}<span class="pill ok">${icSm('check')} In</span><button class="btn ghost sm" style="flex:none" onclick="event.stopPropagation();signOutPrompt('${c.id}','${esc(jsq(nm))}')">Sign out</button></div>`;
     }
     const sel=pending.has(c.id);
-    return `<div class="row ${sel?'checked':''}" style="cursor:pointer" onclick="fdToggle('${c.id}',this)" data-id="${c.id}">
+    return `<div class="row ${sel?'checked':''}" role="button" tabindex="0" style="cursor:pointer" onclick="fdToggle('${c.id}',this)" data-id="${c.id}">
       ${av}${info}
       <div style="width:26px;height:26px;border-radius:50%;border:2px solid ${sel?'#16a34a':'#c2cdda'};background:${sel?'#16a34a':'transparent'};display:grid;place-items:center;flex:none;transition:.15s">
         ${sel?icSm('check','cwhite'):''}
@@ -2929,7 +2987,7 @@ function filterMyYouth(){
     const lead=c.kind==='leader';
     const badge=lead?` <span class="lead-tag">LEADER</span>`:'';
     const sub=`${esc(c.zone)} Zone · ${esc(c.churchName)} · ${lead?'Leader':'Yr '+c.grade}`;
-    return `<div class="row" onclick="openCamper('${c.id}')"><div class="av ${esc(c.gender)}">${initials(c.firstName+' '+c.lastName)}</div>
+    return `<div class="row" role="button" tabindex="0" onclick="openCamper('${c.id}')"><div class="av ${esc(c.gender)}">${initials(c.firstName+' '+c.lastName)}</div>
       <div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}${badge}</div>
       <div class="sub">${sub}</div></div><span class="chev">›</span></div>`;
   }
@@ -2992,7 +3050,7 @@ async function openCamper(id,push=true){
     ${!atCamp&&lastSignOut?`<div class="kv"><span class="k">Signed out by</span><span class="v">${esc(lastSignOut.leaderName)}</span></div>
     <div class="kv"><span class="k">Reason</span><span class="v">${esc(lastSignOut.reason||'—')}</span></div>
     <div class="kv"><span class="k">Parents met</span><span class="v">${lastSignOut.parentsMet?'Yes':'No'}</span></div>`:''}
-    ${atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(p.fullName||p.firstName+' '+p.lastName)}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
+    ${atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
   const fullName=p.fullName||p.firstName+' '+p.lastName;
   document.getElementById('camper').innerHTML=`<div class="detail-hd"><div class="av-lg">${initials(fullName)}</div>
     <h2>${esc(fullName)}</h2><div style="color:#cfe0ff;font-size:.82rem">${esc(p.zone)} Zone · ${lead?'Leader (18+)':'Grade '+(p.grade||'—')}</div></div>
@@ -3009,7 +3067,7 @@ async function openCamper(id,push=true){
       <div class="kv"><span class="k">Name</span><span class="v">${esc(p.parentGuardianName||'—')}${p.parentRelation?' ('+esc(p.parentRelation)+')':''}</span></div>
       <div class="kv"><span class="k">Phone</span><span class="v"><a href="tel:${esc(p.parentPhone||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(p.parentPhone)||'—')}</a></span></div></div>`}
     ${notesHtml}
-    ${canReadCamperNotes()&&['arrived','checked_out','departed'].includes(p.lifecycle)?`<button class="btn alt" style="margin-top:12px;width:100%" onclick="notePrompt('${id}','${esc(fullName)}')">${icSm('note')} Add a note</button>`:''}`;
+    ${canReadCamperNotes()&&['arrived','checked_out','departed'].includes(p.lifecycle)?`<button class="btn alt" style="margin-top:12px;width:100%" onclick="notePrompt('${id}','${esc(jsq(fullName))}')">${icSm('note')} Add a note</button>`:''}`;
   const camperEl=document.getElementById('camper');
   if(camperEl)camperEl.scrollTop=0;
   if(push&&STACK[STACK.length-1]!=='camper')STACK.push('camper');
@@ -3025,7 +3083,7 @@ function signOutPrompt(id,name,isLeader){
     <label>Your name</label><input class="fld" id="soLeader" value="${esc(LAST_LEADER||'')}" placeholder="e.g. Sarah Doyle">
     <label>Reason</label><textarea id="soReason" placeholder="${isLeader?'e.g. left early for the night':'e.g. picked up by parents'}"></textarea>
     ${isLeader?'':'<label>Were parents met at pickup?</label><div class="seg" id="soPm"><button class="on" data-pm="yes" onclick="soPm(this)">Yes</button><button data-pm="no" onclick="soPm(this)">No</button></div>'}
-    <button class="btn" onclick="signOutReview('${id}','${esc(name)}',${!!isLeader})">Review ${icSm('arrowr')}</button>
+    <button class="btn" onclick="signOutReview('${id}','${esc(jsq(name))}',${!!isLeader})">Review ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
   window._soPm='yes';
 }
@@ -3040,7 +3098,7 @@ function signOutReview(id,name,isLeader){
     <div class="sub" style="margin-top:7px">Reason</div><div style="font-size:var(--t-body)">${esc(reason)}</div>
     ${isLeader?'':`<div class="sub" style="margin-top:7px">Parents met</div><div class="nm">${pm?'Yes':'No'}</div>`}</div>
     <button class="btn red" onclick="signOutConfirm()">Confirm &amp; sign out</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="signOutPrompt('${id}','${esc(name)}',${!!isLeader})">‹ Edit</button>`);
+    <button class="btn ghost" style="margin-top:6px" onclick="signOutPrompt('${id}','${esc(jsq(name))}',${!!isLeader})">‹ Edit</button>`);
 }
 async function signOutConfirm(){const d=window._soDraft;if(!d)return;
   try{await api('/attendance/sign-out',{method:'POST',body:{camperId:d.id,leaderName:d.leader,reason:d.reason,parentsMet:d.pm}});window._soDraft=null;closeModal();toast('Signed out');openCamper(d.id,false);}catch(e){toast(e.message);}}
@@ -3255,7 +3313,7 @@ async function submitIncident(){
   }catch(e){toast(e.message);}
 }
 async function deleteIncident(id){
-  if(!confirm('Delete this incident? This cannot be undone.'))return;
+  if(!await confirmSheet({title:'Delete this incident?',body:'This cannot be undone.',confirmLabel:'Delete',danger:true}))return;
   try{await api('/incidents/'+id,{method:'DELETE'});toast('Deleted');await RENDER.incidents();}
   catch(e){toast(e.message);}
 }
@@ -3462,9 +3520,9 @@ function changePassword(id){const u=_findUser(id);
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);}
 async function savePassword(id){const password=document.getElementById('cpP').value;if((password||'').length<6){toast('Password 6+ chars');return;}
   try{await api('/accounts/users/password',{method:'POST',body:{userId:id,password}});closeModal();toast('Password updated');}catch(e){toast(e.message);}}
-async function delAcct(id){if(!confirm("Delete this account?"))return;
+async function delAcct(id){if(!await confirmSheet({title:'Delete this account?',confirmLabel:'Delete',danger:true}))return;
   try{await api("/accounts/users/"+id,{method:"DELETE"});toast("Account deleted");await _rAccts();}catch(e){toast(e.message);}}
-async function delChurch(id){if(!confirm("Delete this church and its login account?"))return;
+async function delChurch(id){if(!await confirmSheet({title:'Delete this church and its login account?',confirmLabel:'Delete',danger:true}))return;
   try{await api("/accounts/churches/"+id,{method:"DELETE"});toast("Church deleted");await _rAccts();}catch(e){toast(e.message);}}
 async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter church name + login username');return;}
   const username=val('ncUser');
@@ -3479,7 +3537,7 @@ async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter churc
    (username, church, gender, password). Also creates any missing b-/g- account and retires the
    old combined login, so one click both migrates and re-issues. Passwords are memorable (Word.##). */
 async function randomizeChurchPasswords(){
-  if(!confirm('Re-randomise ALL church login passwords and download the list?\n\nEvery church’s current password will stop working — hand out the new CSV.'))return;
+  if(!await confirmSheet({title:'Re-randomise ALL church login passwords and download the list?',body:'Every church’s current password will stop working — hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
   // The POST does the whole split+randomise server-side and RETURNS the new passwords. That
   // response IS the only copy — so once it succeeds we must download the CSV before anything
   // else can fail. The accounts-list refresh afterwards is cosmetic; a hiccup there must NOT
@@ -3590,7 +3648,7 @@ RENDER.adminAccom=async function(){
 };
 async function saveRoom(id){const el=document.getElementById('stage');const y=el?el.scrollTop:0;
   try{await api('/accommodation/classrooms/'+id,{method:'PATCH',body:{name:val('rn_'+id),capacity:Number(val('rc_'+id))||0}});toast('Saved');await RENDER.adminAccom();if(el)el.scrollTop=y;}catch(e){toast(e.message);}}
-async function delRoom(id){if(!confirm('Delete this room? Its allocations will be cleared.'))return;
+async function delRoom(id){if(!await confirmSheet({title:'Delete this room?',body:'Its allocations will be cleared.',confirmLabel:'Delete',danger:true}))return;
   try{await api('/accommodation/classrooms/'+id,{method:'DELETE'});toast('Deleted');RENDER.adminAccom();}catch(e){toast(e.message);}}
 async function addRoom(){if(!val('nrName')){toast('Enter a room name');return;}
   const name=val('nrName').trim();
@@ -3610,7 +3668,7 @@ async function _acFaqBody(){
     `<div class="card"><div class="lbl" style="margin-top:0">Add FAQ</div><input class="fld" id="nfq" placeholder="Question"><textarea id="nfa" placeholder="Answer" style="margin-top:8px"></textarea><button class="btn" onclick="addFaqPre()">Add FAQ</button></div>`;
 }
 async function saveFaqPre(id){try{await api('/faq/'+id,{method:'PATCH',body:{question:val('fq_'+id),answer:val('fa_'+id)}});toast('Saved');await _rFaq();}catch(e){toast(e.message);}}
-async function delFaqPre(id){if(!confirm('Delete?'))return;try{await api('/faq/'+id,{method:'DELETE'});await _rFaq();}catch(e){toast(e.message);}}
+async function delFaqPre(id){if(!await confirmSheet({title:'Delete?',confirmLabel:'Delete',danger:true}))return;try{await api('/faq/'+id,{method:'DELETE'});await _rFaq();}catch(e){toast(e.message);}}
 async function addFaqPre(){if(!val('nfq')||!val('nfa')){toast('Enter question + answer');return;}try{await api('/faq',{method:'POST',body:{question:val('nfq'),answer:val('nfa'),order:99}});toast('Added');await _rFaq();}catch(e){toast(e.message);}}
 
 /* ===== ADMIN FAQ (at-camp) ===== */
@@ -3624,7 +3682,7 @@ RENDER.adminFaqEdit=async function(){
     `<div class="card"><div class="h3" style="margin-top:0">Add FAQ</div><input class="fld" id="fqNewQ" placeholder="Question"><textarea id="fqNewA" placeholder="Answer" style="margin-top:8px"></textarea><button class="btn" onclick="addFaqAt()">Add FAQ</button></div>`,'FAQ','Edit all answers');
 };
 async function saveFaqAt(id){try{await api('/faq/'+id,{method:'PATCH',body:{question:val('fq_q_'+id),answer:val('fq_a_'+id)}});toast('Saved');await _rFaqEdit();}catch(e){toast(e.message);}}
-async function delFaqAt(id){if(!confirm('Delete?'))return;try{await api('/faq/'+id,{method:'DELETE'});await _rFaqEdit();}catch(e){toast(e.message);}}
+async function delFaqAt(id){if(!await confirmSheet({title:'Delete?',confirmLabel:'Delete',danger:true}))return;try{await api('/faq/'+id,{method:'DELETE'});await _rFaqEdit();}catch(e){toast(e.message);}}
 async function addFaqAt(){if(!val('fqNewQ')||!val('fqNewA')){toast('Enter question + answer');return;}try{await api('/faq',{method:'POST',body:{question:val('fqNewQ'),answer:val('fqNewA'),order:99}});toast('Added');await _rFaqEdit();}catch(e){toast(e.message);}}
 
 /* ===== ADMIN SETTINGS ===== */
@@ -3773,10 +3831,10 @@ RENDER.adminSettings=async function(){
   renderCheckinDaysPreview();
 };
 window._phaseOverride=null;
-function setPhaseOverride(v){
+async function setPhaseOverride(v){
   // Manual flip changes every live session's entry — confirm before pinning away from Auto.
   if(v!=='auto'){
-    const proceed=confirm('Force the '+(v==='signin'?'arrival sign-in':'daily check-in')+' phase for everyone until set back to Auto?');
+    const proceed=await confirmSheet({title:'Force the '+(v==='signin'?'arrival sign-in':'daily check-in')+' phase for everyone until set back to Auto?',confirmLabel:'Force phase'});
     if(!proceed)return;
   }
   window._phaseOverride=v;
@@ -4040,7 +4098,7 @@ async function offlineSignInUpload(){
   const file=input&&input.files&&input.files[0];
   if(!file)return;
   const box=document.getElementById('osiResult');
-  if(!confirm('Import this sheet and sign in everyone marked "Y" who isn\'t already at camp?')){input.value='';return;}
+  if(!await confirmSheet({title:'Import this sheet and sign in everyone marked "Y" who isn\'t already at camp?',confirmLabel:'Import & sign in'})){input.value='';return;}
   if(box){box.style.display='block';box.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">Reading sheet…</div></div>';}
   try{
     const rd=await _readImportFile(file);
@@ -4370,7 +4428,7 @@ function stuApply(){
   // tdRaw skips esc() — only for cells built entirely from enum-like fields / trusted markup (Status).
   const tdRaw=html=>`<td style="border-bottom:1px solid var(--line);padding:6px 8px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis">${html}</td>`;
   const accLbl=k=>k==='tent'?'Tent':k==='classroom'?'Classroom':'—';
-  const body=rows.map(s=>`<tr onclick="stuEdit('${s.id}')" style="cursor:pointer">
+  const body=rows.map(s=>`<tr role="button" tabindex="0" onclick="stuEdit('${s.id}')" style="cursor:pointer">
     ${td(s.lastName+', '+s.firstName)}${td(s.churchName)}${td(s.grade??'—')}${td(s.gender==='male'?'M':s.gender==='female'?'F':'—')}${td(accLbl(s.accommodationKind))}${tdRaw(s.atCamp?'<span class="pill ok">At camp</span>':'<span class="pill info">Registered</span>')}
   </tr>`).join('');
   const hdr=['Name','Church','Gr','M/F','Accom','Status'];
@@ -4405,7 +4463,7 @@ function _stuFormBody(){
 function stuEdit(id){const s=_stuCache.find(x=>x.id===id);if(!s){toast('Student not found');return;}
   modal(`<h3>Edit student</h3>${_stuFormFields(s)}
     <button class="btn" style="margin-top:10px" onclick="stuSave('${id}')">Save</button>
-    ${s.atCamp?`<button class="btn alt" style="margin-top:6px" onclick="notePrompt('${id}','${esc(s.firstName+' '+s.lastName)}')">${icSm('note')} Add a note</button>`:''}
+    ${s.atCamp?`<button class="btn alt" style="margin-top:6px" onclick="notePrompt('${id}','${esc(jsq(s.firstName+' '+s.lastName))}')">${icSm('note')} Add a note</button>`:''}
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);}
 async function stuSave(id){
   const b=_stuFormBody();
@@ -4425,7 +4483,7 @@ async function stuCreate(){
   try{await api('/registrants',{method:'POST',body:b});closeModal();toast('Student added');await _rStu();}catch(e){toast(e.message);}}
 async function _rStu(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminStudents();if(el)el.scrollTop=y;}
 
-async function adminSaveDefaults(){if(!confirm('Save the current scaffold (churches, accounts, accommodation, FAQ, schedule, devotionals) as the new-year baseline?'))return;
+async function adminSaveDefaults(){if(!await confirmSheet({title:'Save the current scaffold (churches, accounts, accommodation, FAQ, schedule, devotionals) as the new-year baseline?',confirmLabel:'Save baseline'}))return;
   // Backend returns {ok:true} (no counts). Drop the cached /settings so the "Last saved"
   // stamp on the Data screen + close-out checklist reflects this save immediately.
   try{await api('/admin/defaults',{method:'POST'});Cache.del('/settings');toast('Baseline saved');if(_navId==='adminData')RENDER.adminData();}catch(e){toast(e.message);}}
@@ -4463,7 +4521,7 @@ async function _adminResetConfirmed(){
     }else{toast(e.message);}
   }
 }
-async function adminClear(){if(!confirm('Clear all notifications?'))return;
+async function adminClear(){if(!await confirmSheet({title:'Clear all notifications?',confirmLabel:'Clear',danger:true}))return;
   try{const r=await api('/admin/notifications',{method:'DELETE'});toast('Cleared '+(r.deleted||r.cleared||0)+' notices');}catch(e){toast(e.message);}}
 let _importBatch=null;        // [{type,name,csvData}] ordered Form→Ticket→Invoice, awaiting confirm
 let _importPendingParsed=null; // parsed files awaiting manual type resolution (unknowns)
@@ -4811,7 +4869,19 @@ async function _tryRestoreSession(){
 /* ===== BOOT ===== */
 // Enter-to-submit is now handled natively by #loginForm's onsubmit (real <form>, added for iOS
 // PWA Keychain autofill) — no manual keydown listeners needed here, avoids a double doLogin() call.
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('modal').classList.contains('show'))closeModal();});
+document.addEventListener('keydown',e=>{
+  const modalOpen=document.getElementById('modal').classList.contains('show');
+  if(e.key==='Escape'&&modalOpen){closeModal();return;}
+  if(e.key==='Tab'&&modalOpen){_trapModalTab(e);return;}   // keep focus inside the open dialog
+  // Keyboard activation for the app's clickable non-<button> rows (role="button" tabindex="0"):
+  // Enter/Space fires the same onclick as a tap. Native <button>/<a> already do this themselves.
+  if((e.key==='Enter'||e.key===' ')&&e.target&&e.target.getAttribute){
+    const el=e.target;
+    if(el.getAttribute('role')==='button'&&el.tagName!=='BUTTON'&&el.tagName!=='A'&&el.tagName!=='INPUT'&&el.tagName!=='TEXTAREA'&&el.tagName!=='SELECT'){
+      e.preventDefault();el.click();
+    }
+  }
+});
 _initDemoLogin();_tryRestoreSession();
 
 /* B-3: cross-tab + on-focus mode sync. A second tab (or a tab not on Home) used to keep stale
