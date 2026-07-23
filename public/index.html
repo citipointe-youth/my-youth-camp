@@ -2146,10 +2146,11 @@ async function _renderDailyCheckin(){
   // genuinely empty (nobody's actually arrived pre-camp) — skip those two real fetches and build
   // the roster from /registrants instead, client-side only.
   const previewSim=_previewSimActive();
-  const [st,regList,camperPage]=await Promise.all([
+  // The "Not signed in" list moved to the My-students screen, so the check-in load no longer needs
+  // /campers; /registrants is only needed to build the simulated roster during a preview.
+  const [st,regList]=await Promise.all([
     previewSim?Promise.resolve({session:null,roster:[]}):api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status'),
-    api('/registrants').catch(()=>[]),
-    previewSim?Promise.resolve([]):api('/campers?pageSize=300').catch(()=>[]),
+    previewSim?api('/registrants').catch(()=>[]):Promise.resolve([]),
   ]);
   const roster=previewSim?_previewSimRoster(regList):(st.roster||[]).map(r=>({
     id:r.camperId,name:(r.firstName+' '+r.lastName).trim(),
@@ -2214,27 +2215,7 @@ async function _renderDailyCheckin(){
       :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${syncingN} syncing…</div>`):'';
   const doneSection=doneList.length>0?`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · ${doneList.length}</summary>
     ${doneList.map(c=>rowHtml(c)).join('')}</details>`:'';
-  // Item 3: students the viewer can see who aren't atCamp at all yet (never arrived, OR
-  // arrived earlier and have since signed/checked out) — distinct from "Due" above, which is
-  // scoped to people already atCamp who haven't logged THIS session yet. Dedup the same way
-  // RENDER.firstday does (campers = kind:'student' already-camper records; registrants fill in
-  // anyone not yet promoted to a camper record).
-  // Feature 1: the preview simulation already treats everyone (bar the deterministic 5) as
-  // arrived — this section would otherwise list the real (all-unarrived, pre-camp) population
-  // and contradict the roster above it, so it's suppressed while the simulation is active.
-  const camperIds=new Set((Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student').map(c=>c.id));
-  const nsCampers=(Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student'&&!c.atCamp);
-  const nsRegs=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id)&&!c.atCamp);
-  const notSignedIn=previewSim?[]:[...nsRegs,...nsCampers];
-  const nsRow=c=>{
-    const nm=(c.firstName+' '+c.lastName).trim();
-    return `<div class="row">
-      <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div><div class="sub">${esc(c.churchName||'')}${c.grade?' · Yr '+c.grade:''}</div></div>
-      <button class="btn ghost sm" style="flex:none" onclick="signInPrompt('${c.id}','${esc(jsq(nm))}',false)">Sign in to camp</button>
-    </div>`;
-  };
-  const notSignedInSection=notSignedIn.length>0?`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Not Signed In · ${notSignedIn.length}</summary>
-    ${notSignedIn.map(nsRow).join('')}</details>`:'';
+  // ("Not signed in" moved to the bottom of the My-students screen — see filterMyYouth.)
   const html=`<div class="seg" id="dayseg">${dayBtns}</div>
     ${sessionLocked?`<div class="infobox" style="font-size:.8rem;margin-bottom:8px">${icSm('clock')} Viewing ${esc(label)} — only the current session can be checked in. Tap the highlighted session (•) to check people in.</div>`:''}
     ${(showZone||showChurch)?`<div class="filters">${showZone?`<select onchange="setFilter('zone',this.value)">${zoneSelOpts}</select>`:''}${showChurch?`<select onchange="setFilter('church',this.value)">${churchSelOpts}</select>`:''}</div>`:''}
@@ -2250,7 +2231,6 @@ async function _renderDailyCheckin(){
     ${completionBanner}
     ${dueList.map(c=>rowHtml(c)).join('')}
     ${doneSection}
-    ${notSignedInSection}
     <p class="note-hint">Tap a row to check in/out. Notes show on the student's profile to your church too, unless marked sensitive.</p>`;
   paint('checkin',html,'Daily Check-in',label);
   // Show undo toast if pending
@@ -2624,7 +2604,9 @@ async function _renderStudentsBody(){
   host.innerHTML='<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>';
   // Feature 1: simulate a populated roster while previewing at-camp from a still-pre-camp
   // backend — see _previewSimActive()/_previewSimCampers() above (client-side only).
-  const items=_previewSimActive()?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
+  const previewSim=_previewSimActive();
+  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
+  window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
   const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
@@ -2646,7 +2628,9 @@ async function runSearch(v){const box=document.getElementById('results');if(!box
     box.innerHTML=res.length?res.map(r=>{const c=r.camper||{};const name=(c.firstName+' '+c.lastName).trim();
       const contacts=r.contacts||[];const prim=contacts.find(x=>x.type==='primary');const back=contacts.find(x=>x.type==='backup');
       const med=c.medicalConditions||[];
-      return `<div class="findcard"><div style="display:flex;justify-content:space-between"><b>${esc(name)}</b><span class="pill info">${esc(c.churchName||'')}</span></div>
+      // Colour the church name by the student's gender (blue = guy, pink = girl); leaders/unknown neutral.
+      const chClr=c.gender==='male'?'var(--male)':c.gender==='female'?'var(--female)':'';
+      return `<div class="findcard"><div style="display:flex;justify-content:space-between"><b>${esc(name)}</b><span class="pill info"${chClr?` style="color:${chClr};font-weight:700"`:''}>${esc(c.churchName||'')}</span></div>
       <div class="sub" style="margin:3px 0">${esc(c.zone||'')} Zone · ${c.kind==='leader'?'Leader':'Grade '+(c.grade||'—')}</div>
       ${med.map(m=>`<span class="med">${esc(m)}</span> `).join('')}
       ${prim?`<div class="kv"><span class="k">Primary leader</span><span class="v">${esc(prim.name)} · ${telLink(prim.phone)}</span></div>`:''}
@@ -3145,24 +3129,36 @@ async function _renderMyGroup(screenId){
   // Feature 1: the real /campers list is genuinely empty pre-camp (nobody's arrived) — while
   // previewing the at-camp view, build a simulated "everyone but 5 already arrived" list instead
   // (client-side only) so the roster/search screens demo populated rather than blank.
-  const items=_previewSimActive()?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
+  const previewSim=_previewSimActive();
+  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
+  window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
   const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
   window._myYouthAll=items;
-  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not yet arrived. Tap a name to see their details and contacts.')}</div><div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="filterMyYouth()"><option value="all">All genders</option><option value="female">Girls</option><option value="male">Guys</option></select><select id="myGradeF" onchange="filterMyYouth()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}<option value="leaders">Leaders</option></select></div><div id="myYouthList"></div>`;
+  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not signed in. Tap a name to see their details and contacts.')}</div><div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="filterMyYouth()"><option value="all">All genders</option><option value="female">Girls</option><option value="male">Guys</option></select><select id="myGradeF" onchange="filterMyYouth()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}<option value="leaders">Leaders</option></select></div><div id="myYouthList"></div>`;
   document.getElementById(screenId).innerHTML=base;
   filterMyYouth();
 }
+// "Not signed in" list for the My-students screen (moved from the daily check-in screen): scoped
+// people not at camp who have never signed in — /registrants (pre-arrival, non-leader) plus any
+// not-atCamp campers with no sign-out history, deduped by id. Suppressed during the preview sim.
+async function _loadMyNotSignedIn(previewSim,campers){
+  if(previewSim)return [];
+  const regList=await api('/registrants').catch(()=>[]);
+  const camperIds=new Set((campers||[]).filter(c=>c.kind==='student').map(c=>c.id));
+  const nsRegs=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id)&&!c.atCamp);
+  const nsCampers=(campers||[]).filter(c=>c.kind==='student'&&!c.atCamp&&!(c.signOutHistory&&c.signOutHistory.length));
+  return [...nsRegs,...nsCampers];
+}
 function filterMyYouth(){
   const zone=sel('myZoneF')||'all',gen=sel('myGenderF')||'all',gr=sel('myGradeF')||'all';
-  const all=(window._myYouthAll||[]).filter(c=>(zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)&&(gr==='all'||(gr==='leaders'?c.kind==='leader':String(c.grade)===gr)));
-  // Leaders are included here too (not just students) — a leader who wasn't part of the
-  // bulk sign-in at the mode switch (e.g. added by a later CSV import) shows up as a late
-  // arrival and can be signed in with the same button, rather than being invisible.
-  const notArrived=all.filter(c=>!c.atCamp&&(!c.signOutHistory||c.signOutHistory.length===0));
+  const matchF=c=>(zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)&&(gr==='all'||(gr==='leaders'?c.kind==='leader':String(c.grade)===gr));
+  const all=(window._myYouthAll||[]).filter(matchF);
   const signedOut=all.filter(c=>!c.atCamp&&c.signOutHistory&&c.signOutHistory.length>0);
   const atCamp=all.filter(c=>c.atCamp);
+  // "Not signed in" moved here from the daily check-in screen (with the same one-tap sign-in button).
+  const notSignedIn=(window._myNotSignedIn||[]).filter(matchF);
   const el=document.getElementById('myYouthList');if(!el)return;
   // Item 9/11: align My-group rows with the daily check-in rows — a grade/gender badge (or LDR) to
   // the LEFT of the name instead of an initials bubble. Church logins don't repeat their own church
@@ -3176,33 +3172,32 @@ function filterMyYouth(){
       <div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}</div>
       ${sub?`<div class="sub">${sub}</div>`:''}</div><span class="chev">›</span></div>`;
   }
+  function nsRow(c){
+    const nm=(c.firstName+' '+c.lastName).trim();
+    return `<div class="row">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
+      <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div>${showChurchOnTile?`<div class="sub">${esc(c.churchName||'')}</div>`:''}</div>
+      <button class="btn ghost sm" style="flex:none;padding:8px 12px" onclick="signInPrompt('${c.id}','${esc(jsq(nm))}',${c.kind==='leader'})">Sign in to camp</button>
+    </div>`;
+  }
   const groupByChurch=ACTOR.role==='zoneLeader';
+  function grouped(rows,rowFn){
+    if(!groupByChurch)return rows.map(rowFn).join('');
+    const by={};rows.forEach(c=>{(by[c.churchName]||(by[c.churchName]=[])).push(c);});
+    return Object.keys(by).sort().map(ch=>`<div class="lbl" style="margin:8px 0 2px">${esc(ch)}</div>`+by[ch].map(rowFn).join('')).join('');
+  }
   function section(title,rows){
     if(!rows.length)return '';
-    let out=`<h3 class="sec">${title} (${rows.length})</h3>`;
-    if(groupByChurch){
-      const by={};rows.forEach(c=>{(by[c.churchName]||(by[c.churchName]=[])).push(c);});
-      Object.keys(by).sort().forEach(ch=>{
-        out+=`<div class="lbl" style="margin:8px 0 2px">${esc(ch)}</div>`+by[ch].map(myRow).join('');
-      });
-    }else{
-      out+=rows.map(myRow).join('');
-    }
-    return out;
+    return `<h3 class="sec">${title} (${rows.length})</h3>`+grouped(rows,myRow);
+  }
+  // Signed-out and Not-signed-in collapse into dropdowns (like the old check-in "Not Signed In").
+  function dropdown(title,rows,rowFn){
+    if(!rows.length)return '';
+    return `<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${title} · ${rows.length}</summary>${grouped(rows,rowFn)}</details>`;
   }
   let html='';
   html+=section('At camp',atCamp);
-  html+=section('Signed out of camp',signedOut);
-  if(notArrived.length){
-    html+=`<h3 class="sec">Late arrivals (${notArrived.length})</h3>`;
-    html+=`<div class="infobox" style="font-size:.8rem;margin-bottom:8px">First Day Sign In is closed. Sign in late arrivals here — tap a name, then “Sign in to camp”. A note is logged automatically.</div>`;
-    if(groupByChurch){
-      const by={};notArrived.forEach(c=>{(by[c.churchName]||(by[c.churchName]=[])).push(c);});
-      Object.keys(by).sort().forEach(ch=>{html+=`<div class="lbl" style="margin:8px 0 2px">${esc(ch)}</div>`+by[ch].map(myRow).join('');});
-    }else{
-      html+=notArrived.map(myRow).join('');
-    }
-  }
+  html+=dropdown('Signed out of camp',signedOut,myRow);
+  html+=dropdown('Not signed in',notSignedIn,nsRow);
   if(!html)html='<p class="note-hint" style="margin-top:24px;text-align:center">No one matches these filters.</p>';
   el.innerHTML=html;
 }

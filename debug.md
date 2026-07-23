@@ -101,6 +101,11 @@ check "expected vs actual" before touching code.
 >   "Other churches"→"All churches" (item 7). **`RENDER.devotional`** defaults to `localDateISO()`
 >   and greys non-today days (item 12). **`renderHomeAtCamp`** hero tinted by `ZONE_COLORS[ACTOR.zone]`
 >   for zoneLeader/church with the role subtitle removed (item 13).
+> - **Follow-up (`camp-v35`): "Not signed in" moved from `_renderDailyCheckin` to `filterMyYouth`**
+>   (My-students screen) as a `<details>` dropdown via new **`_loadMyNotSignedIn()`**; "Signed out
+>   of camp" is now a dropdown too (the old "Late arrivals" block is gone). The check-in load no
+>   longer fetches `/campers`. `runSearch` findcard colours the church name by `c.gender`. "Not
+>   signed in list wrong/empty" → `_loadMyNotSignedIn`; "signed-out not collapsible" → `filterMyYouth`.
 
 ## Frontend — `public/index.html` (single ~2,920-line SPA)
 

@@ -123,6 +123,17 @@ Admin-requested batch from an at-camp review. SPA + backend (`search.service.ts`
 - **13 — Home hero tinted to the login's zone** (gradient from `ZONE_COLORS` into navy) for
   zoneLeader/church, with the role subtitle removed for those two roles; admin/director unchanged.
 
+**Follow-up (same day, SPA-only, `sw.js` `camp-v34`→`camp-v35`):**
+- **"Not signed in" moved off the daily check-in screen** to the bottom of the My-students screen
+  (`filterMyYouth`) as a `<details>` dropdown with the same one-tap "Sign in to camp" button; built
+  by new helper `_loadMyNotSignedIn(previewSim,campers)` (/registrants + not-atCamp campers w/o
+  sign-out history, deduped). The check-in load dropped its `/campers` fetch as a result.
+- **My-students "Signed out of camp" is now a `<details>` dropdown** too (the old always-open
+  "Late arrivals" block is folded into the "Not signed in" dropdown). `filterMyYouth` refactored
+  with shared `grouped()`/`dropdown()` helpers.
+- **"All churches" search: church name coloured by the student's gender** (blue/pink) in the
+  `runSearch` findcard.
+
 ## Migration files consolidated — 2026-07-16
 
 `supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate
