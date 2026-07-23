@@ -228,6 +228,12 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .row.checked{background:#f0fdf4;border-color:#bbf7d0;}
 .av{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-size:var(--t-sm);font-weight:700;color:var(--violet-d);background:var(--chip);flex:none;}
 .av.male{background:var(--male-bg);color:var(--male);}.av.female{background:var(--female-bg);color:#be185d;}
+/* Grade badge shown to the LEFT of a name on the check-in + My-group rows (items 5/9/11).
+   Gender-coloured so admin/director/zoneLeader can read gender at a glance; church logins are
+   single-gender so theirs read uniformly. Replaces the old round initials bubble on those rows. */
+.gbadge{display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:23px;border-radius:6px;font-size:.68rem;font-weight:800;padding:0 6px;color:#fff;background:#94a3b8;flex:none;line-height:1;letter-spacing:.02em;}
+.gbadge.male{background:var(--male);}.gbadge.female{background:var(--female);}
+.gbadge.leader{background:var(--violet-d);}
 .nm{font-weight:700;font-size:var(--t-body);color:var(--ink);}.sub{font-size:var(--t-xs);color:var(--muted);}
 .chev{color:var(--lav-2);font-size:var(--t-h3);font-weight:700;}
 .search{display:flex;align-items:center;gap:8px;background:#fff;border:2px solid var(--blue);border-radius:14px;padding:11px 13px;margin-bottom:12px;box-shadow:0 0 0 3px rgba(79,70,229,.08);}
@@ -795,6 +801,10 @@ let LAST_LEADER='';
 // existing "Your name (leader)" fields all pick them up rather than adding a parallel prefill.
 let LEADER_INITIALS='';
 function _isChurchAccount(){return !!(ACTOR&&ACTOR.role==='church');}
+// Item 2: the name attributed to a sign-in/out or note. ONLY the first-aid log form still asks for
+// a typed name; every other action uses the account's own name automatically — a church login uses
+// its saved initials, every other role uses the logged-in account's display name.
+function _actingName(){return _isChurchAccount()?LEADER_INITIALS:((ACTOR&&ACTOR.displayName)||'');}
 function _initialsKey(){return 'ycp_initials_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
 function _updateInitialsBadge(){
   const el=document.getElementById('initialsBadge');if(!el)return;
@@ -859,6 +869,13 @@ const ZONES=['Yellow','Blue','Black','Red'];
 // records (no resolvable zone) get no accent — see zoneAccentStyle.
 const ZONE_COLORS={Yellow:'#eab308',Blue:'#4f46e5',Black:'#1e1a3a',Red:'#e11d48'};
 const zoneAccentStyle=z=>ZONE_COLORS[z]?`border-left:4px solid ${ZONE_COLORS[z]};`:'';
+// Grade/gender badge shown to the LEFT of a name on the check-in + My-group rows (items 5/9/11).
+// Youth → "Y<grade>" (e.g. Y11); leaders → "LDR". Coloured by gender (leaders violet).
+function gbadge(c){
+  const lead=(c.kind==='leader');
+  const cls=lead?'leader':((c.gender==='male'||c.gender==='female')?c.gender:'');
+  return `<span class="gbadge ${cls}">${lead?'LDR':'Y'+(c.grade||'?')}</span>`;
+}
 
 /* ===== UTILS ===== */
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1690,9 +1707,14 @@ async function renderHomeAtCamp(){
   const digestHtml=['director','admin'].includes(ACTOR.role)?_digestCardHtml(d):'';
   // Paint the home screen immediately with tiles + notices — don't block on the pulse.
   // The pulse placeholder is replaced in the background once the check-in status loads.
-  const html=`<div class="hero">${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
+  // Item 13: zoneLeader/church get a hero tinted to their zone colour and NO role subtitle
+  // (the zone colour already signals identity). admin/director keep the default hero + a subtitle.
+  const _zoneClr=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?ZONE_COLORS[ACTOR.zone]:null;
+  const _heroStyle=_zoneClr?` style="background:linear-gradient(135deg,${_zoneClr} 0%,#1e1b4b 78%)"`:'';
+  const _heroSub=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?'':`<div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':'Director'}</div>`;
+  const html=`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
     <h2>Hi ${esc(d.greetingName||ACTOR.displayName)}</h2>
-    <div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':ACTOR.role==='director'?'Director':ACTOR.role==='zoneLeader'?(esc(ACTOR.zone)+' Zone Leader'):'Church · '+esc(ACTOR.zone)+' Zone'}</div>
+    ${_heroSub}
     ${accomLineHtml}
     ${digestHtml}</div>
   ${myDayHtml}
@@ -2105,11 +2127,14 @@ async function _renderDailyCheckin(){
   // is always pinned to whatever session is current right now — it can't linger on an
   // earlier/later one it picked before the restriction kicked in.
   const churchRestricted=ACTOR.role==='church'&&!!(SETTINGS&&SETTINGS.churchCheckinTimeRestricted);
-  if(!SEL_SESSION||churchRestricted){
-    const cur=await api('/checkin/sessions/current').catch(()=>null);
-    if(churchRestricted&&cur&&cur.id)SEL_SESSION=cur.id;
-    else if(!SEL_SESSION)SEL_SESSION=(cur&&cur.id)||(SESSIONS[0]&&SESSIONS[0].id);
-  }
+  // Item 4: a church login can now BROWSE every session but only EDIT the current one. Fetch the
+  // current session so we default to it and lock check-in on any OTHER session the church selects
+  // (grey it out). When there is no current session at all (outside a window / camp day), every
+  // session is locked, which matches the backend refusing writes outside the window.
+  const _curSess=await api('/checkin/sessions/current').catch(()=>null);
+  const CUR_ID=(_curSess&&_curSess.id)||null;
+  if(!SEL_SESSION)SEL_SESSION=CUR_ID||(SESSIONS[0]&&SESSIONS[0].id);
+  const sessionLocked=churchRestricted&&SEL_SESSION!==CUR_ID;
   if(!SEL_SESSION){paint('checkin','<p class="note-hint">No check-in sessions configured. Set camp dates in admin settings.</p>','Daily Check-in','');return;}
   // Enriched RosterEntry now includes gender, grade, medicalFlag — no second /campers fetch needed.
   // "Not Signed In" (item 3) needs the students NOT on the roster at all (checkin.service's
@@ -2148,20 +2173,33 @@ async function _renderDailyCheckin(){
   const doneList=list.filter(c=>c.present);
   const dueShown=dueList.length,presentShown=doneList.length;
   const label=_ciLabel(st.session||SESSIONS.find(x=>x.id===SEL_SESSION)||{});
-  const dayBtns=churchRestricted
-    ?`<span class="sub" style="padding:7px 4px;display:inline-flex;align-items:center;gap:4px">${esc(label)} only ${helpTip('Your admin has restricted check-in to the current morning/afternoon window on a camp day. Outside that window it will be blocked.')}</span>`
-    :SESSIONS.map(s=>`<button class="${s.id===SEL_SESSION?'on':''}" onclick="selDay('${s.id}')">${esc(_ciLabel(s))}</button>`).join('');
+  // Item 4: always show switchable session buttons (the old church-restricted branch printed a
+  // static "<label> only" pill whose tooltip was unreadable — that's the reported bug). The
+  // current session is the one selected by default; a restricted church picking another gets a
+  // view-only banner + greyed check-in controls below.
+  const dayBtns=SESSIONS.map(s=>`<button class="${s.id===SEL_SESSION?'on':''}" onclick="selDay('${s.id}')">${esc(_ciLabel(s))}${s.id===CUR_ID?' •':''}</button>`).join('');
   const gradeOpts=['all',...GRADES].map(g=>`<option value="${g}" ${String(g)===FILTER.grade?'selected':''}>${g==='all'?'All grades':'Grade '+g}</option>`).join('');
   const zoneSelOpts=zonesOpt.map(z=>`<option value="${z}" ${z===FILTER.zone?'selected':''}>${z==='all'?'All zones':z+' Zone'}</option>`).join('');
   const churchSelOpts=churchesOpt.map(ch=>`<option value="${esc(ch)}" ${ch===FILTER.church?'selected':''}>${ch==='all'?'All churches':esc(ch)}</option>`).join('');
-  function rowHtml(c,isDue){
-    return `<div class="row${c.present?' checked':''}" role="button" tabindex="0" onclick="_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')">
+  // Item 5/9/11: grade/gender badge to the LEFT of the name; church logins don't repeat their own
+  // church on each tile (they only ever see their own), so those rows collapse to a single line and
+  // fit more per screen. Item 4: when viewing a non-current session as a restricted church, the
+  // check-in control is replaced by a read-only status pill (greyed / not editable).
+  const showChurchOnTile=ACTOR.role!=='church';
+  function rowHtml(c){
+    const subTxt=showChurchOnTile?esc(c.church||c.zone||''):'';
+    const rowClick=sessionLocked?'':` onclick="_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')"`;
+    const actionBtn=sessionLocked
+      ?`<span class="pill ${c.present?'ok':'warn'}" style="flex:none">${c.present?'In':'Out'}</span>`
+      :`<button class="btn ${c.present?'ghost ':''}sm" style="z-index:1;flex:none;padding:8px 14px;font-size:var(--t-sm)" aria-label="${c.present?'Check out':'Check in'}" onclick="event.stopPropagation();_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')">${c.present?'Check out':'Check in'}</button>`;
+    return `<div class="row${c.present?' checked':''}" role="button" tabindex="0"${rowClick}>
+      ${gbadge(c)}
       <div style="flex:1;min-width:0">
         <div class="nm">${esc(c.name)}</div>
-        <div class="sub">${esc(c.church||c.zone)}${c.grade?' · Yr '+c.grade:''}</div>
+        ${subTxt?`<div class="sub">${subTxt}</div>`:''}
       </div>
-      <button class="btn ghost sm" style="z-index:1;flex:none" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(jsq(c.name))}')">Add note</button>
-      <button class="btn ${c.present?'ghost ':''}sm" style="z-index:1;flex:none;padding:10px 18px;font-size:var(--t-sm)" aria-label="${c.present?'Check out':'Check in'}" onclick="event.stopPropagation();_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')">${c.present?'Check out':'Check in'}</button>
+      <button class="btn ghost sm" style="z-index:1;flex:none;padding:8px 12px" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(jsq(c.name))}')">Add note</button>
+      ${actionBtn}
     </div>`;
   }
   const completionBanner=dueShown===0?`<div class="card" style="background:#dcfce7;border:1px solid #16a34a;text-align:center;padding:18px 12px">
@@ -2175,7 +2213,7 @@ async function _renderDailyCheckin(){
       ?`<div class="ci-sync ci-sync-fail" onclick="_retryFailedCheckins()">${icSm('alert')} ${_checkinFailed} check-in${_checkinFailed===1?'':'s'} didn’t save — tap to retry</div>`
       :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${syncingN} syncing…</div>`):'';
   const doneSection=doneList.length>0?`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · ${doneList.length}</summary>
-    ${doneList.map(c=>rowHtml(c,false)).join('')}</details>`:'';
+    ${doneList.map(c=>rowHtml(c)).join('')}</details>`:'';
   // Item 3: students the viewer can see who aren't atCamp at all yet (never arrived, OR
   // arrived earlier and have since signed/checked out) — distinct from "Due" above, which is
   // scoped to people already atCamp who haven't logged THIS session yet. Dedup the same way
@@ -2198,6 +2236,7 @@ async function _renderDailyCheckin(){
   const notSignedInSection=notSignedIn.length>0?`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Not Signed In · ${notSignedIn.length}</summary>
     ${notSignedIn.map(nsRow).join('')}</details>`:'';
   const html=`<div class="seg" id="dayseg">${dayBtns}</div>
+    ${sessionLocked?`<div class="infobox" style="font-size:.8rem;margin-bottom:8px">${icSm('clock')} Viewing ${esc(label)} — only the current session can be checked in. Tap the highlighted session (•) to check people in.</div>`:''}
     ${(showZone||showChurch)?`<div class="filters">${showZone?`<select onchange="setFilter('zone',this.value)">${zoneSelOpts}</select>`:''}${showChurch?`<select onchange="setFilter('church',this.value)">${churchSelOpts}</select>`:''}</div>`:''}
     <div class="filters">
       <select onchange="setFilter('gender',this.value)"><option value="all" ${FILTER.gender==='all'?'selected':''}>All genders</option><option value="female" ${FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${FILTER.gender==='male'?'selected':''}>Guys</option></select>
@@ -2209,7 +2248,7 @@ async function _renderDailyCheckin(){
       ${dueShown>0?`<div style="text-align:right"><div style="font-weight:800;font-size:var(--t-h1);line-height:1;color:var(--warn)">${dueShown}</div><div class="sub" style="font-size:var(--t-2xs)">not yet in</div></div>`:''}
     </div>
     ${completionBanner}
-    ${dueList.map(c=>rowHtml(c,true)).join('')}
+    ${dueList.map(c=>rowHtml(c)).join('')}
     ${doneSection}
     ${notSignedInSection}
     <p class="note-hint">Tap a row to check in/out. Notes show on the student's profile to your church too, unless marked sensitive.</p>`;
@@ -2264,10 +2303,8 @@ function undoCheck(){
 async function doCheck(camperId,type){_performCheck(camperId,type,'');}
 const _SENSITIVE_HELP='Notes show on the student\'s profile by default. Mark this sensitive to hide it from church logins — only zone leaders, directors and admins will be able to see it.';
 function notePrompt(camperId,name){
-  const isChurch=_isChurchAccount();
-  const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:isChurch?LEADER_INITIALS:LAST_LEADER,body:'',sensitive:false};
+  const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:_actingName(),body:'',sensitive:false};
   modal(`<h3>Note · ${esc(name)}</h3>
-    ${isChurch?'':`<label>Your name (leader)</label><input class="fld" id="noteLeader" value="${esc(d.leader)}" placeholder="e.g. Sarah Doyle">`}
     <label>Note</label><textarea id="noteBody" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
     <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this note from church logins on the student's profile.</div></div>
     <label class="tgl"><input type="checkbox" id="noteSensitive" ${d.sensitive?'checked':''}><span class="track"></span></label></div>
@@ -2275,8 +2312,7 @@ function notePrompt(camperId,name){
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
 function reviewNote(camperId,name){
-  const leaderEl=document.getElementById('noteLeader');
-  const leader=leaderEl?leaderEl.value.trim():(_isChurchAccount()?LEADER_INITIALS:''); // church: initials auto-applied
+  const leader=_actingName(); // item 2: account name (church initials / account display name)
   const body=document.getElementById('noteBody').value.trim();
   const sensitive=!!document.getElementById('noteSensitive')?.checked;
   // Item 7e: the leader name is optional — the backend already attributes the note to the
@@ -2564,13 +2600,14 @@ RENDER.search=function(){
 };
 // Camp-wide contact lookup (masked leader phone reveal) rendered into `screenId`.
 function _renderOtherChurches(screenId){
-  paint(screenId,`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find another church's leader</span>${helpTip('Search any camper or leader by name. Tap a result to reveal masked contact details.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a student's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any camper or leader across the camp.</p></div>`,'Student Search','Find any camper');
+  paint(screenId,`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find any camper — all churches</span>${helpTip('Search any camper across every church by name. Tap a result to reveal masked contact details.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a camper's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any camper across all churches.</p></div>`,'Student Search','Find any camper');
 }
 let STUDENTS_SUB='mygroup';
 RENDER.students=async function(){
+  STUDENTS_SUB='mygroup'; // item 8: opening the Students screen always lands on My group
   const seg=`<div class="seg" id="studentsSeg" style="margin-bottom:10px">
       <button class="${STUDENTS_SUB==='mygroup'?'on':''}" onclick="switchStudentsTab('mygroup')">My group</button>
-      <button class="${STUDENTS_SUB==='others'?'on':''}" onclick="switchStudentsTab('others')">Other churches</button>
+      <button class="${STUDENTS_SUB==='others'?'on':''}" onclick="switchStudentsTab('others')">All churches</button>
     </div><div id="studentsBody"></div>`;
   // Paint the shell first so the seg is stable, then fill the body for the active sub-tab.
   paint('students',seg,'Student Search',STUDENTS_SUB==='mygroup'?'Your group':'Find any camper');
@@ -2580,7 +2617,7 @@ async function _renderStudentsBody(){
   const host=document.getElementById('studentsBody');
   if(!host)return;
   if(STUDENTS_SUB==='others'){
-    host.innerHTML=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find another church's leader</span>${helpTip('Search any camper or leader by name. Tap a result to reveal masked contact details.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a student's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any camper or leader across the camp.</p></div>`;
+    host.innerHTML=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find any camper — all churches</span>${helpTip('Search any camper across every church by name to reach their church leaders. Medical &amp; dietary details for other churches are hidden.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a camper's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any camper across all churches and reveal their leaders' contacts.</p></div>`;
     return;
   }
   // My group: fetch + render the roster into #studentsBody.
@@ -3127,13 +3164,17 @@ function filterMyYouth(){
   const signedOut=all.filter(c=>!c.atCamp&&c.signOutHistory&&c.signOutHistory.length>0);
   const atCamp=all.filter(c=>c.atCamp);
   const el=document.getElementById('myYouthList');if(!el)return;
+  // Item 9/11: align My-group rows with the daily check-in rows — a grade/gender badge (or LDR) to
+  // the LEFT of the name instead of an initials bubble. Church logins don't repeat their own church
+  // on each tile (they only ever see their own church + gender), so those rows collapse to one line.
+  const showChurchOnTile=ACTOR.role!=='church';
   function myRow(c){
-    const lead=c.kind==='leader';
-    const badge=lead?` <span class="lead-tag">LEADER</span>`:'';
-    const sub=`${esc(c.zone)} Zone · ${esc(c.churchName)} · ${lead?'Leader':'Yr '+c.grade}`;
-    return `<div class="row" role="button" tabindex="0" onclick="openCamper('${c.id}')"><div class="av ${esc(c.gender)}">${initials(c.firstName+' '+c.lastName)}</div>
-      <div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}${badge}</div>
-      <div class="sub">${sub}</div></div><span class="chev">›</span></div>`;
+    const subParts=[];
+    if(showChurchOnTile){subParts.push(esc(c.zone)+' Zone');subParts.push(esc(c.churchName));}
+    const sub=subParts.join(' · ');
+    return `<div class="row" role="button" tabindex="0" onclick="openCamper('${c.id}')">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
+      <div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}</div>
+      ${sub?`<div class="sub">${sub}</div>`:''}</div><span class="chev">›</span></div>`;
   }
   const groupByChurch=ACTOR.role==='zoneLeader';
   function section(title,rows){
@@ -3192,8 +3233,7 @@ async function openCamper(id,push=true){
   const camp=`<div class="card"><div class="h3" style="margin-top:0">Camp attendance</div>
     <div class="kv"><span class="k">Status</span><span class="v">${atCamp?'<span class="pill ok">Signed in</span>':'<span class="pill warn">Signed out</span>'}</span></div>
     ${!atCamp&&lastSignOut?`<div class="kv"><span class="k">Signed out by</span><span class="v">${esc(lastSignOut.leaderName)}</span></div>
-    <div class="kv"><span class="k">Reason</span><span class="v">${esc(lastSignOut.reason||'—')}</span></div>
-    <div class="kv"><span class="k">Parents met</span><span class="v">${lastSignOut.parentsMet?'Yes':'No'}</span></div>`:''}
+    <div class="kv"><span class="k">Reason</span><span class="v">${esc(lastSignOut.reason||'—')}</span></div>`:''}
     ${atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
   const fullName=p.fullName||p.firstName+' '+p.lastName;
   document.getElementById('camper').innerHTML=`<div class="detail-hd"><div class="av-lg">${initials(fullName)}</div>
@@ -3235,47 +3275,35 @@ function signOutPrompt(id,name,isLeader){
   const who=isLeader?'leader':'youth';
   window._soLeader=!!isLeader;
   const isChurch=_isChurchAccount();
-  if(isChurch&&!_ensureInitials())return; // item 7: initials auto-applied; gate only if unset
-  modal(`<h3>Sign out · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this ${who} OUT of camp${isChurch?(' as '+esc(LEADER_INITIALS)):''}.</p>
-    ${isChurch?'':`<label>Your name</label><input class="fld" id="soLeader" value="${esc(LAST_LEADER||'')}" placeholder="e.g. Sarah Doyle">`}
+  if(isChurch&&!_ensureInitials())return; // church initials auto-applied; gate only if unset
+  const by=_actingName(); // item 2: account name — no typed field
+  modal(`<h3>Sign out · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this ${who} OUT of camp${by?(' as '+esc(by)):''}.</p>
     <label>Reason</label><textarea id="soReason" placeholder="${isLeader?'e.g. left early for the night':'e.g. picked up by parents'}"></textarea>
-    ${isLeader?'':'<label>Were parents met at pickup?</label><div class="seg" id="soPm"><button class="on" data-pm="yes" onclick="soPm(this)">Yes</button><button data-pm="no" onclick="soPm(this)">No</button></div>'}
+    ${isLeader?'':'<p class="sub" style="margin:8px 0 2px;color:var(--ink-2)">Reminder: check this young person is collected by an authorised parent/guardian.</p>'}
     <button class="btn" onclick="signOutReview('${id}','${esc(jsq(name))}',${!!isLeader})">Review ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
-  window._soPm='yes';
 }
-function soPm(b){document.querySelectorAll('#soPm button').forEach(x=>x.classList.remove('on'));b.classList.add('on');window._soPm=b.dataset.pm;}
 function signOutReview(id,name,isLeader){
-  const leaderEl=document.getElementById('soLeader');
-  const leader=leaderEl?leaderEl.value.trim():LEADER_INITIALS; // church: initials auto-applied
-  const reason=document.getElementById('soReason').value.trim(),pm=isLeader?false:window._soPm==='yes';
-  if(!leader){toast('Add your name first');return;}if(!reason){toast('Add a reason');return;}
-  LAST_LEADER=leader;window._soDraft={id,leader,reason,pm};
+  const leader=_actingName(); // item 2: account name, never a typed field
+  const reason=document.getElementById('soReason').value.trim();
+  if(!reason){toast('Add a reason');return;}
+  LAST_LEADER=leader;window._soDraft={id,leader,reason};
   modal(`<h3>Review sign-out</h3><div class="card" style="margin:6px 0 10px">
     <div class="sub">${isLeader?'Leader':'Student'}</div><div class="nm">${esc(name)}</div>
     <div class="sub" style="margin-top:7px">Signed out by</div><div class="nm">${esc(leader)}</div>
-    <div class="sub" style="margin-top:7px">Reason</div><div style="font-size:var(--t-body)">${esc(reason)}</div>
-    ${isLeader?'':`<div class="sub" style="margin-top:7px">Parents met</div><div class="nm">${pm?'Yes':'No'}</div>`}</div>
+    <div class="sub" style="margin-top:7px">Reason</div><div style="font-size:var(--t-body)">${esc(reason)}</div></div>
     <button class="btn red" onclick="signOutConfirm()">Confirm &amp; sign out</button>
     <button class="btn ghost" style="margin-top:6px" onclick="signOutPrompt('${id}','${esc(jsq(name))}',${!!isLeader})">‹ Edit</button>`);
 }
 async function signOutConfirm(){const d=window._soDraft;if(!d)return;
-  try{await api('/attendance/sign-out',{method:'POST',body:{camperId:d.id,leaderName:d.leader,reason:d.reason,parentsMet:d.pm}});window._soDraft=null;closeModal();toast('Signed out');_refreshAfterAttendance(d.id);}catch(e){toast(e.message);}}
+  try{await api('/attendance/sign-out',{method:'POST',body:{camperId:d.id,leaderName:d.leader,reason:d.reason}});window._soDraft=null;closeModal();toast('Signed out');_refreshAfterAttendance(d.id);}catch(e){toast(e.message);}}
 function signInPrompt(id,name,isLeader){
-  // Item 3+7: a church leader signs in with ONE tap — initials auto-applied, no modal, and the
-  // originating list updates in place. Other roles still confirm their initials.
-  if(_isChurchAccount()){
-    if(!_ensureInitials())return;
-    _doSignIn(id,LEADER_INITIALS);
-    return;
-  }
-  const who=isLeader?'leader':'youth';
-  modal(`<h3>Sign in · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this ${who} back IN to camp.</p>
-    <label>Your initials</label><input class="fld" id="siInit" placeholder="e.g. SD" maxlength="6" value="${esc(LAST_LEADER||'')}">
-    <button class="btn" onclick="signInConfirm('${id}')">Sign in</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+  // Item 2+3: sign-in is now ONE tap for every role — the acting name is the account's own name
+  // (church → its initials; other roles → the account display name), never a typed field, and the
+  // originating list updates in place.
+  if(_isChurchAccount()&&!_ensureInitials())return; // church initials gate only
+  _doSignIn(id,_actingName());
 }
-async function signInConfirm(id){const el=document.getElementById('siInit');const init=el?el.value.trim():'';if(!init){toast('Enter your initials');return;}LAST_LEADER=init;closeModal();_doSignIn(id,init);}
 
 /* ===== SCHEDULE ===== */
 let SCHED_DAY=null;
@@ -3294,11 +3322,18 @@ function selSchedDay(d){SCHED_DAY=d;RENDER.schedule();}
 /* ===== DEVOTIONAL ===== */
 let DEVO_DAY=null;
 RENDER.devotional=async function(){
-  if(!DEVO_DAY)DEVO_DAY=(SETTINGS?.checkInDays&&SETTINGS.checkInDays[0])||null;
+  const days=SETTINGS?.checkInDays||[];
+  // Item 12: default to TODAY's devotional and grey out the other camp days (only today's is the
+  // "current" one). Outside the camp dates there is no current day, so all days stay selectable.
+  const today=localDateISO();
+  const isCampToday=days.includes(today);
+  if(!DEVO_DAY)DEVO_DAY=isCampToday?today:((SETTINGS?.checkInDays&&SETTINGS.checkInDays[0])||null);
   if(!DEVO_DAY){paint('devotional','<p class="note-hint">No camp days configured.</p>','Daily Devotional','');return;}
   const d=await api('/devotional/'+DEVO_DAY).catch(()=>null);
-  const days=SETTINGS?.checkInDays||[];
-  const daySeg=days.length>1?`<div class="seg">${days.map(dy=>`<button class="${dy===DEVO_DAY?'on':''}" onclick="selDevoDay('${dy}')">${new Date(dy+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',timeZone:'UTC'})}</button>`).join('')}</div>`:'';
+  const daySeg=days.length>1?`<div class="seg">${days.map(dy=>{
+    const locked=isCampToday&&dy!==today;
+    return `<button class="${dy===DEVO_DAY?'on':''}"${locked?' style="opacity:.4"':''} onclick="${locked?"toast('Today\\'s devotional is the current one')":`selDevoDay('${dy}')`}">${new Date(dy+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',timeZone:'UTC'})}</button>`;
+  }).join('')}</div>`:'';
   paint('devotional',daySeg+(d?`<div class="hero" style="background:radial-gradient(130% 130% at 100% 0%,var(--teal),var(--navy) 78%)">
     <div class="k">Verse of the day</div><h2 style="font-size:1.06rem;line-height:1.5;font-weight:700">"${esc(d.verse)}"</h2>
     <div style="color:#a5f3fc;font-size:var(--t-sm);font-weight:700;margin-top:6px">${esc(d.reference)}</div></div>
@@ -3341,15 +3376,13 @@ RENDER.testimonies=async function(){
   paint('testimonies',`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Submit a testimony</span>${helpTip('Record a God-moment from camp. Choosing a student is optional — leave it blank for a general testimony. Saved for leaders and directors to review.')}</div>
     <div class="infobox" style="font-size:.82rem">Record a testimony or God-moment from camp. Pick a student if it's about one, or leave it as a general testimony. It is saved with the records that leaders &amp; directors review.</div>
     <div class="card"><label>Student (optional)</label><select id="tmCamper">${opts}</select>
-    ${_isChurchAccount()?'':`<label>Your name (leader)</label><input class="fld" id="tmLeader" value="${esc(LAST_LEADER||'')}" placeholder="e.g. Sarah Doyle">`}
     <label>Testimony</label><textarea id="tmBody" placeholder="What happened? Whose story is it? What did God do?" style="min-height:120px"></textarea>
     <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this testimony from church logins on the student's profile.</div></div>
     <label class="tgl"><input type="checkbox" id="tmSensitive"><span class="track"></span></label></div>
     <button class="btn" style="margin-top:10px" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','Day 2+');
 };
 async function submitTestimony(){const camperId=sel('tmCamper'),body=val('tmBody');
-  const tmLeaderEl=document.getElementById('tmLeader');
-  const leader=tmLeaderEl?tmLeaderEl.value.trim():(_isChurchAccount()?LEADER_INITIALS:''); // church: initials auto-applied
+  const leader=_actingName(); // item 2: account name (church initials / account display name)
   const sensitive=!!document.getElementById('tmSensitive')?.checked;
   if(!body){toast('Write the testimony');return;}if(leader)LAST_LEADER=leader;
   const full=leader&&leader!==ACTOR.displayName?`${body}\n— logged by ${leader}`:body;
@@ -3502,8 +3535,7 @@ RENDER.admin=function(){
   // not explicitly listed in the request but there's no other home for it in this console).
   // Reviewed 2026-07-18 (frontend assessment, two independent passes): grouping is considered
   // settled — please don't reactively reshuffle again without a deliberate pass.
-  paint('admin',`<div class="infobox">Admin console — configure camp here year-round.</div>
-    <div class="h3" style="margin:14px 0 6px">Camp setup</div>
+  paint('admin',`<div class="h3" style="margin:14px 0 6px">Camp setup</div>
     <div class="tiles">
       ${wizardTile}
       <div class="tile" onclick="go('adminSettings')"><div class="l">Camp settings</div></div>

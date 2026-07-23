@@ -23,7 +23,6 @@ export interface SignOutEvent {
   type: 'out' | 'in';
   leaderName: string;
   reason?: string;
-  parentsMet?: boolean;
   authorId: string;
   timestamp: ISODateString;
 }

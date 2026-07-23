@@ -83,6 +83,46 @@ A deep audit across three areas was completed and all bugs addressed. Key change
 - `person.service.test.ts`: 4 `listMedicalWatch` cases — atCamp filter, departed excluded, church scoping, firstAid access (BUG-12).
 - `admin.characterisation.test.ts`: `BadRequestError` import added; `force:true` alone throws `BadRequestError` for `newYear` (BUG-13).
 
+## At-camp bug/feature batch (13 items) — deployed 2026-07-24
+
+Admin-requested batch from an at-camp review. SPA + backend (`search.service.ts`, item-1 removal)
++ **migration `0012`** (drops `sign_out_history.parents_met`, applied to prod AFTER the code push).
+`npm run typecheck` clean, `npm run test` = **579 pass**, SPA `node --check` OK. `sw.js`
+`camp-v33`→`camp-v34`. Design: `docs/superpowers/specs/2026-07-24-atcamp-bug-batch-design.md`.
+
+- **1 — "Parents met at pickup" removed entirely.** The Yes/No control is gone (a plain text
+  reminder stays); `parentsMet` stripped from the `SignOutEvent` entity, Zod schema,
+  `attendance.controller`, `supabase.people` mapper, and BOTH audit exports (workbook + CSV);
+  `openCamper`'s "Parents met" row removed. **Migration `0012`** drops the column.
+- **2 — Non-church accounts auto-use the account name.** New SPA helper **`_actingName()`** (church
+  → saved initials, else `ACTOR.displayName`) replaces the typed "Your name" field on **sign-out,
+  sign-in, add-note and testimony**. Sign-in is now one tap for every role. **Only the first-aid log
+  form still asks for a name.**
+- **3 — Admin console top note removed.**
+- **4 — Church daily-check-in session switching.** All sessions are browsable; the current one is
+  marked `•` and selected by default. A restricted church viewing a NON-current session gets a
+  view-only banner + greyed status pills (`sessionLocked` in `_renderDailyCheckin`). This replaced
+  the old static "<label> only" pill whose tooltip was unreadable (the reported bug).
+- **5 / 9 / 11 — Row restyle + `gbadge()`.** New shared **`gbadge(c)`** helper renders a
+  grade/gender badge ("Y11"/"LDR") to the LEFT of the name on BOTH the daily check-in (`rowHtml`)
+  and My-group (`myRow`) rows; gender-coloured (`.gbadge.male/.female`, leaders violet). Church
+  logins no longer repeat their own church on tiles (rows collapse to one line, fit more per
+  screen); buttons slightly smaller.
+- **6 / 10 — "All churches" search cross-scope.** `search.service.search()` now lets
+  church/zoneLeader find ANY arrived camper across churches AND genders (item 10), but
+  **`redactSensitive()`** blanks medical/dietary/medication/medicare/parent/blue-card/consents/DOB/
+  contact for any hit OUTSIDE the actor's `canAccessPerson` scope (item 6). director/admin/firstAid
+  unchanged. `GET /campers/:id` still gates on `canAccessPerson`, so redacted hits can't be
+  drilled into.
+- **7 — "Other churches" → "All churches"** label; misleading "find another church's leader"
+  heading corrected.
+- **8 — My group is the default Students sub-tab** on every open (`STUDENTS_SUB` reset in
+  `RENDER.students`).
+- **12 — Devotional greys non-current days** and defaults to today (`localDateISO()`); all days
+  stay selectable outside the camp dates.
+- **13 — Home hero tinted to the login's zone** (gradient from `ZONE_COLORS` into navy) for
+  zoneLeader/church, with the role subtitle removed for those two roles; admin/director unchanged.
+
 ## Migration files consolidated — 2026-07-16
 
 `supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate
@@ -104,6 +144,10 @@ to 18, RLS enabled in that same migration — `0008` leaders-only notifications)
 migration = `0009` (revokes the public/anon/authenticated execute grant on the
 Supabase-provisioned `rls_auto_enable()` event-trigger function and codifies that
 function + its `ensure_rls` trigger in a tracked migration for the first time).
+Since then: **`0010`** (scheduled notices — `notifications.scheduled_for`), **`0011`**
+(check-in windows — four `checkin_window_*` cols + `church_checkin_time_restricted`), and
+**`0012`** (2026-07-24 — drops `sign_out_history.parents_met`; applied to prod after the code
+push that stopped writing it). Next migration = `0013`.
 
 **Prod reconciled 2026-07-16 (code) + 2026-07-17 (DB).** The code-ref removal (dropping
 `tentPrice`/`classroomPrice` from the settings entity/schema/seed/mapper + fixtures)

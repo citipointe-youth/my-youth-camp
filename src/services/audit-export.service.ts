@@ -43,7 +43,6 @@ interface SignLogEvent {
   type: 'in' | 'out';
   timestamp: string;
   reason: string;
-  parentsMet: boolean;
   authorId: string;
   /** Feature 4: the acting leader's initials/name captured at sign-in/out time (SignOutEvent.leaderName). */
   leaderInitials: string;
@@ -72,7 +71,6 @@ function buildSignInOutTimeline(people: Person[]): { noShows: Person[]; events: 
         type: ev.type === 'in' ? 'in' : 'out',
         timestamp: ev.timestamp,
         reason: ev.reason || '',
-        parentsMet: !!ev.parentsMet,
         authorId: ev.authorId,
         leaderInitials: ev.leaderName || '',
       });
@@ -158,7 +156,7 @@ export function makeAuditExportService(
       const signLog = wb.addWorksheet('Sign-in & Sign-out Log');
       signLog.addRow([
         'Student', 'Church', 'Zone', 'Gender', 'Grade',
-        'Event Type', 'Timestamp (local)', 'Reason', 'Parents Met', 'Authorised By',
+        'Event Type', 'Timestamp (local)', 'Reason', 'Authorised By',
         'Leader Initials', 'Total Students Signed In', 'Total Leaders Signed In',
       ]);
       signLog.getRow(1).font = { bold: true };
@@ -181,7 +179,6 @@ export function makeAuditExportService(
           e.type === 'in' ? 'Sign-in (returned)' : 'Sign-out',
           toLocalTs(e.timestamp, tz),
           e.reason,
-          e.parentsMet ? 'Yes' : '',
           e.authorId,
           e.leaderInitials,
           e.studentsSignedIn,
@@ -308,7 +305,7 @@ export function makeAuditExportService(
       for (const p of noShows) {
         rows.push([
           p.firstName, p.lastName, p.churchName, p.zone, p.gender, String(p.grade ?? ''),
-          'Registered — Did Not Attend', '', '', '', '', '', '', '',
+          'Registered — Did Not Attend', '', '', '', '', '', '',
         ]);
       }
       for (const e of events) {
@@ -317,7 +314,6 @@ export function makeAuditExportService(
           e.type === 'in' ? 'Sign-in (returned)' : 'Sign-out',
           toLocalTs(e.timestamp, tz),
           e.reason,
-          e.parentsMet ? 'Yes' : '',
           e.authorId,
           e.leaderInitials,
           String(e.studentsSignedIn),
@@ -326,7 +322,7 @@ export function makeAuditExportService(
       }
       return toCsvString(
         ['First Name', 'Last Name', 'Church', 'Zone', 'Gender', 'Grade',
-          'Event Type', 'Timestamp (local)', 'Reason', 'Parents Met', 'Authorised By',
+          'Event Type', 'Timestamp (local)', 'Reason', 'Authorised By',
           'Leader Initials', 'Total Students Signed In', 'Total Leaders Signed In'],
         rows,
       );

@@ -79,6 +79,38 @@ function makeParentContact(person: Person, opts?: { mask?: boolean }): MaskedCon
   };
 }
 
+/**
+ * Blank every sensitive/health/contact field on a person, keeping only the identity + placement
+ * needed to LOCATE them (name, gender, grade, church, zone, kind, lifecycle). Used for cross-scope
+ * search hits — a church/zoneLeader can find any camper across churches/genders to reach that
+ * camper's church leaders (items 7 & 10), but must never see another church's (or another gender's)
+ * medical/dietary/parent/medicare data (item 6). The single-person GET /campers/:id path still
+ * gates on canAccessPerson, so a redacted hit can't be drilled into for the real values either.
+ */
+function redactSensitive(person: Person): Person {
+  return {
+    ...person,
+    dateOfBirth: null,
+    mobile: null,
+    email: null,
+    suburb: null,
+    postcode: null,
+    state: null,
+    medicalConditions: [],
+    dietaryRequirements: [],
+    otherMedications: null,
+    medicareNumber: null,
+    parentGuardianName: null,
+    parentPhone: null,
+    parentRelation: null,
+    blueCardNumber: null,
+    blueCardExpiry: null,
+    consents: Object.fromEntries(
+      Object.keys(person.consents).map((k) => [k, { granted: false, timestamp: null }]),
+    ) as Person['consents'],
+  };
+}
+
 export function makeSearchService(
   personRepo: IPersonRepository,
   churchRepo: IChurchRepository,
@@ -115,18 +147,27 @@ export function makeSearchService(
       const persons = await personRepo.search(q);
       // First-aiders must be able to find ANYONE who is registered — including people who have
       // not yet arrived, or who have signed out/departed — so a medical lookup never fails because
-      // of presence state. The SPA red-flags anyone not currently on site. Other roles keep the
-      // existing "arrived campers only" search scope.
-      const scoped = persons.filter((p) => {
-        if (!canAccessPerson(actor, p)) return false;
-        if (isCamper(p)) return true;
-        return actor.role === 'firstAid' && isRegistrant(p);
-      });
-
+      // of presence state. The SPA red-flags anyone not currently on site.
+      //
+      // church/zoneLeader get an "All churches" search (items 6/7/10): ANY arrived camper is
+      // findable across churches AND genders so a leader can locate a student and reach that
+      // student's church contacts — but a hit OUTSIDE the actor's own canAccessPerson scope has
+      // its sensitive data redacted (no other-church/other-gender medical, dietary, parent or
+      // medicare). director/admin already access everyone; their results are never redacted.
       const results: SearchResult[] = [];
-      for (const person of scoped) {
+      for (const person of persons) {
+        const owned = canAccessPerson(actor, person);
+        let visible: boolean;
+        if (owned) {
+          visible = isCamper(person) || (actor.role === 'firstAid' && isRegistrant(person));
+        } else if (actor.role === 'church' || actor.role === 'zoneLeader') {
+          visible = isCamper(person);
+        } else {
+          visible = false;
+        }
+        if (!visible) continue;
         const { masked } = await getContactsForPerson(person);
-        results.push({ camper: person, contacts: masked });
+        results.push({ camper: owned ? person : redactSensitive(person), contacts: masked });
       }
       return results;
     },

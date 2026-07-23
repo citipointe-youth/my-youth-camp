@@ -91,7 +91,6 @@ function toSignOutEvent(row: Record<string, unknown>): SignOutEvent {
     type: row['type'] as 'out' | 'in',
     leaderName: row['leader_name'] as string,
     reason: (row['reason'] as string | null) ?? undefined,
-    parentsMet: (row['parents_met'] as boolean | null) ?? undefined,
     authorId: row['author_id'] as string,
     timestamp: (row['timestamp'] as Date).toISOString(),
   };
@@ -415,7 +414,6 @@ async function appendHistories(tx: TxClient, p: Person): Promise<void> {
         type: e.type,
         leader_name: e.leaderName,
         reason: e.reason ?? null,
-        parents_met: e.parentsMet ?? null,
         author_id: e.authorId,
         timestamp: e.timestamp,
       })),

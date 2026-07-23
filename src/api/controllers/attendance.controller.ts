@@ -13,13 +13,12 @@ export function makeAttendanceController(services: AttendanceControllerServices)
   return {
     async signOut(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
-      const b = req.body as { camperId?: string; reason?: string; parentsMet?: boolean; leaderName?: string };
+      const b = req.body as { camperId?: string; reason?: string; leaderName?: string };
       if (!b.camperId) throw new BadRequestError('Missing camperId');
       await person.signEvent(req.ctx.actor, b.camperId, {
         type: 'out',
         leaderName: b.leaderName ?? req.ctx.actor.displayName ?? 'Staff',
         reason: b.reason,
-        parentsMet: b.parentsMet,
         authorId: req.ctx.actor.id,
         timestamp: nowISO(),
       });

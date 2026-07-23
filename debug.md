@@ -77,6 +77,31 @@ check "expected vs actual" before touching code.
 >   unions and the Express adapter's method cast now include `'put'`; if a future PUT route 404s,
 >   check those two spots weren't reverted.
 
+> **At-camp bug batch (deployed 2026-07-24) — new/changed symbols (grep the name):**
+> - **`gbadge(c)`** (near `ZONE_COLORS`) — grade/gender badge ("Y11"/"LDR") drawn to the LEFT of a
+>   name on the check-in `rowHtml` AND My-group `myRow` rows (`.gbadge.male/.female/.leader` CSS).
+>   "Badge missing/wrong colour on a row" → here. The old initials bubble (`.av`) is gone from
+>   those two rows (still used on `openCamper`'s detail header).
+> - **`_actingName()`** (by `_isChurchAccount`) — the name attributed to sign-in/out, notes and
+>   testimonies (church → `LEADER_INITIALS`, else `ACTOR.displayName`). The typed "Your name" input
+>   is GONE from `signOutPrompt`/`signOutReview`, `signInPrompt` (now one-tap for all roles),
+>   `notePrompt`/`reviewNote`, and `submitTestimony`. **Only the first-aid log form asks a name.**
+>   "Sign-out/note logged under the wrong name" → `_actingName`.
+> - **`parentsMet` fully removed** (item 1). No more Yes/No control, no `soPm`/`window._soPm`, no
+>   `signInConfirm`. Backend: `SignOutEvent`/`checkin.schema`/`attendance.controller`/
+>   `supabase.people`/`audit-export` no longer reference it; migration `0012` drops the column.
+> - **`_renderDailyCheckin`** gained `CUR_ID` + `sessionLocked` (item 4): church logins browse every
+>   session but only the current one (marked `•`) is editable; a non-current session shows a
+>   view-only banner + greyed status pills. `rowHtml(c)` dropped its unused 2nd arg.
+> - **`search.service.search()`** (backend) now returns cross-church/cross-gender hits for
+>   church/zoneLeader, redacted via **`redactSensitive()`** outside `canAccessPerson` scope (items
+>   6/10). "Church sees another church's medical" → `redactSensitive`; "church can't find another
+>   church's student" → the visibility branch in `search()`.
+> - **`RENDER.students`** resets `STUDENTS_SUB='mygroup'` on open (item 8); seg label
+>   "Other churches"→"All churches" (item 7). **`RENDER.devotional`** defaults to `localDateISO()`
+>   and greys non-today days (item 12). **`renderHomeAtCamp`** hero tinted by `ZONE_COLORS[ACTOR.zone]`
+>   for zoneLeader/church with the role subtitle removed (item 13).
+
 ## Frontend — `public/index.html` (single ~2,920-line SPA)
 
 This one file is the only real navigation cost in the repo. Map below (line numbers are a

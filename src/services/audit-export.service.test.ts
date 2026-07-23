@@ -158,7 +158,7 @@ describe('audit-export: sign-in/out log running totals (chronological across stu
     const csv = await svc.exportSignInOutCsv(actor);
     const lines = csv.trim().split('\n');
     expect(lines[0]).toBe(
-      'First Name,Last Name,Church,Zone,Gender,Grade,Event Type,Timestamp (local),Reason,Parents Met,Authorised By,Leader Initials,Total Students Signed In,Total Leaders Signed In',
+      'First Name,Last Name,Church,Zone,Gender,Grade,Event Type,Timestamp (local),Reason,Authorised By,Leader Initials,Total Students Signed In,Total Leaders Signed In',
     );
     // 4 real events (cam1 has none — it was only ever noted, not signed) in chronological order.
     const dataRows = lines.slice(1);
@@ -192,7 +192,7 @@ describe('audit-export: Feature 4 — leader initials captured in the audit trai
     await people.save(person({
       id: 'y2', firstName: 'Ivy', lastName: 'Ng', kind: 'youth', lifecycle: 'checked_out', atCamp: false,
       signOutHistory: [
-        { id: 's1', type: 'out', leaderName: 'SD', reason: 'picked up', parentsMet: true, authorId: 'acct-1', timestamp: '2026-07-02T09:00:00.000Z' },
+        { id: 's1', type: 'out', leaderName: 'SD', reason: 'picked up', authorId: 'acct-1', timestamp: '2026-07-02T09:00:00.000Z' },
       ],
     }));
     const wb = await load();

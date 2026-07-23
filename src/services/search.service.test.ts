@@ -136,3 +136,54 @@ describe('search.service: search() — general "Other churches" lookup stays mas
     expect(leader?.phone).toBe('0411****02');
   });
 });
+
+describe('search.service: search() — church "All churches" cross-scope (items 6/10)', () => {
+  it('a gender-scoped church login finds other-gender / other-church campers, sensitive data REDACTED', async () => {
+    await people.save(
+      person({
+        id: 'pOther',
+        firstName: 'Zed',
+        churchId: 'c2',
+        churchName: 'Grace',
+        zone: 'Blue',
+        gender: 'male',
+        medicalConditions: ['Asthma'],
+        dietaryRequirements: ['Nuts'],
+        parentPhone: '0400999888',
+      }),
+    );
+    const boys = actor('church', { churchId: 'c1', churchName: 'Victory', zone: 'Yellow', genderScope: 'male' });
+
+    // p1 is female of the SAME church (other gender → outside this login's scope).
+    const ada = (await svc.search(boys, 'Ada')).find((r) => r.camper.id === 'p1');
+    expect(ada).toBeDefined(); // item 10: visible despite being the other gender
+    expect(ada?.camper.parentPhone ?? null).toBeNull(); // item 6: redacted
+    expect(ada?.camper.medicalConditions).toEqual([]); // item 6: redacted
+
+    // pOther belongs to another church entirely.
+    const zed = (await svc.search(boys, 'Zed')).find((r) => r.camper.id === 'pOther');
+    expect(zed).toBeDefined();
+    expect(zed?.camper.medicalConditions).toEqual([]);
+    expect(zed?.camper.dietaryRequirements).toEqual([]);
+    expect(zed?.camper.parentPhone ?? null).toBeNull();
+  });
+
+  it('does NOT redact a camper within the login’s own church + gender scope', async () => {
+    await people.save(
+      person({
+        id: 'pMine',
+        firstName: 'Ben',
+        gender: 'male',
+        churchId: 'c1',
+        churchName: 'Victory',
+        zone: 'Yellow',
+        medicalConditions: ['EpiPen'],
+        parentPhone: '0400111000',
+      }),
+    );
+    const boys = actor('church', { churchId: 'c1', churchName: 'Victory', zone: 'Yellow', genderScope: 'male' });
+    const ben = (await svc.search(boys, 'Ben')).find((r) => r.camper.id === 'pMine');
+    expect(ben?.camper.medicalConditions).toEqual(['EpiPen']); // full detail for own scope
+    expect(ben?.camper.parentPhone).toBe('0400111000');
+  });
+});

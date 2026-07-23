@@ -12,7 +12,6 @@ export type CheckInInput = z.infer<typeof CheckInInputSchema>;
 export const SignOutInputSchema = z.object({
   camperId: z.string(),
   reason: z.string().optional(),
-  parentsMet: z.boolean().optional(),
   leaderName: z.string().optional(),
 });
 
