@@ -2006,7 +2006,7 @@ async function drainQueue(){
     }
   }
   _draining=false;
-  await RENDER.checkin();
+  await _rCheckin();
 }
 function _updateSyncDots(camperId,state){
   document.querySelectorAll('.sync-dot[data-id="'+camperId+'"]').forEach(el=>{el.className='sync-dot '+state;});
@@ -2021,7 +2021,7 @@ function _optimisticState(camperId,roster,queue){
 // dropped taps (no persistence by design) — the toast tells the user to re-tap red rows.
 function _retryFailedCheckins(){
   _checkinFailed=0;
-  if(CHECKIN_QUEUE.length)drainQueue();else RENDER.checkin();
+  if(CHECKIN_QUEUE.length)drainQueue();else _rCheckin();
   toast('Re-tap any row still marked red to check them in');
 }
 
@@ -2239,6 +2239,15 @@ async function _renderDailyCheckin(){
 function selDay(id){SEL_SESSION=id;RENDER.checkin();}
 function setFilter(k,v){FILTER[k]=v;if(k==='zone')FILTER.church='all';RENDER.checkin();}
 
+// Re-render the check-in screen WITHOUT jumping back to the top of a long roster. paint() keeps the
+// scroll on a clean same-screen repaint, but a check-in/out reflow (a row moving into the collapsed
+// "Done" section) can shrink the content and clamp it — so capture and restore explicitly. Used for
+// the check/uncheck actions only; deliberate navigations (selDay/setFilter) still reset to top.
+function _rCheckin(){
+  const el=document.getElementById('checkin');
+  const y=el?el.scrollTop:0;
+  return Promise.resolve(RENDER.checkin()).then(()=>{const e2=document.getElementById('checkin');if(e2)e2.scrollTop=y;});
+}
 function _performCheck(camperId,type,name){
   if(!_ensureInitials())return; // item 7: church initials gate (no-op once set; other roles pass)
   // Fix 4 (review 2026-07-17, MEDIUM-LOW): during the preview simulation there is no real
@@ -2249,7 +2258,7 @@ function _performCheck(camperId,type,name){
   if(_previewSimActive()){
     _previewLocalFlips[camperId]=(type==='in');
     toast(type==='in'?'Checked in (preview)':'Checked out (preview)');
-    RENDER.checkin();
+    _rCheckin();
     return;
   }
   // Check-out no longer asks for confirmation — reaching this point already required
@@ -2259,8 +2268,8 @@ function _performCheck(camperId,type,name){
   // Start undo window
   clearTimeout(_undoTimer);_undoCamperId=camperId;_undoType=type;
   _undoTimer=setTimeout(()=>{_undoCamperId=null;_hideUndoToast();},4000);
-  // Immediate local re-render
-  RENDER.checkin();
+  // Immediate local re-render (keeps scroll position)
+  _rCheckin();
 }
 function _showUndoToast(type){
   let el=document.getElementById('undoToast');
@@ -2276,7 +2285,7 @@ function undoCheck(){
   if(!id)return;
   // Remove from queue if still pending
   const idx=CHECKIN_QUEUE.findIndex(e=>e.camperId===id);
-  if(idx>=0){CHECKIN_QUEUE.splice(idx,1);RENDER.checkin();return;}
+  if(idx>=0){CHECKIN_QUEUE.splice(idx,1);_rCheckin();return;}
   // Already sent — send the reverse
   _queueEntry(id,type==='in'?'out':'in');
 }
@@ -3088,8 +3097,10 @@ function fdDraw(){
     <div id="fdConfirmBar" style="display:${pendingCount>0?'block':'none'};position:sticky;bottom:10px;margin-top:16px">
       <button class="btn" style="background:#16a34a" onclick="fdConfirmAll()">Confirm ${pendingCount} sign-in${pendingCount===1?'':'s'}</button>
     </div>`;
+  // Preserve scroll: ticking a student / confirming must not jump back to the top of a long list.
   const el=document.getElementById(_fdScreen);
-  if(el)el.innerHTML=html;
+  const y=el?el.scrollTop:0;
+  if(el){el.innerHTML=html;el.scrollTop=y;}
   document.getElementById('barT').textContent='First Day Sign In';
   document.getElementById('barS').textContent=(notIn.length-pendingCount)+' remaining';
 }
@@ -3176,7 +3187,7 @@ function filterMyYouth(){
     const nm=(c.firstName+' '+c.lastName).trim();
     return `<div class="row">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
       <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div>${showChurchOnTile?`<div class="sub">${esc(c.churchName||'')}</div>`:''}</div>
-      <button class="btn ghost sm" style="flex:none;padding:8px 12px" onclick="signInPrompt('${c.id}','${esc(jsq(nm))}',${c.kind==='leader'})">Sign in to camp</button>
+      <button class="btn ghost sm" style="flex:none;padding:8px 12px" onclick="signInConfirmList('${c.id}','${esc(jsq(nm))}',${c.kind==='leader'})">Sign in to camp</button>
     </div>`;
   }
   const groupByChurch=ACTOR.role==='zoneLeader';
@@ -3258,10 +3269,17 @@ async function openCamper(id,push=true){
 // Item 3: after an attendance write taken from a LIST, re-render that list in place (the row
 // updates, no hop to the profile). Only when the action started ON the profile do we refresh the
 // profile itself. Keeps the leader where they were and cuts a navigation step.
-function _refreshAfterAttendance(id){
+async function _refreshAfterAttendance(id){
   const cur=STACK[STACK.length-1]||'home';
   if(cur==='camper'||cur==='student'){openCamper(id,false);return;}
-  _navTo(cur);
+  // Preserve scroll: signing someone in/out from a list must not jump back to the top. RENDER re-
+  // paints an empty shell first (which clamps the scroll), so capture before and restore after the
+  // full re-render completes (the list is tall again by then).
+  const el=document.getElementById(cur);
+  const y=el?el.scrollTop:0;
+  await _navTo(cur);
+  const el2=document.getElementById(cur);
+  if(el2)el2.scrollTop=y;
 }
 async function _doSignIn(id,leaderName){
   try{await api('/attendance/sign-in',{method:'POST',body:{camperId:id,leaderName}});toast('Signed in');_refreshAfterAttendance(id);}catch(e){toast(e.message);}
@@ -3299,6 +3317,17 @@ function signInPrompt(id,name,isLeader){
   if(_isChurchAccount()&&!_ensureInitials())return; // church initials gate only
   _doSignIn(id,_actingName());
 }
+// Confirm step before signing someone in from the My-students "Not signed in" list — the button
+// sits in a scrollable list, so a mis-tap should not silently mark a young person on site. (Sign-in
+// from the camper profile and the first-day arrival flow stay one-tap.)
+function signInConfirmList(id,name,isLeader){
+  const who=isLeader?'leader':'youth';
+  const by=_actingName();
+  modal(`<h3>Sign in · ${esc(name)}</h3><p class="sub" style="margin:4px 0 10px">Sign this ${who} IN to camp${by?(' as '+esc(by)):''}?</p>
+    <button class="btn" onclick="_confirmSignInList('${id}','${esc(jsq(name))}',${!!isLeader})">Yes, sign in</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+}
+function _confirmSignInList(id,name,isLeader){closeModal();signInPrompt(id,name,isLeader);}
 
 /* ===== SCHEDULE ===== */
 let SCHED_DAY=null;

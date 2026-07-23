@@ -134,6 +134,18 @@ Admin-requested batch from an at-camp review. SPA + backend (`search.service.ts`
 - **"All churches" search: church name coloured by the student's gender** (blue/pink) in the
   `runSearch` findcard.
 
+**Follow-up 2 (same day, SPA-only, `sw.js` `camp-v35`→`camp-v36`):**
+- **Confirm before signing in from the My-students "Not signed in" list** (`signInConfirmList` →
+  `_confirmSignInList` → `signInPrompt`). Sign-in from the camper profile and the first-day arrival
+  flow stay one-tap.
+- **Scroll position preserved on sign-in / check-in-out** across three roster screens: daily
+  check-in (new `_rCheckin()` wraps the action re-renders in `_performCheck`/`undoCheck`/`drainQueue`/
+  `_retryFailedCheckins` — `selDay`/`setFilter` still reset to top), My-students (`_refreshAfterAttendance`
+  now captures/restores the screen scrollTop around the full re-nav), and first-day arrival (`fdDraw`
+  captures/restores before its `innerHTML` swap, fixing the jump on every tick/confirm). Root cause:
+  `paint()` preserves scroll on a clean same-screen repaint, but paths that repaint an empty/loading
+  shell first clamp it.
+
 ## Migration files consolidated — 2026-07-16
 
 `supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate

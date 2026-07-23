@@ -106,6 +106,14 @@ check "expected vs actual" before touching code.
 >   of camp" is now a dropdown too (the old "Late arrivals" block is gone). The check-in load no
 >   longer fetches `/campers`. `runSearch` findcard colours the church name by `c.gender`. "Not
 >   signed in list wrong/empty" → `_loadMyNotSignedIn`; "signed-out not collapsible" → `filterMyYouth`.
+> - **Follow-up 2 (`camp-v36`): scroll preservation on roster actions.** `paint()` keeps scroll on a
+>   clean same-screen repaint, but a repaint through an empty/loading shell clamps it. Fixes:
+>   **`_rCheckin()`** wraps the check-in action re-renders (`_performCheck`/`undoCheck`/`drainQueue`/
+>   `_retryFailedCheckins`; `selDay`/`setFilter` intentionally still reset); **`_refreshAfterAttendance`**
+>   (now async) captures/restores the screen scrollTop around `_navTo` (My-students sign-in/out);
+>   **`fdDraw`** captures/restores around its `innerHTML` swap (first-day arrival tick/confirm).
+>   "Roster jumps to top after check-in/sign-in" → these three. Also **`signInConfirmList`** adds a
+>   confirm before signing in from the My-students "Not signed in" list (profile + arrival stay one-tap).
 
 ## Frontend — `public/index.html` (single ~2,920-line SPA)
 
