@@ -66,26 +66,25 @@ implementation plan (superpowers writing-plans) and execute.
 
 ---
 
-## Future topics to question (not yet scoped)
+## Deferred — full Web Push + proactive check-in-window warnings (item 10)
 
-Flagged by the owner for a future session — each needs its own clarifying-question pass before
-any design work starts. Do not build against these bullets as-is.
+Split out of the 2026-07-23 batch by owner decision: build everything else first, then design
+Web Push properly with risk analysis. Spec to be written at
+`docs/superpowers/specs/2026-07-23-web-push-design.md`. Covers (a) **item 10** — automatically
+notify a church ~1h before its check-in window closes if daily check-ins aren't done, with the
+count remaining — which needs a real server-side scheduler (the app is serverless with no cron
+today) AND a delivery channel that reaches a closed app; and (b) **full Web Push** (VAPID keys,
+push subscription storage, service-worker `push`/`notificationclick` handlers) as that channel.
+Must analyse privacy (subscription + PII storage, opt-in consent, minors), performance (fan-out
+cost on serverless, cron cadence, Vercel Cron), and pros/cons vs the lazy in-app model that
+item 9's scheduled notices already use. **Design only until approved — do not implement.**
 
-- **Editor initials requirement.** Require someone to enter their initials before the app allows
-  an editing action (which actions? all writes, or a specific subset? where do initials get
-  stored/shown — audit trail?).
-- **Split first-day sign-in from daily check-in.** Currently discussed together in places
-  (`checkin.service`, SPA check-in screen) — owner wants these separated into distinct UI/logic
-  boxes. Needs scoping: what's shared vs. what actually needs to diverge.
-- **Time-based lock behavior outside camp dates.** Audit `checkinSwitchoverTime` /
-  `checkinPhaseOverride` / `churchCheckinTimeRestricted` (see `settings.ts`) — what happens when
-  "today" isn't between `CampSettings.startDate` and `endDate`? Needs a walkthrough of current
-  behavior before deciding what *should* happen.
-- **Sign-in workflow & late sign-ins.** Full user-workflow review of the sign-in process,
-  specifically how late arrivals are handled — needs a walkthrough with the owner of the current
-  flow before identifying gaps.
-- **Sign-in/out UI latency.** Students take a while to visually show up as signed in/out after
-  the action completes — investigate root cause (client cache TTL? `_invalidate` gaps? re-render
-  timing?) before proposing a fix. Related: the SPA's 30s client cache / `_prefetch` /
-  stale-while-revalidate nav pattern noted in `CLAUDE.md` "SPA perf" section — worth checking
-  first since it's the most likely culprit.
+## Delivered 2026-07-23 (was "future topics")
+
+These were the owner's queued topics; all shipped in the 2026-07-23 batch (see CLAUDE.md):
+- ~~Editor/church initials requirement~~ → **item 7** (enforced at login, auto-applied, quick-switch).
+- ~~Split first-day sign-in from daily check-in~~ → **item 8** (wide button + greying, distinct faces).
+- ~~Time-based lock behavior~~ → **item 11** (hard AM/PM windows, blocked outside windows/camp days).
+- ~~Sign-in workflow & late sign-ins~~ → **item 3** (in-place list re-render, one-tap church sign-in).
+- ~~Sign-in/out UI latency~~ → **item 3** (`_invalidate('/attendance')` now clears
+  `/registrants`+`/campers`, so the in-place re-render shows the change immediately).

@@ -1573,3 +1573,76 @@ could otherwise grant a same-day login to a real account.
    then never restore from it).
 
 Both destructive ops use bulk `deleteAll()` (Supabase: `TRUNCATE`), not row-by-row deletes.
+
+## Overnight admin batch — items 1-9,11 — deployed 2026-07-23
+
+Large admin-requested batch (SPA + backend + **migrations 0010 & 0011**, both applied to prod
+before the code push). Design: `docs/superpowers/specs/2026-07-23-overnight-batch-design.md`.
+`npm run typecheck` clean, `npm run test` = **577 pass**, SPA `node --check` OK. `sw.js`
+`camp-v32`→`camp-v33`. **Item 10 (proactively warning churches ~1h before a check-in window
+closes) + full Web Push are DEFERRED** to `docs/superpowers/specs/2026-07-23-web-push-design.md`
+(a real scheduler + push infra this serverless app doesn't have yet).
+
+- **Item 1 — iOS password save (best-effort).** `#loginForm` (already a real `<form>` submit with
+  `autocomplete="username"`/`current-password`) gained an explicit `type="text"` username and, in
+  `doLogin`, a feature-detected `navigator.credentials.store(new PasswordCredential(...))` (helps
+  Chrome/Edge/Android SAVE the credential; **Safari/iOS has no Credential Management API** — there
+  the native form-submit heuristic is the only lever, and autofill of an *existing* saved password
+  is the reliable path). Not a guaranteed fix on old iOS.
+- **Item 2 — session TTL 12h → 24h.** `auth.service.ts` `TOKEN_TTL_MS`. Comments updated in
+  `auth.service.ts`/`rate-limiter.ts`/`express-adapter.ts`.
+- **Item 3 — de-janked attendance workflow.** `signInConfirm`/`signOutConfirm`/`_doSignIn` now
+  re-render the **originating list in place** (`_refreshAfterAttendance` — reads `STACK` top; only
+  refreshes the profile when the action started ON the profile) instead of hopping to `openCamper`.
+  A church leader signs a student in with **one tap** (`signInPrompt` → direct `_doSignIn`, no
+  modal). `_invalidate('/attendance')` now also clears `/registrants`+`/campers` so the re-rendered
+  list is fresh immediately (this is the "sign-in latency" item from PLANNED-IMPROVEMENTS).
+- **Item 4 — flat grouped settings page.** `RENDER.adminSettings` rebuilt as collapsible `<details
+  class="setg">` sections (Camp details & dates · Check-in & timing · Account access) with
+  done-state pills; one Save button still writes everything (every input stays in the DOM). **The
+  Notices card was removed from Camp Settings** (owner request) → Notices + Scheduled notices now
+  live in a new **Communications** group on the admin console (`RENDER.admin`). The setup wizard is
+  still reachable from the console but is no longer the primary settings surface.
+- **Item 5 — no leader auto-check-in on mode switch.** `admin.service.setMode` no longer bulk-signs-
+  in leaders on the pre-camp→at-camp transition. Leaders start `atCamp:false` and are signed in
+  manually via My-group "Late arrivals" (existing path). The at-camp→pre-camp revert block and the
+  practice-first-aid-note wipe are unchanged.
+- **Item 6 — audit/exports sorted by date/time.** `audit-export.service.ts`: the Daily Check-in Log
+  (workbook + `exportCheckInLogCsv`) is flattened across all people and sorted by `ci.timestamp`;
+  Notes & Testimonies, First-Aid Records, and Incidents sheets sorted by `createdAt`. Sign-in/out
+  timeline was already chronological.
+- **Item 7 — enforced church initials.** `enforceInitials()` (non-dismissible, no Skip) runs at
+  login + session restore for church accounts; `_ensureInitials()` guards the attributed writes
+  (check-in, sign-in/out, first-day, note, testimony) as a backstop. Initials are **auto-applied**
+  everywhere and **never requested per action** (the "Your name" fields on note/testimony/sign-out
+  are hidden for church; sign-in is one-tap). The header ✎ badge (`promptInitials(true)`) is the
+  quick-switch when a different leader takes the device. `LEADER_INITIALS` + per-account
+  `localStorage['ycp_initials_<user>']` plumbing unchanged.
+- **Item 8 — home First-Day Sign-In split from Daily Check-in.** `renderHomeAtCamp`: **First Day
+  Sign In** is now a **wide button between the hero and the tiles** (Day-1 only; greyed once past
+  the switchover), and **Daily Check-in** is the first **tile** (greyed during the sign-in phase).
+  No more single tile that switches its own label. `openCheckinFace(face)` sets a one-shot
+  `_forceCheckinFace` consumed by `RENDER.checkin` so an explicit tap opens the intended face while
+  greying enforces the time gate. `.tile.tdis` / `.wide-signin` / `.btn.bdis` CSS; `_ampm()` helper.
+- **Item 9 — scheduled notices (in-app, lazy-fire, NO cron).** `Notification.scheduledFor`
+  (migration **`0010`**, `notifications.scheduled_for timestamptz`). A future-scheduled notice is
+  withheld from **every** audience feed until `scheduledFor <= now` (`getActorFeed` filter) — it
+  surfaces on the next feed fetch after that instant, no scheduler needed. New service methods
+  `scheduled(actor)` (own if zoneLeader, all if director/admin) + `update(actor,id,input)`
+  (`UpdateNotificationSchema`; creator or director/admin); `remove` widened so a creator can delete
+  their own. Routes `GET /notifications/scheduled`, `PATCH /notifications/:id`. Supabase `save`
+  on-conflict set list widened to persist edits. SPA: `RENDER.compose` gained a **When** (Send now /
+  Schedule) segment + `datetime-local` (converted as **Brisbane UTC+10** via `_localInputToIso`);
+  `RENDER.scheduled` lists/edits/deletes pending notices; reachable from Notices + the admin console.
+- **Item 11 — church check-in hard AM/PM windows.** `CampSettings.checkinWindow{Am,Pm}{Start,End}`
+  (**optional** fields, defaults 06:00/12:00/12:00/22:00; migration **`0011`** adds four `text`
+  columns AND sets `church_checkin_time_restricted = true` for the existing prod row). Pure
+  `allowedWindowSession(days,today,now,windows)` in `checkin-sessions.ts` returns the one session a
+  church may write now, or **null** outside a window / on a non-camp day. `checkin.service`
+  `assertSessionAllowed` rewritten to use it (church only; no-op unless restricted) with a clear
+  `ForbiddenError`. `churchCheckinTimeRestricted` now **defaults ON** (seed.ts + the prod UPDATE);
+  admin can edit the windows + toggle in the settings "Check-in & timing" section.
+
+**Migration state:** prod now has `0010` + `0011` applied (verified: `notifications.scheduled_for`
+present; four `settings.checkin_window_*` columns present; `church_checkin_time_restricted = true`).
+The repo's `supabase/migrations/` holds `0001`–`0011`. Next future migration = `0012`.
