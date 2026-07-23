@@ -151,6 +151,21 @@ h3.sec{font-size:var(--t-xs);font-weight:800;letter-spacing:.08em;text-transform
 .tile{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px 10px;min-height:92px;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;cursor:pointer;transition:transform .12s,box-shadow .12s;box-shadow:0 2px 8px rgba(30,27,75,.06);position:relative;}
 .tile:active{transform:scale(.95);box-shadow:none;}.tile .ic{font-size:1.65rem;display:block;color:var(--purple);}.tile .l{font-size:var(--t-xs);font-weight:700;margin-top:7px;color:#1e1a3a;}
 .tile .sub{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Item 8: greyed (time-locked) controls — visibly disabled but still tappable to explain why. */
+.tile.tdis{opacity:.45;box-shadow:none;cursor:default;}
+.tile.tdis:active{transform:none;}
+.wide-signin{margin:2px 0 12px;box-shadow:0 6px 16px rgba(124,58,237,.28);}
+.btn.bdis{background:#e5e7eb;color:#9ca3af;box-shadow:none;cursor:default;}
+/* Item 4: grouped, collapsible settings sections. */
+.setg{margin-bottom:10px;border:1px solid var(--line);border-radius:16px;background:#fff;overflow:hidden;box-shadow:0 2px 8px rgba(30,27,75,.05);}
+.setg>summary{list-style:none;cursor:pointer;padding:14px 16px;font-weight:700;display:flex;align-items:center;gap:9px;color:#1e1a3a;}
+.setg>summary::-webkit-details-marker{display:none;}
+.setg>summary::after{content:'⌄';margin-left:auto;opacity:.5;font-weight:700;}
+.setg[open]>summary::after{content:'⌃';}
+.setg[open]>summary{border-bottom:1px solid var(--line);}
+.setg .card{border:none;box-shadow:none;border-radius:0;margin:0;}
+.setg .pill.ok{background:#dcfce7;color:#166534;}
+.setg summary .pill{margin-left:0;}
 /* SVG icon system (3.1) + size helpers (C1/C4) */
 .ic-svg{width:20px;height:20px;display:inline-block;vertical-align:middle;flex:none;stroke:currentColor;}
 .ic-svg.ic-sm{width:16px;height:16px;}
@@ -545,6 +560,7 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="records"></section>
     <section class="screen" id="notifs"></section>
     <section class="screen" id="compose"></section>
+    <section class="screen" id="scheduled"></section>
     <section class="screen" id="camper"></section>
     <section class="screen" id="firstday"></section>
     <section class="screen" id="myyouth"></section>
@@ -587,7 +603,7 @@ textarea{min-height:84px;resize:vertical;}
     <h1>My Youth Camp</h1>
     <p>Registration &amp; on-ground management</p>
     <form class="card" id="loginForm" onsubmit="event.preventDefault();doLogin();return false;">
-      <label>Username</label><input class="fld" id="username" name="username" placeholder="username" inputmode="text" autocapitalize="none" autocomplete="username" autocorrect="off" spellcheck="false">
+      <label>Username</label><input class="fld" id="username" name="username" type="text" placeholder="username" inputmode="text" autocapitalize="none" autocomplete="username" autocorrect="off" spellcheck="false">
       <label>Password</label><input class="fld" id="password" name="password" type="password" autocomplete="current-password">
       <button class="btn" type="submit">Sign in</button>
       <div class="err" id="loginErr"></div>
@@ -662,7 +678,10 @@ function _invalidate(path){
   else if(path.startsWith('/admin/mode'))Cache.del('/settings','/checkin');
   // A schedule write is independent of check-in (de-linked) → clear only /schedule.
   else if(path.startsWith('/schedule'))Cache.del('/schedule');
-  else if(path.startsWith('/attendance')||path.startsWith('/checkin'))Cache.del('/checkin');
+  // A sign-in/out (and to a lesser extent a check-in) changes a person's atCamp/lifecycle, which
+  // the registrants + campers views reflect — clear them too so a list re-rendered in place right
+  // after the write (item 3) shows the change immediately instead of the stale 30s-cached roster.
+  else if(path.startsWith('/attendance')||path.startsWith('/checkin'))Cache.del('/checkin','/registrants','/campers');
   else if(path.startsWith('/notifications'))Cache.del('/notifications');
   else if(path.startsWith('/notes'))Cache.del('/notes');
   // A per-student edit (adminStudents) can touch an ARRIVED student too — campers +
@@ -794,19 +813,42 @@ function _saveLeaderInitials(v){
   if(LEADER_INITIALS)LAST_LEADER=LEADER_INITIALS; // keep the shared prefill in step
   _updateInitialsBadge();
 }
-// Skippable initials prompt. `force` (header control) always shows it; the post-login
-// auto-prompt passes no force and only shows when nothing is stored yet.
+// Change/switch initials (header ✎ badge) — the "a different leader took the device" path.
+// Skippable. The login-time gate is enforceInitials() below.
 function promptInitials(force){
   if(!_isChurchAccount())return;
   if(!force&&LEADER_INITIALS)return;
   modal(`<h3>Your initials</h3>
-    <p class="sub" style="margin:4px 0 10px">Add your initials so sign-in, sign-out, check-in and note records show who did them. Saved on this device for this login — change or skip anytime from the header.</p>
+    <p class="sub" style="margin:4px 0 10px">Your initials tag every sign-in, sign-out, check-in and note you record. Saved on this device for this login — change anytime from the ✎ header badge.</p>
     <label>Initials</label><input class="fld" id="liInit" maxlength="6" value="${esc(LEADER_INITIALS||'')}" placeholder="e.g. SD" autocomplete="off" autocapitalize="characters">
     <button class="btn" style="margin-top:10px" onclick="_confirmInitials()">Save</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Skip</button>`);
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
   setTimeout(()=>{const e=document.getElementById('liInit');if(e)e.focus();},50);
 }
 function _confirmInitials(){_saveLeaderInitials(val('liInit'));closeModal();toast(LEADER_INITIALS?('Initials set: '+LEADER_INITIALS):'Initials cleared');}
+// Enforced initials gate (item 7). A church account MUST set initials once per login before doing
+// attributed work; shown at login + session restore with NO skip. Dismissing it leaves the header
+// badge on "Set initials"; the write-path guard `_ensureInitials()` re-shows it before the first
+// attributed action, so attribution is guaranteed without ever asking again once set.
+function enforceInitials(){
+  if(!_isChurchAccount()||LEADER_INITIALS)return;
+  modal(`<h3>Set your initials to continue</h3>
+    <p class="sub" style="margin:4px 0 10px">Your church login is shared, so your initials tag every sign-in, sign-out, check-in and note you record. Enter them once — they're saved on this device and applied automatically. If someone else takes over, tap the ✎ badge in the header to switch.</p>
+    <label>Initials</label><input class="fld" id="liInit" maxlength="6" value="" placeholder="e.g. SD" autocomplete="off" autocapitalize="characters" onkeydown="if(event.key==='Enter')_confirmEnforceInitials()">
+    <button class="btn" style="margin-top:10px" onclick="_confirmEnforceInitials()">Save &amp; continue</button>`);
+  setTimeout(()=>{const e=document.getElementById('liInit');if(e)e.focus();},50);
+}
+function _confirmEnforceInitials(){
+  const v=(val('liInit')||'').trim();
+  if(!v){const e=document.getElementById('liInit');if(e){e.style.borderColor='#e11d48';e.focus();}toast('Please enter your initials');return;}
+  _saveLeaderInitials(v);closeModal();toast('Initials set: '+LEADER_INITIALS);
+}
+// Guard for attributed writes: true when initials are present (normal case — no prompt at all),
+// else pops the enforced gate and returns false so the caller aborts and retries after saving.
+function _ensureInitials(){
+  if(!_isChurchAccount()||LEADER_INITIALS)return true;
+  enforceInitials();return false;
+}
 const GRADES=[7,8,9,10,11,12];
 // Zone names — MUST match backend ZONE_NAMES (src/core/types/enums.ts) and migration 011
 // (which renamed 'Green'→'Black'). A stale 'Green' here let a director send a zone notice no
@@ -1017,6 +1059,14 @@ async function doLogin(){
     const d=await api('/auth/login',{method:'POST',body:{username:document.getElementById('username').value.trim(),password:document.getElementById('password').value}});
     TOKEN=d.token;ACTOR={...d.user,displayName:((d.user.firstName||'')+' '+(d.user.lastName||'')).trim()};
     localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
+    // Item 1: nudge the browser to SAVE this credential. Chrome/Edge/Android support the Credential
+    // Management API; Safari/iOS does not (there the real <form id="loginForm"> submit + correct
+    // autocomplete tokens are the only lever, already in place — an existing saved password will
+    // still autofill). Feature-detected, fired while the fields are still populated, best-effort.
+    try{if(window.PasswordCredential&&navigator.credentials&&navigator.credentials.store){
+      const _u=document.getElementById('username').value.trim();
+      navigator.credentials.store(new PasswordCredential({id:_u,name:_u,password:document.getElementById('password').value})).catch(()=>{});
+    }}catch(_){}
     if(MUST_CHANGE_PASSWORD_ENFORCED&&ACTOR.mustChangePassword){document.getElementById('login').style.display='none';_showChangePasswordGate();return;}
     SETTINGS=await api('/settings');
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
@@ -1025,9 +1075,9 @@ async function doLogin(){
     document.getElementById('stage').style.display='block';
     document.getElementById('tabs').style.display='';  // let CSS media query control visibility
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
-    // Feature 4: church accounts get the skippable initials prompt on fresh login.
+    // Item 7: church accounts must set initials once per login (enforced, no skip).
     _loadLeaderInitials();
-    if(_isChurchAccount()&&!LEADER_INITIALS)promptInitials(false);
+    enforceInitials();
   }catch(e){if(err){err.textContent=e.message;err.style.display='block';}else toast(e.message);}
 }
 function logout(){
@@ -1070,7 +1120,7 @@ async function submitChangePassword(){
     document.getElementById('tabs').style.display='';
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
     _loadLeaderInitials();
-    if(_isChurchAccount()&&!LEADER_INITIALS)promptInitials(false);
+    enforceInitials();
   }catch(e){_mcpErr(e.message);}
 }
 // Brisbane-anchored "today" (YYYY-MM-DD), mirroring the backend's zonedNow(). The camp's
@@ -1113,6 +1163,12 @@ function campPhase(){
   const sw=(SETTINGS&&SETTINGS.checkinSwitchoverTime)||'14:00';
   return (day1&&brisbaneNowTime()<sw)?'signin':'checkin';
 }
+// 'HH:MM' (24h) → '2:00 PM'. Used for the home switchover-time hint (item 8).
+function _ampm(t){if(!t||t.indexOf(':')<0)return t||'';let[h,m]=t.split(':').map(Number);const ap=h<12?'AM':'PM';h=h%12;if(h===0)h=12;return h+':'+String(m).padStart(2,'0')+' '+ap;}
+// Item 8: when the home controls explicitly choose a face, force the Check-in surface to show it
+// (one-shot; RENDER.checkin reads then clears it). Absent an explicit tap it falls back to campPhase().
+let _forceCheckinFace=null;
+function openCheckinFace(face){_forceCheckinFace=face;gotoTab('checkin');}
 function updateModeUI(){
   const b=document.getElementById('modeBadge'),r=document.getElementById('roleBadge');
   if(PREVIEW_MODE){b.textContent='Preview';b.style.background='#92400e';b.style.color='var(--card)';}
@@ -1256,7 +1312,7 @@ const TAB_OF={home:'home',people:'people',student:'people',help:'help',
   admin:'admin',adminAccounts:'admin',adminSettings:'admin',adminAccom:'admin',adminData:'admin',
   adminFaqEdit:'admin',atCampInfo:'admin',adminContacts:'admin',
   adminChurchImport:'admin',adminRecords:'admin',adminCloseOut:'admin',adminWizard:'admin',adminStudents:'admin',
-  checkin:'checkin',search:'search',students:'students',allstudents:'allstudents',records:'records',notifs:'home',compose:'notifs',
+  checkin:'checkin',search:'search',students:'students',allstudents:'allstudents',records:'records',notifs:'home',compose:'notifs',scheduled:'notifs',
   data:'data',
   camper:'students',myyouth:'students',firstday:'checkin',schedule:'schedule',devotional:'home',faq:'home',notes:'home',testimonies:'home',budget:'home',accom:'home',import:'import'};
 
@@ -1600,11 +1656,15 @@ async function renderHomeAtCamp(){
     myAccom=rooms.length?rooms.map(r=>r.name+' — '+(r.gender==='male'?'Guys':'Girls')+' ('+r.n+')').join(' · '):'To be confirmed';
   }catch(e){myAccom='To be confirmed';}}
   const tiles=[];
+  // Item 8: First-Day Sign-In and Daily Check-in are now TWO distinct controls with time-based
+  // GREYING (no confusing "same tile switches label"). First-Day Sign-In is a wide button between
+  // the hero and the tiles (Day 1 only), enabled during the sign-in phase and greyed after the
+  // switchover. Daily Check-in is the first tile, greyed during the sign-in phase and enabled after.
   const phase=campPhase();
-  const entryLabel=phase==='signin'?'First Day Sign In':'Daily Check-in';
-  const entryIcon=phase==='signin'?'check':'check';
-  // Unified Sign-in/Check-in entry — one tile, phase-labelled, routes to the Check-in surface.
-  tiles.push(`<div class="tile" onclick="gotoTab('checkin')"><div class="ic">${ic(entryIcon)}</div><div class="l">${entryLabel}</div></div>`);
+  const isDay1=PREVIEW_MODE?(((SETTINGS&&SETTINGS.campDay)||1)===1):(_realCampDayNumber()===1);
+  const swLabel=_ampm((SETTINGS&&SETTINGS.checkinSwitchoverTime)||'14:00');
+  const dailyDisabled=phase==='signin';
+  tiles.push(`<div class="tile${dailyDisabled?' tdis':''}" onclick="${dailyDisabled?`toast('Daily check-in opens at ${swLabel}')`:"openCheckinFace('checkin')"}"><div class="ic">${ic('check')}</div><div class="l">Daily Check-in</div></div>`);
   tiles.push(`<div class="tile" onclick="go('testimonies')"><div class="ic">${ic('star')}</div><div class="l">Submit Testimonies</div></div>`);
   tiles.push(`<div class="tile" onclick="go('schedule')"><div class="ic">${ic('calendar')}</div><div class="l">Schedule</div></div>`);
   tiles.push(`<div class="tile" onclick="go('devotional')"><div class="ic">${ic('book')}</div><div class="l">Devotional</div></div>`);
@@ -1636,6 +1696,13 @@ async function renderHomeAtCamp(){
     ${accomLineHtml}
     ${digestHtml}</div>
   ${myDayHtml}
+  ${(function(){
+    // Item 8: wide First-Day Sign-In button (Day 1 only). Enabled in the sign-in phase; greyed
+    // once the switchover passes. Sits between the hero card and the tile grid.
+    if(!isDay1)return '';
+    const disabled=phase!=='signin';
+    return `<button class="btn wide-signin${disabled?' bdis':''}" onclick="${disabled?"toast('First-day sign-in has closed for today')":"openCheckinFace('signin')"}">${icSm('check')} First Day Sign In</button>`;
+  })()}
   <div class="tiles">${tiles.join('')}</div>
   ${notesLinkHtml}
   <div id="homePulse"></div>
@@ -1938,7 +2005,9 @@ function _retryFailedCheckins(){
 
 // Unified entry: one nav id, phase-branched. Arrival sign-in before the switchover, daily after.
 RENDER.checkin=async function(){
-  if(campPhase()==='signin'){ await _renderArrival(); return; }
+  // Item 8: an explicit home tap (openCheckinFace) forces the face; otherwise time-driven phase.
+  const forced=_forceCheckinFace;_forceCheckinFace=null;
+  if((forced||campPhase())==='signin'){ await _renderArrival(); return; }
   await _renderDailyCheckin();
 };
 /* ===== Feature 1 (2026-07-17): preview "everyone already checked in" simulation =====
@@ -2080,7 +2149,7 @@ async function _renderDailyCheckin(){
   const dueShown=dueList.length,presentShown=doneList.length;
   const label=_ciLabel(st.session||SESSIONS.find(x=>x.id===SEL_SESSION)||{});
   const dayBtns=churchRestricted
-    ?`<span class="sub" style="padding:7px 4px;display:inline-flex;align-items:center;gap:4px">${esc(label)} only ${helpTip('Your admin has restricted check-in to the session that\'s currently happening.')}</span>`
+    ?`<span class="sub" style="padding:7px 4px;display:inline-flex;align-items:center;gap:4px">${esc(label)} only ${helpTip('Your admin has restricted check-in to the current morning/afternoon window on a camp day. Outside that window it will be blocked.')}</span>`
     :SESSIONS.map(s=>`<button class="${s.id===SEL_SESSION?'on':''}" onclick="selDay('${s.id}')">${esc(_ciLabel(s))}</button>`).join('');
   const gradeOpts=['all',...GRADES].map(g=>`<option value="${g}" ${String(g)===FILTER.grade?'selected':''}>${g==='all'?'All grades':'Grade '+g}</option>`).join('');
   const zoneSelOpts=zonesOpt.map(z=>`<option value="${z}" ${z===FILTER.zone?'selected':''}>${z==='all'?'All zones':z+' Zone'}</option>`).join('');
@@ -2152,6 +2221,7 @@ function selDay(id){SEL_SESSION=id;RENDER.checkin();}
 function setFilter(k,v){FILTER[k]=v;if(k==='zone')FILTER.church='all';RENDER.checkin();}
 
 function _performCheck(camperId,type,name){
+  if(!_ensureInitials())return; // item 7: church initials gate (no-op once set; other roles pass)
   // Fix 4 (review 2026-07-17, MEDIUM-LOW): during the preview simulation there is no real
   // check-in session — the api() write-guard blocks the POST `_queueEntry` would fire, so the
   // row never actually flipped AND drainQueue's caught error ticked up `_checkinFailed`, so a
@@ -2194,9 +2264,10 @@ function undoCheck(){
 async function doCheck(camperId,type){_performCheck(camperId,type,'');}
 const _SENSITIVE_HELP='Notes show on the student\'s profile by default. Mark this sensitive to hide it from church logins — only zone leaders, directors and admins will be able to see it.';
 function notePrompt(camperId,name){
-  const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:LAST_LEADER,body:'',sensitive:false};
+  const isChurch=_isChurchAccount();
+  const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:isChurch?LEADER_INITIALS:LAST_LEADER,body:'',sensitive:false};
   modal(`<h3>Note · ${esc(name)}</h3>
-    <label>Your name (leader)</label><input class="fld" id="noteLeader" value="${esc(d.leader)}" placeholder="e.g. Sarah Doyle">
+    ${isChurch?'':`<label>Your name (leader)</label><input class="fld" id="noteLeader" value="${esc(d.leader)}" placeholder="e.g. Sarah Doyle">`}
     <label>Note</label><textarea id="noteBody" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
     <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this note from church logins on the student's profile.</div></div>
     <label class="tgl"><input type="checkbox" id="noteSensitive" ${d.sensitive?'checked':''}><span class="track"></span></label></div>
@@ -2204,7 +2275,9 @@ function notePrompt(camperId,name){
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
 function reviewNote(camperId,name){
-  const leader=document.getElementById('noteLeader').value.trim(),body=document.getElementById('noteBody').value.trim();
+  const leaderEl=document.getElementById('noteLeader');
+  const leader=leaderEl?leaderEl.value.trim():(_isChurchAccount()?LEADER_INITIALS:''); // church: initials auto-applied
+  const body=document.getElementById('noteBody').value.trim();
   const sensitive=!!document.getElementById('noteSensitive')?.checked;
   // Item 7e: the leader name is optional — the backend already attributes the note to the
   // logged-in actor (see confirmNote below); this field is only a "logged by" annotation.
@@ -2554,7 +2627,7 @@ RENDER.notifs=async function(){
   const feed=await api('/notifications');
   const canSend=['zoneLeader','director','admin'].includes(ACTOR.role);
   const canDelete=['zoneLeader','director','admin'].includes(ACTOR.role);
-  paint('notifs',`${canSend?`<button class="btn" onclick="go('compose')">${ic('edit')} Send a notice</button>`:`<p class="note-hint">Church accounts receive notices; zone leaders &amp; directors send.</p>`}
+  paint('notifs',`${canSend?`<button class="btn" onclick="composeNew()">${ic('edit')} Send a notice</button><button class="btn ghost" onclick="go('scheduled')">${icSm('clock')} Scheduled notices</button>`:`<p class="note-hint">Church accounts receive notices; zone leaders &amp; directors send.</p>`}
     ${feed.length?'':`<p class="note-hint">No ${CAMP_MODE==='pre-camp'?'pre-camp':'camp'} notices yet. Directors and Zone Leaders can post camp, zone or church updates here.</p>`}${feed.map(n=>`<div class="ncard ${n.priority==='urgent'?'urgent':n.scope==='zone'?'zone':''}">
       <div class="ntop"><span class="ntag">${n.scope==='camp'?icSm('diamond')+' Camp-wide':n.scope==='church'?'Church':esc(n.zone||'')+' Zone'}</span>
       ${n.priority==='urgent'?'<span class="ntag" style="background:#fdecec;color:var(--danger)">Urgent</span>':''}
@@ -2848,26 +2921,73 @@ function drawAccom(){
 }
 RENDER.compose=function(){
   const isDir=['director','admin'].includes(ACTOR.role);
+  const ed=window._editNotice||null; // set by editNotice() when editing a still-scheduled notice
+  const schedVal=ed&&ed.scheduledFor?_isoToLocalInput(ed.scheduledFor):'';
+  const when=schedVal?'schedule':'now';
+  const isZoneEd=ed&&ed.scope==='zone';
   paint('compose',`<label>Send to</label><div class="seg" id="audSeg">
-    ${isDir?`<button class="on" data-aud="camp" onclick="setAud(this)">${icSm('diamond')} Camp-wide</button><button data-aud="zone" onclick="setAud(this)">A zone</button>`
+    ${isDir?`<button class="${(!ed||ed.scope==='camp')?'on':''}" data-aud="camp" onclick="setAud(this)">${icSm('diamond')} Camp-wide</button><button class="${isZoneEd?'on':''}" data-aud="zone" onclick="setAud(this)">A zone</button>`
       :`<button class="on" data-aud="myzone" onclick="setAud(this)">${esc(ACTOR.zone)} Zone</button>`}
     </div>
-    ${isDir?`<div id="zoneWrap" style="display:none"><label>Zone</label><select id="zoneSel">${ZONES.map(z=>`<option>${z}</option>`).join('')}</select></div>`:''}
-    <label>Priority</label><div class="seg" id="priSeg"><button class="on" data-pri="normal" onclick="setPri(this)">${icSm('check')} Normal</button><button data-pri="urgent" onclick="setPri(this)">${icSm('urgent')} Urgent</button></div>
-    <label>Title</label><input class="fld" id="ntitle">
-    <label>Message</label><textarea id="nbody"></textarea>
-    <button class="btn" id="sendBtn" onclick="sendNotif()">Send notice</button>`,'Send a notice','Goes to leaders');
-  window._aud=isDir?'camp':'myzone';window._pri='normal';
+    ${isDir?`<div id="zoneWrap" style="display:${isZoneEd?'block':'none'}"><label>Zone</label><select id="zoneSel">${ZONES.map(z=>`<option ${ed&&ed.zone===z?'selected':''}>${z}</option>`).join('')}</select></div>`:''}
+    <label>Priority</label><div class="seg" id="priSeg"><button class="${(!ed||ed.priority!=='urgent')?'on':''}" data-pri="normal" onclick="setPri(this)">${icSm('check')} Normal</button><button class="${ed&&ed.priority==='urgent'?'on':''}" data-pri="urgent" onclick="setPri(this)">${icSm('urgent')} Urgent</button></div>
+    <label>Title</label><input class="fld" id="ntitle" value="${ed?esc(ed.title):''}">
+    <label>Message</label><textarea id="nbody">${ed?esc(ed.body):''}</textarea>
+    <label>When</label><div class="seg" id="whenSeg"><button class="${when==='now'?'on':''}" data-when="now" onclick="setWhen(this)">Send now</button><button class="${when==='schedule'?'on':''}" data-when="schedule" onclick="setWhen(this)">${icSm('clock')} Schedule</button></div>
+    <div id="schedWrap" style="display:${when==='schedule'?'block':'none'}"><label>Deliver at (Brisbane time)</label><input class="fld" type="datetime-local" id="schedAt" value="${schedVal}"></div>
+    <button class="btn" id="sendBtn" onclick="sendNotif()">${ed?'Save changes':'Send notice'}</button>`,ed?'Edit notice':'Send a notice','Goes to leaders');
+  window._aud=ed?(ed.scope==='camp'?'camp':(isDir?'zone':'myzone')):(isDir?'camp':'myzone');
+  window._pri=ed?ed.priority:'normal';window._when=when;window._editNoticeId=ed?ed.id:null;
 };
+function composeNew(){window._editNotice=null;go('compose');}
 function setAud(b){document.querySelectorAll('#audSeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');window._aud=b.dataset.aud;const z=document.getElementById('zoneWrap');if(z)z.style.display=window._aud==='zone'?'block':'none';}
 function setPri(b){document.querySelectorAll('#priSeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');window._pri=b.dataset.pri;}
+function setWhen(b){document.querySelectorAll('#whenSeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');window._when=b.dataset.when;const w=document.getElementById('schedWrap');if(w)w.style.display=window._when==='schedule'?'block':'none';}
+// datetime-local <-> ISO, anchored to Brisbane (AEST, UTC+10, no DST — the app's fixed timezone).
+function _localInputToIso(v){if(!v)return null;const d=new Date(v+':00+10:00');return isNaN(d.getTime())?null:d.toISOString();}
+function _isoToLocalInput(iso){if(!iso)return '';const d=new Date(iso);if(isNaN(d.getTime()))return '';
+  const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Australia/Brisbane',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(d);
+  const g=t=>((p.find(x=>x.type===t)||{}).value||'');let hh=g('hour');if(hh==='24')hh='00';
+  return `${g('year')}-${g('month')}-${g('day')}T${hh}:${g('minute')}`;}
+function _schedLabel(iso){const li=_isoToLocalInput(iso);if(!li)return '';return li.slice(0,10)+' · '+_ampm(li.slice(11));}
 async function sendNotif(){const title=document.getElementById('ntitle').value.trim(),body=document.getElementById('nbody').value.trim();
   if(!title||!body){toast('Enter title + message');return;}
   let p={priority:window._pri,title,body};
   if(window._aud==='camp')p.scope='camp';else if(window._aud==='myzone'){p.scope='zone';p.zone=ACTOR.zone;}
   else{p.scope='zone';p.zone=document.getElementById('zoneSel').value;}
-  if(p.scope==='camp'||window._pri==='urgent'){if(!await confirmSheet({title:'Send '+(window._pri==='urgent'?'URGENT ':'')+(p.scope==='camp'?'camp-wide':p.zone+' zone')+' notice?',confirmLabel:'Send'}))return;}
-  try{await api('/notifications',{method:'POST',body:p});toast('Delivered');back();}catch(e){toast(e.message);}}
+  let scheduledFor=null;
+  if(window._when==='schedule'){
+    scheduledFor=_localInputToIso((document.getElementById('schedAt')||{}).value);
+    if(!scheduledFor){toast('Pick a valid date & time');return;}
+    if(new Date(scheduledFor).getTime()<=Date.now()){toast('Schedule a time in the future');return;}
+  }
+  p.scheduledFor=scheduledFor;
+  const editingId=window._editNoticeId;
+  // Confirm loud/immediate sends only — a scheduled or edited notice skips the "send now?" gate.
+  if(!editingId&&!scheduledFor&&(p.scope==='camp'||window._pri==='urgent')){
+    if(!await confirmSheet({title:'Send '+(window._pri==='urgent'?'URGENT ':'')+(p.scope==='camp'?'camp-wide':p.zone+' zone')+' notice?',confirmLabel:'Send'}))return;
+  }
+  try{
+    if(editingId){await api('/notifications/'+editingId,{method:'PATCH',body:p});window._editNotice=null;window._editNoticeId=null;toast('Notice updated');go('scheduled');}
+    else{await api('/notifications',{method:'POST',body:p});
+      if(scheduledFor){toast('Scheduled for '+_schedLabel(scheduledFor));go('scheduled');}
+      else{toast('Delivered');back();}}
+  }catch(e){toast(e.message);}}
+// Scheduled notices management (item 9) — creator sees own; director/admin see all.
+RENDER.scheduled=async function(){
+  const list=await api('/notifications/scheduled').catch(()=>[]);
+  window._schedList=list;
+  const rows=list.length?list.map(n=>`<div class="ncard ${n.priority==='urgent'?'urgent':n.scope==='zone'?'zone':''}">
+      <div class="ntop"><span class="ntag">${n.scope==='camp'?icSm('diamond')+' Camp-wide':n.scope==='church'?'Church':esc(n.zone||'')+' Zone'}</span>
+      ${n.priority==='urgent'?'<span class="ntag" style="background:#fdecec;color:var(--danger)">Urgent</span>':''}
+      <span class="ntime">${icSm('clock')} ${esc(_schedLabel(n.scheduledFor))}</span></div>
+      <div class="ntitle">${esc(n.title)}</div><div class="nbody">${esc(n.body)}</div>
+      <div class="rowsb" style="align-items:center;margin-top:8px"><div class="nfrom" style="margin:0">— ${esc(n.senderName)}</div>
+        <div style="display:flex;gap:6px"><button class="btn ghost sm" onclick="editNotice('${n.id}')">Edit</button><button class="btn ghost sm" onclick="deleteScheduled('${n.id}')">Delete</button></div></div></div>`).join(''):'<p class="note-hint">No scheduled notices. Compose a notice and choose “Schedule” to send it later.</p>';
+  paint('scheduled',`<button class="btn" onclick="composeNew()">${ic('edit')} New notice</button>${rows}`,'Scheduled notices','Pending delivery');
+};
+function editNotice(id){const n=(window._schedList||[]).find(x=>x.id===id);if(!n){toast('Notice not found — refresh');return;}window._editNotice=n;go('compose');}
+async function deleteScheduled(id){if(!await confirmSheet({title:'Delete this scheduled notice?',confirmLabel:'Delete',danger:true}))return;try{await api('/notifications/'+id,{method:'DELETE'});toast('Deleted');RENDER.scheduled();}catch(e){toast(e.message);}}
 
 /* ===== MY YOUTH at-camp ===== */
 
@@ -2960,11 +3080,13 @@ function fdToggle(id,rowEl){
 async function fdConfirmAll(){
   const pending=[...(window._fdPending||new Set())];
   if(!pending.length)return;
+  if(!_ensureInitials())return; // item 7: church initials gate (no-op once set)
   const btn=document.querySelector('#fdConfirmBar button');
   if(btn){btn.textContent='Signing in…';btn.disabled=true;}
+  const leaderName=LEADER_INITIALS||ACTOR.displayName; // church: initials; others: display name
   let ok=0,fail=0;
   await Promise.all(pending.map(id=>
-    api('/attendance/sign-in',{method:'POST',body:{camperId:id,leaderName:ACTOR.displayName}})
+    api('/attendance/sign-in',{method:'POST',body:{camperId:id,leaderName}})
       .then(()=>{
         const c=window._fdAll.find(s=>s.id===id);
         if(c)c.atCamp=true;
@@ -3098,11 +3220,24 @@ async function openCamper(id,push=true){
 }
 
 /* SIGN OUT / IN */
+// Item 3: after an attendance write taken from a LIST, re-render that list in place (the row
+// updates, no hop to the profile). Only when the action started ON the profile do we refresh the
+// profile itself. Keeps the leader where they were and cuts a navigation step.
+function _refreshAfterAttendance(id){
+  const cur=STACK[STACK.length-1]||'home';
+  if(cur==='camper'||cur==='student'){openCamper(id,false);return;}
+  _navTo(cur);
+}
+async function _doSignIn(id,leaderName){
+  try{await api('/attendance/sign-in',{method:'POST',body:{camperId:id,leaderName}});toast('Signed in');_refreshAfterAttendance(id);}catch(e){toast(e.message);}
+}
 function signOutPrompt(id,name,isLeader){
   const who=isLeader?'leader':'youth';
   window._soLeader=!!isLeader;
-  modal(`<h3>Sign out · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this ${who} OUT of camp.</p>
-    <label>Your name</label><input class="fld" id="soLeader" value="${esc(LAST_LEADER||'')}" placeholder="e.g. Sarah Doyle">
+  const isChurch=_isChurchAccount();
+  if(isChurch&&!_ensureInitials())return; // item 7: initials auto-applied; gate only if unset
+  modal(`<h3>Sign out · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this ${who} OUT of camp${isChurch?(' as '+esc(LEADER_INITIALS)):''}.</p>
+    ${isChurch?'':`<label>Your name</label><input class="fld" id="soLeader" value="${esc(LAST_LEADER||'')}" placeholder="e.g. Sarah Doyle">`}
     <label>Reason</label><textarea id="soReason" placeholder="${isLeader?'e.g. left early for the night':'e.g. picked up by parents'}"></textarea>
     ${isLeader?'':'<label>Were parents met at pickup?</label><div class="seg" id="soPm"><button class="on" data-pm="yes" onclick="soPm(this)">Yes</button><button data-pm="no" onclick="soPm(this)">No</button></div>'}
     <button class="btn" onclick="signOutReview('${id}','${esc(jsq(name))}',${!!isLeader})">Review ${icSm('arrowr')}</button>
@@ -3111,7 +3246,9 @@ function signOutPrompt(id,name,isLeader){
 }
 function soPm(b){document.querySelectorAll('#soPm button').forEach(x=>x.classList.remove('on'));b.classList.add('on');window._soPm=b.dataset.pm;}
 function signOutReview(id,name,isLeader){
-  const leader=document.getElementById('soLeader').value.trim(),reason=document.getElementById('soReason').value.trim(),pm=isLeader?false:window._soPm==='yes';
+  const leaderEl=document.getElementById('soLeader');
+  const leader=leaderEl?leaderEl.value.trim():LEADER_INITIALS; // church: initials auto-applied
+  const reason=document.getElementById('soReason').value.trim(),pm=isLeader?false:window._soPm==='yes';
   if(!leader){toast('Add your name first');return;}if(!reason){toast('Add a reason');return;}
   LAST_LEADER=leader;window._soDraft={id,leader,reason,pm};
   modal(`<h3>Review sign-out</h3><div class="card" style="margin:6px 0 10px">
@@ -3123,16 +3260,22 @@ function signOutReview(id,name,isLeader){
     <button class="btn ghost" style="margin-top:6px" onclick="signOutPrompt('${id}','${esc(jsq(name))}',${!!isLeader})">‹ Edit</button>`);
 }
 async function signOutConfirm(){const d=window._soDraft;if(!d)return;
-  try{await api('/attendance/sign-out',{method:'POST',body:{camperId:d.id,leaderName:d.leader,reason:d.reason,parentsMet:d.pm}});window._soDraft=null;closeModal();toast('Signed out');openCamper(d.id,false);}catch(e){toast(e.message);}}
+  try{await api('/attendance/sign-out',{method:'POST',body:{camperId:d.id,leaderName:d.leader,reason:d.reason,parentsMet:d.pm}});window._soDraft=null;closeModal();toast('Signed out');_refreshAfterAttendance(d.id);}catch(e){toast(e.message);}}
 function signInPrompt(id,name,isLeader){
+  // Item 3+7: a church leader signs in with ONE tap — initials auto-applied, no modal, and the
+  // originating list updates in place. Other roles still confirm their initials.
+  if(_isChurchAccount()){
+    if(!_ensureInitials())return;
+    _doSignIn(id,LEADER_INITIALS);
+    return;
+  }
   const who=isLeader?'leader':'youth';
   modal(`<h3>Sign in · ${esc(name)}</h3><p class="sub" style="margin:4px 0 8px">Signing this ${who} back IN to camp.</p>
-    <label>Your initials</label><input class="fld" id="siInit" placeholder="e.g. SD" maxlength="6" value="${esc(LEADER_INITIALS||LAST_LEADER||'')}">
+    <label>Your initials</label><input class="fld" id="siInit" placeholder="e.g. SD" maxlength="6" value="${esc(LAST_LEADER||'')}">
     <button class="btn" onclick="signInConfirm('${id}')">Sign in</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
-async function signInConfirm(id){const init=document.getElementById('siInit').value.trim();if(!init){toast('Enter your initials');return;}
-  try{await api('/attendance/sign-in',{method:'POST',body:{camperId:id,leaderName:init}});closeModal();toast('Signed in');openCamper(id,false);}catch(e){toast(e.message);}}
+async function signInConfirm(id){const el=document.getElementById('siInit');const init=el?el.value.trim():'';if(!init){toast('Enter your initials');return;}LAST_LEADER=init;closeModal();_doSignIn(id,init);}
 
 /* ===== SCHEDULE ===== */
 let SCHED_DAY=null;
@@ -3198,15 +3341,17 @@ RENDER.testimonies=async function(){
   paint('testimonies',`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Submit a testimony</span>${helpTip('Record a God-moment from camp. Choosing a student is optional — leave it blank for a general testimony. Saved for leaders and directors to review.')}</div>
     <div class="infobox" style="font-size:.82rem">Record a testimony or God-moment from camp. Pick a student if it's about one, or leave it as a general testimony. It is saved with the records that leaders &amp; directors review.</div>
     <div class="card"><label>Student (optional)</label><select id="tmCamper">${opts}</select>
-    <label>Your name (leader)</label><input class="fld" id="tmLeader" value="${esc(LAST_LEADER||'')}" placeholder="e.g. Sarah Doyle">
+    ${_isChurchAccount()?'':`<label>Your name (leader)</label><input class="fld" id="tmLeader" value="${esc(LAST_LEADER||'')}" placeholder="e.g. Sarah Doyle">`}
     <label>Testimony</label><textarea id="tmBody" placeholder="What happened? Whose story is it? What did God do?" style="min-height:120px"></textarea>
     <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this testimony from church logins on the student's profile.</div></div>
     <label class="tgl"><input type="checkbox" id="tmSensitive"><span class="track"></span></label></div>
     <button class="btn" style="margin-top:10px" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','Day 2+');
 };
-async function submitTestimony(){const camperId=sel('tmCamper'),leader=val('tmLeader'),body=val('tmBody');
+async function submitTestimony(){const camperId=sel('tmCamper'),body=val('tmBody');
+  const tmLeaderEl=document.getElementById('tmLeader');
+  const leader=tmLeaderEl?tmLeaderEl.value.trim():(_isChurchAccount()?LEADER_INITIALS:''); // church: initials auto-applied
   const sensitive=!!document.getElementById('tmSensitive')?.checked;
-  if(!body){toast('Write the testimony');return;}LAST_LEADER=leader;
+  if(!body){toast('Write the testimony');return;}if(leader)LAST_LEADER=leader;
   const full=leader&&leader!==ACTOR.displayName?`${body}\n— logged by ${leader}`:body;
   const payload={body:full,category:'testimony',sensitive};if(camperId)payload.camperId=camperId;
   try{await api('/notes',{method:'POST',body:payload});toast('Testimony submitted');const t=document.getElementById('tmBody');if(t)t.value='';const s=document.getElementById('tmSensitive');if(s)s.checked=false;}catch(e){toast(e.message);}}
@@ -3370,6 +3515,11 @@ RENDER.admin=function(){
     <div class="tiles">
       <div class="tile" onclick="go('adminAccounts')"><div class="l">Accounts &amp; churches</div></div>
       <div class="tile" onclick="go('adminContacts')"><div class="l">Ministry contacts</div></div>
+    </div>
+    <div class="h3" style="margin:16px 0 6px">Communications</div>
+    <div class="tiles">
+      <div class="tile" onclick="gotoTab('notifs')"><div class="ic">${ic('bell')}</div><div class="l">Notices</div></div>
+      <div class="tile" onclick="go('scheduled')"><div class="ic">${ic('clock')}</div><div class="l">Scheduled notices</div></div>
     </div>
     <div class="h3" style="margin:16px 0 6px">Data</div>
     <div class="tiles">
@@ -3817,46 +3967,66 @@ function _addDays(dateStr,n){const d=new Date(dateStr+'T12:00:00Z');if(isNaN(d))
 function _datesBetween(start,end){const out=[];if(!start)return out;const s=new Date(start+'T12:00:00Z');let e=end?new Date(end+'T12:00:00Z'):s;if(isNaN(s)||isNaN(e)||e<s)return start&&!isNaN(s)?[start]:[];let cur=new Date(s);let guard=0;while(cur<=e&&guard++<60){out.push(cur.toISOString().slice(0,10));cur.setUTCDate(cur.getUTCDate()+1);}return out;}
 RENDER.adminSettings=async function(){
   const s=SETTINGS||await api('/settings');
-  paint('adminSettings',`<div class="card tap" onclick="go('notifs')" style="margin-bottom:12px">
-      <div class="rowsb"><div><div style="font-weight:600">Notices</div><div class="sub">Send &amp; review camp notices</div></div><span class="pill info">View ›</span></div></div>
-    <div class="card">
-    <div class="two-col">
-      <div><label>Camp name</label><input class="fld" id="stName" value="${esc(s.campName||'')}"></div>
-      <div><label>Year</label><input class="fld" id="stYear" type="number" inputmode="numeric" value="${esc(s.year||'')}"></div>
-      <div><label>Start date (YYYY-MM-DD)</label><input class="fld" id="stStart" type="date" value="${esc(s.startDate||'')}" onchange="onStartDateChange()"></div>
-      <div><label>End date (YYYY-MM-DD)</label><input class="fld" id="stEnd" type="date" value="${esc(s.endDate||'')}" onchange="renderCheckinDaysPreview()"></div>
-    </div>
-    <label>At-camp check-in days (auto-generated)</label>
-    <div id="stDaysPreview" class="sub" style="background:var(--tint);border-radius:10px;padding:9px 11px;font-size:.8rem;color:var(--violet-d)"></div>
-    <!-- PC-4: tent/classroom price fields removed. Registration fees come from the uploaded
-         data (per-registrant Cost), surfaced in Budget — not from settings. -->
-    <label style="margin-top:16px">Account access</label>
-    <div class="tglrow">
-      <div><div class="tgl-l">Lock church logins ${helpTip('Stops church accounts signing in. People already signed in stay signed in until they log out or their session expires (up to 12 hours).')}</div><div class="sub">Turn on after camp to close church access.</div></div>
-      <label class="tgl"><input type="checkbox" id="stChurchLock" ${s.churchLoginLocked?'checked':''}><span class="track"></span></label>
-    </div>
-    <div class="tglrow">
-      <div><div class="tgl-l">Lock zone leader logins ${helpTip('Stops zone leader accounts signing in. People already signed in stay signed in until they log out or their session expires (up to 12 hours).')}</div><div class="sub">Manual only — toggle on or off whenever you need.</div></div>
-      <label class="tgl"><input type="checkbox" id="stZoneLock" ${s.zoneLeaderLoginLocked?'checked':''}><span class="track"></span></label>
-    </div>
-    <div class="tglrow">
-      <div><div class="tgl-l">Restrict church check-in to current session ${helpTip('When on, church accounts can only submit the check-in that\'s actually happening right now — not an earlier or later session. Before camp starts, they can still complete the very first session (Mon PM). Zone leaders, directors and admin are never restricted.')}</div><div class="sub">Stops early/late check-ins from church accounts — toggle off any time.</div></div>
-      <label class="tgl"><input type="checkbox" id="stChurchCheckinRestrict" ${s.churchCheckinTimeRestricted?'checked':''}><span class="track"></span></label>
-    </div>
-    <label style="margin-top:16px">Arrival → daily check-in switchover</label>
-    <div class="two-col">
-      <div><label>Switchover time (Day 1)</label><input class="fld" id="stSwitchover" type="time" value="${esc(s.checkinSwitchoverTime||'14:00')}"></div>
-      <div><label>Phase</label>
-        <div class="seg" id="stPhaseSeg">
-          <button type="button" class="${(s.checkinPhaseOverride||'auto')==='auto'?'on':''}" data-phase="auto" onclick="setPhaseOverride('auto')">Auto</button>
-          <button type="button" class="${s.checkinPhaseOverride==='signin'?'on':''}" data-phase="signin" onclick="setPhaseOverride('signin')">Sign-in</button>
-          <button type="button" class="${s.checkinPhaseOverride==='checkin'?'on':''}" data-phase="checkin" onclick="setPhaseOverride('checkin')">Check-in</button>
+  // Item 4: a flat, grouped settings page (collapsible sections, done-state ticks) instead of a
+  // forced wizard flow. Every input still lives in the DOM (inside <details>), so the single
+  // Save button at the bottom writes them all in one PATCH exactly as before. Notices are NO
+  // longer surfaced here (item 4) — they live on the admin console's Communications group.
+  const tick=ok=>ok?'<span class="pill ok">Ready</span>':'<span class="pill">Set up</span>';
+  paint('adminSettings',`
+    <details class="setg" open><summary>${icSm('calendar')} Camp details &amp; dates ${tick(!!s.campName&&!!s.startDate&&!!s.endDate)}</summary>
+      <div class="card">
+        <div class="two-col">
+          <div><label>Camp name</label><input class="fld" id="stName" value="${esc(s.campName||'')}"></div>
+          <div><label>Year</label><input class="fld" id="stYear" type="number" inputmode="numeric" value="${esc(s.year||'')}"></div>
+          <div><label>Start date</label><input class="fld" id="stStart" type="date" value="${esc(s.startDate||'')}" onchange="onStartDateChange()"></div>
+          <div><label>End date</label><input class="fld" id="stEnd" type="date" value="${esc(s.endDate||'')}" onchange="renderCheckinDaysPreview()"></div>
+        </div>
+        <label>At-camp check-in days (auto-generated)</label>
+        <div id="stDaysPreview" class="sub" style="background:var(--tint);border-radius:10px;padding:9px 11px;font-size:.8rem;color:var(--violet-d)"></div>
+        <p class="note-hint">Setting the start date pre-fills the end date to the 4th day; adjust it as needed. Check-in days are generated from the range — one Morning and one Afternoon session per day.</p>
+      </div>
+    </details>
+    <details class="setg"><summary>${icSm('clock')} Check-in &amp; timing ${tick(true)}</summary>
+      <div class="card">
+        <label>Arrival → daily check-in switchover</label>
+        <div class="two-col">
+          <div><label>Switchover time (Day 1)</label><input class="fld" id="stSwitchover" type="time" value="${esc(s.checkinSwitchoverTime||'14:00')}"></div>
+          <div><label>Phase</label>
+            <div class="seg" id="stPhaseSeg">
+              <button type="button" class="${(s.checkinPhaseOverride||'auto')==='auto'?'on':''}" data-phase="auto" onclick="setPhaseOverride('auto')">Auto</button>
+              <button type="button" class="${s.checkinPhaseOverride==='signin'?'on':''}" data-phase="signin" onclick="setPhaseOverride('signin')">Sign-in</button>
+              <button type="button" class="${s.checkinPhaseOverride==='checkin'?'on':''}" data-phase="checkin" onclick="setPhaseOverride('checkin')">Check-in</button>
+            </div>
+          </div>
+        </div>
+        <p class="note-hint">On Day 1, arrival sign-in switches to daily check-in at the time above. <b>Auto</b> follows that time; <b>Sign-in</b> / <b>Check-in</b> force the phase across the whole app until set back to Auto.</p>
+        <div class="tglrow" style="margin-top:14px">
+          <div><div class="tgl-l">Restrict church check-in to the open window ${helpTip('When on, church accounts can only record a check-in during the morning or afternoon window below, on an actual camp day. Zone leaders, directors and admin are never restricted.')}</div><div class="sub">Stops early/late check-ins from church accounts — toggle off any time.</div></div>
+          <label class="tgl"><input type="checkbox" id="stChurchCheckinRestrict" ${s.churchCheckinTimeRestricted?'checked':''}><span class="track"></span></label>
+        </div>
+        <label style="margin-top:14px">Check-in windows (church accounts)</label>
+        <div class="two-col">
+          <div><label>Morning from</label><input class="fld" id="stAmStart" type="time" value="${esc(s.checkinWindowAmStart||'06:00')}"></div>
+          <div><label>Morning to</label><input class="fld" id="stAmEnd" type="time" value="${esc(s.checkinWindowAmEnd||'12:00')}"></div>
+          <div><label>Afternoon from</label><input class="fld" id="stPmStart" type="time" value="${esc(s.checkinWindowPmStart||'12:00')}"></div>
+          <div><label>Afternoon to</label><input class="fld" id="stPmEnd" type="time" value="${esc(s.checkinWindowPmEnd||'22:00')}"></div>
+        </div>
+        <p class="note-hint">Windows apply only when the restriction above is on. Outside a window (or on a non-camp day) church check-ins are blocked with a friendly message.</p>
+      </div>
+    </details>
+    <details class="setg"><summary>${icSm('key')} Account access ${tick(true)}</summary>
+      <div class="card">
+        <div class="tglrow">
+          <div><div class="tgl-l">Lock church logins ${helpTip('Stops church accounts signing in. People already signed in stay signed in until they log out or their session expires (up to 24 hours).')}</div><div class="sub">Turn on after camp to close church access.</div></div>
+          <label class="tgl"><input type="checkbox" id="stChurchLock" ${s.churchLoginLocked?'checked':''}><span class="track"></span></label>
+        </div>
+        <div class="tglrow">
+          <div><div class="tgl-l">Lock zone leader logins ${helpTip('Stops zone leader accounts signing in. People already signed in stay signed in until they log out or their session expires (up to 24 hours).')}</div><div class="sub">Manual only — toggle on or off whenever you need.</div></div>
+          <label class="tgl"><input type="checkbox" id="stZoneLock" ${s.zoneLeaderLoginLocked?'checked':''}><span class="track"></span></label>
         </div>
       </div>
-    </div>
-    <p class="note-hint">On Day 1, arrival sign-in switches to daily check-in at the time above. <b>Auto</b> follows that time; <b>Sign-in</b> / <b>Check-in</b> force the phase across the whole app until set back to Auto.</p>
-    <button class="btn" style="margin-top:14px" onclick="saveSettings()">Save camp settings</button>
-    <p class="note-hint">Setting the start date pre-fills the end date to the 4th day; you can adjust it. Check-in days are generated from the date range automatically — one Morning and one Afternoon session per day.</p></div>`,'Camp settings','Dates & details');
+    </details>
+    <button class="btn" style="margin-top:6px" onclick="saveSettings()">Save camp settings</button>`,'Camp settings','Grouped setup');
   renderCheckinDaysPreview();
 };
 window._phaseOverride=null;
@@ -3895,7 +4065,11 @@ async function saveSettings(){
     const churchCheckinRestrict=!!document.getElementById('stChurchCheckinRestrict')?.checked;
     const switchover=document.getElementById('stSwitchover')?.value||'14:00';
     const phaseOverride=window._phaseOverride||document.querySelector('#stPhaseSeg button.on')?.dataset.phase||'auto';
-    await api('/settings',{method:'PATCH',body:{campName:val('stName'),year:Number(val('stYear'))||new Date().getFullYear(),startDate:val('stStart'),endDate:val('stEnd'),timezone:'Australia/Brisbane',checkInDays:days,churchLoginLocked:churchLock,zoneLeaderLoginLocked:zoneLock,churchCheckinTimeRestricted:churchCheckinRestrict,checkinSwitchoverTime:switchover,checkinPhaseOverride:phaseOverride}});
+    const amStart=document.getElementById('stAmStart')?.value||'06:00';
+    const amEnd=document.getElementById('stAmEnd')?.value||'12:00';
+    const pmStart=document.getElementById('stPmStart')?.value||'12:00';
+    const pmEnd=document.getElementById('stPmEnd')?.value||'22:00';
+    await api('/settings',{method:'PATCH',body:{campName:val('stName'),year:Number(val('stYear'))||new Date().getFullYear(),startDate:val('stStart'),endDate:val('stEnd'),timezone:'Australia/Brisbane',checkInDays:days,churchLoginLocked:churchLock,zoneLeaderLoginLocked:zoneLock,churchCheckinTimeRestricted:churchCheckinRestrict,checkinSwitchoverTime:switchover,checkinPhaseOverride:phaseOverride,checkinWindowAmStart:amStart,checkinWindowAmEnd:amEnd,checkinWindowPmStart:pmStart,checkinWindowPmEnd:pmEnd}});
     SETTINGS=await api('/settings',{noCache:true});SESSIONS=[];SEL_SESSION=null;SCHED_DAY=null;DEVO_DAY=null;
     toast('Settings saved');
   }catch(e){toast(e.message);}
@@ -4888,7 +5062,8 @@ async function _tryRestoreSession(){
     document.getElementById('stage').style.display='block';
     document.getElementById('tabs').style.display='';  // let CSS media query control visibility
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
-    _loadLeaderInitials(); // restore the badge/prefill; no auto-prompt on a silent session restore
+    _loadLeaderInitials(); // restore the badge/prefill
+    enforceInitials();     // item 7: a restored church session with no initials is still gated
   }catch(e){
     if(e&&e.code==='MUST_CHANGE_PASSWORD'){_showChangePasswordGate();return;}
     TOKEN=null;ACTOR=null;

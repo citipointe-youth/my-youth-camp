@@ -20,7 +20,7 @@ const MUST_CHANGE_PASSWORD_ENFORCED = false;
 // Login throttle: 10 FAILED attempts per (IP + username) per 15-minute window.
 // Keyed by ip+username (not bare IP) and counting failures only — at a camp venue all
 // ~200 leaders share ONE public IP behind the WiFi NAT and re-log-in every morning
-// (12h token TTL), so a bare-IP any-attempt bucket locked out the whole site.
+// (24h token TTL), so a bare-IP any-attempt bucket locked out the whole site.
 const loginLimiter = new RateLimiter(10, 15 * 60 * 1000);
 
 /** Rate-limit key for a login attempt: client IP + submitted username (lowercased). */

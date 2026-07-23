@@ -31,6 +31,13 @@ export interface CampSettings {
   // Manual admin override of the arrival/daily phase. 'auto' = time-driven (the normal case);
   // 'signin'/'checkin' pin the phase across the app until set back to 'auto'.
   checkinPhaseOverride: 'auto' | 'signin' | 'checkin';
+  // Item 11: hard AM/PM check-in windows for church accounts (only enforced when
+  // churchCheckinTimeRestricted is true). 'HH:MM' 24h strings. Optional so existing
+  // fixtures compile; defaults applied on read: AM 06:00-12:00, PM 12:00-22:00.
+  checkinWindowAmStart?: string;
+  checkinWindowAmEnd?: string;
+  checkinWindowPmStart?: string;
+  checkinWindowPmEnd?: string;
   // Mode switch
   campMode: CampMode;
   // Temp passwords from the most recent new-year rollover, cleared after export.

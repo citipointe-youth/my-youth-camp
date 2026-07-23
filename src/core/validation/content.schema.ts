@@ -85,6 +85,10 @@ export const UpdateSettingsSchema = z.object({
   churchCheckinTimeRestricted: z.boolean().optional(),
   checkinSwitchoverTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
   checkinPhaseOverride: z.enum(['auto', 'signin', 'checkin']).optional(),
+  checkinWindowAmStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
+  checkinWindowAmEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
+  checkinWindowPmStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
+  checkinWindowPmEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
   campMode: z.enum(CAMP_MODES).optional(),
 });
 

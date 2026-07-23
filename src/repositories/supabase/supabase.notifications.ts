@@ -21,6 +21,7 @@ export function toNotif(r: Record<string, unknown>): Notification {
     leadersOnly: (r['leaders_only'] as boolean | null) ?? false,
     audienceEstimate: r['audience_estimate'] as number,
     expiresAt: r['expires_at'] ? (r['expires_at'] as Date).toISOString() : undefined,
+    scheduledFor: r['scheduled_for'] ? (r['scheduled_for'] as Date).toISOString() : null,
     createdAt: (r['created_at'] as Date).toISOString(),
   };
 }
@@ -42,6 +43,7 @@ export function notifColumns(n: Notification): Record<string, unknown> {
     leaders_only: n.leadersOnly ?? false,
     audience_estimate: n.audienceEstimate,
     expires_at: n.expiresAt ?? null,
+    scheduled_for: n.scheduledFor ?? null,
     created_at: n.createdAt,
   };
 }
@@ -83,7 +85,16 @@ export class SupabaseNotificationRepository implements INotificationRepository {
   async save(n: Notification): Promise<Notification> {
     await this.sql`
       insert into notifications ${this.sql(notifColumns(n))}
-      on conflict (id) do update set title = excluded.title, body = excluded.body
+      on conflict (id) do update set
+        title = excluded.title,
+        body = excluded.body,
+        scope = excluded.scope,
+        zone = excluded.zone,
+        church_id = excluded.church_id,
+        priority = excluded.priority,
+        expires_at = excluded.expires_at,
+        scheduled_for = excluded.scheduled_for,
+        audience_estimate = excluded.audience_estimate
     `;
     return n;
   }

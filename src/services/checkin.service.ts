@@ -6,6 +6,7 @@ import { toRosterEntry, type RosterEntry } from '../api/dto/person.dto';
 import { NotFoundError, ForbiddenError } from '../core/errors/app-error';
 import { zonedNow } from '../utils/date';
 import {
+  allowedWindowSession,
   buildSessions,
   currentSession as pickCurrentSession,
   parseSessionId,
@@ -81,10 +82,21 @@ export function makeCheckInService(
       if (!settings?.churchCheckinTimeRestricted) return;
       const { days, tz } = await ctx();
       const { date, time } = zonedNow(tz);
-      const current = pickCurrentSession(days, date, time);
-      if (current && sessionId !== current.id) {
+      const windows = {
+        amStart: settings.checkinWindowAmStart ?? '06:00',
+        amEnd: settings.checkinWindowAmEnd ?? '12:00',
+        pmStart: settings.checkinWindowPmStart ?? '12:00',
+        pmEnd: settings.checkinWindowPmEnd ?? '22:00',
+      };
+      const allowed = allowedWindowSession(days, date, time, windows);
+      if (!allowed) {
         throw new ForbiddenError(
-          `Check-in is currently restricted to the ${current.label} session — ask your admin if you need to record a different session.`,
+          `Check-in is closed right now — the morning window is ${windows.amStart}–${windows.amEnd} and the afternoon window is ${windows.pmStart}–${windows.pmEnd}, on camp days only.`,
+        );
+      }
+      if (sessionId !== allowed.id) {
+        throw new ForbiddenError(
+          `Check-in is currently limited to the ${allowed.label} session.`,
         );
       }
     },

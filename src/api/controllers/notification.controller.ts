@@ -23,6 +23,18 @@ export function makeNotificationController(services: NotificationControllerServi
       return services.notification.send(req.ctx.actor, req.body);
     },
 
+    async scheduled(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.notification.scheduled(req.ctx.actor);
+    },
+
+    async update(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      const id = req.params['id'];
+      if (!id) throw new BadRequestError('Missing notification id');
+      return services.notification.update(req.ctx.actor, id, req.body);
+    },
+
     async remove(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       const id = req.params['id'];

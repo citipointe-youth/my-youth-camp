@@ -3,7 +3,7 @@ import type { Notification } from '../core/entities/notification';
 import type { Actor } from '../core/entities/user';
 import { assertCanSendNotification } from './access-control';
 import { isCamper } from '../core/entities/person';
-import { CreateNotificationSchema } from '../core/validation/notification.schema';
+import { CreateNotificationSchema, UpdateNotificationSchema } from '../core/validation/notification.schema';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
@@ -13,6 +13,8 @@ export interface NotificationService {
   send(actor: Actor, input: unknown): Promise<Notification>;
   feed(actor: Actor): Promise<Notification[]>;
   latest(actor: Actor): Promise<Notification | null>;
+  scheduled(actor: Actor): Promise<Notification[]>;
+  update(actor: Actor, id: string, input: unknown): Promise<Notification>;
   remove(actor: Actor, id: string): Promise<{ ok: true }>;
   clearAll(actor: Actor): Promise<{ deleted: number }>;
 }
@@ -45,7 +47,12 @@ export function makeNotificationService(
 
   async function getActorFeed(actor: Actor): Promise<Notification[]> {
     const active = await notifRepo.findActive();
+    const now = nowISO();
     return active.filter((n) => {
+      // Scheduled notices are withheld from EVERY audience feed until their publish time
+      // passes (lazy-fire: they surface on the next feed fetch after `scheduledFor`). The
+      // creator manages pending ones via the separate `scheduled()` list, not the feed.
+      if (n.scheduledFor && n.scheduledFor > now) return false;
       // Leaders-only notices (e.g. incident alerts) are never shown to church/firstAid,
       // regardless of scope — their bodies can describe a minor.
       if (n.leadersOnly && actor.role !== 'zoneLeader' && actor.role !== 'director' && actor.role !== 'admin') {
@@ -83,6 +90,7 @@ export function makeNotificationService(
         leadersOnly: false,
         audienceEstimate: audience,
         expiresAt: data.expiresAt ?? null,
+        scheduledFor: data.scheduledFor ?? null,
         createdAt: nowISO(),
       };
       const saved = await notifRepo.save(notif);
@@ -99,14 +107,70 @@ export function makeNotificationService(
       return feed[0] ?? null;
     },
 
-    async remove(actor, id) {
-      if (actor.role !== 'zoneLeader' && actor.role !== 'director' && actor.role !== 'admin') {
-        throw new ForbiddenError('Not allowed to delete notifications');
-      }
+    // Pending scheduled notices (publish time still in the future). The creator sees their
+    // own; director/admin see everyone's. Sorted soonest-first for the management list.
+    async scheduled(actor) {
+      const now = nowISO();
+      const all = await notifRepo.findAll();
+      const isOversight = actor.role === 'director' || actor.role === 'admin';
+      return all
+        .filter((n) => n.scheduledFor != null && n.scheduledFor > now)
+        .filter((n) => isOversight || n.senderId === actor.id)
+        .sort((a, b) => (a.scheduledFor as string).localeCompare(b.scheduledFor as string));
+    },
+
+    // Edit a notice (typically a still-pending scheduled one). Creator or director/admin only.
+    async update(actor, id, input) {
+      const data = UpdateNotificationSchema.parse(input);
       const existing = await notifRepo.findById(id);
       if (!existing) throw new NotFoundError('Notification not found');
-      if (actor.role === 'zoneLeader' && !(existing.scope === 'zone' && existing.zone === actor.zone)) {
-        throw new ForbiddenError('Zone leaders can only delete notices for their own zone');
+      const isOversight = actor.role === 'director' || actor.role === 'admin';
+      if (!isOversight && existing.senderId !== actor.id) {
+        throw new ForbiddenError('You can only edit notices you created');
+      }
+      const scope = data.scope ?? existing.scope;
+      const zone = data.zone !== undefined ? data.zone : existing.zone;
+      // Re-authorise if the audience (scope/zone) changed.
+      if (data.scope !== undefined || data.zone !== undefined) {
+        assertCanSendNotification(actor, scope, zone);
+      }
+      const churchId = data.churchId !== undefined ? data.churchId : existing.churchId;
+      const audienceChanged =
+        data.scope !== undefined || data.zone !== undefined || data.churchId !== undefined;
+      const audience = audienceChanged
+        ? await estimateAudience(scope, zone, churchId)
+        : existing.audienceEstimate;
+      const updated: Notification = {
+        ...existing,
+        scope,
+        zone: zone ?? null,
+        churchId: churchId ?? null,
+        priority: data.priority ?? existing.priority,
+        title: data.title ?? existing.title,
+        body: data.body ?? existing.body,
+        expiresAt: data.expiresAt !== undefined ? data.expiresAt : existing.expiresAt,
+        scheduledFor: data.scheduledFor !== undefined ? data.scheduledFor : existing.scheduledFor,
+        audienceEstimate: audience,
+      };
+      const saved = await notifRepo.save(updated);
+      invalidateDashboardCache();
+      return saved;
+    },
+
+    async remove(actor, id) {
+      const existing = await notifRepo.findById(id);
+      if (!existing) throw new NotFoundError('Notification not found');
+      const isOversight = actor.role === 'director' || actor.role === 'admin';
+      const isCreator = existing.senderId === actor.id;
+      // A creator may always delete their own notice (needed for a zoneLeader's own scheduled
+      // ones); otherwise only director/admin, plus the legacy zoneLeader-own-zone allowance.
+      if (!isOversight && !isCreator) {
+        if (actor.role !== 'zoneLeader') {
+          throw new ForbiddenError('Not allowed to delete notifications');
+        }
+        if (!(existing.scope === 'zone' && existing.zone === actor.zone)) {
+          throw new ForbiddenError('Zone leaders can only delete notices for their own zone');
+        }
       }
       await notifRepo.delete(id);
       invalidateDashboardCache();

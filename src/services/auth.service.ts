@@ -7,7 +7,7 @@ import { UnauthorizedError } from '../core/errors/app-error';
 import { LoginInputSchema } from '../core/validation/auth.schema';
 import type { LoginInput } from '../core/validation/auth.schema';
 
-const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // A well-formed but unmatchable scrypt hash (salt:key). Used to run an equal-cost password
 // verification when the account doesn't exist / has no password, so login response time and
@@ -20,7 +20,7 @@ const DUMMY_PASSWORD_HASH = `${'0'.repeat(32)}:${'0'.repeat(128)}`;
 // Map, logging every user out, and a token minted on instance A was unknown to
 // instance B). The signed token carries the full actor so authenticated requests
 // need no DB lookup; the HMAC guarantees it wasn't tampered with. Trade-off: a
-// role/zone change only takes effect on the user's next login (within the 12h TTL).
+// role/zone change only takes effect on the user's next login (within the 24h TTL).
 const INSECURE_FALLBACK = 'camp-platform-dev-secret-change-in-production';
 const SESSION_SECRET = process.env['SESSION_SECRET'] ?? INSECURE_FALLBACK;
 

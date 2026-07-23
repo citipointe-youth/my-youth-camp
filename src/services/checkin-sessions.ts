@@ -57,6 +57,25 @@ export function parseSessionId(id: string): { day: string; sfx: 'am' | 'pm' } | 
   return { day: m[1] as string, sfx: m[2] as 'am' | 'pm' };
 }
 
+// Item 11: hard AM/PM check-in windows (church accounts only, admin-editable, on by
+// default). Returns the single session a check-in is allowed to target right now, or
+// null if check-in is closed (outside camp days entirely, or between/outside the
+// configured windows). Pure — no settings/actor lookups here.
+export function allowedWindowSession(
+  days: readonly string[],
+  today: string,
+  nowTime: string,
+  windows: { amStart: string; amEnd: string; pmStart: string; pmEnd: string },
+): CheckInSession | null {
+  if (!days.includes(today)) return null;
+  const sessions = buildSessions(days);
+  const amSession = sessions.find((s) => s.id === `${today}~am`);
+  const pmSession = sessions.find((s) => s.id === `${today}~pm`);
+  if (nowTime >= windows.amStart && nowTime < windows.amEnd && amSession) return amSession;
+  if (nowTime >= windows.pmStart && nowTime < windows.pmEnd && pmSession) return pmSession;
+  return null;
+}
+
 // The session a leader should land on now: today's AM before midday / PM after; if no
 // session today, the most recent past session; otherwise the first upcoming one.
 export function currentSession(

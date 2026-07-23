@@ -230,6 +230,78 @@ describe('audit-export: Feature 4 — leader initials captured in the audit trai
   });
 });
 
+describe('audit-export: Daily Check-in Log & Notes are sorted chronologically (item 6)', () => {
+  beforeEach(async () => {
+    // Two people whose check-in entries are deliberately out of order both within a person's
+    // own history and interleaved across people — the log must re-sort by timestamp, not trust
+    // person/array iteration order.
+    await people.save(person({
+      id: 'ck1', firstName: 'Zack', lastName: 'Zeta', kind: 'youth', lifecycle: 'arrived', atCamp: true,
+      checkInHistory: [
+        { id: 'c3', sessionId: '2026-07-02~am', sessionLabel: 'Wed AM', type: 'in', leaderId: 'ZZ', timestamp: '2026-07-02T08:00:00.000Z' },
+        { id: 'c1', sessionId: '2026-07-01~pm', sessionLabel: 'Tue PM', type: 'in', leaderId: 'ZZ', timestamp: '2026-07-01T13:00:00.000Z' },
+      ],
+    }));
+    await people.save(person({
+      id: 'ck2', firstName: 'Amy', lastName: 'Alpha', kind: 'youth', lifecycle: 'arrived', atCamp: true,
+      checkInHistory: [
+        { id: 'c4', sessionId: '2026-07-02~pm', sessionLabel: 'Wed PM', type: 'in', leaderId: 'AA', timestamp: '2026-07-02T13:00:00.000Z' },
+        { id: 'c2', sessionId: '2026-07-01~pm', sessionLabel: 'Tue PM', type: 'in', leaderId: 'AA', timestamp: '2026-07-01T13:30:00.000Z' },
+      ],
+    }));
+  });
+
+  it('exportMasterWorkbook: Daily Check-in Log rows come out strictly in timestamp order', async () => {
+    const wb = await load();
+    const sheet = wb.getWorksheet('Daily Check-in Log')!;
+    const header = (sheet.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    const studentCol = header.indexOf('Student');
+    const students: string[] = [];
+    for (let r = 2; r <= sheet.rowCount; r++) {
+      const cells = (sheet.getRow(r).values as unknown[]).map((v) => String(v ?? ''));
+      students.push(cells[studentCol] ?? '');
+    }
+    // Expected chronological order by raw ISO timestamp:
+    // c1 (Zack, 07-01 13:00) < c2 (Amy, 07-01 13:30) < c3 (Zack, 07-02 08:00) < c4 (Amy, 07-02 13:00)
+    expect(students).toEqual(['Zack Zeta', 'Amy Alpha', 'Zack Zeta', 'Amy Alpha']);
+  });
+
+  it('exportCheckInLogCsv: rows come out strictly in timestamp order', async () => {
+    const csv = await svc.exportCheckInLogCsv(actor);
+    const lines = csv.trim().split('\n');
+    const dataRows = lines.slice(1);
+    const firstNames = dataRows.map((l) => l.split(',')[0]);
+    expect(firstNames).toEqual(['Zack', 'Amy', 'Zack', 'Amy']);
+  });
+
+  it('Notes & Testimonies sheet rows come out in createdAt order', async () => {
+    // The outer beforeEach already added a firstaid note then a testimony (in that call order,
+    // so createdAt is non-decreasing) for cam1 — add an earlier-dated testimony for ck1 to force
+    // a real reorder relative to insertion order.
+    const noteSvc = makeNoteService(notes, people);
+    await noteSvc.add(actor, { camperId: 'ck1', category: 'testimony', body: 'Recent testimony' });
+    const all = await notes.findAll();
+    const recent = all.find((n) => n.body === 'Recent testimony')!;
+    const earlier = all.find((n) => n.body === 'Great week')!;
+    // Force 'Recent testimony' to have an earlier createdAt than 'Great week' despite being
+    // added later, so a correct sort (not insertion order) is the only way to pass.
+    await notes.save({ ...recent, createdAt: '2020-01-01T00:00:00.000Z' });
+    await notes.save({ ...earlier, createdAt: '2025-01-01T00:00:00.000Z' });
+
+    const wb = await load();
+    const ns = wb.getWorksheet('Notes & Testimonies')!;
+    const bodies: string[] = [];
+    for (let r = 2; r <= ns.rowCount; r++) {
+      bodies.push((ns.getRow(r).values as unknown[]).map((v) => String(v ?? '')).join('|'));
+    }
+    const recentIdx = bodies.findIndex((b) => b.includes('Recent testimony'));
+    const greatIdx = bodies.findIndex((b) => b.includes('Great week'));
+    expect(recentIdx).toBeGreaterThanOrEqual(0);
+    expect(greatIdx).toBeGreaterThanOrEqual(0);
+    expect(recentIdx).toBeLessThan(greatIdx);
+  });
+});
+
 describe('audit-export.service — compliance-export RBAC (review Finding A)', () => {
   function roleActor(role: Actor['role'], over: Partial<Actor> = {}): Actor {
     return { id: 'u', role, churchId: null, churchName: null, zone: null, displayName: role, ...over };

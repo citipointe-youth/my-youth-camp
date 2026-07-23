@@ -22,13 +22,12 @@ import type { ScheduleItem } from '../core/entities/schedule';
 import type { Devotional } from '../core/entities/devotional';
 import type { CampMode } from '../core/types/enums';
 import type { Actor } from '../core/entities/user';
-import type { Person, SignOutEvent } from '../core/entities/person';
+import type { Person } from '../core/entities/person';
 import { assertCan } from './access-control';
 import { ForbiddenError, NotFoundError, BadRequestError, WipeGuardError } from '../core/errors/app-error';
 import { nowISO } from '../utils/date';
 import { newId } from '../utils/id';
 import { makeSettingsService } from './settings.service';
-import { withSignEvent } from './person-lifecycle';
 import { generateTempPassword } from '../utils/temp-password';
 import { hashPassword } from '../utils/crypto';
 import { invalidateDashboardCache } from './dashboard-cache';
@@ -230,35 +229,17 @@ export function makeAdminService(
       return { deleted };
     },
 
-    // Leaders are never on the daily check-in app (checkin.service excludes kind:'leader')
-    // and don't do a Day-1 arrival — instead, the moment the camp actually goes live they
-    // should already read as "at camp" everywhere else (My Youth, dashboard totals). Bulk-
-    // apply the SAME transition a normal sign-in uses (withSignEvent) to every leader not
-    // already at camp, exactly once, on the pre-camp -> at-camp transition. One saveMany
-    // (chunked bulk upsert) — not a per-leader round trip — so this can't reintroduce the
-    // mode-switch latency issue (perf audit, 2026-07-03).
+    // Leaders are NOT auto-signed-in on the pre-camp -> at-camp transition (reverted
+    // 2026-07-23 — see docs/superpowers/specs/2026-07-23-overnight-batch-design.md item 5).
+    // They start atCamp:false at go-live like everyone else and are signed in manually via
+    // the My-group "Late arrivals" -> "Sign in to camp" path (filterMyYouth already includes
+    // leaders), the same as a real physical arrival. This keeps dashboard totalAtCamp from
+    // counting un-arrived leaders. checkin.service/dashboard.service already exclude leaders
+    // from the twice-daily roster regardless of this.
     async setMode(actor, mode) {
       const before = await settingsService.get();
       const saved = await settingsService.setMode(actor, mode);
       if (before.campMode !== 'at-camp' && mode === 'at-camp') {
-        const people = await personRepo.findAll();
-        const now = nowISO();
-        const toSignIn = people.filter(
-          (p) => p.kind === 'leader' && !p.atCamp && p.lifecycle !== 'cancelled',
-        );
-        if (toSignIn.length > 0) {
-          const event = (): SignOutEvent => ({
-            id: newId('so'),
-            type: 'in',
-            leaderName: actor.displayName,
-            reason: 'Camp started',
-            authorId: actor.id,
-            timestamp: now,
-          });
-          const updated = toSignIn.map((leader) => withSignEvent(leader, event(), now));
-          await personRepo.saveMany(updated);
-          invalidateDashboardCache();
-        }
         // First-aid records logged during pre-camp are necessarily test/practice ones —
         // nobody is physically at camp yet for a real first-aid incident to happen (see
         // note.service.ts's firstAidEligible, which lets a first-aider log/read a record

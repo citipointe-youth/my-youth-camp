@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSessions, currentSession, parseSessionId } from './checkin-sessions';
+import { allowedWindowSession, buildSessions, currentSession, parseSessionId } from './checkin-sessions';
 
 // AC-1: youth arrive at lunch on the first day (PM session only) and depart at lunch on
 // the last day (AM session only). Interior days keep both AM and PM. A single-day camp is
@@ -72,5 +72,54 @@ describe('parseSessionId', () => {
       expect(parsed).not.toBeNull();
       expect(`${parsed!.day}~${parsed!.sfx}`).toBe(s.id);
     }
+  });
+});
+
+describe('allowedWindowSession — item 11 hard AM/PM windows', () => {
+  const days = ['2026-07-01', '2026-07-02', '2026-07-03'];
+  const windows = { amStart: '06:00', amEnd: '12:00', pmStart: '12:00', pmEnd: '22:00' };
+
+  it('in the AM window on an interior day returns the AM session', () => {
+    const result = allowedWindowSession(days, '2026-07-02', '08:00', windows);
+    expect(result?.id).toBe('2026-07-02~am');
+  });
+
+  it('in the PM window on an interior day returns the PM session', () => {
+    const result = allowedWindowSession(days, '2026-07-02', '15:00', windows);
+    expect(result?.id).toBe('2026-07-02~pm');
+  });
+
+  it('outside both windows returns null', () => {
+    expect(allowedWindowSession(days, '2026-07-02', '23:00', windows)).toBeNull();
+    expect(allowedWindowSession(days, '2026-07-02', '02:00', windows)).toBeNull();
+  });
+
+  it('a non-camp day returns null even if the time is inside a window', () => {
+    expect(allowedWindowSession(days, '2026-07-10', '08:00', windows)).toBeNull();
+  });
+
+  it('day-1 is PM-only — the AM window on day 1 returns null (no AM session exists)', () => {
+    expect(allowedWindowSession(days, '2026-07-01', '08:00', windows)).toBeNull();
+  });
+
+  it('day-1 in the PM window returns the PM session', () => {
+    const result = allowedWindowSession(days, '2026-07-01', '15:00', windows);
+    expect(result?.id).toBe('2026-07-01~pm');
+  });
+
+  it('last day is AM-only — the PM window on the last day returns null (no PM session exists)', () => {
+    expect(allowedWindowSession(days, '2026-07-03', '15:00', windows)).toBeNull();
+  });
+
+  it('last day in the AM window returns the AM session', () => {
+    const result = allowedWindowSession(days, '2026-07-03', '08:00', windows);
+    expect(result?.id).toBe('2026-07-03~am');
+  });
+
+  it('the boundary end time is exclusive (amEnd not allowed, treated as PM start)', () => {
+    // At exactly 12:00 the AM window has ended (nowTime < amEnd fails) and the PM window
+    // (12:00 inclusive) has begun.
+    const result = allowedWindowSession(days, '2026-07-02', '12:00', windows);
+    expect(result?.id).toBe('2026-07-02~pm');
   });
 });

@@ -9,7 +9,7 @@ interface Bucket {
  * Used to throttle login attempts. Reworked for go-live (2026-07-02):
  * - The caller keys buckets by ip+username (not bare IP) — at a camp venue every
  *   device shares ONE public IP behind the WiFi NAT, so a bare-IP bucket was a single
- *   shared 10-attempt pool for 200 leaders re-logging-in each morning (12h token TTL).
+ *   shared 10-attempt pool for 200 leaders re-logging-in each morning (24h token TTL).
  * - Only FAILED attempts count (`recordFailure`), checked non-mutatingly via
  *   `isLimited` — successful logins never consume the budget.
  *

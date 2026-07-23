@@ -68,3 +68,56 @@ describe('notification.service — leadersOnly feed filtering', () => {
     expect(feed.map((n) => n.id)).toContain('notif-normal');
   });
 });
+
+describe('notification.service — scheduled notices (item 9)', () => {
+  const future = () => new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const past = () => new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+  async function schedule(over: Partial<Notification> = {}) {
+    return svc.send(
+      actor('director', { id: 'd1', displayName: 'Dir' }),
+      { scope: 'camp', priority: 'normal', title: 'Later', body: 'body', scheduledFor: future(), ...over },
+    );
+  }
+
+  it('a future-scheduled notice is withheld from every audience feed until due', async () => {
+    await schedule();
+    for (const role of ['church', 'zoneLeader', 'director', 'admin'] as const) {
+      const feed = await svc.feed(actor(role, { zone: 'Yellow' }));
+      expect(feed.map((n) => n.title)).not.toContain('Later');
+    }
+  });
+
+  it('a scheduled notice whose time has passed appears in the feed', async () => {
+    await svc.send(actor('director', { id: 'd1' }), { scope: 'camp', title: 'Due', body: 'b', scheduledFor: past() });
+    const feed = await svc.feed(actor('church', { churchId: 'c1' }));
+    expect(feed.map((n) => n.title)).toContain('Due');
+  });
+
+  it('scheduled() lists a creator\'s own pending notices; director/admin see all', async () => {
+    const zActor = actor('zoneLeader', { id: 'z9', zone: 'Yellow' });
+    await svc.send(zActor, { scope: 'zone', zone: 'Yellow', title: 'Zmine', body: 'b', scheduledFor: future() });
+    await schedule({ title: 'DirOne' }); // sender d1
+
+    const zList = await svc.scheduled(zActor);
+    expect(zList.map((n) => n.title)).toEqual(['Zmine']); // only own
+
+    const adminList = await svc.scheduled(actor('admin', { id: 'a1' }));
+    expect(adminList.map((n) => n.title).sort()).toEqual(['DirOne', 'Zmine']);
+  });
+
+  it('a creator can edit and delete their own scheduled notice', async () => {
+    const zActor = actor('zoneLeader', { id: 'z9', zone: 'Yellow' });
+    const n = await svc.send(zActor, { scope: 'zone', zone: 'Yellow', title: 'Old', body: 'b', scheduledFor: future() });
+    const edited = await svc.update(zActor, n.id, { title: 'New', scheduledFor: future() });
+    expect(edited.title).toBe('New');
+    await svc.remove(zActor, n.id);
+    expect(await svc.scheduled(actor('admin', { id: 'a1' }))).toHaveLength(0);
+  });
+
+  it('a zoneLeader cannot edit a notice they did not create', async () => {
+    const n = await schedule({ title: 'DirOwned' }); // sender d1
+    const other = actor('zoneLeader', { id: 'zX', zone: 'Blue' });
+    await expect(svc.update(other, n.id, { title: 'hijack' })).rejects.toThrow();
+  });
+});

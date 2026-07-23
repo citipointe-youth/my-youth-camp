@@ -21,5 +21,12 @@ export interface Notification {
   leadersOnly?: boolean;
   audienceEstimate: number;
   expiresAt?: ISODateString | null;
+  /**
+   * When set to a future instant, this notice is a SCHEDULED notice: it is withheld from
+   * every audience feed until `scheduledFor <= now` (lazy-fire — no server scheduler needed,
+   * since feeds are re-fetched on every home/Notices load). The creator (+ director/admin)
+   * can view/edit/delete it while it is still pending. Null/absent = an ordinary immediate notice.
+   */
+  scheduledFor?: ISODateString | null;
   createdAt: ISODateString;
 }

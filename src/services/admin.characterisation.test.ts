@@ -610,13 +610,14 @@ describe('AdminService.setMode', () => {
     expect(back.campMode).toBe('pre-camp');
   });
 
-  it('bulk-signs-in every non-cancelled leader on the pre-camp -> at-camp transition', async () => {
+  it('leaves leaders atCamp:false on the pre-camp -> at-camp transition (no auto sign-in)', async () => {
     await repos.personRepo.save(person({ id: 'lead1', kind: 'leader', lifecycle: 'registered', atCamp: false }));
     await repos.personRepo.save(person({ id: 'lead2', kind: 'leader', lifecycle: 'registered', atCamp: false }));
     await repos.personRepo.save(
       person({ id: 'lead3', kind: 'leader', lifecycle: 'cancelled', atCamp: false }),
     );
-    // A leader already atCamp (e.g. re-run of the switch) is left alone — no duplicate event.
+    // A leader who happened to already be atCamp (e.g. signed in manually beforehand) is
+    // left exactly as-is — the mode switch itself never touches leader presence either way.
     await repos.personRepo.save(
       person({ id: 'lead4', kind: 'leader', lifecycle: 'arrived', atCamp: true, signOutHistory: [] }),
     );
@@ -625,39 +626,25 @@ describe('AdminService.setMode', () => {
     await svc.setMode(actor('admin', { id: 'a1', displayName: 'Sarah Admin' }), 'at-camp');
 
     const lead1 = await repos.personRepo.findById('lead1');
-    expect(lead1!.atCamp).toBe(true);
-    expect(lead1!.lifecycle).toBe('arrived');
-    expect(lead1!.signOutHistory).toHaveLength(1);
-    expect(lead1!.signOutHistory[0]).toMatchObject({ type: 'in', authorId: 'a1', leaderName: 'Sarah Admin' });
+    expect(lead1!.atCamp).toBe(false);
+    expect(lead1!.lifecycle).toBe('registered');
+    expect(lead1!.signOutHistory).toHaveLength(0);
 
     const lead2 = await repos.personRepo.findById('lead2');
-    expect(lead2!.atCamp).toBe(true);
+    expect(lead2!.atCamp).toBe(false);
+    expect(lead2!.signOutHistory).toHaveLength(0);
 
     const lead3 = await repos.personRepo.findById('lead3');
-    expect(lead3!.atCamp).toBe(false); // cancelled — never auto-signed-in
+    expect(lead3!.atCamp).toBe(false);
     expect(lead3!.signOutHistory).toHaveLength(0);
 
     const lead4 = await repos.personRepo.findById('lead4');
-    expect(lead4!.signOutHistory).toHaveLength(0); // already at camp — no duplicate event
+    expect(lead4!.atCamp).toBe(true); // was already at camp beforehand — unaffected either way
+    expect(lead4!.signOutHistory).toHaveLength(0);
 
-    // Youth (p1/p2 from seedEverything) are untouched — this only ever applies to leaders.
+    // Youth (p1/p2 from seedEverything) are also untouched.
     const p1 = await repos.personRepo.findById('p1');
     expect(p1!.atCamp).toBe(false);
-  });
-
-  it('does NOT re-bulk-sign-in leaders on an at-camp -> at-camp no-op', async () => {
-    await repos.personRepo.save(person({ id: 'lead1', kind: 'leader', lifecycle: 'registered', atCamp: false }));
-    const svc = build(repos);
-
-    await svc.setMode(actor('admin'), 'at-camp');
-    expect((await repos.personRepo.findById('lead1'))!.atCamp).toBe(true);
-
-    // A fresh leader added after the transition already ran is untouched by re-selecting
-    // the SAME mode — only a real pre-camp -> at-camp transition applies the bulk sign-in.
-    await svc.setMode(actor('admin'), 'at-camp');
-    await repos.personRepo.save(person({ id: 'lead2', kind: 'leader', lifecycle: 'registered', atCamp: false }));
-    await svc.setMode(actor('admin'), 'at-camp');
-    expect((await repos.personRepo.findById('lead2'))!.atCamp).toBe(false);
   });
 
   it('wipes first-aid records on the pre-camp -> at-camp transition, leaving other notes alone', async () => {

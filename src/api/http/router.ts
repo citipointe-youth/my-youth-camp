@@ -144,7 +144,9 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     // ----- Notifications -----
     { method: 'GET', path: '/notifications', auth: true, handler: (r) => notification.feed(r) },
     { method: 'GET', path: '/notifications/latest', auth: true, handler: (r) => notification.latest(r) },
+    { method: 'GET', path: '/notifications/scheduled', auth: true, handler: (r) => notification.scheduled(r) },
     { method: 'POST', path: '/notifications', auth: true, handler: (r) => notification.send(r) },
+    { method: 'PATCH', path: '/notifications/:id', auth: true, handler: (r) => notification.update(r) },
     { method: 'DELETE', path: '/notifications/:id', auth: true, handler: (r) => notification.remove(r) },
 
     // ----- Incidents (Feature 3) -----

@@ -195,15 +195,20 @@ export function makeAuditExportService(
       const checkinLog = wb.addWorksheet('Daily Check-in Log');
       checkinLog.addRow(['Student', 'Church', 'Zone', 'Session', 'Type', 'Timestamp (local)', 'Leader (Initials)']);
       checkinLog.getRow(1).font = { bold: true };
+      // Flatten across every person, then sort chronologically — a per-person nesting would
+      // group all of one student's entries together regardless of when they occurred.
+      const checkinEntries: { p: Person; ci: Person['checkInHistory'][number] }[] = [];
       for (const p of people) {
-        for (const ci of p.checkInHistory) {
-          checkinLog.addRow([
-            `${p.firstName} ${p.lastName}`, p.churchName, p.zone,
-            ci.sessionLabel, ci.type === 'in' ? 'Check-in' : 'Check-out',
-            toLocalTs(ci.timestamp, tz),
-            ci.leaderId,
-          ]);
-        }
+        for (const ci of p.checkInHistory) checkinEntries.push({ p, ci });
+      }
+      checkinEntries.sort((a, b) => a.ci.timestamp.localeCompare(b.ci.timestamp));
+      for (const { p, ci } of checkinEntries) {
+        checkinLog.addRow([
+          `${p.firstName} ${p.lastName}`, p.churchName, p.zone,
+          ci.sessionLabel, ci.type === 'in' ? 'Check-in' : 'Check-out',
+          toLocalTs(ci.timestamp, tz),
+          ci.leaderId,
+        ]);
       }
 
       const personMap = new Map(people.map((p) => [p.id, p]));
@@ -212,8 +217,10 @@ export function makeAuditExportService(
       const notesSheet = wb.addWorksheet('Notes & Testimonies');
       notesSheet.addRow(['Student', 'Church', 'Zone', 'Grade', 'Gender', 'Category', 'Note', 'Session', 'Created At']);
       notesSheet.getRow(1).font = { bold: true };
-      for (const note of notes) {
-        if (note.category === 'firstaid') continue; // → dedicated First-Aid Records sheet
+      const generalNotes = notes
+        .filter((note) => note.category !== 'firstaid') // → dedicated First-Aid Records sheet
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      for (const note of generalNotes) {
         const p = note.camperId ? personMap.get(note.camperId) : undefined;
         notesSheet.addRow([
           p ? `${p.firstName} ${p.lastName}` : 'No specific student',
@@ -236,8 +243,10 @@ export function makeAuditExportService(
         { width: 22 }, { width: 20 }, { width: 10 }, { width: 8 }, { width: 10 }, { width: 30 },
         { width: 30 }, { width: 18 }, { width: 18 }, { width: 20 },
       ];
-      for (const note of notes) {
-        if (note.category !== 'firstaid') continue;
+      const firstAidNotes = notes
+        .filter((note) => note.category === 'firstaid')
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      for (const note of firstAidNotes) {
         const p = note.camperId ? personMap.get(note.camperId) : undefined;
         const fa = parseFirstAidBody(note.body);
         faSheet.addRow([
@@ -252,7 +261,8 @@ export function makeAuditExportService(
       }
 
       // ----- Incidents (Feature 3) — summary is decrypted by the repo mapper on read -----
-      const incidents = await incidentRepo.findRecent();
+      const incidentsRaw = await incidentRepo.findRecent();
+      const incidents = [...incidentsRaw].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       const incidentsSheet = wb.addWorksheet('Incidents');
       incidentsSheet.addRow(['Summary', 'Severity', 'Logged by', 'Logged at', 'Zone']);
       incidentsSheet.getRow(1).font = { bold: true };
@@ -326,14 +336,19 @@ export function makeAuditExportService(
       assertCan(actor, 'export:compliance');
       const { tz, people } = await getAllData();
       const rows: string[][] = [];
+      // Flatten across every person, then sort chronologically — a per-person nesting would
+      // group all of one student's entries together regardless of when they occurred.
+      const checkinEntries: { p: Person; ci: Person['checkInHistory'][number] }[] = [];
       for (const p of people) {
-        for (const ci of p.checkInHistory) {
-          rows.push([
-            p.firstName, p.lastName, p.churchName, p.zone,
-            ci.sessionLabel, ci.type === 'in' ? 'Check-in' : 'Check-out',
-            toLocalTs(ci.timestamp, tz), ci.leaderId,
-          ]);
-        }
+        for (const ci of p.checkInHistory) checkinEntries.push({ p, ci });
+      }
+      checkinEntries.sort((a, b) => a.ci.timestamp.localeCompare(b.ci.timestamp));
+      for (const { p, ci } of checkinEntries) {
+        rows.push([
+          p.firstName, p.lastName, p.churchName, p.zone,
+          ci.sessionLabel, ci.type === 'in' ? 'Check-in' : 'Check-out',
+          toLocalTs(ci.timestamp, tz), ci.leaderId,
+        ]);
       }
       return toCsvString(
         ['First Name', 'Last Name', 'Church', 'Zone', 'Session', 'Type', 'Timestamp (local)', 'Leader (Initials)'],

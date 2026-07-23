@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeCheckInService } from './checkin.service';
 import { InMemoryPersonRepository, InMemorySettingsRepository } from '../repositories/in-memory';
 import type { Person } from '../core/entities/person';
@@ -32,12 +32,13 @@ function person(over: Partial<Person> = {}): Person {
   };
 }
 
-function settings(): CampSettings {
+function settings(over: Partial<CampSettings> = {}): CampSettings {
   const now = '2026-01-01T00:00:00.000Z';
   return {
     id: SETTINGS_ID, campName: 'Camp', year: 2026, startDate: '2026-06-30', endDate: '2026-07-05',
     timezone: 'UTC', checkInDays: ['2026-06-30', '2026-07-01', '2026-07-02'],
     accommodationLocked: false, churchLoginLocked: false, zoneLeaderLoginLocked: false, churchCheckinTimeRestricted: false, checkinSwitchoverTime: '14:00', checkinPhaseOverride: 'auto', campMode: 'at-camp', createdAt: now, updatedAt: now,
+    ...over,
   };
 }
 
@@ -113,6 +114,80 @@ describe('getSessionStatus — roster filter', () => {
     const result = await svc.getSessionStatus(actor(), SESSION_ID);
     expect(result.roster.map((r) => r.camperId)).toEqual(['p1']);
     expect(result.totalCount).toBe(1);
+  });
+});
+
+describe('assertSessionAllowed — item 11 hard AM/PM windows (church only)', () => {
+  let personRepo: InMemoryPersonRepository;
+  let settingsRepo: InMemorySettingsRepository;
+
+  beforeEach(() => {
+    personRepo = new InMemoryPersonRepository();
+    settingsRepo = new InMemorySettingsRepository();
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  function pinClock(iso: string): void {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(iso));
+  }
+
+  it('church, restricted, inside the AM window on an interior day: allowed session passes', async () => {
+    pinClock('2026-07-01T08:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    await expect(svc.assertSessionAllowed(actor('church'), '2026-07-01~am')).resolves.toBeUndefined();
+  });
+
+  it('church, restricted, inside the AM window but wrong session id: throws naming the allowed session', async () => {
+    pinClock('2026-07-01T08:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    await expect(svc.assertSessionAllowed(actor('church'), '2026-07-01~pm')).rejects.toThrow(/limited to the/);
+  });
+
+  it('church, restricted, outside both windows: throws "closed right now"', async () => {
+    pinClock('2026-07-01T23:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    await expect(svc.assertSessionAllowed(actor('church'), '2026-07-01~pm')).rejects.toThrow(/closed right now/);
+  });
+
+  it('church, restricted, on a non-camp day: throws "closed right now"', async () => {
+    pinClock('2026-08-01T08:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    await expect(svc.assertSessionAllowed(actor('church'), '2026-07-01~am')).rejects.toThrow(/closed right now/);
+  });
+
+  it('church, restriction OFF: any session at any time passes (no-op)', async () => {
+    pinClock('2026-07-01T23:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: false }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    await expect(svc.assertSessionAllowed(actor('church'), '2026-07-01~pm')).resolves.toBeUndefined();
+  });
+
+  it('non-church roles bypass entirely, even when restricted and outside all windows', async () => {
+    pinClock('2026-07-01T23:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    for (const role of ['director', 'admin', 'zoneLeader', 'firstAid'] as const) {
+      await expect(svc.assertSessionAllowed(actor(role), '2026-07-01~pm')).resolves.toBeUndefined();
+    }
+  });
+
+  it('respects custom admin-edited windows', async () => {
+    pinClock('2026-07-01T09:30:00Z');
+    await settingsRepo.saveSingleton(
+      settings({
+        churchCheckinTimeRestricted: true,
+        checkinWindowAmStart: '09:00',
+        checkinWindowAmEnd: '10:00',
+      }),
+    );
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    await expect(svc.assertSessionAllowed(actor('church'), '2026-07-01~am')).resolves.toBeUndefined();
   });
 });
 
