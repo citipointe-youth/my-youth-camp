@@ -106,13 +106,14 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
 .screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:var(--pad) var(--pad) 26px;display:none;}
 .screen.active{display:block;animation:rise .25s ease;}
 @keyframes rise{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
-/* Bug 3 (2026-07-17): the bottom nav was reserving the FULL device safe-area-inset-bottom
-   (≈34px/~1cm on a home-indicator phone) below the tab icons, on top of the tab bar's own
-   white background — read by the owner as an oversized blank white band at the very bottom
-   of the screen. Scaled down to a small fraction of the inset (≈7px/~0.2cm on that same
-   device, ~2px on a device with no inset) — still a non-zero cushion so the icons aren't
-   flush with the true edge, just far smaller than the full safe-area reservation. */
-.tabs{display:flex;background:#fff;border-top:1px solid var(--line);flex:none;padding:4px 6px calc(2px + env(safe-area-inset-bottom) * 0.15);gap:2px;z-index:20;}
+/* The bottom nav's white background MUST fill the home-indicator safe area, or the dark body
+   backdrop (#0b0a1a) shows through beneath the tabs as a black bar (reported 2026-07-24).
+   Bug 3 (2026-07-17) shrank this reservation to ~15% of the inset to avoid what read as an
+   "oversized white band" — but that under-reservation is precisely what re-exposed the black
+   bar on a home-indicator phone. Reserve the FULL inset: the home-indicator pill sits inside
+   this white zone, so it isn't wasted space. A max() floor keeps a small cushion on devices
+   with no inset (where env(safe-area-inset-bottom) is 0). */
+.tabs{display:flex;background:#fff;border-top:1px solid var(--line);flex:none;padding:4px 6px max(6px,env(safe-area-inset-bottom));gap:2px;z-index:20;}
 .tab{flex:1;text-align:center;padding:7px 4px 6px;font-size:var(--t-xs);color:var(--muted);cursor:pointer;border:none;background:none;position:relative;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:12px;transition:background .15s,color .15s;}
 .tab .ic{display:block;transition:transform .15s;}
 .tab.on{color:var(--blue);font-weight:700;background:var(--chip);}

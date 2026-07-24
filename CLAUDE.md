@@ -146,6 +146,15 @@ Admin-requested batch from an at-camp review. SPA + backend (`search.service.ts`
   `paint()` preserves scroll on a clean same-screen repaint, but paths that repaint an empty/loading
   shell first clamp it.
 
+**Follow-up 3 (same day, CSS-only, `sw.js` `camp-v36`→`camp-v37`):**
+- **Black bar under the bottom nav on home-indicator iPhones fixed.** `.tabs` padding-bottom was
+  `calc(2px + env(safe-area-inset-bottom)*0.15)` (the Bug-3 2026-07-17 shrink), so the white nav
+  background no longer filled the ~34px home-indicator safe area and the dark `body` backdrop
+  (`#0b0a1a`) showed through. Restored to `max(6px, env(safe-area-inset-bottom))` — the nav white
+  now fills the safe area (the home-indicator pill lives in that zone, so it's not wasted). This
+  reverses the Bug-3 tweak; the two requests are in direct tension (less white ⇒ black shows), and
+  filling the safe area with the nav colour is the standard iOS resolution.
+
 ## Migration files consolidated — 2026-07-16
 
 `supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate
