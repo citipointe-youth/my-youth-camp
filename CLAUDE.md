@@ -157,6 +157,17 @@ Admin-requested batch from an at-camp review. SPA + backend (`search.service.ts`
   letterbox) blends with the near-white nav instead of reading black; the nav keeps the full-inset
   reservation and gained a soft top shadow (`0 -2px 10px`); the `.app` box-shadow was softened for
   the light backdrop. Supersedes the Bug-3 2026-07-17 fractional-inset tweak.
+- **Follow-up 4 (`camp-v38`→`camp-v39`): bottom nav pinned to the true viewport bottom.** The nav
+  (`.tabs`) was still floating above the home indicator with a light gap below it, because it was a
+  flex child of the fixed-height `.app` (`height:100dvh`) which doesn't reach the physical screen
+  bottom on iOS. Copied YS Connection's `.bot-nav`: `.tabs` is now `position:fixed;left:0;right:0;
+  bottom:0;z-index:100`, so it sticks to the visual-viewport bottom and adapts as the browser
+  toolbar shows/hides. `.screen` bottom padding raised to `calc(64px + env(safe-area-inset-bottom))`
+  so content clears the fixed bar. (`#tabs{display:none}` at >=980px still hides it for the sidebar.)
+- **Follow-up 4 also: At-Camp Info schedule editor time/activity overlap.** `_schedRow`'s native
+  `<input type="time">` could overflow its 96px cell into the Activity field on iOS. Time column
+  narrowed to 86px, gap 6->8px, `.sched-row input{overflow:hidden}` clips native overflow, and
+  `.sched-row .sr-t` gets tighter horizontal padding (less white space around the value).
 
 ## Migration files consolidated — 2026-07-16
 
