@@ -146,14 +146,17 @@ Admin-requested batch from an at-camp review. SPA + backend (`search.service.ts`
   `paint()` preserves scroll on a clean same-screen repaint, but paths that repaint an empty/loading
   shell first clamp it.
 
-**Follow-up 3 (same day, CSS-only, `sw.js` `camp-v36`→`camp-v37`):**
-- **Black bar under the bottom nav on home-indicator iPhones fixed.** `.tabs` padding-bottom was
-  `calc(2px + env(safe-area-inset-bottom)*0.15)` (the Bug-3 2026-07-17 shrink), so the white nav
-  background no longer filled the ~34px home-indicator safe area and the dark `body` backdrop
-  (`#0b0a1a`) showed through. Restored to `max(6px, env(safe-area-inset-bottom))` — the nav white
-  now fills the safe area (the home-indicator pill lives in that zone, so it's not wasted). This
-  reverses the Bug-3 tweak; the two requests are in direct tension (less white ⇒ black shows), and
-  filling the safe area with the nav colour is the standard iOS resolution.
+**Follow-up 3 (same day, CSS-only, `sw.js` `camp-v36`→`camp-v38`):**
+- **Black bar under the bottom nav on home-indicator iPhones fixed — copied YS Connection's nav
+  layout.** Root cause: the fixed-height `.app` (`height:100dvh`) doesn't quite reach the physical
+  screen bottom on a home-indicator phone, and the bottom nav is a flex child clipped at the app's
+  edge — so the near-black `body` backdrop (`#0b0a1a`) showed through the home-indicator strip and
+  no amount of nav `padding-bottom` could cover it (v37's `max(6px,env(safe-area-inset-bottom))`
+  padding was necessary but insufficient on its own). Fix (matching YS's `body{background:var(--paper)}`
+  + `.bot-nav`): **`body` background is now light (`var(--paper)`)** so that strip (and the desktop
+  letterbox) blends with the near-white nav instead of reading black; the nav keeps the full-inset
+  reservation and gained a soft top shadow (`0 -2px 10px`); the `.app` box-shadow was softened for
+  the light backdrop. Supersedes the Bug-3 2026-07-17 fractional-inset tweak.
 
 ## Migration files consolidated — 2026-07-16
 
