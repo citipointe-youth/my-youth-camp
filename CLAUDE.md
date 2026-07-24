@@ -169,6 +169,19 @@ Admin-requested batch from an at-camp review. SPA + backend (`search.service.ts`
   narrowed to 86px, gap 6->8px, `.sched-row input{overflow:hidden}` clips native overflow, and
   `.sched-row .sr-t` gets tighter horizontal padding (less white space around the value).
 
+**Follow-up 5 (`camp-v40`→`camp-v41`, CSS-only): the real iOS bottom-nav bug — `overflow:hidden` shell.**
+The `position:fixed` bottom nav floated above the home indicator on iPhones (in Safari AND standalone,
+verified by loading the live page in a real browser: the nav is provably `position:fixed;bottom:0` at
+the viewport bottom in Chrome, but iOS floats it). Root cause: **iOS mis-positions `position:fixed`
+descendants of an `overflow:hidden` ancestor** — the app shell was `body`/`.app { height:100dvh;
+overflow:hidden }`, so iOS pinned the nav to the app's short 100dvh edge, not the true viewport bottom.
+YS Connection has no such `overflow:hidden` shell (its body scrolls naturally), which is why its fixed
+nav sits correctly. Fix: dropped `overflow:hidden` and switched `height:100dvh`→`min-height:100dvh` on
+`body` + `.app`. Internal scroll still lives on `.stage`/`.screen` (unchanged), so no JS/scroll-logic
+change; the ≥980px grid re-sets its own `height:100dvh` on `#app`. If iOS still floats after this, the
+next step is the full YS body-scroll model (screens flow in the document, sticky header) — a larger
+change deferred because this minimal one targets the exact documented trigger.
+
 ## Migration files consolidated — 2026-07-16
 
 `supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate

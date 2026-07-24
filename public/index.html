@@ -67,21 +67,23 @@
                         so the smallest text clears the ~11px legibility floor (was below it) */
 --pad:14px;}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-html,body{height:100%;height:100dvh;}
+html,body{min-height:100dvh;}
 /* A1: explicit root size (= the previous implicit 16px), scaled up at tablet/laptop so
    every rem-based size grows proportionally. This is the core fluid-type mechanism. */
 html{font-size:16px;}
-/* body background is LIGHT (matches YS Connection). The old near-black backdrop (#0b0a1a) showed
-   through as a black bar in the home-indicator safe area on iPhones, because the fixed-height .app
-   (height:100dvh) doesn't quite reach the physical screen bottom there and the bottom nav is clipped
-   at the app's edge — so no amount of nav padding could cover the strip. A light body makes that
-   strip (and the desktop letterbox) blend with the near-white nav instead of reading as a black bar. */
-body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--paper);display:flex;justify-content:center;height:100dvh;overflow:hidden;overscroll-behavior:none;}
-/* height:100dvh on body+app (not 100% of the layout viewport): on mobile the layout
-   viewport can be shorter than the visual viewport when the URL bar is hidden, which
-   left a strip of dark body background BELOW the bottom nav ("nav not at the bottom").
-   Anchoring both to the dynamic viewport makes #tabs sit flush at the bottom. */
-.app{width:100%;max-width:460px;height:100dvh;background:var(--paper);display:flex;flex-direction:column;position:relative;overflow:hidden;box-shadow:0 0 40px rgba(30,27,75,.14);}
+/* body background is LIGHT (matches YS Connection) so the home-indicator strip and desktop letterbox
+   blend with the near-white nav instead of reading as a black bar.
+   NO `overflow:hidden` / fixed `height:100dvh` on body+app (matches YS Connection): iOS mis-positions
+   `position:fixed` descendants of an `overflow:hidden` ancestor, which pinned the bottom nav to the
+   app's short 100dvh edge instead of the true viewport bottom (the nav "floated" with a gap below,
+   in Safari AND standalone — verified 2026-07-24). A natural `min-height` shell lets the fixed nav
+   anchor to the real viewport bottom. Screens still scroll internally (see `.stage`/`.screen`). */
+body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--paper);display:flex;justify-content:center;min-height:100dvh;overscroll-behavior:none;}
+/* min-height (NOT fixed height) + NO overflow:hidden — see the body note above: an overflow:hidden
+   ancestor breaks `position:fixed` on iOS, floating the bottom nav. The internal scroll lives on the
+   screens (`.stage`/`.screen`), not here, so dropping the clip doesn't let the shell scroll. The
+   ≥980px grid re-sets its own height:100dvh on #app. */
+.app{width:100%;max-width:460px;min-height:100dvh;background:var(--paper);display:flex;flex-direction:column;position:relative;box-shadow:0 0 40px rgba(30,27,75,.14);}
 /* Header bar is WHITE at every width (owner: match the desktop/web header on phone too).
    Previously this was a violet→navy gradient on phone and only turned white at ≥980px; now
    the base bar is white with dark text and a hairline bottom border, and the badges/sign-out
