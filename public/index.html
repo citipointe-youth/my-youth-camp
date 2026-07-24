@@ -5172,7 +5172,17 @@ if('serviceWorker'in navigator){
   navigator.serviceWorker.addEventListener('controllerchange',()=>{
     if(_reloading)return;_reloading=true;location.reload();
   });
-  window.addEventListener('load',()=>{navigator.serviceWorker.register('/sw.js').catch(()=>{});});
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('/sw.js').then((reg)=>{
+      // iOS standalone PWAs are lazy about checking for a new service worker, so a fresh deploy
+      // can sit un-applied until the user manually clears website data. Force an update check on
+      // load AND every time the app is brought back to the foreground; when a newer SW installs it
+      // skipWaiting()s + claims, which fires controllerchange above and reloads once to the new UI.
+      const _check=()=>{try{reg.update();}catch(_){}};
+      _check();
+      document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')_check();});
+    }).catch(()=>{});
+  });
 }
 
 </script>
