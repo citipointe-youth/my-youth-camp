@@ -207,6 +207,23 @@ Connection's natural body-scroll model:
   already scroll no-ops (stage never scrolled) and stay so — `paint()` handles real preservation.
   The import-guide modal's own `igBody.scrollTop` (its own scroll container) is untouched.
 
+**Follow-up 7 (`camp-v42`→`camp-v43`, CSS-only): overlays anchored to `.app` re-pinned to the
+viewport after the body-scroll conversion.** Follow-up 6 made `.app` grow with content on phone, so
+every `position:absolute` overlay that was a direct child of `.app` (and relied on `.app` == the
+viewport) started anchoring to the bottom/height of the tall page instead of the screen. Reported
+symptom: the incident-log confirmation **toast showed at the very bottom** (off-screen when scrolled).
+Fixes — all switched `position:absolute`→`position:fixed` so they track the viewport in both layouts:
+- **`.toast`** → `position:fixed`, and moved to float near the **top** (`top:calc(env(safe-area-inset-top)
+  + 60px)`, slides down into view, `z-index:110`) per the owner's request — was `bottom:88px`.
+- **`.modal`** (`#modal` bottom-sheet) → `position:fixed;inset:0` — a sheet opened while scrolled
+  down had been landing at the bottom of the page.
+- **`.ig-wrap`** (`#impGuide` Elvanto guide overlay) → `position:fixed;inset:0`.
+- **`#login,#mcpGate`** (full-screen gates) → `position:fixed;inset:0` (+ `overflow-y:auto` so a
+  tall form scrolls internally now that it can't use body-scroll).
+`#nprog` (the top loading bar) is a child of the sticky `.bar`, not `.app`, so it was unaffected.
+GOTCHA for future overlays: any full-viewport overlay/toast MUST be `position:fixed`, never
+`position:absolute` — the phone `.app` is not viewport-height, it grows with the scrolling content.
+
 ## Migration files consolidated — 2026-07-16
 
 `supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate

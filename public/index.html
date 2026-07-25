@@ -363,15 +363,22 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .callbox{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:13px;font-size:var(--t-sm);color:#166534;margin-bottom:10px;}
 .warnbox{background:#fffbeb;border:1px solid #fcd34d;border-radius:14px;padding:13px;font-size:var(--t-sm);color:#92400e;margin-bottom:10px;}
 .infobox{background:var(--tint);border:1px solid var(--lav);border-radius:14px;padding:13px;font-size:var(--t-sm);color:var(--violet-d);margin-bottom:10px;}
-.toast{position:absolute;left:50%;bottom:88px;transform:translateX(-50%) translateY(20px);background:linear-gradient(135deg,var(--violet-dd),#1e1b4b);color:#fff;padding:11px 20px;border-radius:999px;font-size:var(--t-sm);font-weight:700;opacity:0;pointer-events:none;transition:.25s;z-index:40;max-width:90%;text-align:center;box-shadow:0 4px 16px rgba(79,70,229,.35);}
+/* position:FIXED (not absolute): in the phone body-scroll model .app grows with content, so an
+   absolute toast anchored to .app landed at the bottom of the tall page instead of on-screen.
+   Fixed anchors it to the viewport. Floats near the TOP, just under the sticky header, and slides
+   down into view. (top uses the safe-area inset so it clears the notch on standalone iOS.) */
+.toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 60px);transform:translateX(-50%) translateY(-20px);background:linear-gradient(135deg,var(--violet-dd),#1e1b4b);color:#fff;padding:11px 20px;border-radius:999px;font-size:var(--t-sm);font-weight:700;opacity:0;pointer-events:none;transition:.25s;z-index:110;max-width:90%;text-align:center;box-shadow:0 4px 16px rgba(79,70,229,.35);}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-.modal{position:absolute;inset:0;background:rgba(14,10,30,.6);display:none;align-items:flex-end;z-index:50;}
+/* position:FIXED (not absolute) so the backdrop + bottom sheet track the viewport, not the now-
+   growing .app (phone body-scroll model). As absolute, a sheet opened while scrolled down landed
+   at the bottom of the tall page. Fixed inset:0 = viewport on both phone and the ≥980px grid. */
+.modal{position:fixed;inset:0;background:rgba(14,10,30,.6);display:none;align-items:flex-end;z-index:50;}
 .modal.show{display:flex;}
 .sheet{background:#fff;width:100%;border-radius:24px 24px 0 0;padding:20px 17px max(20px,env(safe-area-inset-bottom));animation:rise .2s;max-height:88dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
 .sheet::before{content:"";display:block;width:36px;height:4px;background:#e4e2f5;border-radius:2px;margin:0 auto 14px;}
 .sheet h3{font-size:var(--t-h3);color:var(--navy);margin-bottom:8px;font-weight:800;}
 /* Elvanto export guide (import screen) — full-screen step viewer, swipeable on phone */
-.ig-wrap{position:absolute;inset:0;background:rgba(14,10,30,.72);display:none;z-index:55;align-items:center;justify-content:center;padding:12px;}
+.ig-wrap{position:fixed;inset:0;background:rgba(14,10,30,.72);display:none;z-index:55;align-items:center;justify-content:center;padding:12px;}
 .ig-wrap.show{display:flex;}
 .ig-card{background:#fff;border-radius:20px;width:100%;max-width:720px;max-height:92dvh;display:flex;flex-direction:column;overflow:hidden;animation:rise .2s;}
 .ig-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 16px 10px;flex-shrink:0;}
@@ -452,7 +459,9 @@ textarea{min-height:84px;resize:vertical;}
 .gradepill{font-size:var(--t-micro);font-weight:800;background:#eef2f8;color:#475569;border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
 .err{background:#fde2e1;color:#7f1d1d;border-radius:10px;padding:9px 12px;font-size:var(--t-sm);margin-top:8px;display:none;}
 /* Login is white-background / purple-text to match the in-app theme (was dark gradient). */
-#login,#mcpGate{position:absolute;inset:0;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;z-index:60;}
+/* position:FIXED so these full-screen gates cover the viewport regardless of body scroll
+   (phone body-scroll model — an absolute gate is sized to the growing .app, not the viewport). */
+#login,#mcpGate{position:fixed;inset:0;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;z-index:60;overflow-y:auto;}
 /* Match .app's own containment discipline (460-820px stepped) instead of stretching edge-to-edge on wide screens. */
 #login>*,#mcpGate>*{width:100%;max-width:420px;}
 #login h1,#mcpGate h1{color:var(--violet);font-size:1.85rem;text-align:center;margin-bottom:5px;letter-spacing:-.03em;font-weight:800;}

@@ -127,6 +127,15 @@ check "expected vs actual" before touching code.
 >   document scroll to top on phone navigations (one shared document scroll now). "Nav floats / black
 >   strip below nav on iPhone" → the phone `.stage`/`.screen`/`.bar`/`.tabs` rules; "screen scrolls but
 >   nav wrong on desktop, or list jumps to top after an action" → `_scroller`/the ≥980px block.
+> - **Follow-up 7 (`camp-v43`): overlays re-pinned to the viewport (`position:absolute`→`fixed`).**
+>   The body-scroll conversion made `.app` grow with content, so overlays that were `position:absolute`
+>   children of `.app` anchored to the bottom of the tall page. Fixed: **`.toast`** (now
+>   `position:fixed`, floats near the TOP — `top:calc(safe-area+60px)` — was `bottom:88px`; the
+>   reported "incident notification at the very bottom" bug), **`.modal`** (`#modal` bottom sheet),
+>   **`.ig-wrap`** (`#impGuide`), **`#login`/`#mcpGate`**. `#nprog` lives in the sticky `.bar`, not
+>   `.app`, so it was fine. **GOTCHA:** any NEW full-viewport overlay/toast MUST be `position:fixed`
+>   — the phone `.app` is not viewport-height, it grows with scrolling content. "Toast/modal/gate
+>   appears at the bottom of the page or off-screen" → this class of bug.
 
 ## Frontend — `public/index.html` (single ~2,920-line SPA)
 
