@@ -114,6 +114,19 @@ check "expected vs actual" before touching code.
 >   **`fdDraw`** captures/restores around its `innerHTML` swap (first-day arrival tick/confirm).
 >   "Roster jumps to top after check-in/sign-in" → these three. Also **`signInConfirmList`** adds a
 >   confirm before signing in from the My-students "Not signed in" list (profile + arrival stay one-tap).
+> - **Follow-up 6 (`camp-v42`): phone shell converted to YS Connection body-scroll (bottom-nav float
+>   fix).** PHONE now uses natural body-scroll: `.bar` is `position:sticky;top:0`, `.stage` is plain
+>   `flex:1`, `.screen` is an in-flow block (NOT `position:absolute;overflow-y:auto`), so the **body**
+>   scrolls and the `position:fixed` `.tabs` anchors to the real iOS viewport bottom (the fix for the
+>   "nav floats above the home indicator" bug — Follow-ups 3–5 were insufficient). The **≥980px block
+>   re-establishes internal-scroll** (`html,body{height:100dvh;overflow:hidden}`, `#stage{overflow:hidden}`,
+>   `#stage .screen{position:absolute;inset:0;overflow-y:auto}`, `#bar{position:relative}`) so desktop
+>   is unchanged. Because the scroll container differs by layout, **`_scroller(el)`** (`_isWide()` →
+>   screen el on desktop, `document.scrollingElement` on phone) now backs every scroll save/restore:
+>   `_spinner`, `paint`, `_rCheckin`, `fdDraw`, `openCamper`, `_refreshAfterAttendance`. `_navTo` resets
+>   document scroll to top on phone navigations (one shared document scroll now). "Nav floats / black
+>   strip below nav on iPhone" → the phone `.stage`/`.screen`/`.bar`/`.tabs` rules; "screen scrolls but
+>   nav wrong on desktop, or list jumps to top after an action" → `_scroller`/the ≥980px block.
 
 ## Frontend — `public/index.html` (single ~2,920-line SPA)
 

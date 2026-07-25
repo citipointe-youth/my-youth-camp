@@ -89,7 +89,10 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
    the base bar is white with dark text and a hairline bottom border, and the badges/sign-out
    are restyled to read on white. The ≥980px block keeps only the wide-specific tweaks
    (subtitle hidden, no wrap). The purple camp identity still lives in the hero cards. */
-.bar{background:#fff;color:var(--ink);border-bottom:1px solid var(--line);padding:max(14px,env(safe-area-inset-top)) 14px 6px;display:flex;align-items:center;flex-wrap:wrap;column-gap:7px;row-gap:2px;flex:none;z-index:20;position:relative;}
+/* Sticky header (matches YS Connection's `.hdr`): as the BODY scrolls (phone body-scroll model,
+   see the body/.app/.stage/.screen notes), the bar pins to the viewport top. The ≥980px grid
+   block resets it to position:relative because the desktop shell scrolls internally, not the body. */
+.bar{background:#fff;color:var(--ink);border-bottom:1px solid var(--line);padding:max(14px,env(safe-area-inset-top)) 14px 6px;display:flex;align-items:center;flex-wrap:wrap;column-gap:7px;row-gap:2px;flex:none;z-index:30;position:sticky;top:0;}
 .bar .bk{width:34px;height:34px;border-radius:50%;display:none;place-items:center;background:var(--chip);color:var(--violet-d);font-size:var(--t-h3);flex:none;cursor:pointer;align-self:center;}
 .bar.canback .bk{display:grid;}
 /* Title + subtitle share one line ("My Church Hub — All churches"); the subtitle
@@ -104,13 +107,17 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
 .mode-badge{font-size:var(--t-micro);font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap;flex:none;letter-spacing:.03em;border:1px solid rgba(0,0,0,.12);}
 .role-badge{font-size:var(--t-micro);font-weight:800;background:var(--chip);color:var(--violet-d);border:1px solid var(--lav);border-radius:999px;padding:2px 8px;white-space:nowrap;flex:none;letter-spacing:.03em;}
 .sign-out{padding:3px 10px;border-radius:999px;background:#fff;color:var(--ink);font-size:var(--t-2xs);font-weight:700;flex:none;cursor:pointer;white-space:nowrap;border:1px solid var(--line);}
-.stage{flex:1;position:relative;overflow:hidden;}
-/* overflow-x:hidden is explicit: a bare overflow-y:auto computes overflow-x to `auto`, which let
-   each screen pan sideways on a phone whenever any child slightly overran the width (the "drag
-   left/right on empty space" bug). Wide tables keep their OWN overflow-x:auto wrappers, so they
-   still scroll. overscroll-behavior:contain kills the vertical rubber-band chaining to the body.
-   Neither affects the desktop/web layout. */
-.screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:var(--pad) var(--pad) calc(64px + env(safe-area-inset-bottom));display:none;}
+/* PHONE: the stage is a plain flex child — no clip, no positioning. The active screen flows in
+   the normal document and the BODY scrolls (YS Connection body-scroll model). This is what makes
+   the fixed bottom nav anchor to the true viewport bottom on iOS: with no overflow:hidden /
+   fixed-height ancestor, `position:fixed` is measured against the real viewport, not the app's
+   short 100dvh edge (the "floating nav" bug, 2026-07-24). The ≥980px grid block re-establishes
+   internal-scroll (#stage overflow:hidden + .screen position:absolute) for the desktop layout. */
+.stage{flex:1;}
+/* PHONE: screens are normal in-flow blocks. overflow-x:hidden still guards against a child
+   slightly overrunning the width (the sideways-pan bug); wide tables keep their OWN
+   overflow-x:auto wrappers. Bottom padding clears the fixed nav. */
+.screen{overflow-x:hidden;padding:var(--pad) var(--pad) calc(64px + env(safe-area-inset-bottom));display:none;}
 .screen.active{display:block;animation:rise .25s ease;}
 @keyframes rise{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
 /* Bottom nav, styled like YS Connection's `.bot-nav`: a near-white bar that reserves the full
@@ -497,17 +504,23 @@ textarea{min-height:84px;resize:vertical;}
    earlier markup rebuild left these selectors as #header/#main, which matched nothing,
    so the desktop grid silently never activated (app stayed a 460px phone column). */
 @media(min-width:980px){
+  /* Desktop RE-ESTABLISHES the internal-scroll shell (the phone base rules now use body-scroll:
+     body min-height + in-flow screens + sticky header, so the fixed bottom nav anchors to the
+     real viewport on iOS). Here the grid #app is a fixed 100dvh frame, the body is clipped, and
+     each screen scrolls inside #stage — unchanged desktop behaviour. */
+  html,body{height:100dvh;overflow:hidden;}
   /* Full-width on large screens (owner: no centred bars on a 1080p display) — the cap
      and auto-margins were leaving ~160px gutters each side at 1920px. */
-  #app{max-width:none;margin:0;width:100%;display:grid;grid-template-columns:220px 1fr;grid-template-rows:auto 1fr;grid-template-areas:"header header" "widenav main";height:100dvh;}
-  #bar{grid-area:header;background:#fff;border-bottom:1px solid var(--line);color:var(--ink);padding:10px 20px;flex-wrap:nowrap;row-gap:0;}
+  #app{max-width:none;margin:0;width:100%;display:grid;grid-template-columns:220px 1fr;grid-template-rows:auto 1fr;grid-template-areas:"header header" "widenav main";height:100dvh;min-height:0;}
+  #bar{grid-area:header;background:#fff;border-bottom:1px solid var(--line);color:var(--ink);padding:10px 20px;flex-wrap:nowrap;row-gap:0;position:relative;top:auto;}
   #bar .ttl{flex:0 0 auto;}
   #bar .ttl .s{display:none;}
   #bar .sign-out{background:transparent;border:1px solid var(--line);color:var(--ink);}
   #bar .bk{color:var(--ink);}
   #previewBanner.show{grid-column:1 / -1;}
   #tabs{display:none;}
-  #stage{grid-area:main;padding:0;}
+  #stage{grid-area:main;padding:0;position:relative;overflow:hidden;min-height:0;}
+  #stage .screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:var(--pad);}
   .wide-nav{grid-area:widenav;display:flex;flex-direction:column;gap:2px;padding:14px 10px;border-right:1px solid var(--line);background:#f9f8ff;overflow-y:auto;}
   .wide-nav-item{display:flex;align-items:center;gap:10px;padding:10px 13px;border-radius:12px;cursor:pointer;font-size:var(--t-body);font-weight:500;color:var(--ink);text-decoration:none;transition:background .12s;}
   .wide-nav-item:hover{background:var(--chip);}
@@ -1367,13 +1380,24 @@ function _paint(id,html,t,s){
      ("stuck spinner / wrong page" guard). */
 let _navToken=0, _navId=null;
 function _stale(tok){return tok!==_navToken;}
+// Layout-aware scroll container. PHONE (body-scroll model — see the .stage/.screen CSS notes):
+// the whole document scrolls, so a screen's scroll position lives on document.scrollingElement.
+// DESKTOP (≥980px internal-scroll grid): the screen element itself scrolls inside #stage.
+// Every save/restore of a screen's scroll routes through this so it targets the right element.
+function _isWide(){return window.innerWidth>=980;}
+function _scroller(el){return (_isWide()&&el)?el:(document.scrollingElement||document.documentElement);}
 function _spinner(id,label){
   const el=document.getElementById(id);
-  if(el){el.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">'+(label||'Loading…')+'</div></div>';el.scrollTop=0;}
+  if(el){el.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">'+(label||'Loading…')+'</div></div>';const sc=_scroller(el);if(sc)sc.scrollTop=0;}
   _showScreen(id);
 }
 async function _navTo(id,arg){
   const tok=++_navToken; _navId=id;
+  // PHONE body-scroll: all screens share the one document scroll, so a genuine navigation must
+  // reset it to the top (each screen no longer keeps its own scrollTop). In-place refreshes don't
+  // go through _navTo (they call paint()/RENDER directly), so their scroll is preserved by paint().
+  // _refreshAfterAttendance, which DOES reuse _navTo, captures/restores around this on its own.
+  if(!_isWide()){const sc=document.scrollingElement||document.documentElement;if(sc)sc.scrollTop=0;}
   // Stale-while-revalidate: if this screen already holds its previous render, show it
   // instantly and let RENDER repaint when (cached, usually instant) data arrives —
   // no spinner flash on revisits. Only first visits (empty screen) get a spinner.
@@ -1419,9 +1443,10 @@ function paint(id,html,t,s){
     // filtered list must not jump to top. A fresh navigation (screen not active, or empty)
     // resets to top. This subsumes the manual save/restore in the _r* re-loaders.
     const samePaint=el.classList.contains('active')&&el.innerHTML.trim()!==''&&!el.querySelector('.loading');
-    const keepY=samePaint?el.scrollTop:0;
+    const sc=_scroller(el);
+    const keepY=samePaint&&sc?sc.scrollTop:0;
     el.innerHTML=_wizardChipHtml(id)+html;
-    el.scrollTop=keepY;
+    if(sc)sc.scrollTop=keepY;
   }
   _showScreen(id);
   _renderWideNav(id);
@@ -2256,8 +2281,8 @@ function setFilter(k,v){FILTER[k]=v;if(k==='zone')FILTER.church='all';RENDER.che
 // the check/uncheck actions only; deliberate navigations (selDay/setFilter) still reset to top.
 function _rCheckin(){
   const el=document.getElementById('checkin');
-  const y=el?el.scrollTop:0;
-  return Promise.resolve(RENDER.checkin()).then(()=>{const e2=document.getElementById('checkin');if(e2)e2.scrollTop=y;});
+  const sc=_scroller(el);const y=sc?sc.scrollTop:0;
+  return Promise.resolve(RENDER.checkin()).then(()=>{const e2=_scroller(document.getElementById('checkin'));if(e2)e2.scrollTop=y;});
 }
 function _performCheck(camperId,type,name){
   if(!_ensureInitials())return; // item 7: church initials gate (no-op once set; other roles pass)
@@ -3110,8 +3135,8 @@ function fdDraw(){
     </div>`;
   // Preserve scroll: ticking a student / confirming must not jump back to the top of a long list.
   const el=document.getElementById(_fdScreen);
-  const y=el?el.scrollTop:0;
-  if(el){el.innerHTML=html;el.scrollTop=y;}
+  const sc=_scroller(el);const y=sc?sc.scrollTop:0;
+  if(el){el.innerHTML=html;if(sc)sc.scrollTop=y;}
   document.getElementById('barT').textContent='First Day Sign In';
   document.getElementById('barS').textContent=(notIn.length-pendingCount)+' remaining';
 }
@@ -3270,7 +3295,7 @@ async function openCamper(id,push=true){
     ${notesHtml}
     ${canReadCamperNotes()&&['arrived','checked_out','departed'].includes(p.lifecycle)?`<button class="btn alt" style="margin-top:12px;width:100%" onclick="notePrompt('${id}','${esc(jsq(fullName))}')">${icSm('note')} Add a note</button>`:''}`;
   const camperEl=document.getElementById('camper');
-  if(camperEl)camperEl.scrollTop=0;
+  const camperSc=_scroller(camperEl);if(camperSc)camperSc.scrollTop=0;
   if(push&&STACK[STACK.length-1]!=='camper')STACK.push('camper');
   _paint('camper','',fullName,p.zone+' Zone');
   _showScreen('camper');
@@ -3287,9 +3312,9 @@ async function _refreshAfterAttendance(id){
   // paints an empty shell first (which clamps the scroll), so capture before and restore after the
   // full re-render completes (the list is tall again by then).
   const el=document.getElementById(cur);
-  const y=el?el.scrollTop:0;
+  const sc=_scroller(el);const y=sc?sc.scrollTop:0;
   await _navTo(cur);
-  const el2=document.getElementById(cur);
+  const el2=_scroller(document.getElementById(cur));
   if(el2)el2.scrollTop=y;
 }
 async function _doSignIn(id,leaderName){

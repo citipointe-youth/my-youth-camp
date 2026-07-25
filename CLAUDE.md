@@ -182,6 +182,31 @@ change; the ≥980px grid re-sets its own `height:100dvh` on `#app`. If iOS stil
 next step is the full YS body-scroll model (screens flow in the document, sticky header) — a larger
 change deferred because this minimal one targets the exact documented trigger.
 
+**Follow-up 6 (`camp-v41`→`camp-v42`, CSS+JS): full YS Connection body-scroll conversion — the
+fix that finally worked.** Follow-up 5's minimal `overflow:hidden` removal was NOT sufficient on the
+user's iOS — the nav still floated (the shell was still a fixed 100dvh flex column whose screens
+scrolled internally, so the body never actually scrolled and the fixed nav still anchored to the
+app's 100dvh edge, not the dynamic-toolbar viewport bottom). Converted the PHONE shell to YS
+Connection's natural body-scroll model:
+- `.bar` → `position:sticky;top:0;z-index:30` (was `relative`) — pins to viewport top as the body scrolls.
+- `.stage` → plain `flex:1` (dropped `position:relative;overflow:hidden`).
+- `.screen` → normal in-flow block: `overflow-x:hidden;padding:… calc(64px+safe-area)` (dropped
+  `position:absolute;inset:0;overflow-y:auto;overscroll-behavior;-webkit-overflow-scrolling`). The
+  active screen now flows in the document and the **body** scrolls, so `position:fixed` `.tabs`
+  anchors to the true visual-viewport bottom on iOS (exactly why YS's nav sits correctly).
+- **≥980px grid re-establishes the internal-scroll shell** so the desktop layout is unchanged:
+  `html,body{height:100dvh;overflow:hidden}`, `#stage{position:relative;overflow:hidden}`,
+  `#stage .screen{position:absolute;inset:0;overflow-y:auto}`, `#bar{position:relative}`.
+- **JS scroll refactor** — because a screen's scroll now lives on the *document* on phone but on the
+  *screen element* on desktop, added a layout-aware helper: `_isWide()` (`innerWidth>=980`) and
+  `_scroller(el)` (returns `el` on desktop, `document.scrollingElement` on phone). Routed every
+  save/restore through it: `_spinner`, `paint` (samePaint keepY), `_rCheckin`, `fdDraw`,
+  `openCamper`, `_refreshAfterAttendance`. `_navTo` now resets the document scroll to top on phone
+  navigations (all screens share one document scroll, so a genuine nav must reset; in-place
+  refreshes bypass `_navTo` and are preserved by `paint()`). The `#stage`-based `_r*` reloaders were
+  already scroll no-ops (stage never scrolled) and stay so — `paint()` handles real preservation.
+  The import-guide modal's own `igBody.scrollTop` (its own scroll container) is untouched.
+
 ## Migration files consolidated — 2026-07-16
 
 `supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate
