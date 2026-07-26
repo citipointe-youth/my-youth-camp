@@ -139,14 +139,16 @@ check "expected vs actual" before touching code.
 
 > **2026-07-26 batch (incident alerts, overlay stacking, preview phases) — new/changed symbols
 > (grep the name):**
-> - **`_isIncidentNotice(n)` / `_noticeFeed(feed)` / `_incidentAlerts(feed)` / `_incidentBannerHtml(feed)`
->   / `_ackIncident(id)`** (declared just above `noticeCard`) — the incident-alert system.
+> - **`_isIncidentNotice(n)` / `_noticeFeed(feed)` / `_urgentAlerts(feed)` / `_alertBannerHtml(feed)`
+>   / `_ackAlert(id)`** (declared just above `noticeCard`) — the incident-alert system.
 >   `leadersOnly` is set by exactly ONE backend path (`incident.service.log`; everything else is
 >   created `leadersOnly:false`), so it is the reliable "raised by an incident" marker.
 >   `_noticeFeed` is the single filter every notice LIST renders through — home AND `RENDER.notifs`.
->   The full-screen "Incident logged" modal is gone; `_checkUrgentNoticesFromFeed` now fires only
->   for human-sent urgent notices. Acknowledgement is **per device** (`localStorage`, shared
->   `_DISMISS_KEY` store) — by design, not a bug if a second device re-alerts.
+>   `_alertBannerHtml` is the single ALERT surface: the bottom-sheet modal path
+>   (`_checkUrgentNoticesFromFeed`/`checkUrgentNotices`/`_ackUrgent`) is **deleted** as of `camp-v45`
+>   and every unacknowledged urgent notice — incident or human-sent — renders in the top banner.
+>   Acknowledgement is **per device** (`localStorage`, shared `_DISMISS_KEY` store) — by design,
+>   not a bug if a second device re-alerts.
 > - **`_previewPhase` + `switchPreviewPhase()`** replace `SETTINGS.campDay` + `switchDay()`, both
 >   **deleted**. `campPhase()` returns `_previewPhase` outright while `PREVIEW_MODE` — ahead of the
 >   time rule AND the admin's `checkinPhaseOverride`. Header badge (`#dayBadge`) reads
@@ -486,9 +488,9 @@ tolerate absence via `?? false`.
 | **A deleted row (incident, FAQ, …) stays on screen until reload** | `_invalidate(path)` (`public/index.html`) — a write to `/<resource>/<id>` falls through to the generic `Cache.del(path)`, which matches only keys equal to or UNDER `/<resource>/<id>` and therefore **leaves the cached collection key `/<resource>` intact** for the 30s TTL. `/incidents` and `/faq` got explicit branches 2026-07-26; `/notifications`, `/notes`, `/registrants`, `/accounts` already had prefix branches. **Any NEW id-suffixed write endpoint needs its own branch naming the collection key.** |
 | **A light-purple bar appears under the bottom nav (or under the login card) and vanishes when you scroll** | `html{background:#fff}` (near `html{font-size:16px}`). The CANVAS paints the strip iOS briefly exposes below the body box when the dynamic toolbar retracts / the keyboard dismisses; with no background on `html` the canvas inherits `body`'s `--paper`. If the purple bar returns, that rule was removed or a later `html` rule overrode it. NOT the same bug as the 2026-07-24 *black* bar (that one was fixed by making `body` light — both fixes are needed). |
 | **A bottom sheet / overlay renders UNDER the bottom nav (its button is unreachable)** | The z-index ladder above `.modal` in the CSS: `.tabs` is **100**, so every full-viewport overlay must be `position:fixed` **AND** above 100. `.modal`/`.ig-wrap` 120, `.toast` 130, `#login`/`#mcpGate` 140. A new overlay that copies an old `z-index:50`-era rule will be covered by the nav. |
-| **An incident alert pops a full-screen modal on every app open** | Should not anymore — incidents render as the `.inc-banner` strip above the hero (`_incidentBannerHtml`), acknowledged per device by `_ackIncident`. If the modal returns, `_checkUrgentNoticesFromFeed`'s `!_isIncidentNotice(n)` filter was dropped. A **human-sent** urgent notice still popping the modal is BY DESIGN. |
+| **An urgent/incident alert appears at the BOTTOM of Home (bottom sheet), or at the top AND bottom at once** | The bottom-sheet path is **deleted** (`camp-v45`) — `_checkUrgentNoticesFromFeed`, `checkUrgentNotices` and `_ackUrgent` no longer exist. EVERY unacknowledged urgent notice (incident or human-sent) renders in the single top banner: `_urgentAlerts` → `_alertBannerHtml` → `_ackAlert`, `.inc-banner` CSS. If a sheet reappears, someone reintroduced a `modal()` call on the home render path. **If a user still sees the old sheet, it's a stale service worker** — the SPA is cache-first, so an installed PWA serves the previous `index.html` until the SW updates; force-reload / reopen to pick up the new `CACHE` version. |
 | **An incident appears in the Notices list (home or the Notices screen)** | Both lists render through **`_noticeFeed()`**, which drops `leadersOnly` notices (owner decision 2026-07-26 — incidents live on the Incidents screen, the Notes record filter and the Home banner only). If one shows up, a call site bypassed `_noticeFeed`. |
-| **An incident alert re-appears after acknowledging** | Expected on a DIFFERENT device / after clearing site data — acknowledgement is `localStorage`-only (`_DISMISS_KEY`), the owner's explicit choice over a server-side ack table. Same device re-alerting IS a bug: check `_ackIncident` wrote to `_DISMISS_KEY` and that `isNoticeDismissed` reads the same key. |
+| **An incident alert re-appears after acknowledging** | Expected on a DIFFERENT device / after clearing site data — acknowledgement is `localStorage`-only (`_DISMISS_KEY`), the owner's explicit choice over a server-side ack table. Same device re-alerting IS a bug: check `_ackAlert` wrote to `_DISMISS_KEY` and that `isNoticeDismissed` reads the same key. |
 | **Preview shows "Day 1"/"Day 2", or only one of First-Day-Sign-In / Daily Check-in** | `SETTINGS.campDay`/`switchDay()` were **deleted** 2026-07-26 → `_previewPhase`/`switchPreviewPhase()`. Both controls must render in preview (`isDay1` is forced `true`), one greyed by `campPhase()`. If the phase ignores the badge, check `campPhase()`'s `if(PREVIEW_MODE)return _previewPhase` early-return still precedes the `checkinPhaseOverride` check. |
 | **A `paint()` title/subtitle shows a literal `&amp;` (or `&lt;`)** | `_paint` writes them with **`.textContent`** — entities are never decoded. Use a bare `&` in `paint()`'s 3rd/4th args; `&amp;` is correct only inside `innerHTML` body strings. |
 | **`b-<church>` and `g-<church>` see each other's dashboard counts** | `dashboard-cache.ts` `_actorKey` must include **`genderScope`** (added 2026-07-26; it was missing from the moment gender scoping landed in migration `0006`). Key = `${role}:${churchId}:${zone}:${genderScope}`. Covered by `dashboard.service.test.ts` → "scopes the cache key by genderScope". Any future scoping dimension goes here too. |

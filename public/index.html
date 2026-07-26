@@ -154,7 +154,7 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
 .nownext .now{font-weight:800;}.nownext .nx{font-size:var(--t-sm);color:var(--lav);margin-top:2px;}
 /* Incident alert banner (2026-07-26) — replaces the full-screen "Incident logged" modal that fired
    on every app open. Compact, non-blocking, sits above the hero on Home; one row per unacknowledged
-   high-severity incident, cleared per device by the "Got it" button (`_ackIncident`). Deliberately
+   high-severity incident, cleared per device by the "Got it" button (`_ackAlert`). Deliberately
    red/left-accented rather than the calm `.notice` tint — it still has to read as an alarm. */
 .inc-banner{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
 .inc-row{display:flex;align-items:center;gap:10px;background:#fff1f2;border:1px solid #fecdd3;border-left:4px solid var(--danger);border-radius:14px;padding:10px 12px;}
@@ -1656,7 +1656,7 @@ RENDER.home=async function renderHome(skipModeSync){
   const s=SETTINGS,isWide=['director','admin'].includes(ACTOR.role);
   // Unacknowledged high-severity incidents sit ABOVE the hero — first thing on the screen.
   // Incidents can be (and have been) logged pre-camp, so this belongs on both home variants.
-  let body=_incidentBannerHtml(feed)+`<div class="hero">${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2>Hi ${esc(ACTOR.displayName)}</h2>
+  let body=_alertBannerHtml(feed)+`<div class="hero">${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2>Hi ${esc(ACTOR.displayName)}</h2>
     <div class="cd"><div class="big">${h.daysToGo??'—'}</div><div class="meta">days to go<br>${esc(h.startDate||'')}${s&&s.endDate?' – '+esc(s.endDate):''}</div></div></div>`;
   // Bug-2: registrations split by who (Student/Leader) × where they sleep (Tent/Classroom).
   // Replaces the old Campers/Leaders/Ldr-blue-card band. Counts come from the already-loaded
@@ -1831,7 +1831,7 @@ async function renderHomeAtCamp(){
   const _zoneClr=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?ZONE_COLORS[ACTOR.zone]:null;
   const _heroStyle=_zoneClr?` style="background:linear-gradient(135deg,${_zoneClr} 0%,#1e1b4b 78%)"`:'';
   const _heroSub=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?'':`<div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':'Director'}</div>`;
-  const html=_incidentBannerHtml(feed)+`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
+  const html=_alertBannerHtml(feed)+`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
     <h2>Hi ${esc(d.greetingName||ACTOR.displayName)}</h2>
     ${_heroSub}
     ${accomLineHtml}
@@ -1852,8 +1852,8 @@ async function renderHomeAtCamp(){
   <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>`;
   paint('home','','Home',d.greetingName||ACTOR.displayName);
   document.getElementById('home').innerHTML=html;
-  // Urgent notice check uses the feed we already have — no second /notifications fetch.
-  _checkUrgentNoticesFromFeed(feed||[]);
+  // (No urgent-notice modal here any more — urgent notices render in the top banner that
+  // `_alertBannerHtml(feed)` already injected at the head of `html` above.)
   if(['director','admin'].includes(ACTOR.role))_renderDirectorDigest();
   // Load the oversight pulse in the background and inject it when ready.
   renderOversightPulse().then(pulseHtml=>{
@@ -1880,19 +1880,25 @@ const _isIncidentNotice=n=>!!(n&&n.leadersOnly);
 /* Every notice LIST renders through this — keeps the "incidents never appear in a notice feed"
    rule in one place instead of at each call site. */
 function _noticeFeed(feed){return (feed||[]).filter(n=>!_isIncidentNotice(n));}
-function _incidentAlerts(feed){return (feed||[]).filter(n=>_isIncidentNotice(n)&&n.priority==='urgent'&&!isNoticeDismissed(n.id));}
-function _incidentBannerHtml(feed){
-  const list=_incidentAlerts(feed);
+/* EVERY unacknowledged urgent notice renders here — incident auto-alerts AND human-sent ones.
+   (2026-07-26 follow-up: the first cut left human-sent urgent notices on the old bottom-sheet
+   modal, which meant Home could show an alert at the TOP and another at the BOTTOM at the same
+   time — reported immediately. There is now exactly ONE alert surface.) */
+function _urgentAlerts(feed){return (feed||[]).filter(n=>n.priority==='urgent'&&!isNoticeDismissed(n.id));}
+function _alertBannerHtml(feed){
+  const list=_urgentAlerts(feed);
   if(!list.length)return '';
+  // Tap target follows the KIND of alert: an incident opens the Incidents screen (only leadership
+  // ever receives one — church/firstAid are filtered server-side), anything else opens Notices.
   return `<div class="inc-banner" id="incBanner">${list.map(n=>`<div class="inc-row" data-nid="${esc(n.id)}">
     <span class="inc-ico">${icSm('alert')}</span>
-    <div class="inc-txt" onclick="go('incidents')"><b>${esc(n.title)}</b><span>${esc(n.body)}</span></div>
-    <button class="inc-ack" onclick="_ackIncident('${n.id}')">Got it</button>
+    <div class="inc-txt" onclick="${_isIncidentNotice(n)?"go('incidents')":"gotoTab('notifs')"}"><b>${esc(n.title)}</b><span>${esc(n.body)}</span></div>
+    <button class="inc-ack" onclick="_ackAlert('${n.id}')">Got it</button>
   </div>`).join('')}</div>`;
 }
 /* Acknowledge = this device has seen it. Removes the row in place (no re-render/refetch) and drops
    the whole banner once the last row goes, so Home doesn't keep an empty container. */
-function _ackIncident(id){
+function _ackAlert(id){
   const s=_dismissedSet();s.add(id);
   try{localStorage.setItem(_DISMISS_KEY,JSON.stringify([...s]));}catch(e){}
   const row=document.querySelector('#incBanner .inc-row[data-nid="'+id+'"]');
@@ -1924,30 +1930,12 @@ function dismissNotice(btn){
   if(box&&!box.querySelector('.notice'))box.innerHTML='<p class="note-hint">All caught up — no notices right now.</p>';
 }
 
-/* ===== SPRINT 3: URGENT NOTICES, MY DAY, OVERSIGHT PULSE, tel: ===== */
-// Called with an already-fetched feed to avoid a duplicate /notifications request.
-function _checkUrgentNoticesFromFeed(feed){
-  // Incident auto-alerts are excluded here — they render as the compact Home banner
-  // (`_incidentBannerHtml`) instead of this blocking modal. See the INCIDENT ALERTS block above.
-  const urgent=(feed||[]).filter(n=>n.priority==='urgent'&&!_isIncidentNotice(n)&&!isNoticeDismissed(n.id));
-  if(!urgent.length)return;
-  const n=urgent[0];
-  modal(`<div style="text-align:center;padding:8px 0 4px">
-    <div style="font-size:2rem;color:var(--rose)">${icLg('urgent')}</div>
-    <h3 style="color:#dc2626;margin:6px 0">${esc(n.title)}</h3>
-    <p style="color:#7f1d1d;font-size:var(--t-body);margin:0 0 14px">${esc(n.body)}</p>
-    <button class="btn" style="background:#dc2626" onclick="_ackUrgent('${n.id}')">Acknowledged</button>
-  </div>`);
-}
-// Standalone version for callers that don't have a pre-fetched feed.
-async function checkUrgentNotices(){
-  try{_checkUrgentNoticesFromFeed(await api('/notifications'));}catch(e){}
-}
-function _ackUrgent(id){
-  const s=_dismissedSet();s.add(id);
-  try{localStorage.setItem(_DISMISS_KEY,JSON.stringify([...s]));}catch(e){}
-  closeModal();
-}
+/* ===== SPRINT 3: MY DAY, OVERSIGHT PULSE, tel: =====
+   The urgent-notice BOTTOM SHEET is gone (2026-07-26). `_checkUrgentNoticesFromFeed`,
+   `checkUrgentNotices` and `_ackUrgent` were deleted: Home was showing an alert banner at the top
+   AND this modal at the bottom for the same event. Every unacknowledged urgent notice now renders
+   in the single top banner (`_alertBannerHtml` / `_urgentAlerts` / `_ackAlert`). Do NOT reintroduce
+   a blocking dialog here — that is the exact complaint this replaced. */
 function renderMyDay(d){
   const DUE=d.checkInsDue||0;
   const sess=d.currentSession;

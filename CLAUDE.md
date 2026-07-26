@@ -1510,7 +1510,7 @@ this section.
   fired on **every** app open and was disruptive. Now: **`leadersOnly`** (set by exactly one code
   path — `incident.service.log`; every other notification is created `leadersOnly:false` — so it is
   a reliable incident marker with no schema change) drives a new `_isIncidentNotice()`. New helpers
-  `_noticeFeed()` / `_incidentAlerts()` / `_incidentBannerHtml()` / `_ackIncident()` + `.inc-banner`
+  `_noticeFeed()` / `_urgentAlerts()` / `_alertBannerHtml()` / `_ackAlert()` + `.inc-banner`
   CSS. A red, left-accented strip sits **above the hero on Home** (both pre-camp and at-camp — the
   pre-camp variant matters, incidents have been logged pre-camp), one row per unacknowledged high
   incident, tap the text to open Incidents, "Got it" to acknowledge. **Acknowledgement is per
@@ -1521,6 +1521,15 @@ this section.
   what the banner reads, and the push design hangs off the same record. **Deliberately unchanged:**
   a genuine human-sent urgent notice still pops the modal (`_checkUrgentNoticesFromFeed` now
   excludes incidents only) — that is a director choosing to interrupt everyone.
+  **↑ SUPERSEDED SAME DAY (`camp-v44`→`camp-v45`): the bottom sheet is GONE entirely.** Keeping the
+  modal for human-sent urgent notices meant Home could show an alert banner at the TOP *and* a
+  sheet at the BOTTOM at the same time (reported immediately on an at-camp preview: prod has both
+  a `leadersOnly` "Incident logged" AND a non-incident urgent "Scheduled 1" live). There is now
+  exactly **ONE alert surface**: `_urgentAlerts`/`_alertBannerHtml`/`_ackAlert` render EVERY
+  unacknowledged urgent notice — incident or human-sent — in the top banner, with the row's tap
+  target routing by kind (incident → Incidents screen, else → Notices). `_checkUrgentNoticesFromFeed`,
+  `checkUrgentNotices` and `_ackUrgent` are **deleted**. ⚠️ Do NOT reintroduce a blocking dialog for
+  notices — that is the exact complaint this replaced.
 - **Home notices = the 3 most recent REAL notices** (`_noticeFeed(feed).slice(0,3)` on both home
   variants; both already sliced to 3, the bug was incidents eating the slots).
 - **Bottom sheets were rendering UNDER the bottom nav** (screenshots 5 "Switch to At-Camp" and 7
