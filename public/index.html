@@ -153,9 +153,13 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
 .nownext{background:linear-gradient(135deg,var(--violet-d),#1e1b4b);color:#fff;border-radius:16px;padding:14px 16px;margin-bottom:12px;}
 .nownext .now{font-weight:800;}.nownext .nx{font-size:var(--t-sm);color:var(--lav);margin-top:2px;}
 /* Incident alert banner (2026-07-26) — replaces the full-screen "Incident logged" modal that fired
-   on every app open. Compact, non-blocking, sits above the hero on Home; one row per unacknowledged
-   high-severity incident, cleared per device by the "Got it" button (`_ackAlert`). Deliberately
-   red/left-accented rather than the calm `.notice` tint — it still has to read as an alarm. */
+   on every app open. Compact, non-blocking; one row per unacknowledged urgent notice, cleared per
+   device by the "Got it" button (`_ackAlert`). Deliberately red/left-accented rather than the calm
+   `.notice` tint — it still has to read as an alarm.
+   2026-07-27: placement moved from above the hero to immediately ABOVE the "Notices" heading near
+   the bottom of Home (owner request), on BOTH the pre-camp and at-camp home variants. This is the
+   change that the 2026-07-26 "move incidents below Testimonies & Notes" request actually meant —
+   the Incidents menu TILE was moved by mistake and has since been restored to the grid. */
 .inc-banner{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
 .inc-row{display:flex;align-items:center;gap:10px;background:#fff1f2;border:1px solid #fecdd3;border-left:4px solid var(--danger);border-radius:14px;padding:10px 12px;}
 .inc-ico{flex:none;color:var(--danger);display:grid;place-items:center;}
@@ -1306,6 +1310,21 @@ function _ampm(t){if(!t||t.indexOf(':')<0)return t||'';let[h,m]=t.split(':').map
 // (one-shot; RENDER.checkin reads then clears it). Absent an explicit tap it falls back to campPhase().
 let _forceCheckinFace=null;
 function openCheckinFace(face){_forceCheckinFace=face;gotoTab('checkin');}
+/* 2026-07-27 — keep the BOTTOM NAV's Sign-in/Check-in label in step with campPhase().
+   `navModel._ci()` has always computed the right label, but `buildTabs()` only ran at
+   login / mode switch, so the label froze at whatever the phase was when the session
+   started: after the Day-1 switchover time passed (or an admin pinned the phase, or the
+   preview toggle flipped) the tab still read "Sign-in" while the app was in check-in.
+   The desktop SIDEBAR never had this bug — `_renderWideNav` runs on every paint().
+   Cheap and idempotent: it only touches the DOM when the phase actually changed. */
+let _navPhase=null;
+function _syncNavPhase(){
+  if(!ACTOR)return;
+  const p=(typeof campPhase==='function')?campPhase():null;
+  if(p===_navPhase)return;
+  _navPhase=p;
+  buildTabs();
+}
 function updateModeUI(){
   const b=document.getElementById('modeBadge'),r=document.getElementById('roleBadge');
   if(PREVIEW_MODE){b.textContent='Preview';b.style.background='#92400e';b.style.color='var(--card)';}
@@ -1451,6 +1470,7 @@ function switchPreviewPhase(){
   if(!PREVIEW_MODE)return;
   _previewPhase=_previewPhase==='signin'?'checkin':'signin';
   updateModeUI();
+  _syncNavPhase(); // the bottom nav's Sign-in/Check-in label must follow the toggle
   toast(_previewPhase==='signin'?'Previewing first-day sign-in':'Previewing through-camp check-in');
   STACK=['home'];RENDER.home();}
 
@@ -1672,6 +1692,13 @@ RENDER.home=async function renderHome(skipModeSync){
         // B-3: publish the authoritative mode so OTHER tabs of this origin pick it up via the
         // 'storage' event (see BOOT). Written every home visit; cheap and idempotent.
         try{localStorage.setItem('ycp_campmode',fresh.campMode);}catch(_){}
+        // 2026-07-27: also adopt the two PHASE inputs. Without these an admin pinning the
+        // phase (or editing the switchover time) never reached an already-open session, so
+        // `campPhase()` — and the Check-in tab label with it — stayed on the stale value.
+        if(SETTINGS){
+          SETTINGS.checkinPhaseOverride=fresh.checkinPhaseOverride;
+          SETTINGS.checkinSwitchoverTime=fresh.checkinSwitchoverTime;
+        }
         if(fresh.campMode!==CAMP_MODE){
           CAMP_MODE=fresh.campMode;
           if(SETTINGS)SETTINGS.campMode=fresh.campMode;
@@ -1680,6 +1707,9 @@ RENDER.home=async function renderHome(skipModeSync){
       }
     }catch(e){}
   }
+  // Re-label the Check-in/Sign-in tab if the phase moved since the nav was last built
+  // (switchover time passed, admin pinned the phase, preview toggle flipped). No-op otherwise.
+  _syncNavPhase();
   if(CAMP_MODE==='at-camp'){await renderHomeAtCamp();return;}
   // Parallel-load the three independent home datasets (was three sequential awaits).
   const [h,regs,feed]=await Promise.all([
@@ -1688,9 +1718,10 @@ RENDER.home=async function renderHome(skipModeSync){
     api('/notifications').catch(()=>[]),
   ]);
   const s=SETTINGS,isWide=['director','admin'].includes(ACTOR.role);
-  // Unacknowledged high-severity incidents sit ABOVE the hero — first thing on the screen.
-  // Incidents can be (and have been) logged pre-camp, so this belongs on both home variants.
-  let body=_alertBannerHtml(feed)+`<div class="hero">${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2>Hi ${esc(ACTOR.displayName)}</h2>
+  // Unacknowledged urgent notices (incident auto-alerts + human-sent) render on BOTH home
+  // variants — incidents can be, and have been, logged pre-camp. 2026-07-27: the banner moved
+  // off the top of the screen to just above the "Notices" heading, matching the at-camp home.
+  let body=`<div class="hero">${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2>Hi ${esc(ACTOR.displayName)}</h2>
     <div class="cd"><div class="big">${h.daysToGo??'—'}</div><div class="meta">days to go<br>${esc(h.startDate||'')}${s&&s.endDate?' – '+esc(s.endDate):''}</div></div></div>`;
   // Bug-2: registrations split by who (Student/Leader) × where they sleep (Tent/Classroom).
   // Replaces the old Campers/Leaders/Ldr-blue-card band. Counts come from the already-loaded
@@ -1751,10 +1782,11 @@ RENDER.home=async function renderHome(skipModeSync){
   // this removes pre-camp zoneLeader/director/admin's only route to RENDER.incidents;
   // pre-camp incident logging is unreachable until at-camp mode.
   // Notices — latest 3 REAL notices (incident auto-alerts are filtered out by `_noticeFeed` and
-  // surface in the banner at the top of this screen instead; feed already loaded in parallel
+  // surface in the alert banner injected directly below instead; feed already loaded in parallel
   // above, expiry handled server-side)
   {const notices=_noticeFeed(feed).slice(0,3);
-    body+=`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
+    body+=_alertBannerHtml(feed)
+    +`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
     <div id="homeNotices" style="margin-top:10px">${notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>'}</div>`;
   }
   paint('home',body,'My Church Hub',isWide?'All churches':(ACTOR.churchName?esc(ACTOR.churchName):esc(ACTOR.displayName)));
@@ -1842,13 +1874,13 @@ async function renderHomeAtCamp(){
     if(ACTOR.role==='director')tiles.push(`<div class="tile" onclick="go('data')"><div class="ic">${ic('note')}</div><div class="l">Student Data Table</div></div>`);
   }
   // Feature 3: Incidents tile for zoneLeader/director/admin (both modes).
-  // 2026-07-26: Incidents moved OUT of the tile grid to a slim full-width link below
-  // "Testimonies & Notes" and above the Notices summary (see `incidentsLinkHtml`).
+  // 2026-07-27: RESTORED to the tile grid. The 2026-07-26 change that demoted it to a slim
+  // full-width link was a misread of the owner's request — what was meant to move below
+  // "Testimonies & Notes" was the urgent-alert BANNER (`_alertBannerHtml`, the red strip with
+  // the "Got it" button), not this menu tile. Do not demote it again.
+  if(canManageIncident())tiles.push(`<div class="tile" onclick="go('incidents')"><div class="ic">${ic('alert')}</div><div class="l">Incidents</div></div>`);
   // Testimonies & Notes → slim full-width bold link below the grid (not a tile).
   const notesLinkHtml=canReadNotes()?`<div class="card tap" onclick="go('notes')" style="margin-top:10px"><div class="rowsb"><div style="font-weight:700">${icSm('note')} Testimonies &amp; Notes</div><span style="color:var(--muted)">›</span></div></div>`:'';
-  // Incidents → same slim link treatment, placed directly BELOW Testimonies & Notes and ABOVE the
-  // Notices summary (owner request 2026-07-26). Was a tile in the grid above.
-  const incidentsLinkHtml=canManageIncident()?`<div class="card tap" onclick="go('incidents')" style="margin-top:10px"><div class="rowsb"><div style="font-weight:700">${icSm('alert')} Incidents</div><span style="color:var(--muted)">›</span></div></div>`:'';
   // Accommodation → one-line strip inside the hero (church, real at-camp only).
   const accomLineHtml=(ACTOR.role==='church'&&!PREVIEW_MODE)?`<div style="margin-top:8px;color:#cfe0ff;font-size:.78rem">${icSm('classroom')} Your accommodation: ${esc(myAccom)}</div>`:'';
   // PC-7: FAQ/Help is a PRE-CAMP aid only — no FAQ tile in at-camp home for any role.
@@ -1869,7 +1901,9 @@ async function renderHomeAtCamp(){
   const _zoneClr=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?ZONE_COLORS[ACTOR.zone]:null;
   const _heroStyle=_zoneClr?` style="background:linear-gradient(135deg,${_zoneClr} 0%,#1e1b4b 78%)"`:'';
   const _heroSub=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?'':`<div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':'Director'}</div>`;
-  const html=_alertBannerHtml(feed)+`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
+  // 2026-07-27: the alert banner is NO LONGER at the head of the screen — it sits immediately
+  // above the "Notices" heading near the bottom (owner request; see the block below).
+  const html=`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
     <h2>Hi ${esc(d.greetingName||ACTOR.displayName)}</h2>
     ${_heroSub}
     ${accomLineHtml}
@@ -1885,8 +1919,8 @@ async function renderHomeAtCamp(){
   })()}
   <div class="tiles">${tiles.join('')}</div>
   ${notesLinkHtml}
-  ${incidentsLinkHtml}
   <div id="homePulse"></div>
+  ${_alertBannerHtml(feed)}
   <div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
   <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>`;
   paint('home','','Home',d.greetingName||ACTOR.displayName);
@@ -3648,21 +3682,17 @@ RENDER.faq=async function(){
 RENDER.testimonies=async function(){
   // A testimony is stored as a note with category 'testimony'. The student is optional —
   // the default is a general testimony with no specific student identified.
-  // CH-2: the dropdown previously fetched only /campers (= isCamper, lifecycle ≥ arrived),
-  // so a church login's youth who have NOT yet signed in (lifecycle 'registered') never
-  // appeared and the list looked empty. Mirror RENDER.firstday: pull BOTH /registrants
-  // (pre-arrival youth, kind 'camper') and /campers (arrived students, kind 'student') and
-  // dedupe by id, so every one of the church's young people is selectable.
-  const [campPage,regs]=await Promise.all([
-    api(_scoped('/campers?pageSize=300')).catch(()=>[]),
-    api(_scoped('/registrants')).catch(()=>[]),
-  ]);
+  // 2026-07-27: ONLY students who have signed in are selectable — this REVERSES the earlier
+  // "CH-2" change that merged /registrants in so pre-arrival youth (lifecycle 'registered')
+  // also appeared. `/campers` is exactly the right feed for that: it is `isCamper`, i.e.
+  // lifecycle ≥ arrived, so someone who signed in and later signed out is still listed (a
+  // testimony can be logged after they go home) but someone who never arrived is not.
+  // Do NOT re-add the /registrants merge here — an empty-looking list pre-camp is correct;
+  // the Testimonies tile only exists on the at-camp home anyway.
+  const campPage=await api(_scoped('/campers?pageSize=300')).catch(()=>[]);
   const campers=(Array.isArray(campPage)?campPage:campPage.items||[]).filter(c=>c.kind==='student');
-  const regYouth=(regs||[]).filter(r=>r.kind==='camper'&&r.status!=='cancelled');
-  const byId={};
-  campers.forEach(c=>{byId[c.id]={id:c.id,firstName:c.firstName,lastName:c.lastName,churchName:c.churchName};});
-  regYouth.forEach(r=>{if(!byId[r.id])byId[r.id]={id:r.id,firstName:r.firstName,lastName:r.lastName,churchName:r.churchName};});
-  const items=Object.values(byId).sort((a,b)=>(a.firstName+a.lastName).localeCompare(b.firstName+b.lastName));
+  const items=campers.map(c=>({id:c.id,firstName:c.firstName,lastName:c.lastName,churchName:c.churchName}))
+    .sort((a,b)=>(a.firstName+a.lastName).localeCompare(b.firstName+b.lastName));
   const opts=`<option value="" selected>No specific student identified</option>`
     +items.map(c=>`<option value="${c.id}">${esc(c.firstName+' '+c.lastName)} · ${esc(c.churchName)}</option>`).join('');
   paint('testimonies',`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Submit a testimony</span>${helpTip('Record a God-moment from camp. Choosing a student is optional — leave it blank for a general testimony. Saved for leaders and directors to review.')}</div>
@@ -4295,9 +4325,12 @@ RENDER.adminSettings=async function(){
   // forced wizard flow. Every input still lives in the DOM (inside <details>), so the single
   // Save button at the bottom writes them all in one PATCH exactly as before. Notices are NO
   // longer surfaced here (item 4) — they live on the admin console's Communications group.
+  // 2026-07-27: ALL THREE sections start COLLAPSED (owner request) — the first one no longer
+  // carries `open`. Collapse state is cosmetic only; every input is still in the DOM, so
+  // `saveSettings` reads them all regardless of which sections the admin expanded.
   const tick=ok=>ok?'<span class="pill ok">Ready</span>':'<span class="pill">Set up</span>';
   paint('adminSettings',`
-    <details class="setg" open><summary>${icSm('calendar')} Camp details &amp; dates ${tick(!!s.campName&&!!s.startDate&&!!s.endDate)}</summary>
+    <details class="setg"><summary>${icSm('calendar')} Camp details &amp; dates ${tick(!!s.campName&&!!s.startDate&&!!s.endDate)}</summary>
       <div class="card">
         <div class="two-col">
           <div><label>Camp name</label><input class="fld" id="stName" value="${esc(s.campName||'')}"></div>
@@ -4395,6 +4428,9 @@ async function saveSettings(){
     const pmEnd=document.getElementById('stPmEnd')?.value||'22:00';
     await api('/settings',{method:'PATCH',body:{campName:val('stName'),year:Number(val('stYear'))||new Date().getFullYear(),startDate:val('stStart'),endDate:val('stEnd'),timezone:'Australia/Brisbane',checkInDays:days,churchLoginLocked:churchLock,zoneLeaderLoginLocked:zoneLock,churchCheckinTimeRestricted:churchCheckinRestrict,checkinSwitchoverTime:switchover,checkinPhaseOverride:phaseOverride,checkinWindowAmStart:amStart,checkinWindowAmEnd:amEnd,checkinWindowPmStart:pmStart,checkinWindowPmEnd:pmEnd}});
     SETTINGS=await api('/settings',{noCache:true});SESSIONS=[];SEL_SESSION=null;SCHED_DAY=null;DEVO_DAY=null;
+    // The phase override / switchover time just changed under us — re-label the Check-in tab
+    // for THIS session immediately (other sessions pick it up on their next home visit).
+    _syncNavPhase();
     toast('Settings saved');
   }catch(e){toast(e.message);}
 }

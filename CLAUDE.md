@@ -1950,15 +1950,20 @@ the audience rule, the subscription table and the warning detector; the fan-out 
   before `select vault.create_secret('<secret>','cron_secret')` exists means every tick 401s, also
   silently. Both preconditions are written at the top of the file. It was split out of `0013` for
   exactly this reason.
-- **`0015_discount_code_overrides.sql` — NOT APPLIED.** One `settings.discount_code_overrides
-  jsonb not null default '{}'`. ⚠ Remember the standing rule: **`supabase.settings` writes ALL
-  settings columns on every save**, so once the code is deployed, any settings save (and mode
-  switch, and new-year) fails in prod until `0015` is applied. Apply it WITH the deploy, not after.
+- **`0015_discount_code_overrides.sql` — APPLIED to prod 2026-07-27**, immediately BEFORE the push
+  that merged this whole branch to `master` (see the 2026-07-27 section at the bottom). One
+  `settings.discount_code_overrides jsonb not null default '{}'`; verified present, and the history
+  row reconciled from the generated timestamp `20260726211058` to version `'0015'`. It had to go in
+  first because of the standing rule: **`supabase.settings` writes ALL settings columns on every
+  save**, so once the code is live, any settings save (and mode switch, and new-year) fails until
+  the column exists.
 - **Next migration = `0016`.**
-- **Prod drift found, reported, NOT fixed:** migrations `0009`–`0012` are applied but recorded
+- **Prod drift found, reported, STILL NOT fixed:** migrations `0009`–`0012` are applied but recorded
   under generated timestamp versions (`20260720012415`, `20260723131647`, `20260723131721`,
   `20260723181751`). The schema is correct; only the version labels drifted, because the
-  reconciliation step was skipped four times.
+  reconciliation step was skipped four times. ⚠ Consequence: a `supabase db push` would consider
+  those four **unapplied and try to re-run them**. Deliberately left alone (rewriting four history
+  rows is a bigger call than the one row this session introduced) — fix it as its own task.
 
 ### `canSeeNotification()` — the single notification-audience rule
 
@@ -2046,7 +2051,9 @@ and rehydrated once at boot (`window._ciqRestored` guard). Two things worth know
    They badge "Leader" instead of "Yr -" and the grade filter gains a Leaders option. They stay
    excluded from the twice-daily check-in roster — that is a different screen, do not "fix" it.
 3. **Incidents moved off the home tile grid** to a slim full-width link, below "Testimonies & Notes"
-   and above the Notices summary.
+   and above the Notices summary. **⚠ REVERTED 2026-07-27 — this was a MISREAD of the request.**
+   What the owner wanted moved below Testimonies & Notes was the urgent-alert *banner*, not the
+   menu tile. Incidents is a tile in the grid again; see the 2026-07-27 section below.
 4. **Schedule editor time boxes tightened** — column `80px`→`64px`, gap `8`→`6px`, and the time
    input itself on `--t-xs` with 4px/2px padding, centred. See the CSS gotcha below for why this
    took several attempts.
@@ -2072,3 +2079,53 @@ sits **after** `.sched-row .fld` (~line 383 in `public/index.html`) with a comme
 - `API_RE` in `sw.js` was **deliberately NOT extended** with `push` or `internal`. Nothing in the
   SPA calls a `/push` endpoint yet (later phase), and the cron tick is server-to-server — it never
   passes through a service worker.
+
+## Small SPA fix batch + the web-push branch finally shipped — deployed 2026-07-27
+
+**This is the release that actually put the 2026-07-26 web-push/launch-readiness work into prod.**
+Everything described in the section above had been sitting unmerged on `feat/web-push-phase1-3`
+(9 commits) while `origin/master` — and therefore production — was still at `369437c`. This release
+applied migration `0015` to Supabase FIRST, then merged the branch plus four owner-requested SPA
+fixes to `master`. `npm run typecheck` clean, `npm run test` = **634 pass / 48 files**, SPA
+`node --check` OK. `sw.js` `camp-v48`→**`camp-v49`**. All four fixes are **SPA-only**
+(`public/index.html`) — no backend, schema or migration change beyond applying `0015`.
+
+> **Process lesson worth keeping:** CLAUDE.md described the 2026-07-26 batch in the past tense while
+> none of it was on `master`. Prose in this file records what was *built*, which is not the same as
+> what is *deployed* — when reloading context, check `git log origin/master..HEAD` before assuming
+> a documented feature is live.
+
+1. **Incidents is a menu TILE again; the ALERT BANNER is what moved.** The 2026-07-26 change
+   (commit `6b454d6`, item 3) demoted the Incidents tile to a slim full-width link — a misread of
+   the owner's request. Reverted: `canManageIncident()` pushes the tile back into the `.tiles` grid
+   in `renderHomeAtCamp` and `incidentsLinkHtml` is deleted. What was actually meant to move is
+   **`_alertBannerHtml(feed)`** — the red strip with the **"Got it"** acknowledgement button — which
+   was at the very head of the Home markup and now renders **immediately above the "Notices"
+   heading** near the bottom, on **both** home variants (at-camp `renderHomeAtCamp` and pre-camp
+   `RENDER.home`). Note this moves *every* urgent alert, not just incident-raised ones — there is
+   deliberately only one alert surface (see the 2026-07-26 notes), so human-sent urgent notices
+   move with it.
+2. **Testimony student picker = arrived students only.** `RENDER.testimonies` no longer merges
+   `/registrants` into the dropdown — it reads `/campers` alone (which is `isCamper`, i.e.
+   lifecycle ≥ `arrived`). **This deliberately reverses the earlier "CH-2" fix** that added
+   pre-arrival youth because a church's list "looked empty". Someone who signed in and later
+   signed out is still selectable (a testimony can be logged after they head home); someone who
+   never arrived is not. The screen is only reachable from the at-camp home tile, so a
+   sparse-looking list pre-camp is correct, not a bug. **Do not re-add the `/registrants` merge**
+   without checking with the owner — it has now been flipped in both directions.
+3. **All three Camp Settings sections start collapsed.** `RENDER.adminSettings`'s first
+   `<details class="setg">` lost its hardcoded `open`. Cosmetic only — every input still lives in
+   the DOM regardless of collapse state, which is exactly why the single `saveSettings()` PATCH
+   still writes all of them (that invariant is load-bearing; don't "optimise" it by rendering
+   section bodies lazily).
+4. **The bottom-nav Check-in/Sign-in label now follows the phase.** `navModel._ci()` always
+   computed the right label, but `buildTabs()` only ran at login and on a mode switch — so the tab
+   froze at whatever phase was current when the session started and still read **"Sign-in"** after
+   the app had moved into check-in. New **`_syncNavPhase()`** (declared beside `campPhase()`)
+   caches the last-built phase in `_navPhase` and re-runs `buildTabs()` only on a real change.
+   Called from `RENDER.home` (covers the Day-1 switchover time passing), `switchPreviewPhase()`
+   (the preview toggle, which never rebuilt the nav at all) and `saveSettings()` (an admin pinning
+   `checkinPhaseOverride`). `RENDER.home`'s `/settings` re-sync **also now adopts
+   `checkinPhaseOverride` + `checkinSwitchoverTime`** — previously it copied only `campMode`, so an
+   admin's phase change never reached an already-open session at all. The **desktop sidebar never
+   had this bug** (`_renderWideNav` runs on every `paint()`); it was bottom-nav-only.
