@@ -52,6 +52,13 @@ export interface CampSettings {
   formImportedAt?: string | null;
   ticketsImportedAt?: string | null;
   invoicesImportedAt?: string | null;
+  /**
+   * Per-discount-code override amounts, code -> dollars. A registrant using that code whose
+   * registrationCost is null/0 is budgeted at this amount instead. Empty object = no overrides.
+   * Optional (like the checkinWindow* fields above) so existing fixtures compile; defaults to
+   * {} wherever read.
+   */
+  discountCodeOverrides?: Record<string, number>;
   createdAt: ISODateString;
   updatedAt: ISODateString;
 }

@@ -30,6 +30,7 @@ function toSettings(r: Record<string, unknown>): CampSettings {
     formImportedAt: (r['form_imported_at'] as Date | null)?.toISOString() ?? null,
     ticketsImportedAt: (r['tickets_imported_at'] as Date | null)?.toISOString() ?? null,
     invoicesImportedAt: (r['invoices_imported_at'] as Date | null)?.toISOString() ?? null,
+    discountCodeOverrides: (r['discount_code_overrides'] as Record<string, number>) ?? {},
     createdAt: (r['created_at'] as Date).toISOString(),
     updatedAt: (r['updated_at'] as Date).toISOString(),
   };
@@ -62,6 +63,7 @@ function settingsCols(s: CampSettings): Record<string, unknown> {
     form_imported_at: s.formImportedAt ?? null,
     tickets_imported_at: s.ticketsImportedAt ?? null,
     invoices_imported_at: s.invoicesImportedAt ?? null,
+    discount_code_overrides: s.discountCodeOverrides ?? {},
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   };
@@ -75,6 +77,7 @@ const UPDATE_COLS = [
   'checkin_window_am_start', 'checkin_window_am_end', 'checkin_window_pm_start', 'checkin_window_pm_end',
   'last_temp_passwords', 'last_exported_at',
   'defaults_saved_at', 'form_imported_at', 'tickets_imported_at', 'invoices_imported_at',
+  'discount_code_overrides',
   'updated_at',
 ] as const;
 

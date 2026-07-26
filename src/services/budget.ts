@@ -132,6 +132,37 @@ function scopeToRows(scope: Scope, fullAmount: number | null): CategoryRow[] {
 }
 
 /**
+ * Apply per-discount-code "paid in full" overrides before budgeting.
+ *
+ * Some registrants carry `registrationCost: 0` because a discount code was used to record a
+ * manual EFTPOS/cash payment taken at registration — the money WAS collected, but the ticket
+ * reads $0, so the budget buckets them as "Sponsored" and undercounts the total.
+ *
+ * Only a null/0 cost is filled. A genuinely recorded nonzero cost is never overwritten — an
+ * override is a statement about missing data, not a repricing.
+ *
+ * Pure; returns a new array and does not mutate its input. Output flows through computeBudget
+ * unchanged, so category bucketing, per-church totals, the grand total and the CSV export all
+ * pick it up for free.
+ */
+export function applyDiscountOverrides(
+  people: BudgetPerson[],
+  overrides: Record<string, number>,
+): BudgetPerson[] {
+  const keys = Object.keys(overrides);
+  if (keys.length === 0) return people.slice();
+  return people.map((p) => {
+    const code = (p.discountCode ?? '').trim();
+    if (!code) return p;
+    const amount = overrides[code];
+    if (amount == null) return p;
+    // Only fill missing/zero — never reprice a recorded cost.
+    if (p.registrationCost != null && p.registrationCost !== 0) return p;
+    return { ...p, registrationCost: amount };
+  });
+}
+
+/**
  * Compute the full budget report from a flat list of registrants.
  * @param people  registrants (campers + leaders) within the desired scope.
  * @param filterChurchId  if set, only this church is included and the grand total is scoped to it.

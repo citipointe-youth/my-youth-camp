@@ -23,5 +23,11 @@ export function makeSettingsController(services: SettingsControllerServices) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.settings.update(req.ctx.actor, req.body);
     },
+
+    async updateDiscountOverrides(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      const body = req.body as { overrides?: Record<string, number> };
+      return services.settings.updateDiscountCodeOverrides(req.ctx.actor, body?.overrides ?? {});
+    },
   };
 }

@@ -81,6 +81,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     // ----- Settings -----
     { method: 'GET', path: '/settings', auth: false, handler: (r) => settingsCtrl.get(r) },
     { method: 'PATCH', path: '/settings', auth: true, handler: (r) => settingsCtrl.update(r) },
+    { method: 'PATCH', path: '/settings/discount-overrides', auth: true, handler: (r) => settingsCtrl.updateDiscountOverrides(r) },
 
     // ----- Admin -----
     { method: 'POST', path: '/admin/mode', auth: true, handler: (r) => admin.setMode(r) },
