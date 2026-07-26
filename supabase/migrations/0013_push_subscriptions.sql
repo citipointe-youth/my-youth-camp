@@ -31,21 +31,8 @@ alter table notifications add column if not exists dedupe_key   text;
 create unique index if not exists notifications_dedupe_key_idx
   on notifications(dedupe_key) where dedupe_key is not null;
 
--- 3. The scheduler (D1). Vercel Hobby cron is daily-only, so the database drives the
---    tick instead. Keeping the schedule here means it lives in git, not just in prod.
-create extension if not exists pg_cron;
-create extension if not exists pg_net;
-
--- The secret is read from Vault at run time and is NEVER written into this migration.
--- One-time out-of-band setup, before this runs:
---   select vault.create_secret('<the-cron-secret>', 'cron_secret');
-select cron.schedule('camp-push-tick', '*/5 * * * *', $$
-  select net.http_get(
-    url     := 'https://my-youth-camp.vercel.app/internal/cron/tick',
-    headers := jsonb_build_object(
-      'Authorization',
-      'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')
-    ),
-    timeout_milliseconds := 25000
-  );
-$$);
+-- The SCHEDULER is deliberately NOT here — see `0014_push_cron_schedule.sql`.
+-- Split 2026-07-26: this file must be applied to prod BEFORE the code that writes
+-- `push_sent_at`/`dedupe_key` deploys, but the cron job must NOT start until the
+-- `/internal/cron/tick` route exists and `cron_secret` is in Vault. Applying them
+-- together would leave a scheduler firing every 5 minutes at a 404 for weeks.

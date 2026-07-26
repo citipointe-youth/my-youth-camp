@@ -1,6 +1,6 @@
-# 2026-07-26 — Web Push via Vercel Cron (design + privacy assessment)
+# 2026-07-26 — Web Push via scheduled tick (design + privacy assessment)
 
-**Status: DESIGN ONLY — nothing implemented, no migration applied, no source file touched.**
+**Status: DESIGN APPROVED — nothing implemented, no migration applied, no source file touched.**
 
 Supersedes and narrows `docs/superpowers/specs/2026-07-23-web-push-design.md` (referred to below as
 "the 07-23 spec"). That doc is still worth reading for the Layer A / Layer B framing; this one is
@@ -8,11 +8,34 @@ the current scope of record.
 
 Owner decisions treated as **fixed requirements** for this design:
 
-- Delivery channel is **Web Push only** (PWA), fired by **Vercel Cron**. No email, no SMS, no
+- Delivery channel is **Web Push only** (PWA), fired by a **scheduled tick**. No email, no SMS, no
   in-app polling.
 - Exactly **three triggers** are in scope (§3). Missed/incomplete check-in escalation to zone
   leaders is **out of scope**.
 - The owner specifically asked for the **privacy assessment** (§9) to be substantive.
+
+## 0. Owner review — 2026-07-26 (decisions applied throughout)
+
+This document was reviewed with the owner after first drafting. The decisions below are **applied
+inline** in every section, not appended as errata — where a section contradicted a decision it was
+rewritten. Recorded here so the reasoning is not lost.
+
+| # | Decision | Effect |
+|---|---|---|
+| D1 | **Scheduler is Supabase `pg_cron` + `pg_net`, not Vercel Cron.** The Vercel plan is Hobby (free), whose cron is limited to daily triggering — unusable for trigger 3. `pg_cron` 1.6.4 and `pg_net` 0.20.3 are available-but-not-installed on project `nwfafrgojqkxylbppywo`; `supabase_vault` is already installed. Cost: $0 vs ~US$20/mo for Vercel Pro | §4.1 rewritten. The route, its `CRON_SECRET` guard, and every job are **unchanged** — only the caller differs |
+| D2 | **Trigger 1 uses the §4.2 hybrid**: inline best-effort push from `incident.service.log()`, scheduled tick as sweeper | §4.2 promoted from proposal to design |
+| D3 | **Payload policy = Option C**, unchanged, including trigger 3's count exception | §9.1 unchanged |
+| D4 | **Trigger 3**: 60-minute lead, **both** AM and PM, **church logins only** (no zone-leader escalation), only when `remaining > 0`, and **only when `churchCheckinTimeRestricted === true`** | §3, §10 phase 3 |
+| D5 | **There are no communal devices.** Leaders log into their account on their **own personal phone**. A church login is a shared *account* installed on several leaders' individual phones — it is not one handset passed around. This contradicts the shared-device inference the first draft built §9.5 on | §9.4 and §9.5 rewritten; P2 High→Low, P8 downgraded |
+| D6 | **Logout keeps the subscription** (follows from D5 — logout is not a device hand-off, and a 24h token TTL means leaders re-login roughly daily) | §9.3 row changed |
+| D7 | **No admin "revoke all devices" UI.** Post-camp the owner locks accounts with the existing `churchLoginLocked` / `zoneLeaderLoginLocked` toggles | §9.3, and see D8 — the lock does **not** stop pushes on its own |
+| D8 | **NEW FINDING from D7.** `churchLoginLocked` / `zoneLeaderLoginLocked` are checked in exactly one place — `auth.service.login`, after the password check. They block **login only**. A push subscription is independent of any session, so a locked-out leader's phone would keep receiving camp pushes forever. **Closed by making the push audience resolver skip `status:'inactive'` users and login-locked roles** — which also closes P4, removes the need for D7's revoke UI, and is reversible (unlock restores alerts with no re-subscribe) | §4.9 (new), P13 |
+| D9 | **Advisory lock (old §5 Layer 1) deleted.** Session-level `pg_try_advisory_lock` is unsafe on a transaction pooler — the lock is taken on a connection returned to the pool mid-handler and can outlive the tick, wedging every subsequent run. Layer 2's atomic claim is a genuine guarantee alone | §5 |
+| D10 | **`canSeeNotification(actor, notif, now)` extracted** from `getActorFeed` and used by both the in-app feed and the push audience resolver | §4.9 (new) |
+
+Still open and **not blocking implementation** — organisational, needed before rollout to real
+leaders: old §12 questions 9 (third-party transfer posture), 10 (under-18 account holders),
+11 (privacy notice ownership), 12 (iOS install comms). Carried into §10 phase 7.
 
 ---
 
@@ -27,7 +50,7 @@ The 07-23 spec was written the night items 1-9 and 11 shipped. Parts of it are n
 | Proposed inventing `warnLeadMinutes` + reusing "`checkinWindowAm/PmEnd` from item 11" as if item 11 were hypothetical | Item 11 **shipped**: `settings.checkin_window_{am,pm}_{start,end}` (migration `0011`) exist, `churchCheckinTimeRestricted` defaults **true** in prod, and the pure helper `allowedWindowSession(days, today, nowTime, windows)` already exists in `src/services/checkin-sessions.ts` |
 | Proposed a `warned_checkin_sessions` marker table or a JSONB blob on `settings` | Superseded by the `notifications.dedupe_key` design in §5 — one mechanism covers all three triggers |
 | Next migration implied `0012` era numbering | Repo holds `0001`–`0012`; **next is `0013`** |
-| `sw.js` "bump CACHE" (then ~`camp-v33`) | `sw.js` is now **`camp-v43`** |
+| `sw.js` "bump CACHE" (then ~`camp-v33`) | `sw.js` is now **`camp-v45`** (the 2026-07-26 incident-alert batch stepped it v43→v45; an earlier draft of this doc said v43) |
 | Did not consider that a leaders-only notification body is encrypted at rest | Migration `0008` + `supabase.notifications.ts` encrypt `notifications.body` with AES-256-GCM **when `leadersOnly` is true**. The push sender therefore reads a *decrypted* body — see §9.1, this is the crux of the payload decision |
 | "Build Layer A first, Layer B later" | Still the right sequencing instinct, but Layer A for triggers 1 and 2 **already exists** (the in-app feed). This project is now almost purely Layer B plus one new Layer-A query (trigger 3) |
 
@@ -43,19 +66,24 @@ handlers only. That absence is precisely why these three items were deferred.
 Verified by reading the files, not assumed:
 
 - **`vercel.json`** — `regions: ["syd1"]`, `functions["api/index.ts"].maxDuration = 30`, and a
-  catch-all rewrite `"/(.*)" → "/api/index"`. **Consequence: any cron path lands on the Express
-  app**, so a cron route is just a normal entry in `src/api/http/router.ts` — no second serverless
-  function needed, and it inherits the same 30s ceiling.
-- **`api/index.ts`** — memoises `createAppInstance()` in `appPromise`. A cron invocation pays the
+  catch-all rewrite `"/(.*)" → "/api/index"`. **Consequence: any path lands on the Express
+  app**, so the tick route is just a normal entry in `src/api/http/router.ts` — no second serverless
+  function needed, and it inherits the same 30s ceiling. `vercel.json` itself is **not modified** by
+  this design (see D1 — no `crons` key is added).
+- **`api/index.ts`** — memoises `createAppInstance()` in `appPromise`. A tick invocation pays the
   same cold-start as a user request (container build + repo init). Irrelevant for correctness, but
-  it means a cron tick is not free.
+  it means a tick is not free.
 - **`src/api/http/types.ts`** — `HttpRequest` is `{ ctx, params, query, body, ip }`. **There is no
-  `headers` field.** Vercel Cron authenticates by sending `Authorization: Bearer $CRON_SECRET`, and
+  `headers` field.** The scheduler authenticates by sending `Authorization: Bearer $CRON_SECRET`, and
   the Express adapter currently reads `req.headers['authorization']` only inside `resolveContext`
-  for the app's own bearer tokens. So a cron route requires a **small adapter change**: add an
+  for the app's own bearer tokens. So the tick route requires a **small adapter change**: add an
   optional `headers?: Record<string, string | undefined>` to `HttpRequest` and populate it in
   `src/api/http/express-adapter.ts` (~line 116). This is the one non-obvious plumbing cost of the
-  whole feature and is easy to miss when planning.
+  whole feature and is easy to miss when planning. It is unaffected by D1 — the header check is
+  needed whoever calls the route.
+- **Supabase extensions** (verified on `nwfafrgojqkxylbppywo`, 2026-07-26) — `pg_cron` 1.6.4 and
+  `pg_net` 0.20.3 are **available but not installed**; `supabase_vault` 0.3.1 **is** installed.
+  This is what makes D1 possible at zero cost.
 - **`src/utils/date.ts`** — `nowISO()` is UTC; `zonedNow(tz)` / `zonedToday(tz)` return
   `{date:'YYYY-MM-DD', time:'HH:MM'}` in an IANA zone via `Intl`. `settings.timezone` holds the
   camp zone (`Australia/Brisbane` in prod; `checkin.service` falls back to `DEFAULT_TZ`).
@@ -74,7 +102,7 @@ Verified by reading the files, not assumed:
   alert's summary is ciphertext at rest and plaintext in the service layer.
 - **`src/utils/field-crypto.ts`** — envelope `v1.<keyId>.<iv>.<tag>.<ct>`, AES-256-GCM, AAD
   `"<table>:<column>:<id>"`, keys from `FIELD_ENCRYPTION_KEY` (+ `_PREV` for rotation).
-- **`public/sw.js`** — `CACHE = 'camp-v43'`; `API_RE` is an explicit allowlist of top-level API
+- **`public/sw.js`** — `CACHE = 'camp-v45'`; `API_RE` is an explicit allowlist of top-level API
   prefixes that must never be cached, with a loud comment that a missing prefix causes the SPA's
   HTML to be cached under an API URL. **`push` must be added to `API_RE`.**
 - **`public/manifest.json`** — `display: "standalone"`, maskable icons present. The app is already
@@ -96,7 +124,20 @@ Verified by reading the files, not assumed:
 |---|---|---|---|---|
 | 1 | **High-severity incident logged** | admin + director + zoneLeader (identical to the existing `leadersOnly` urgent notice) | as close to immediate as the design allows | the `Notification` row `incident.service.log()` already creates |
 | 2 | **Scheduled notice fires** | that notice's normal audience (`scope` + `leadersOnly` rules in `getActorFeed`) | within one cron tick of `scheduledFor` | `notifications.scheduled_for` (migration `0010`) |
-| 3 | **Check-in window closing soon** (~1h before the AM or PM window `End`) | the church accounts with students still unchecked for the closing session | within one cron tick | `settings.checkin_window_*` + `Person.checkInHistory` |
+| 3 | **Check-in window closing soon** (60 min before the AM or PM window `End`) | the church **logins** with students still unchecked for the closing session | within one tick | `settings.checkin_window_*` + `Person.checkInHistory` |
+
+**Trigger 3 firing conditions (D4), all required:**
+
+1. `settings.churchCheckinTimeRestricted === true`. When the toggle is off the window times still
+   exist but are not a real deadline, so "closing soon" would be misleading.
+2. Today (in `settings.timezone`) is in `settings.checkInDays`.
+3. The current zoned time is within 60 minutes of that session's window `End` — **both** AM and PM.
+4. `remaining > 0` for that login. Never send "0 students still to check in".
+5. Audience is **church logins only**. No zone-leader copy, no escalation — that feature stays out
+   of scope.
+
+Conditions 1–3 also gate whether the job runs its queries at all (§4.1), so the expensive
+person scan happens on roughly 24 ticks a day during camp week rather than all 288.
 
 Trigger 2 **replaces the lazy-fire model**: today a scheduled notice only appears when someone
 happens to open the app (`getActorFeed`'s `n.scheduledFor > now` filter). It keeps working exactly
@@ -108,67 +149,123 @@ additive on top of it.
 ## 4. Architecture
 
 ```
-Vercel Cron  ──►  GET /internal/cron/tick        (Authorization: Bearer $CRON_SECRET)
-                     │
-                     ├─ pg_try_advisory_lock('cron:push')   ← overlapping-run guard
-                     ├─ job A: fire due scheduled notices   (notifications.scheduled_for <= now)
-                     ├─ job B: create check-in-closing notices (dedupe_key, at most one per church×session)
-                     ├─ job C: claim unsent pushable notices (push_sent_at is null → set now())
-                     └─ job D: fan out web-push to push_subscriptions of the resolved audience
-                                  │  404/410 → delete the subscription row
-                                  │  429/5xx → failure_count++ (delete after N)
-                                  ▼
-service worker `push`  ──► showNotification(title, "Open the app…")
-service worker `notificationclick` ──► focus/open '/' + postMessage({type:'push-nav', screen})
+Supabase pg_cron ──► pg_net.http_get ──► GET /internal/cron/tick   (Authorization: Bearer $CRON_SECRET)
+    (*/5 * * * *)                            │
+                                             ├─ job B: create check-in-closing notices
+                                             │         (gated by §3 conditions 1-3; dedupe_key,
+                                             │          at most one per church-login × session)
+                                             ├─ job C: claim unsent pushable notices
+                                             │         (scheduled_for <= now OR immediate;
+                                             │          push_sent_at is null → set now())
+                                             └─ job D: resolve audience + fan out web-push
+                                                  │  audience = canSeeNotification() per user,
+                                                  │             minus inactive / login-locked (§4.9)
+                                                  │  404/410 → delete the subscription row
+                                                  │  429/5xx → failure_count++ (delete after 10)
+                                                  ▼
+                                       service worker `push`
+                                            ──► showNotification(title, "Open the app…")
+                                       service worker `notificationclick`
+                                            ──► focus/open '/' + postMessage({type:'push-nav', screen})
+
+incident.service.log(severity:'high')  ──► saves Notification ──► void sendPushForNotification(n)
+    (inline, best-effort, not awaited — D2)                          races job C safely via the claim
 ```
 
-### 4.1 Cron route and cadence
+Note there is no separate "job A". The old draft had job A fire due scheduled notices and job C
+claim them; in fact **the claim *is* the firing**. A scheduled notice needs no state change to
+become live — `getActorFeed` already reveals it the moment `scheduledFor <= now`. Job C's
+`push_sent_at` claim over `scheduled_for <= now()` is the whole of trigger 2.
 
-`vercel.json` gains:
+### 4.1 The scheduled tick — Supabase `pg_cron`, not Vercel Cron (D1)
 
-```json
-"crons": [{ "path": "/internal/cron/tick", "schedule": "*/5 * * * *" }]
+**Why not Vercel Cron.** The project is on Vercel's **Hobby (free)** plan, whose cron entitlement is
+daily triggering only — a `*/5` expression is accepted in `vercel.json` but fires once a day. That
+is fatal for trigger 3, which must notice a window closing within the hour. Vercel Pro (~US$20/mo
+per seat) would lift it. Not worth paying for, because the database already has a scheduler.
+
+**What replaces it.** `pg_cron` calls the same route over HTTP via `pg_net`, at the same cadence,
+with the same bearer secret. **Everything downstream of the HTTP request is identical** — the route,
+its guard, all three jobs, the claim, the fan-out. Only the caller changes.
+
+```sql
+-- in migration 0013, so the schedule is in git and reproducible
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+-- one-time, out of band (do NOT commit the secret to a migration):
+--   select vault.create_secret('<the-cron-secret>', 'cron_secret');
+
+select cron.schedule('camp-push-tick', '*/5 * * * *', $$
+  select net.http_get(
+    url     := 'https://my-youth-camp.vercel.app/internal/cron/tick',
+    headers := jsonb_build_object(
+      'Authorization',
+      'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')
+    ),
+    timeout_milliseconds := 25000
+  );
+$$);
 ```
-
-**One route, one cadence, all jobs.** Reasons:
-
-- Vercel Cron entitlement is a per-plan quota (number of jobs and minimum granularity). A single
-  job is the smallest possible ask and the least likely to hit a plan ceiling. **I do not know this
-  project's current Vercel plan limits and have not verified them** — confirm the plan allows
-  sub-daily cron before committing to `*/5` (see Open Questions).
-- Each job is a cheap query; running them in one warm invocation avoids three cold starts.
-- The catch-all rewrite means the path is served by the existing Express app, so this is a route
-  registration, not new infrastructure.
 
 **Why 5 minutes:** trigger 2 (a scheduled notice) is the one with a user-visible promise — an admin
 picks a minute in the SPA's `datetime-local` and expects delivery near it. 5 minutes is the worst-
-case skew; 15 would be noticeable. Triggers 1 and 3 are tolerant of 5 minutes in principle, but
-trigger 1 is safeguarding data and 5 minutes is a **real weakness** — see §4.2. `*/5` is 288
-invocations/day; if the plan only permits 96/day, fall back to `*/15` and accept the skew, or gate
-the cron to camp week only (see "what could go wrong").
+case skew; 15 would be noticeable. Trigger 1 no longer depends on the cadence at all under D2.
+Trigger 3's 60-minute lead window absorbs 5 minutes without difficulty.
+
+**Cost of the cadence.** 288 ticks/day, each a cold-ish serverless invocation. The tick must
+therefore be **cheap when there is nothing to do**: check the §3 conditions 1–3 *before* the job-B
+person scan, so the expensive path runs ~24 times a day during camp week and never outside it.
+Jobs C and D are indexed queries over `notifications` and are cheap unconditionally.
+
+**Things `pg_cron` gets you that Vercel Cron does not:** `select * from cron.job_run_details order
+by start_time desc limit 20` is a real execution history, and `select cron.unschedule
+('camp-push-tick')` is an instant kill switch that needs no deploy.
+
+**Things to watch, specific to this choice:**
+
+- The schedule lives in the database, not the repo, unless the `cron.schedule` call is in a
+  migration. **It must be in migration `0013`** — otherwise it exists only in prod and is invisible
+  to every future reader.
+- `pg_net` is **fire-and-forget and async**. It does not surface the HTTP response to the caller;
+  responses land in `net._http_response`. A 500 from the tick is therefore **silent** unless
+  someone looks. The tick handler must log its own outcome server-side (Vercel function logs) —
+  do not rely on the caller to notice failure.
+- A **paused Supabase project stops the scheduler** with no warning. The Supabase free tier pauses
+  projects after a week of inactivity; this project is in daily use during camp but could pause in
+  the off-season, and the schedule resumes on restore.
+- `pg_cron` schedules are interpreted in the **database's** timezone (UTC here). Irrelevant, because
+  §6 forbids wall-clock cron expressions and mandates a fixed interval — but do not "fix" this by
+  writing `0 1 * * *` and reasoning about Brisbane.
+- The secret is now in **two** places (Vault and the Vercel env var). Rotating means updating both.
+  Record this in `SECURITY-ACTIONS.md`.
 
 **The route is not part of the app's normal auth layer.** It is `auth: false` in the route table
 and instead compares `headers.authorization` to `Bearer ${process.env.CRON_SECRET}` using a
-constant-time compare (`crypto.timingSafeEqual`), 401 otherwise. `CRON_SECRET` is a Vercel
-env var marked Sensitive. Note the route path starts `/internal/` — add `internal` to `sw.js`'s
-`API_RE` too if the SPA is ever pointed at it (it should not be).
+constant-time compare (`crypto.timingSafeEqual`), 401 otherwise. `CRON_SECRET` is a Vercel env var
+marked Sensitive. The route path starts `/internal/`; **do not** add `internal` to `sw.js`'s
+`API_RE` — the SPA never calls it and the tick is server-to-server, so it never passes through a
+service worker.
 
-### 4.2 Trigger 1 latency — the one place I'd argue with the brief
+### 4.2 Trigger 1 fires inline, with the tick as sweeper (D2 — ACCEPTED)
 
-A high-severity incident is child-safeguarding data. A cron-only design means a zone leader logs
-"student X has been injured / has disclosed Y" and the director's phone buzzes **up to 5 minutes
-later**. That is defensible but not obviously right.
+A high-severity incident is child-safeguarding data. A tick-only design would mean a zone leader
+logs "student X has been injured / has disclosed Y" and the director's phone buzzes **up to 5
+minutes later**. The owner accepted the hybrid instead.
 
-**Recommended shape (hybrid):** `incident.service.log()` fires the push **inline, best-effort**,
-immediately after saving the notification — `void sendPushForNotification(notif).catch(log)`, not
-awaited, so a slow push service can never make the incident form hang or fail. The cron then acts
-as a **sweeper**: it picks up any notification with `push_sent_at is null` older than ~2 minutes and
-sends it, covering the case where the inline attempt died with the serverless function.
+**Design:** `incident.service.log()` fires the push **inline, best-effort**, immediately after
+saving the notification — `void sendPushForNotification(notif).catch(log)`, **not awaited**, so a
+slow or failing push service can never make the incident form hang or error. The scheduled tick then
+acts as a **sweeper**: job C picks up any notification with `push_sent_at is null` and sends it,
+covering the case where the inline attempt died with the serverless function before completing.
 
-This keeps the owner's "fired by Vercel Cron" requirement intact as the *guarantee* mechanism while
-removing the worst-case latency from the safeguarding path. The claim-row mechanism in §5 makes the
-two paths safe to run concurrently — whichever gets the row first wins, the other sends nothing.
-**Flagged as an open question** rather than assumed.
+The claim-row mechanism in §5 makes the two paths safe to run concurrently — whichever claims the
+row first sends, the other sends nothing. This is the reason the claim is non-negotiable rather
+than a nicety.
+
+**Testing consequence:** the inline path must be tested for the property that matters — that a
+throwing/slow `sendPushForNotification` does **not** reject `incident.service.log()`. A test that
+only asserts "push was called" misses the whole point of `void`.
 
 ### 4.3 VAPID key management
 
@@ -278,8 +375,8 @@ makes a future `supabase db push` re-apply or mis-order.
 
 ### 4.7 Service worker (`public/sw.js`)
 
-Two new top-level handlers, plus `CACHE` bumped **`camp-v43` → `camp-v44`** and `push` added to
-`API_RE`:
+Two new top-level handlers, plus `CACHE` bumped **`camp-v45` → `camp-v46`** and `push` added to
+`API_RE` (`internal` deliberately **not** added — see §4.1):
 
 ```js
 self.addEventListener('push', (e) => {
@@ -343,21 +440,91 @@ it.
   generic "not available in preview" toast.
 - **`sw.js` bump is required** because `public/index.html` changes.
 
+### 4.9 Audience resolution (D10, D8) — the piece the first draft left unspecified
+
+The original §4 said "fan out to the push_subscriptions of the resolved audience" without saying how
+the audience is resolved. It is the largest genuinely-unbuilt part of this feature and it has a trap
+in it.
+
+**The trap.** Today, audience lives in `notification.service.getActorFeed` as a *forward filter*:
+given an actor, which notices can they see? Push needs the **inverse**: given a notice, which users?
+Writing a second implementation of the same rules guarantees eventual drift — a leader pushed about
+a notice they cannot open, or (worse) a `leadersOnly` incident pushed to a church login whose feed
+correctly hides it. The rules are non-trivial: scope camp/zone/church, the `leadersOnly` role gate,
+the `scheduledFor` withhold, and admin/director seeing every scope.
+
+**The fix — one predicate, both directions:**
+
+```ts
+// src/services/notification-visibility.ts  (NEW, pure, no I/O)
+export function canSeeNotification(
+  actor: Pick<Actor, 'role' | 'zone' | 'churchId'>,
+  n: Notification,
+  nowIso: string,
+): boolean
+```
+
+Lift the body of `getActorFeed`'s `.filter()` into it verbatim. Then:
+
+- `getActorFeed` becomes `active.filter((n) => canSeeNotification(actor, n, now))` — **no behaviour
+  change**, and that is exactly what its existing tests should prove.
+- The push audience resolver loads all users once and returns
+  `users.filter((u) => canSeeNotification(actorFromUser(u), n, now))`.
+
+A single test asserting the two agree over a matrix of (role × scope × leadersOnly) is then
+meaningful, because there is only one rule set to be right about.
+
+**Then subtract the accounts that must not be reached (D8).** This is the finding that came out of
+the owner's "accounts are locked after camp" answer. `churchLoginLocked` and
+`zoneLeaderLoginLocked` are read in **exactly one place** — `auth.service.login`, after the password
+check (verified). They block **login**. A push subscription is independent of any session, so
+without this step a locked-out leader's phone keeps receiving camp pushes indefinitely, and the
+owner's post-camp lock would create a false sense of closure.
+
+```ts
+function isPushSuppressed(u: User, s: CampSettings): boolean {
+  if (u.status !== 'active') return true;                          // closes P4
+  if (u.role === 'church'     && s.churchLoginLocked)     return true;
+  if (u.role === 'zoneLeader' && s.zoneLeaderLoginLocked) return true;
+  return false;
+}
+```
+
+Three properties make this the right shape rather than deleting subscription rows:
+
+- **It reuses the control the owner already relies on.** Locking accounts after camp now genuinely
+  stops everything, which is what they assumed it did.
+- **It is reversible.** Unlocking for next camp restores alerts with no device re-subscribe, no
+  re-consent, no support cost. A row delete would silently require every leader to opt in again.
+- **It removes the need for an admin "revoke all devices" screen** (D7). Deactivating an account is
+  now the lost-phone runbook, and it is a control that already exists on the Accounts screen.
+
+Deliberately **not** suppressed: `mustChangePassword`. That blocks app use but says nothing about
+whether the human should be alerted, and suppressing it would silently mute a leader who has simply
+not got round to changing a temp password.
+
+**Cost note.** The resolver loads the full `users` table per notification. That is tens of rows
+here, not thousands — no index work needed. If job C claims several notices in one tick, load users
+**once** and reuse across them.
+
 ---
 
 ## 5. Idempotency / delivery-once
 
-Cron runs can overlap (a slow run still executing when the next tick starts) and Vercel may retry.
-A leader must never be pushed the same thing twice. Three layers, cheapest first:
+Ticks can overlap (a slow run still executing when the next one starts), the inline incident path
+(§4.2) races the sweeper by design, and `pg_net` may deliver a duplicate request. A leader must never
+be pushed the same thing twice. Two layers:
 
-**Layer 1 — an advisory lock around the whole tick.**
-`select pg_try_advisory_lock(hashtext('cron:push'))` at the top of the handler; if it returns false,
-return `{skipped:'locked'}` and exit. Released on completion (and automatically when the connection
-closes, which matters on a function timeout). This alone prevents the common case. It is **not**
-sufficient on its own — the transaction-pooler connection model means "the same session" is not
-guaranteed across the whole handler, so treat this as an optimisation, not a guarantee.
+> **An earlier draft had a third layer — `pg_try_advisory_lock(hashtext('cron:push'))` around the
+> whole tick — and it has been DELETED (D9).** It is not merely redundant here, it is actively
+> unsafe: this app reaches Postgres through Supabase's **transaction pooler**, where a
+> *session*-level advisory lock is taken on a backend connection that is returned to the pool
+> partway through the handler. The lock can outlive the tick and wedge every subsequent run until
+> the backend recycles, with no error anywhere. Layer 2 below is a genuine guarantee on its own and
+> needs no help. If a future change ever does want a lock, it must be `pg_advisory_xact_lock`
+> inside an explicit transaction, never the session form.
 
-**Layer 2 — atomic claim, the actual guarantee.**
+**Layer 1 — atomic claim, the actual guarantee.**
 Delivery is gated on a single-statement conditional update:
 
 ```sql
@@ -376,16 +543,21 @@ permanently. That is the right trade for this app — a duplicate lock-screen sa
 worse than a missed one, and the **in-app feed is the guaranteed channel** in every case. Do not
 "fix" this by claiming after send.
 
-**Layer 3 — `dedupe_key` for anything the cron *creates*.**
-Trigger 3 has no pre-existing row: the cron must create the "window closing" notice itself. Its
+**Layer 2 — `dedupe_key` for anything the tick *creates*.**
+Trigger 3 has no pre-existing row: the tick must create the "window closing" notice itself. Its
 key is deterministic:
 
 ```
 checkin-warn:<sessionId>:<churchUserId>      e.g. checkin-warn:2026-09-29~am:usr_abc
 ```
 
+Keyed on the **church login id, not the church id** — church accounts are gender-scoped
+(`b-`/`g-`), so `b-victory` and `g-victory` are two audiences with two different counts and must be
+able to hold two separate notices for the same session.
+
 Inserted with `on conflict (dedupe_key) do nothing`. Two overlapping runs, or twelve consecutive
-ticks inside the one-hour lead window, still produce exactly **one** notice per church per session —
+ticks inside the one-hour lead window, still produce exactly **one** notice per church login per
+session —
 and, because pushing is gated on `push_sent_at`, exactly one push. This replaces the 07-23 spec's
 `warned_checkin_sessions` marker table with a mechanism that also serves triggers 1 and 2. The
 markers are purged for free by `admin.service` `reset` / `newYear` (which already truncate
@@ -395,9 +567,9 @@ markers are purged for free by `admin.service` `reset` / `newYear` (which alread
 
 | Trigger | Row created by | Dedupe |
 |---|---|---|
-| 1 — incident | `incident.service.log()` (exists today) | `push_sent_at` claim; inline send and cron sweeper race safely |
+| 1 — incident | `incident.service.log()` (exists today) | `push_sent_at` claim; inline send and tick sweeper race safely |
 | 2 — scheduled notice | the author, via `RENDER.compose` (exists today) | `push_sent_at` claim; `scheduled_for <= now()` selects it |
-| 3 — window closing | the **cron** | `dedupe_key` unique insert, then `push_sent_at` claim |
+| 3 — window closing | the **tick** (job B) | `dedupe_key` unique insert, then `push_sent_at` claim |
 
 **Per-device duplicates** are separately prevented by the `endpoint` unique constraint (a device
 that re-subscribes replaces its row rather than adding one) and by the SW's `tag` (a repeat with the
@@ -410,7 +582,9 @@ same tag replaces the visible notification rather than stacking).
 Everything operational in this app is **Australia/Brisbane, UTC+10, no DST** — which removes the
 hardest class of bug but not the offset bug.
 
-**Vercel Cron schedules are UTC.** The rule that follows:
+**Scheduler expressions are UTC** — true of Vercel Cron, and equally true of `pg_cron`, which runs
+in the database's timezone (UTC on Supabase). D1 does not change this rule or soften it. The rule
+that follows:
 
 > **Never encode a wall-clock time in the cron expression.** Run a frequent fixed-interval tick
 > (`*/5 * * * *`) and do *all* date/time reasoning inside the handler with
@@ -477,6 +651,14 @@ One file, `supabase/migrations/0013_push_subscriptions.sql`:
 2. `alter table push_subscriptions enable row level security;` (no policies, matching `0002`)
 3. `alter table notifications add column if not exists push_sent_at timestamptz;`
 4. `alter table notifications add column if not exists dedupe_key text;` + partial unique index
+5. `create extension if not exists pg_cron;` + `create extension if not exists pg_net;` (D1)
+6. `select cron.schedule('camp-push-tick', '*/5 * * * *', $$ … $$);` (§4.1) — **the schedule belongs
+   in the migration**, or it exists only in prod and is invisible to every future reader. The
+   secret is read from Vault at run time and is **never written into the migration**.
+
+The Vault secret itself (`select vault.create_secret('<secret>', 'cron_secret')`) is a one-time
+out-of-band step, like the post-deploy admin password — it is not in the migration and must be in
+the phase-1 runbook or the scheduled tick will 401 forever, silently (P14).
 
 Additive and safe to apply **before** the code push (unlike migration `0012`, which had to follow
 its code). Note the standing project rule that `supabase.settings` writes *all* settings columns on
@@ -641,11 +823,12 @@ correlating endpoint → device → human is trivial for anyone with the DB.
 
 | Event | Action | Rationale |
 |---|---|---|
-| **Explicit logout** (`logout()`) | `unsubscribe()` + `DELETE /push/subscribe` | A logout on a camp device usually means the device is being handed on. Re-subscribing after the next login is one tap and raises **no** new OS prompt (permission is already granted), so the friction is near-zero. **Recommended: yes, always** — the simple rule beats a role-conditional one. |
+| **Explicit logout** (`logout()`) | **keep** (D6) | Reversed from the first draft, which assumed logout meant a device hand-off. Under D5 the phone is the leader's own, so logout is routine — and with a 24h token TTL (`TOKEN_TTL_MS`, `auth.service.ts:10`; note `CLAUDE.md` says 12h and is wrong) leaders re-login roughly daily. Deleting would force a daily re-tap and feed straight into the alert-fatigue failure mode. |
 | **Session expiry** (24h TTL, no explicit logout) | keep | Otherwise every leader loses alerts overnight, which defeats the feature. |
-| **Account deactivated** (`account.service` `toggleStatus`) | delete that user's rows explicitly | The FK cascade only fires on *delete*, not deactivate. Must be added or a deactivated account keeps receiving safeguarding alerts — a real hole given the app's documented stateless-token trade-off (a deactivated user's token already stays valid to its TTL). |
+| **Account deactivated** (`account.service` `toggleStatus`) | **keep the row; suppress at send time** (§4.9) | Changed from the first draft's "delete". Suppression closes P4 just as effectively, and is reversible — reactivating restores alerts without every device re-subscribing and re-consenting. The FK cascade point still stands: it fires on *delete*, not deactivate, so something had to handle this either way. |
+| **Role login-locked** (`churchLoginLocked` / `zoneLeaderLoginLocked`) | **suppress at send time** (§4.9) | **NEW — D8.** Not in the first draft at all. This is the owner's post-camp control and it blocks login only; without the resolver check, locked-out leaders' phones keep buzzing indefinitely. |
 | **Account deleted** | automatic | `on delete cascade`. |
-| **Church passwords randomised** (`POST /accounts/churches/randomize-passwords`) | delete all `role='church'` subscriptions | Passwords are being redistributed; the set of humans behind those accounts is changing. |
+| **Church passwords randomised** (`POST /accounts/churches/randomize-passwords`) | delete all `role='church'` subscriptions | Passwords are being redistributed; the set of humans behind those accounts is changing. Unlike deactivation this is **not** reversible in intent — the previous holders should not silently keep alerts. |
 | **New-year rollover** (`admin.service.newYear`) | delete all | The rollover already purges people and transient data; device registrations from last year's leaders must not survive into a new camp with a partly different team. **This needs an explicit `pushSubscriptionRepo.deleteAll()` call — it is not automatic.** |
 | **Factory reset** (`admin.service.reset`) | delete all | Same. |
 | **404 / 410 from the push service** | delete immediately | Standard, and the main self-cleaning mechanism. |
@@ -682,69 +865,80 @@ Additional points:
 - **Record the consent version** (`consent_version` on the row). If the trigger set or the payload
   policy changes materially — especially if anyone ever argues for more detail in the payload — the
   card should re-prompt rather than silently expand the scope of what was agreed to.
-- **Church accounts are shared logins**, so "consent" is being given by whoever happens to be
-  holding the device, on behalf of an account others also use. This is a genuine weakness in the
-  consent model and cannot be fixed technically at this account granularity. Mitigation is
-  organisational: tell church leaders in the pre-camp briefing what the app will push.
+- **Shared account, individual device (D5).** A church login such as `b-victory` is used by several
+  leaders, but each installs it on **their own phone** and taps "turn on alerts" for themselves. So
+  consent is given per person for their own device, which is the granularity that matters. The
+  first draft treated this as a serious weakness on the belief that one handset was passed around;
+  that belief was wrong and the finding is withdrawn. What remains is milder and worth a line in the
+  pre-camp briefing: a leader enabling alerts is opting **their** phone into that church's alerts,
+  and their colleagues' phones are enrolled or not independently.
 - **Under-18 leaders**: if any youth leader with an account is themselves a minor, they are a data
   subject too, and the org's usual consent posture for minors applies to *their* device
-  registration. Not assessed here — I do not know whether any account holder is under 18.
+  registration. Not assessed here — still open (§0).
 
-### 9.5 Risk if a device is lost or shared
+### 9.5 Risk on a personal device (REWRITTEN — D5)
 
-**This is the highest-severity finding and it is specific to this app, not a generic caveat.**
+**The first draft called this "the highest-severity finding". That assessment rested on an
+inference that turned out to be false, and is withdrawn.**
 
-The app **already assumes camp devices are shared between leaders.** That is not speculation — it is
-a built feature: `promptInitials(true)` behind the header `✎` badge exists precisely as "a different
-leader has taken the device", `enforceInitials()` runs at every login for church accounts, and
-`LEADER_INITIALS` is stored per account in `localStorage['ycp_initials_<user>']` so it can be
-switched without logging out. The whole initials mechanism exists because one login is used by many
-humans on one or more phones.
+The draft reasoned from `promptInitials(true)`, `enforceInitials()` and
+`localStorage['ycp_initials_<user>']` that camp devices are physically passed between leaders. The
+owner confirms they are not: **leaders log into their account on their own personal phone.** A
+church login is a shared *account* installed on several individually-owned handsets. The initials
+mechanism is explained equally well by that — it disambiguates *which human* is acting under a
+shared login, not which human is holding a shared phone.
 
-Overlay Web Push on that:
+What that changes:
 
-- A notification fires on a device currently in the hands of **whichever leader took it last** —
-  possibly one who was never intended to see that alert, and (for a church-held device) possibly in
-  a room with students.
-- **`userVisibleOnly: true` means we cannot suppress it.** There is no "check who's holding the
-  device first" — the service worker is obliged to show something for every push received. This is
-  why §9.1's payload rule is not merely prudent but load-bearing: it is the *only* control available
-  on this surface.
-- **The app's own scoping controls do not apply to the OS notification.** `leadersOnly`,
-  `canAccessPerson`, and the `b-`/`g-` gender scoping all operate inside the authenticated app. A
-  lock-screen banner is outside all of them.
-- **A lost or stolen phone keeps receiving alerts** until someone deletes the subscription. The
-  server has no signal that the device is lost. Mitigations: the logout-deletes-subscription rule
-  (§9.3), an admin ability to revoke all devices for an account (worth building — it is one delete
-  by `user_id`, and it is the "leader lost their phone at camp" runbook), and OS-level device wipe
-  which the org does not control.
-- Under the recommended payload, the worst-case disclosure to a bystander is: *this camp has an
-  urgent alert right now*, or *this church has 3 students unchecked*. That is an acceptable
-  residual. Under Option A it would be a named minor's incident summary on a shared phone — which is
-  the reason Option A is rejected outright.
+- **"Alert fires in front of the wrong leader" drops from High to Low** (P2). A leader's own phone
+  showing their own church's alert is the intended behaviour, not a leak.
+- The residual disclosure surface is the ordinary one: a personal phone's **lock screen**, visible to
+  anyone near it — on a table, in a pocket-out moment, in a room that may contain students.
 
-**Also worth stating plainly:** trigger 1's audience is admin/director/zoneLeader, who are more
-likely to hold personal, individually-owned phones. Trigger 3's audience is **church accounts** —
-the shared-device population. The recommended payload split (generic for 1, count-bearing for 3)
-happens to align correctly with that, but it aligned by design, and any future change to trigger 3's
-payload should be assessed against the shared-device assumption specifically.
+What does **not** change, and why §9.1's payload rule stays exactly as written:
+
+- **`userVisibleOnly: true` means we cannot suppress a notification.** The service worker is obliged
+  to show something for every push received. There is no "decide at display time" option, on any
+  device, personal or not.
+- **The app's own scoping controls do not reach the OS notification.** `leadersOnly`,
+  `canAccessPerson` and the `b-`/`g-` gender scoping all operate inside the authenticated app. A
+  lock-screen banner is outside all of them, on a personal phone as much as a shared one.
+- So the payload rule is still the **only** control available on this surface. It costs nothing to
+  keep and it is what makes the residual acceptable: the worst-case disclosure to a bystander is
+  *this camp has an urgent alert right now*, or *this church has 3 students unchecked*. Under
+  Option A it would be a named minor's incident summary on a lock screen — personal phone or not,
+  that is why Option A is rejected.
+
+**Lost or stolen phone.** Still real, and now the main scenario in this section rather than a
+footnote. The server has no signal that a device is lost, and a personal phone is more likely to be
+lost off-site than a device that lives in a camp office. Under D7 there is no admin
+revoke-all-devices button; the remedy is **deactivate the account** (Accounts screen), which §4.9's
+resolver turns into an immediate stop on all that account's pushes. Reactivating restores them. This
+is a better runbook than the draft's proposed delete-by-`user_id`, because it is one existing
+control, it is reversible, and it stops app access at the same time.
+
+**Post-camp.** The owner's practice is to lock church and zone-leader logins with the existing
+settings toggles. §4.9/D8 makes that stop pushes too — without it, the lock would stop logins while
+every enrolled phone kept receiving camp alerts indefinitely.
 
 ### 9.6 Risk table
 
 | # | Risk | Severity | Likelihood | Mitigation |
 |---|---|---|---|---|
 | P1 | Safeguarding detail (incident summary, student name) rendered on a lock screen | **High** | High, if payloads are not constrained | §9.1 rule: no server-stored body ever enters a payload. Fixed templates + a unit test asserting the summary is absent |
-| P2 | Shared/handed-on device shows an alert to the wrong leader, or to a student in the room | **High** | High — shared devices are a designed-for reality (`promptInitials`) | Generic payloads (P1); consent copy tells leaders to keep the device locked; admin "revoke all devices for this account" |
-| P3 | Lost/stolen device keeps receiving alerts indefinitely | Medium | Medium | Delete subscription on logout; admin revoke-all-devices; 404/410 pruning; 90-day inactivity sweep |
-| P4 | Deactivated account still receives alerts (FK cascade doesn't fire on deactivate) | Medium | High if not explicitly handled | Explicit delete in `account.service.toggleStatus`; covered by a test |
+| P2 | Alert renders on a lock screen visible to a bystander (incl. a student in the room) | **Low** (was High) | Medium | **Downgraded by D5** — devices are personal, not passed between leaders, so the "wrong leader sees it" case largely disappears. Residual is ordinary lock-screen visibility, held to "an alert exists" by the §9.1 payload rule; consent copy asks leaders to keep the phone locked |
+| P3 | Lost/stolen device keeps receiving alerts indefinitely | Medium | Medium | **Deactivate the account** → §4.9 resolver stops all its pushes immediately and reversibly; 404/410 pruning; 90-day inactivity sweep. (Logout no longer deletes — D6) |
+| P4 | Deactivated account still receives alerts (FK cascade doesn't fire on deactivate) | Medium | High if not explicitly handled | `isPushSuppressed` skips `status!=='active'` in the audience resolver (§4.9); covered by a test |
 | P5 | Device registrations survive the new-year rollover into a different leadership team | Medium | High if not explicitly handled | `deleteAll()` in `admin.service` `newYear` **and** `reset`; covered by a test |
 | P6 | Third-party relay metadata (endpoint, timing, frequency) profiles the leadership group | Low–Medium | Certain — unavoidable given the channel | Accept and document. Subjects are leaders, not minors. Minimise message volume (three triggers only, dedupe enforced) |
 | P7 | Subscription keys (`p256dh`/`auth`) exposed by a raw DB read | Low | Low | Encrypt both with the existing `field-crypto` codec + per-row AAD; RLS on the table |
-| P8 | Consent is illusory — permission prompt only, on a shared account | Medium | High without the consent step | In-app consent copy before `requestPermission()`; `consent_version` recorded; pre-camp briefing |
+| P8 | Consent is uninformed — the browser prompt says nothing about what will be sent | **Low–Medium** (was Medium) | High without the consent step | **Downgraded by D5** — each leader consents on their own phone, so the "consenting on behalf of others" problem is gone. In-app consent copy before `requestPermission()`; `consent_version` recorded; pre-camp briefing |
 | P9 | Leaders believe alerts are on when they are not (iOS not installed, icon deleted, Focus mode, permission denied) → an alert is assumed delivered and isn't | Medium | High | The in-app feed remains the guaranteed channel; explicit per-state UI (§4.8); admin readout of how many accounts have a registered device |
-| P10 | Duplicate pushes from overlapping cron runs desensitise leaders to urgent alerts | Low | Medium without the claim design | `push_sent_at` atomic claim + `dedupe_key` + advisory lock + SW `tag` (§5) |
+| P10 | Duplicate pushes from overlapping ticks (or the inline/sweeper race) desensitise leaders | Low | Medium without the claim design | `push_sent_at` atomic claim + `dedupe_key` + SW `tag` (§5). The advisory lock is **deleted** — D9 |
 | P11 | Timezone error silently disables (or spuriously fires) trigger 3 for the whole camp | Medium | Medium — this bug class has already occurred twice here | `zonedNow(settings.timezone)` only; no wall-clock cron expressions; a test pinned at 09:00 Brisbane / 23:00 UTC previous day |
-| P12 | Cron secret leaks → an attacker can force-fire notices | Low | Low | `CRON_SECRET` marked Sensitive in Vercel; constant-time compare; the route only *delivers* already-authored rows, it cannot author content |
+| P12 | Tick secret leaks → an attacker can force-fire notices | Low | Low | `CRON_SECRET` marked Sensitive in Vercel **and** stored in Supabase Vault (two places to rotate — note it in `SECURITY-ACTIONS.md`); constant-time compare; the route only *delivers* already-authored rows, it cannot author content |
+| **P13** | **Post-camp login lock does not stop pushes.** `churchLoginLocked`/`zoneLeaderLoginLocked` are read only in `auth.service.login`; a subscription is session-independent, so locked-out leaders' phones keep receiving camp alerts indefinitely — while the owner believes the lock closed everything | **Medium** | **Certain if not handled** — this is the owner's actual post-camp practice | `isPushSuppressed` checks both lock flags in the audience resolver (§4.9/D8); test asserts a locked church role resolves to an empty audience |
+| P14 | `pg_net` is fire-and-forget, so a 500 from the tick is silent — the feature can stop working with no signal | Medium | Medium | Tick logs its own outcome (Vercel function logs); `cron.job_run_details` and `net._http_response` are checkable; the in-app feed is unaffected either way |
 
 ---
 
@@ -753,54 +947,75 @@ payload should be assessed against the shared-device assumption specifically.
 Phased, with a stop/go gate between infrastructure and delivery. Each phase is independently
 shippable and independently revertible.
 
-1. **Cron plumbing only.** Add `headers` to `HttpRequest` + the Express adapter; add
+1. **Tick plumbing only.** Add `headers` to `HttpRequest` + the Express adapter; add
    `GET /internal/cron/tick` (`auth:false`, `CRON_SECRET` constant-time guard) returning a stub;
-   add the `crons` entry to `vercel.json`; set `CRON_SECRET`. Tests: missing/wrong secret 401s,
-   correct secret 200s. **Verify in prod that the cron actually fires** (Vercel deployment logs)
-   before building anything on top of it — this is the assumption most likely to be wrong.
+   set `CRON_SECRET` in Vercel **and** `vault.create_secret(..., 'cron_secret')` in Supabase; enable
+   `pg_cron` + `pg_net` and register the schedule. Tests: missing/wrong secret 401s, correct secret
+   200s. **Verify in prod that the tick actually fires** — `select * from cron.job_run_details order
+   by start_time desc limit 5`, cross-checked against the Vercel function log — before building
+   anything on top of it. This is the assumption most likely to be wrong, and `pg_net`'s
+   fire-and-forget nature (P14) means nothing else will tell you.
+   *(`vercel.json` is NOT modified — D1.)*
 2. **Migration `0013`** applied to prod (additive, safe ahead of code), plus the
    `schema_migrations` version reconciliation (§4.6). Entity + repo trio (`interfaces`,
    `memory`, `supabase`) + `container.ts` wiring for `push_subscriptions`; `Notification` gains
    `pushSentAt`/`dedupeKey` and the on-conflict list is widened. No behaviour yet.
+   **Also in this phase, because everything later depends on it:** extract
+   `canSeeNotification()` (§4.9/D10) and refactor `getActorFeed` onto it — a pure refactor whose
+   existing notification tests must pass **unchanged**, which is the proof it changed nothing.
 3. **Trigger 3's detection logic, in-app only (no push).** Pure function in a new
    `src/services/checkin-warnings.ts` — `churchesBehind(settings, people, users, now)` returning
    `{ userId, churchId, sessionId, remaining, windowEnd }`, unit-tested with no I/O, **including a
-   Brisbane-vs-UTC boundary case**. Wire it into the cron to create the `dedupe_key`'d urgent
-   church-scoped `Notification`. **This ships real value with zero push infrastructure and zero new
-   personal data** — the 07-23 spec's "Layer A first" argument, still correct.
+   Brisbane-vs-UTC boundary case**. Gate on all five §3 conditions (notably
+   `churchCheckinTimeRestricted === true` — D4). Wire it into the tick to create the `dedupe_key`'d
+   urgent church-scoped `Notification`. **This ships real value with zero push infrastructure and
+   zero new personal data** — the 07-23 spec's "Layer A first" argument, still correct.
    ⚠ **Gender-scoping gotcha:** church logins are `b-`/`g-` and gender-scoped via
    `users.gender_scope`. "Students still unchecked" must be computed **per login** through
    `canAccessPerson`, not per church — otherwise a `b-victory` login is told about girls it cannot
    see or act on, and the counts will be wrong and unactionable.
 4. **VAPID + subscribe/unsubscribe API.** `web-push` dependency; `VAPID_*` env vars;
-   `GET /push/config`, `POST /push/subscribe`, `DELETE /push/subscribe`; the deletion hooks of §9.3
-   (logout, deactivate, randomise-passwords, newYear, reset) with tests. Still no sending.
+   `GET /push/config`, `POST /push/subscribe`, `DELETE /push/subscribe`; the retention hooks of §9.3
+   — **deletion** on randomise-passwords / `newYear` / `reset`, and **suppression** (not deletion)
+   for inactive and login-locked accounts via `isPushSuppressed` (§4.9). Logout does **not** delete
+   (D6). Tests for each, including P13's locked-role case. Still no sending.
 5. **Service worker + client opt-in UI.** `sw.js` `push` + `notificationclick`, `CACHE`
-   `camp-v43`→`camp-v44`, `push` added to `API_RE`; the home "Alerts on this device" card with all
+   `camp-v45`→`camp-v46`, `push` added to `API_RE`; the home "Alerts on this device" card with all
    four states; the consent copy; the iOS install prompt. **Requires real-device verification** —
    an iPhone installed to Home Screen, an Android Chrome, and one Safari-tab negative case. This
    cannot be verified by `typecheck` + `vitest`; the repo has already been bitten by exactly that
    (the incidents screen shipped with no DOM container and unit tests never noticed).
-6. **Sender + pruning.** The push service (fixed payload templates), the `push_sent_at` claim, the
-   fan-out with bounded concurrency (`Promise.allSettled`, cap ~10), 404/410 pruning, failure
-   counting. Enable **trigger 2 first** (lowest sensitivity — an ordinary broadcast notice), verify
-   on real devices, then **trigger 3**, then **trigger 1** last (highest sensitivity, and the one
-   whose latency design may still change per §4.2).
-7. **Docs + comms.** `CLAUDE.md` section, `SECURITY-ACTIONS.md` entry for `VAPID_PRIVATE_KEY` and
-   `CRON_SECRET`, the privacy-notice text for the org, and the pre-camp leader briefing covering
-   Add-to-Home-Screen and the re-login it forces.
+6. **Sender + pruning.** The push service (fixed payload templates), the audience resolver (§4.9),
+   the `push_sent_at` claim, the fan-out with bounded concurrency (`Promise.allSettled`, cap ~10),
+   404/410 pruning, failure counting. Enable **trigger 2 first** (lowest sensitivity — an ordinary
+   broadcast notice), verify on real devices, then **trigger 3**, then **trigger 1** last (highest
+   sensitivity; its inline hybrid per D2 lands here).
+7. **Docs + comms.** `CLAUDE.md` section, `debug.md` symbol-map entries, `SECURITY-ACTIONS.md`
+   entries for `VAPID_PRIVATE_KEY` and for `CRON_SECRET` **living in two places** (Vercel env +
+   Supabase Vault), the privacy-notice text for the org, and the pre-camp leader briefing covering
+   Add-to-Home-Screen and the re-login it forces. **Also close the four organisational questions
+   still open in §0** — third-party transfer posture, under-18 account holders, privacy-notice
+   ownership, and who delivers the iOS install comms. These do not block phases 1–6 but do block
+   rollout to real leaders.
 
-**Gate between 3 and 4:** the owner confirms the §9.1 payload recommendation and the §9.3 retention
-policy, and the Vercel plan's cron entitlement is verified.
+**Gate between 3 and 4:** phase 1's prod verification passed (the tick demonstrably fires), and
+phase 3's notices are appearing correctly in-app for a real camp day. Payload policy (D3) and
+retention (D6–D8) are already signed off, so they are no longer gates.
 
 ---
 
 ## 11. What could go wrong
 
-- **The Vercel plan doesn't allow `*/5`.** Most likely blocker, and it is a plan/billing question,
-  not an engineering one. Fallbacks: `*/15` (accept the skew on trigger 2), or the §4.2 hybrid so
-  trigger 1 is inline and cron is only a sweeper. Verify before phase 1.
-- **Cron fires but the function cold-starts past `maxDuration: 30`.** The tick does DB work plus
+- **~~The Vercel plan doesn't allow `*/5`.~~ CONFIRMED AND RESOLVED.** The plan is Hobby, which does
+  not. Resolved by D1 (Supabase `pg_cron`), not by paying. The residual risks moved to the two
+  bullets below.
+- **`pg_cron`/`pg_net` don't behave as expected in this Supabase project.** Neither extension is
+  currently installed, so phase 1's prod verification is a genuine test, not a formality. If
+  `pg_net` cannot reach the Vercel domain (egress restrictions, TLS, timeout), fall back to Vercel
+  Hobby's daily cron for the sweeper + accept that trigger 3 needs Vercel Pro.
+- **A paused Supabase project silently stops the scheduler.** Off-season risk. The in-app feed keeps
+  working, so the failure is degraded-not-broken, but nobody is told.
+- **Tick fires but the function cold-starts past `maxDuration: 30`.** The tick does DB work plus
   N outbound HTTPS calls. With ~40 subscriptions this is fine; if fan-out ever grows, cap the
   per-tick send count and let the next tick continue (the `push_sent_at` claim makes that safe).
 - **The `HttpRequest.headers` addition ripples.** It touches a core interface used by every route
@@ -830,31 +1045,24 @@ policy, and the Vercel plan's cron entitlement is verified.
 
 ---
 
-## 12. Open questions for the owner
+## 12. Open questions — status after owner review
 
-1. **Trigger-1 latency.** Is up to 5 minutes acceptable for a high-severity incident alert, or
-   should `incident.service.log()` fire the push inline (best-effort, not awaited) with cron as the
-   sweeper (§4.2)? I recommend the hybrid; it is a deviation from "fired by Vercel Cron" as
-   literally stated.
-2. **Vercel plan cron entitlement** — how many cron jobs and what minimum granularity does the
-   current plan allow? `*/5` is 288 invocations/day. I have not verified this and it gates the
-   cadence.
-3. **Payload policy sign-off.** Confirm §9.1 Option C (title-only, "open the app"), including the
-   one exception: trigger 3 carries a **count** and a window-close time. Anyone wanting more detail
-   on a lock screen needs to own that decision explicitly.
-4. **Trigger-3 lead time.** ~60 minutes before the window `End` — confirm? And should it fire for
-   both AM and PM windows, or PM only?
-5. **Trigger-3 gating.** Should the reminder run only when `churchCheckinTimeRestricted === true`
-   (currently true in prod)? If the toggle is switched off, the window times still exist but are no
-   longer a real deadline — a "closing soon" alert arguably becomes misleading.
-6. **Trigger-3 audience.** Church accounts only, as specified. Should the zone leader also be
-   copied when a church is still behind at, say, 15 minutes to close? (This edges toward the
-   escalation feature explicitly declared out of scope — confirm it stays out.)
-7. **Logout behaviour.** Confirm that logging out deletes the device's subscription (§9.3). It costs
-   one tap to re-enable and is the safer default for shared camp devices, but it does mean a leader
-   who habitually logs out gets no alerts.
-8. **Admin revoke-all-devices** for an account — worth building in v1? It is the "a leader lost
-   their phone mid-camp" runbook and is one delete by `user_id`.
+**Answered (2026-07-26).** Full reasoning in §0; recorded here so the original list stays readable.
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Trigger-1 latency | **Hybrid** — inline best-effort + tick sweeper (D2, §4.2) |
+| 2 | Vercel cron entitlement | Plan is **Hobby**, daily only → **switched to Supabase `pg_cron`** (D1, §4.1). No spend |
+| 3 | Payload policy | **Option C confirmed**, including trigger 3's count exception (D3, §9.1) |
+| 4 | Trigger-3 lead time / windows | **60 minutes, both AM and PM** (D4, §3) |
+| 5 | Trigger-3 gating | **Only when `churchCheckinTimeRestricted === true`** (D4, §3) |
+| 6 | Trigger-3 audience | **Church logins only.** Zone-leader escalation stays out of scope (D4) |
+| 7 | Logout behaviour | **Keeps the subscription** — devices are personal, not handed on (D5→D6, §9.3) |
+| 8 | Admin revoke-all-devices | **Not built.** Deactivating the account achieves it via the §4.9 resolver, and the post-camp login lock now suppresses too (D7→D8) |
+
+**Still open — organisational, not blocking implementation.** These gate *rollout to real leaders*,
+not phases 1–6. Carried into §10 phase 7.
+
 9. **Third-party transfer posture.** Does the org have any position on Apple/Google/Mozilla
    receiving push **metadata** (endpoints, timing, frequency — never camper data)? This is
    unavoidable with Web Push; if it is not acceptable, the feature cannot proceed in this form.
