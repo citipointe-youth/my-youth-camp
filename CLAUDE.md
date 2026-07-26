@@ -248,7 +248,11 @@ function + its `ensure_rls` trigger in a tracked migration for the first time).
 Since then: **`0010`** (scheduled notices — `notifications.scheduled_for`), **`0011`**
 (check-in windows — four `checkin_window_*` cols + `church_checkin_time_restricted`), and
 **`0012`** (2026-07-24 — drops `sign_out_history.parents_met`; applied to prod after the code
-push that stopped writing it). Next migration = `0013`.
+push that stopped writing it). Since then: **`0013`** (push subscriptions + notification claim
+columns — **applied to prod** 2026-07-26), **`0014`** (pg_cron/pg_net + the tick schedule —
+committed but **deliberately NOT applied**), **`0015`** (discount-code overrides — **not
+applied**). Next migration = `0016`. See the 2026-07-26 web-push section at the bottom of this
+file for the gating conditions on `0014`/`0015`.
 
 **Prod reconciled 2026-07-16 (code) + 2026-07-17 (DB).** The code-ref removal (dropping
 `tentPrice`/`classroomPrice` from the settings entity/schema/seed/mapper + fixtures)
@@ -1896,3 +1900,175 @@ closes) + full Web Push are DEFERRED** to `docs/superpowers/specs/2026-07-23-web
 **Migration state:** prod now has `0010` + `0011` applied (verified: `notifications.scheduled_for`
 present; four `settings.checkin_window_*` columns present; `church_checkin_time_restricted = true`).
 The repo's `supabase/migrations/` holds `0001`–`0011`. Next future migration = `0012`.
+(**Superseded — see the 2026-07-26 section below: the repo now holds `0001`–`0015`, prod is at
+`0013`, and the next migration is `0016`.**)
+
+## Web push phases 1-3 + bundled launch-readiness batch — 2026-07-26
+
+Plan: `docs/superpowers/plans/2026-07-26-web-push-phase1-3.md`; progress + deviations:
+`.superpowers/sdd/progress.md` (read that before trusting any summary here — it records the
+deferred findings and the prod-drift discovery). Backend + SPA + **migrations `0013`/`0014`/
+`0015`**. `npm run typecheck` clean, `npm run test` = **634 pass / 48 files**. `sw.js`
+`camp-v47`→`camp-v48`. **No push is actually sent yet** — this release builds the scheduler,
+the audience rule, the subscription table and the warning detector; the fan-out is a later phase.
+
+### Scheduled tick — Supabase `pg_cron`, NOT Vercel Cron
+
+- **`GET /internal/cron/tick`** (`src/api/controllers/cron.controller.ts`, registered `auth:false`
+  in `router.ts`) sits OUTSIDE the app's auth layer and is guarded by a shared secret instead:
+  `Authorization: Bearer <CRON_SECRET>`, compared with `timingSafeEqual`. Two traps are handled
+  explicitly and must not be "simplified" away — (1) `timingSafeEqual` **throws** on a length
+  mismatch, so `secretMatches` length-checks first (a naive call leaks length as a 500 instead of
+  a 401); (2) an **unset** `CRON_SECRET` fails CLOSED, otherwise a misconfigured deploy would let
+  anyone fire the tick with an empty bearer. It throws `UnauthorizedError` rather than returning
+  an error object, because the adapter only maps thrown errors to a non-200.
+  This route needed `HttpRequest.headers` — the type had **no headers field at all** before this
+  release (`src/api/http/types.ts`).
+- **`makeCronService`** (`src/services/cron.service.ts`) is the tick body. Phase 1-3 scope is job
+  B only (create in-app check-in-closing notices). It runs **288 times a day**, so it must be
+  cheap when idle: the pure `warnWindow()` gate runs off settings alone and short-circuits before
+  the people table is touched. Per-church failures are caught individually (`failed` counter) so
+  one bad church cannot abort the rest of the tick, and dedupe detection keys off **SQLSTATE
+  `23505`**, never the error message — matching `/dedupe_key/i` on the text would silently swallow
+  a "column does not exist" and report success.
+- **The scheduler is Supabase `pg_cron` + `pg_net`, not Vercel Cron.** The Vercel plan is
+  **Hobby, whose cron is daily-only** — useless for a warning that must fire ~60 minutes before a
+  check-in window closes. `vercel.json` is **deliberately unmodified**; do not add a `crons` block
+  to it. The schedule lives in migration `0014` so it is in git rather than existing only as
+  invisible prod state.
+
+### Migration state (this is the bit that bites)
+
+- **`0013_push_subscriptions.sql` — APPLIED to prod.** `push_subscriptions` table (+ RLS, 2
+  indexes) and `notifications.push_sent_at` / `notifications.dedupe_key`. Verified against
+  `nwfafrgojqkxylbppywo` after applying; history row reconciled to version `'0013'` (the MCP
+  `apply_migration` tool records a generated timestamp — see the `0005` note above, this is still
+  required after every apply on this project).
+- **`0014_push_cron_schedule.sql` — committed, DELIBERATELY NOT APPLIED.** It creates
+  `pg_cron`/`pg_net` and schedules the tick. Applying it before the route is live in prod means
+  every tick 404s **silently** into `net._http_response` (pg_net is fire-and-forget). Applying it
+  before `select vault.create_secret('<secret>','cron_secret')` exists means every tick 401s, also
+  silently. Both preconditions are written at the top of the file. It was split out of `0013` for
+  exactly this reason.
+- **`0015_discount_code_overrides.sql` — NOT APPLIED.** One `settings.discount_code_overrides
+  jsonb not null default '{}'`. ⚠ Remember the standing rule: **`supabase.settings` writes ALL
+  settings columns on every save**, so once the code is deployed, any settings save (and mode
+  switch, and new-year) fails in prod until `0015` is applied. Apply it WITH the deploy, not after.
+- **Next migration = `0016`.**
+- **Prod drift found, reported, NOT fixed:** migrations `0009`–`0012` are applied but recorded
+  under generated timestamp versions (`20260720012415`, `20260723131647`, `20260723131721`,
+  `20260723181751`). The schema is correct; only the version labels drifted, because the
+  reconciliation step was skipped four times.
+
+### `canSeeNotification()` — the single notification-audience rule
+
+`src/services/notification-visibility.ts` — extracted verbatim from `getActorFeed`, which now
+calls it (`notification.service.ts:54`). It owns ALL of it: `leadersOnly` filtering (church and
+firstAid excluded), zone/church scope, expiry, and the `scheduledFor > now` withholding.
+**Do not reimplement any of those rules anywhere else.** The push audience resolver in a later
+phase calls this same function, and the whole point of the extraction is that a leader can never
+be pushed a notice they cannot see in the app. Note `dashboard.service`'s `latestNotification`
+still carries its own duplicate `leadersOnly` filter (pre-existing) — if you touch audience rules,
+check that one too.
+
+### `churchesBehind()` / `warnWindow()` — `src/services/checkin-warnings.ts`
+
+Pure, fully tested, **clock injected** (`zonedNow(tz, now)`) so there is no hidden `Date.now()`.
+`warnWindow()` is the cheap settings-only gate; `churchesBehind()` does the roster work. Three
+traps are baked in and must not be "cleaned up":
+
+1. **"Checked in" is last-entry-wins**, matching `toRosterEntry` in `src/api/dto/person.dto.ts`
+   exactly. A student checked in and then out is NOT checked in. Diverge from this and the push
+   count disagrees with the roster the leader is staring at.
+2. **AC-1**: the first camp day is **PM-only** and the last day is **AM-only**, so there is no
+   AM window to warn about on day 1 and no PM window on the last day. This arrives as
+   `allowedWindowSession()` returning null, which is easy to mistake for a bug.
+3. **Brisbane, not UTC.** `DEFAULT_TZ = 'Australia/Brisbane'` mirrors `checkin.service.ts` and
+   must stay byte-identical to it, or the reminder and the enforcement disagree.
+   `WARN_LEAD_MINUTES = 60`.
+
+### S2 — check-in queue persistence
+
+`_ciqKey()` / `_persistQueue()` / `_restoreQueue()` (`public/index.html`). `CHECKIN_QUEUE` is now
+mirrored to `localStorage` under a **per-account** key (`ycp_ciq_<username>`) on every push/shift,
+and rehydrated once at boot (`window._ciqRestored` guard). Two things worth knowing:
+
+- **Initials are captured at QUEUE time, not drain time** (`_queueEntry` stores
+  `initials: LEADER_INITIALS`). A rehydrated entry must keep its original author — the ✎ badge may
+  have been switched to a different leader before the queue drains.
+- **Stale-session entries are DROPPED, with a toast.** On restore, anything whose `sessionId` is
+  not the currently-selected session is discarded (its window has closed; the POST would 403) and
+  the count is toasted so it can be reconciled against the paper sheet, rather than vanishing.
+- ⚠ **Deferred finding (accepted, NOT fixed — needs an owner call):** persistence introduces a
+  narrow double-submit window. In `drainQueue` the `await` can resolve (server write committed)
+  before the sync shift+persist runs; a crash in that one-tick gap replays the entry on reboot, and
+  `withCheckIn` has no `(sessionId, camperId)` dedup — so that is a duplicate row in the compliance
+  export. Pre-S2 the same crash simply LOST the tap. Displayed state is unaffected (last-entry-wins
+  in `toRosterEntry`). The fix is a client idempotency key or server-side dedup — a follow-up.
+
+### Discount-code overrides
+
+- **`applyDiscountOverrides(people, overrides)`** (`src/services/budget.ts`, pure + tested) maps a
+  discount code to a "paid in full" amount before `computeBudget` runs. SPA mirror
+  `_applyDiscountOverrides` / `_saveDiscountOverride` / `_prefillDiscountOverride` on the Budget
+  screen; hostile codes go through `esc(jsq())` in the inline handler.
+- **New capability `budget:manage` = admin + director ONLY.** Deliberately NOT folded into
+  `admin:manage` — widening `admin:manage` would have handed director the entire back office. If
+  you need another finance-ish permission, add it beside `budget:manage`; do not widen the admin one.
+- **`PATCH /settings/discount-overrides`** (`settings.service.ts`, asserts `budget:manage`); the
+  key is present in the Supabase settings `UPDATE_COLS` list (miss that and the save is a silent
+  no-op — the same trap as `elvanto_meta` back in migration `017`).
+
+### S5 / S6 (from the launch-readiness list)
+
+- **`assertFieldEncryptionKey()`** (`src/utils/field-crypto.ts`) is now called from `src/app.ts`
+  at boot, guarded on `PERSISTENCE === 'supabase'`, right beside `assertSessionSecret()`. A
+  missing/malformed key used to boot green and then 500 on every person read — indistinguishable
+  from "the app is broken" at camp with no engineer. ⚠ Minor, deferred: the `try/catch` around
+  `Buffer.from(raw,'base64')` is dead code (Node never throws on bad base64, it silently drops
+  invalid chars) — the 32-byte length check does all the real validation.
+- **`_scoped(path)`** (`public/index.html`) appends `?churchId=<ACTOR.churchId>` for church logins
+  on `/registrants` and `/campers` reads, so the indexed backend fast-path (`scopedAll` →
+  `findByChurch`) stops being dead code in practice. ⚠ It **must** be used for the `api()` call AND
+  for any `_allCached()`/`_prefetch()` key for the same resource — `Cache.get` is an exact-key
+  lookup, so a mismatch silently disables the prefetch/stale-while-revalidate hit (no error, just
+  slower). Follow-up fix in the same batch: deterministic `(last_name, first_name)` ordering on all
+  10 people finders, so the scoped and unscoped paths return the same order.
+
+### Four SPA UI changes (owner request, out of plan — commit `6b454d6`)
+
+1. **Floating arrival confirm bar.** `.fd-confirm` was `position:sticky;bottom:10px`, which pins to
+   the bottom of the CONTENT, not the viewport — on the phone body-scroll shell that stranded it at
+   the end of a long roster. Now `position:fixed`, `z-index:105` (between `.tabs` 100 and `.modal`
+   120), with a spacer keeping the last row clear. Same rule as the documented overlay gotcha.
+2. **Leaders now appear on the arrival screen.** They were filtered out of BOTH the `/campers` and
+   `/registrants` feeds, so a leader missed by the bulk sign-in could not be signed in there at all.
+   They badge "Leader" instead of "Yr -" and the grade filter gains a Leaders option. They stay
+   excluded from the twice-daily check-in roster — that is a different screen, do not "fix" it.
+3. **Incidents moved off the home tile grid** to a slim full-width link, below "Testimonies & Notes"
+   and above the Notices summary.
+4. **Schedule editor time boxes tightened** — column `80px`→`64px`, gap `8`→`6px`, and the time
+   input itself on `--t-xs` with 4px/2px padding, centred. See the CSS gotcha below for why this
+   took several attempts.
+
+### ⚠️ CSS GOTCHA — `.sched-row .sr-t` vs `.sched-row .fld` are EQUAL specificity
+
+Both are (0,2,0). The time input carries **both** classes (`<input class="fld sr-t" type="time">`),
+so **whichever rule appears LAST in the stylesheet wins** — and a `.sr-t` rule placed ABOVE
+`.sched-row .fld` is **silently dead**. That is exactly why three separate attempts to shrink the
+schedule time boxes had no visible effect: each one narrowed the grid track while the `.fld`
+padding/font below it kept overriding the `.sr-t` sizing, and `overflow:hidden` on
+`.sched-row input` hid the overflow instead of the box actually fitting. The `.sr-t` block now
+sits **after** `.sched-row .fld` (~line 383 in `public/index.html`) with a comment saying so.
+**Keep it there.** If `.sr-t` ever needs to win from anywhere, raise its specificity
+(e.g. `input.sr-t.fld`) rather than relying on source order again.
+
+### Also
+
+- `public/sw.js` is now **`camp-v48`** (v45→v46 for the early SPA batch, →v47 for the schedule-time
+  fix, →v48 here for the queue persistence + discount-override UI + `?churchId` scoping). Standing
+  rule unchanged: `public/index.html` changing means `CACHE` must step, because iOS standalone PWAs
+  are documented as lazy about picking up a new worker.
+- `API_RE` in `sw.js` was **deliberately NOT extended** with `push` or `internal`. Nothing in the
+  SPA calls a `/push` endpoint yet (later phase), and the cron tick is server-to-server — it never
+  passes through a service worker.
