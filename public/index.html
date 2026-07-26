@@ -368,13 +368,26 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 /* The time input's native iOS control is chunky and can overflow its grid cell into the Activity
    field. Tighten its horizontal padding so the value has less white space around it and stays
    inside the (narrower) time column. */
-.sched-row .sr-t{padding-left:8px;padding-right:4px;}
+.sched-row .sr-t{padding-left:4px;padding-right:2px;font-size:var(--t-xs);letter-spacing:-.2px;}
 /* 2026-07-26 — the editor's default 7 empty rows per day made the screen a wall of oversized
    boxes (the inputs inherited the full-size `.fld` padding/type, which is sized for one-per-line
    form fields, not a dense repeating grid). Compact them: shorter rows, smaller type, tighter
    radius. Purely the schedule editor — `.fld` elsewhere is untouched. */
 .sched-row .fld{padding:8px 10px;font-size:var(--t-sm);border-radius:10px;}
 .sched-row .iconbtn{padding:6px;}
+/* 2026-07-26 (2nd pass) — the time boxes were STILL reported as too big after the 86px/8px
+   tightening. The remaining bulk is the native iOS time control's own chrome, so shrink the
+   field itself rather than only its track: smaller type + minimal padding (above) and a
+   narrower column (set on the grid in `_schedRow`). Keep `.fld`'s height so the row's
+   baseline still lines up with the Activity input. */
+.sched-row .sr-t{text-align:center;}
+/* First-day arrival confirm bar. Was `position:sticky;bottom:10px`, which pins to the bottom of
+   the CONTENT, not the viewport — on the phone body-scroll shell (see the overlay GOTCHA above)
+   that left it stranded at the end of a long roster instead of floating over it. Fixed to the
+   viewport, above the nav (`.tabs` is z-index 100) and below `.modal` (120). */
+.fd-confirm{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom));z-index:105;width:min(420px,calc(100% - 32px));margin:0;}
+.fd-confirm .btn{box-shadow:0 6px 20px rgba(22,163,74,.45);}
+@media(min-width:980px){.fd-confirm{bottom:24px;}}
 /* Top loading bar (#nprog): a thin accent bar that animates whenever a real network request
    is in flight (cache hits skip it). Gives instant "it's working" feedback on button/tab taps
    that otherwise sat still during the 1–1.5s serverless round-trip. Anchored to the BOTTOM edge
@@ -1808,9 +1821,13 @@ async function renderHomeAtCamp(){
     if(ACTOR.role==='director')tiles.push(`<div class="tile" onclick="go('data')"><div class="ic">${ic('note')}</div><div class="l">Student Data Table</div></div>`);
   }
   // Feature 3: Incidents tile for zoneLeader/director/admin (both modes).
-  if(canManageIncident())tiles.push(`<div class="tile" onclick="go('incidents')"><div class="ic">${ic('alert')}</div><div class="l">Incidents</div></div>`);
+  // 2026-07-26: Incidents moved OUT of the tile grid to a slim full-width link below
+  // "Testimonies & Notes" and above the Notices summary (see `incidentsLinkHtml`).
   // Testimonies & Notes → slim full-width bold link below the grid (not a tile).
   const notesLinkHtml=canReadNotes()?`<div class="card tap" onclick="go('notes')" style="margin-top:10px"><div class="rowsb"><div style="font-weight:700">${icSm('note')} Testimonies &amp; Notes</div><span style="color:var(--muted)">›</span></div></div>`:'';
+  // Incidents → same slim link treatment, placed directly BELOW Testimonies & Notes and ABOVE the
+  // Notices summary (owner request 2026-07-26). Was a tile in the grid above.
+  const incidentsLinkHtml=canManageIncident()?`<div class="card tap" onclick="go('incidents')" style="margin-top:10px"><div class="rowsb"><div style="font-weight:700">${icSm('alert')} Incidents</div><span style="color:var(--muted)">›</span></div></div>`:'';
   // Accommodation → one-line strip inside the hero (church, real at-camp only).
   const accomLineHtml=(ACTOR.role==='church'&&!PREVIEW_MODE)?`<div style="margin-top:8px;color:#cfe0ff;font-size:.78rem">${icSm('classroom')} Your accommodation: ${esc(myAccom)}</div>`:'';
   // PC-7: FAQ/Help is a PRE-CAMP aid only — no FAQ tile in at-camp home for any role.
@@ -1847,6 +1864,7 @@ async function renderHomeAtCamp(){
   })()}
   <div class="tiles">${tiles.join('')}</div>
   ${notesLinkHtml}
+  ${incidentsLinkHtml}
   <div id="homePulse"></div>
   <div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
   <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>`;
@@ -3195,9 +3213,14 @@ async function _renderArrival(){
   _fdScreen='checkin';
   paint('checkin','<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','First Day Sign In','Select students to confirm');
   const [camperPage,regList]=await Promise.all([api('/campers?pageSize=300'),api('/registrants')]);
-  const campers=(Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student');
+  // 2026-07-26: LEADERS are listed on this screen too. They were filtered out of BOTH feeds, so a
+  // leader missed by the pre-camp→at-camp bulk sign-in (added later, or arriving on day 1 before
+  // the mode switch) could not be signed in from the arrivals screen at all — the only route was
+  // finding them via My Students. They are ordinary arrivals; show them. They remain excluded from
+  // the twice-daily check-in roster, which is a separate screen (checkin.service filters kind).
+  const campers=(Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student'||c.kind==='leader');
   const camperIds=new Set(campers.map(c=>c.id));
-  const registrants=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id));
+  const registrants=(Array.isArray(regList)?regList:[]).filter(c=>!camperIds.has(c.id));
   window._fdAll=[...registrants,...campers];
   window._fdPending=new Set();
   window._fdGender='all';window._fdGrade='all';
@@ -3209,16 +3232,20 @@ function fdDraw(){
   const alreadyIn=students.filter(c=>c.atCamp);
   const gen=window._fdGender||'all';
   const gr=window._fdGrade||'all';
-  const matchFilter=c=>(gen==='all'||c.gender===gen)&&(gr==='all'||String(c.grade)===gr);
+  // 'leader' is a grade-filter option (mirrors My Students), since leaders now appear here and
+  // have no grade to filter on.
+  const matchFilter=c=>(gen==='all'||c.gender===gen)&&(gr==='all'||(gr==='leader'?c.kind==='leader':String(c.grade)===gr));
   const visible=notIn.filter(matchFilter);
   // AC-3: the gender/grade filter applies to the already-signed-in section too.
   const visibleIn=alreadyIn.filter(matchFilter);
   const pending=window._fdPending||(window._fdPending=new Set());
-  const gradeOpts=['all',...GRADES].map(g=>`<option value="${g}" ${String(g)===gr?'selected':''}>${g==='all'?'All grades':'Yr '+g}</option>`).join('');
+  const gradeOpts=['all',...GRADES,'leader'].map(g=>`<option value="${g}" ${String(g)===gr?'selected':''}>${g==='all'?'All grades':g==='leader'?'Leaders':'Yr '+g}</option>`).join('');
   function fdRow(c,done){
     // AC-4: initials bubble is gender-coloured via .av.male/.av.female (blue/pink).
     const av=`<div class="av ${esc(c.gender)}">${initials(c.firstName+' '+c.lastName)}</div>`;
-    const info=`<div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}<span class="gradepill">Yr ${c.grade||'—'}</span></div><div class="sub">${esc(c.churchName)}</div></div>`;
+    // Leaders have no grade — badge them "Leader" rather than showing "Yr —".
+    const gradeLabel=c.kind==='leader'?'Leader':'Yr '+(c.grade||'—');
+    const info=`<div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}<span class="gradepill">${gradeLabel}</span></div><div class="sub">${esc(c.churchName)}</div></div>`;
     if(done){
       // AC-2: an already-signed-in student can be signed OUT here to correct a mistake.
       const nm=(c.firstName+' '+c.lastName).replace(/'/g,"\\'");
@@ -3245,9 +3272,10 @@ function fdDraw(){
     ${visible.length?visible.map(c=>fdRow(c,false)).join(''):'<p class="note-hint">No students match these filters.</p>'}
     ${notIn.length===0?`<div class="callbox">${icSm('check')} All students in your group are signed in</div>`:''}
     ${visibleIn.length?`<h3 class="sec" style="margin-top:16px">Already signed in (${visibleIn.length})</h3>`+visibleIn.map(c=>fdRow(c,true)).join(''):''}
-    <div id="fdConfirmBar" style="display:${pendingCount>0?'block':'none'};position:sticky;bottom:10px;margin-top:16px">
+    <div id="fdConfirmBar" class="fd-confirm" style="display:${pendingCount>0?'block':'none'}">
       <button class="btn" style="background:#16a34a" onclick="fdConfirmAll()">Confirm ${pendingCount} sign-in${pendingCount===1?'':'s'}</button>
-    </div>`;
+    </div>
+    ${pendingCount>0?'<div style="height:72px"></div>':''}`;
   // Preserve scroll: ticking a student / confirming must not jump back to the top of a long list.
   const el=document.getElementById(_fdScreen);
   const sc=_scroller(el);const y=sc?sc.scrollTop:0;
@@ -5154,7 +5182,7 @@ async function saveDevo(d){try{await api('/devotional',{method:'POST',body:{day:
 // One editable table row (Time + Activity). Index r keeps input ids unique per day.
 // Inputs are addressed by CLASS within each .sched-row (not index-based ids), so a row can be
 // deleted from the middle without renumbering the rest — saveSchedDay reads the live rows.
-function _schedRow(d,r,t,n){return `<div class="sched-row" style="display:grid;grid-template-columns:80px minmax(0,1fr) auto;gap:8px;margin-bottom:5px;align-items:center">`
+function _schedRow(d,r,t,n){return `<div class="sched-row" style="display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:6px;margin-bottom:5px;align-items:center">`
   +`<input class="fld sr-t" type="time" value="${esc(t||'')}">`
   +`<input class="fld sr-n" placeholder="Activity" value="${esc(n||'')}">`
   +`<button class="iconbtn danger" type="button" title="Delete row" onclick="this.closest('.sched-row').remove()">${icSm('trash')}</button></div>`;}
