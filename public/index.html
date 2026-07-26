@@ -1925,8 +1925,8 @@ async function renderHomeAtCamp(){
   <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>`;
   paint('home','','Home',d.greetingName||ACTOR.displayName);
   document.getElementById('home').innerHTML=html;
-  // (No urgent-notice modal here any more — urgent notices render in the top banner that
-  // `_alertBannerHtml(feed)` already injected at the head of `html` above.)
+  // (No urgent-notice modal here any more — urgent notices render in the banner that
+  // `_alertBannerHtml(feed)` already injected above the "Notices" heading in `html` above.)
   if(['director','admin'].includes(ACTOR.role))_renderDirectorDigest();
   // Load the oversight pulse in the background and inject it when ready.
   renderOversightPulse().then(pulseHtml=>{
