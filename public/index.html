@@ -883,7 +883,7 @@ async function api(path,opt={}){
    instant. Fire-and-forget; failures are ignored (the screen will retry). */
 function _prefetch(){
   const common=['/settings','/home','/notifications'];
-  const byMode=CAMP_MODE==='at-camp'?['/checkin/sessions']:['/registrants'];
+  const byMode=CAMP_MODE==='at-camp'?['/checkin/sessions']:[_scoped('/registrants')];
   // Admin/director land on account & setup screens first; warming these two makes the
   // Accounts, Ministry-contacts and Setup-wizard screens open instantly (no cold round-trip).
   const byRole=(ACTOR&&(ACTOR.role==='admin'||ACTOR.role==='director'))?['/accounts/churches','/accounts/users']:[];
@@ -907,6 +907,15 @@ let LAST_LEADER='';
 // existing "Your name (leader)" fields all pick them up rather than adding a parallel prefill.
 let LEADER_INITIALS='';
 function _isChurchAccount(){return !!(ACTOR&&ACTOR.role==='church');}
+// S6: church logins fetch only their own church's people. The backend fast path
+// (person.service scopedAll -> findByChurch) already exists; this is the SPA half.
+// MUST be used for BOTH the api() call and any _allCached()/_prefetch() key for the
+// same resource — Cache.get is an exact-key lookup, so a mismatch silently disables
+// the prefetch/stale-while-revalidate hit (no error, just slower).
+function _scoped(path){
+  if(!_isChurchAccount()||!ACTOR.churchId)return path;
+  return path+(path.includes('?')?'&':'?')+'churchId='+encodeURIComponent(ACTOR.churchId);
+}
 // Item 2: the name attributed to a sign-in/out or note. ONLY the first-aid log form still asks for
 // a typed name; every other action uses the account's own name automatically — a church login uses
 // its saved initials, every other role uses the logged-in account's display name.
@@ -1675,7 +1684,7 @@ RENDER.home=async function renderHome(skipModeSync){
   // Parallel-load the three independent home datasets (was three sequential awaits).
   const [h,regs,feed]=await Promise.all([
     api('/home'),
-    api('/registrants').catch(()=>[]),
+    api(_scoped('/registrants')).catch(()=>[]),
     api('/notifications').catch(()=>[]),
   ]);
   const s=SETTINGS,isWide=['director','admin'].includes(ACTOR.role);
@@ -2032,7 +2041,7 @@ function telLink(phone){
 let ALLREG=[],CHURCHES=[];
 function _isWideRole(){return ACTOR!=null&&['director','admin','zoneLeader'].includes(ACTOR.role);}
 RENDER.people=async function renderPeople(){
-  ALLREG=await api('/registrants');
+  ALLREG=await api(_scoped('/registrants'));
   const map={};ALLREG.forEach(r=>{if(r.churchId)map[r.churchId]=r.churchName;});
   CHURCHES=Object.entries(map).map(([id,name])=>({id,name}));
   const isDir=_isWideRole();
@@ -2306,7 +2315,7 @@ function _previewSimRoster(regList){
 // Simulated CamperDto-shaped list for the My-group/roster screens (_renderMyGroup), built the
 // same way — everyone `atCamp:true` except the same deterministic excluded 5.
 async function _previewSimCampers(){
-  const regList=await api('/registrants').catch(()=>[]);
+  const regList=await api(_scoped('/registrants')).catch(()=>[]);
   // Fix 2: same canonical population + same notIn computation as _previewSimRoster/openCamper.
   const people=_previewCanonicalPeople(regList);
   const notIn=_previewNotCheckedInIds(people);
@@ -2359,7 +2368,7 @@ async function _renderDailyCheckin(){
   // /campers; /registrants is only needed to build the simulated roster during a preview.
   const [st,regList]=await Promise.all([
     previewSim?Promise.resolve({session:null,roster:[]}):api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status'),
-    previewSim?api('/registrants').catch(()=>[]):Promise.resolve([]),
+    previewSim?api(_scoped('/registrants')).catch(()=>[]):Promise.resolve([]),
   ]);
   const roster=previewSim?_previewSimRoster(regList):(st.roster||[]).map(r=>({
     id:r.camperId,name:(r.firstName+' '+r.lastName).trim(),
@@ -2744,7 +2753,7 @@ async function saveFirstAidLog(id){
 let _faRecFilter='today';
 RENDER.records=async function(){
   let recs=[],page=[];
-  try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=100'),api('/campers?pageSize=300').catch(()=>[])]);}
+  try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=100'),api(_scoped('/campers?pageSize=300')).catch(()=>[])]);}
   catch(e){paint('records','<p class="err" style="display:block">'+esc(e.message)+'</p>','First-aid records','');return;}
   window._faRecsAll=recs||[];
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c.firstName+' '+c.lastName+(c.grade?' · Gr '+c.grade:'');});window._faCamperMap=cmap;
@@ -2823,7 +2832,7 @@ async function _renderStudentsBody(){
   // Feature 1: simulate a populated roster while previewing at-camp from a still-pre-camp
   // backend — see _previewSimActive()/_previewSimCampers() above (client-side only).
   const previewSim=_previewSimActive();
-  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
+  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api(_scoped('/campers?pageSize=300')));
   window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
@@ -2957,7 +2966,7 @@ function _applyDiscountOverrides(people,overrides){
 }
 RENDER.budget=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('budget','<p class="note-hint" style="margin-top:24px;text-align:center">Budget is available to directors only.</p>','Budget & Costings','');return;}
-  const [regs,camperPage]=await Promise.all([api('/registrants'),api('/campers?pageSize=1000').catch(()=>[])]);
+  const [regs,camperPage]=await Promise.all([api(_scoped('/registrants')),api(_scoped('/campers?pageSize=1000')).catch(()=>[])]);
   // Anyone already at camp (esp. leaders, bulk-signed-in on the mode switch) has
   // lifecycle !== 'registered' and drops out of /registrants — merge in /campers
   // (deduped by id) so registration fees for arrived people still count.
@@ -3059,7 +3068,7 @@ function exportBudget(){
    below is an auto-distribution view (7 per tent, leaders in separate tents). */
 RENDER.accom=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('accom','<p class="note-hint" style="margin-top:24px;text-align:center">Accommodation allocations are available to directors only.</p>','Accommodation allocations','');return;}
-  const [regs,rooms,alloc]=await Promise.all([api('/registrants'),api('/accommodation/classrooms'),api('/accommodation/allocations')]);
+  const [regs,rooms,alloc]=await Promise.all([api(_scoped('/registrants')),api('/accommodation/classrooms'),api('/accommodation/allocations')]);
   window._accomRegs=regs||[];window._accomRooms=rooms||[];window._accomAlloc=alloc||{};
   paint('accom','<div id="accomBody"></div>','Accommodation allocations','Classrooms by ministry & gender');
   drawAccom();
@@ -3277,7 +3286,7 @@ let _fdScreen='firstday';
 RENDER.firstday=async function(){
   _fdScreen='firstday';
   paint('firstday','<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','First Day Sign In','Select students to confirm');
-  const [camperPage,regList]=await Promise.all([api('/campers?pageSize=300'),api('/registrants')]);
+  const [camperPage,regList]=await Promise.all([api(_scoped('/campers?pageSize=300')),api(_scoped('/registrants'))]);
   const campers=(Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student');
   const camperIds=new Set(campers.map(c=>c.id));
   const registrants=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id));
@@ -3292,7 +3301,7 @@ RENDER.firstday=async function(){
 async function _renderArrival(){
   _fdScreen='checkin';
   paint('checkin','<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','First Day Sign In','Select students to confirm');
-  const [camperPage,regList]=await Promise.all([api('/campers?pageSize=300'),api('/registrants')]);
+  const [camperPage,regList]=await Promise.all([api(_scoped('/campers?pageSize=300')),api(_scoped('/registrants'))]);
   // 2026-07-26: LEADERS are listed on this screen too. They were filtered out of BOTH feeds, so a
   // leader missed by the pre-camp→at-camp bulk sign-in (added later, or arriving on day 1 before
   // the mode switch) could not be signed in from the arrivals screen at all — the only route was
@@ -3400,7 +3409,7 @@ async function _renderMyGroup(screenId){
   // previewing the at-camp view, build a simulated "everyone but 5 already arrived" list instead
   // (client-side only) so the roster/search screens demo populated rather than blank.
   const previewSim=_previewSimActive();
-  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
+  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api(_scoped('/campers?pageSize=300')));
   window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
@@ -3415,7 +3424,7 @@ async function _renderMyGroup(screenId){
 // not-atCamp campers with no sign-out history, deduped by id. Suppressed during the preview sim.
 async function _loadMyNotSignedIn(previewSim,campers){
   if(previewSim)return [];
-  const regList=await api('/registrants').catch(()=>[]);
+  const regList=await api(_scoped('/registrants')).catch(()=>[]);
   const camperIds=new Set((campers||[]).filter(c=>c.kind==='student').map(c=>c.id));
   const nsRegs=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id)&&!c.atCamp);
   const nsCampers=(campers||[]).filter(c=>c.kind==='student'&&!c.atCamp&&!(c.signOutHistory&&c.signOutHistory.length));
@@ -3486,7 +3495,7 @@ async function openCamper(id,push=true){
   let atCamp=p.atCamp;
   if(_previewSimActive()){
     try{
-      const regList=await api('/registrants').catch(()=>[]);
+      const regList=await api(_scoped('/registrants')).catch(()=>[]);
       const notIn=_previewNotCheckedInIds(_previewCanonicalPeople(regList));
       atCamp=_previewIsPresent(id,notIn);
     }catch(e){}
@@ -3645,8 +3654,8 @@ RENDER.testimonies=async function(){
   // (pre-arrival youth, kind 'camper') and /campers (arrived students, kind 'student') and
   // dedupe by id, so every one of the church's young people is selectable.
   const [campPage,regs]=await Promise.all([
-    api('/campers?pageSize=300').catch(()=>[]),
-    api('/registrants').catch(()=>[]),
+    api(_scoped('/campers?pageSize=300')).catch(()=>[]),
+    api(_scoped('/registrants')).catch(()=>[]),
   ]);
   const campers=(Array.isArray(campPage)?campPage:campPage.items||[]).filter(c=>c.kind==='student');
   const regYouth=(regs||[]).filter(r=>r.kind==='camper'&&r.status!=='cancelled');
@@ -3673,7 +3682,7 @@ async function submitTestimony(){const camperId=sel('tmCamper'),body=val('tmBody
   try{await api('/notes',{method:'POST',body:payload});toast('Testimony submitted');const t=document.getElementById('tmBody');if(t)t.value='';const s=document.getElementById('tmSensitive');if(s)s.checked=false;}catch(e){toast(e.message);}}
 RENDER.notes=async function(presetFilter){
   // /notes/recent returns bare notes (no camper details) — join /campers for name/church/zone/gender/grade.
-  const [notes,page,incidents,churchRows]=await Promise.all([api('/notes/recent'),api('/campers?pageSize=300').catch(()=>[]),api('/incidents').catch(()=>[]),api('/accounts/churches').catch(()=>[])]);
+  const [notes,page,incidents,churchRows]=await Promise.all([api('/notes/recent'),api(_scoped('/campers?pageSize=300')).catch(()=>[]),api('/incidents').catch(()=>[]),api('/accounts/churches').catch(()=>[])]);
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c;});
   // Left-edge zone accent (2026-07-18): a general note/testimony (no camperId) has no student
   // to take a zone from, so fall back to the zone of the church that logged it (authorChurchId).
@@ -4639,7 +4648,7 @@ async function _loadAllocation(){
   const wrap=document.getElementById('allocWrap'); if(!wrap) return;
   const [unallocated,regs,churches,overrides]=await Promise.all([
     api('/import/unallocated').catch(()=>[]),
-    api('/registrants').catch(()=>[]),
+    api(_scoped('/registrants')).catch(()=>[]),
     api('/accounts/churches').catch(()=>[]),
     api('/import/allocations').catch(()=>[]),
   ]);
@@ -4741,8 +4750,8 @@ let _dataSortKey=null,_dataSortDir=1; // active column sort; null key = default 
 RENDER.data=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('data','<p class="note-hint">This area is restricted to directors and admins.</p>','Data','');return;}
   const [regs,camperPage,churches]=await Promise.all([
-    api('/registrants').catch(()=>[]),
-    api('/campers?pageSize=1000').catch(()=>[]),
+    api(_scoped('/registrants')).catch(()=>[]),
+    api(_scoped('/campers?pageSize=1000')).catch(()=>[]),
     api('/accounts/churches').catch(()=>[]),
   ]);
   // At-camp, anyone already signed in (esp. leaders — bulk-signed-in on the mode switch)
@@ -4905,8 +4914,8 @@ function _stuNorm(r,atCamp){return {id:r.id,firstName:r.firstName,lastName:r.las
   medical:(r.medicalConditions||[]).join(', '),dietary:(r.dietaryRequirements||[]).join(', '),atCamp};}
 RENDER.adminStudents=async function(){
   const [regs,campers,churches]=await Promise.all([
-    api('/registrants').catch(()=>[]),
-    api('/campers').catch(()=>[]),
+    api(_scoped('/registrants')).catch(()=>[]),
+    api(_scoped('/campers')).catch(()=>[]),
     api('/accounts/churches').catch(()=>[]),
   ]);
   const byId={};
@@ -5196,7 +5205,7 @@ const WIZARD_STEPS=[
   {key:'accounts',label:'Accounts',icon:'users',screen:'adminAccounts',summary:'Accounts — login accounts for church leaders, zone leaders and directors.',check:async()=>{try{const u=await api('/accounts/users');return(u||[]).filter(x=>x.role!=='admin').length>0;}catch(e){return false;}}},
   // Item 5a: sits between Accounts and Accommodation rooms — a camp usually imports its
   // registration export right after accounts exist, before setting up rooms/allocation.
-  {key:'import',label:'Import registrations',icon:'upload',screen:'import',summary:'Import registrations — upload your Form, Ticket List and Invoice exports.',check:async()=>{if(SETTINGS&&SETTINGS.formImportedAt)return true;try{const r=await api('/registrants');return(r||[]).length>0;}catch(e){return false;}}},
+  {key:'import',label:'Import registrations',icon:'upload',screen:'import',summary:'Import registrations — upload your Form, Ticket List and Invoice exports.',check:async()=>{if(SETTINGS&&SETTINGS.formImportedAt)return true;try{const r=await api(_scoped('/registrants'));return(r||[]).length>0;}catch(e){return false;}}},
   {key:'accom',label:'Accommodation rooms',icon:'classroom',screen:'adminAccom',summary:'Accommodation rooms — your sleeping rooms and their capacities.',check:async()=>{try{const b=await api('/accommodation/classrooms');return(b||[]).length>0;}catch(e){return false;}}},
   {key:'accomAlloc',label:'Accommodation allocation',icon:'home',screen:'accom',summary:'Accommodation allocation — assign churches to rooms, auto-filled to capacity.',check:async()=>{try{const a=await api('/accommodation/allocations');return Object.values(a||{}).some(arr=>Array.isArray(arr)&&arr.some(e=>e&&Number(e.n)>0));}catch(e){return false;}}},
   // Feature 7 (2026-07-17): Schedule/FAQ/Devotionals merged into ONE step routing to the
