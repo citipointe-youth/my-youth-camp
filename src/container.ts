@@ -19,6 +19,7 @@ import {
   InMemoryFaqRepository,
   InMemorySettingsRepository,
   InMemorySnapshotRepository,
+  InMemoryPushSubscriptionRepository,
 } from './repositories/in-memory';
 import { JsonFilePersistence } from './repositories/persistence';
 import {
@@ -38,6 +39,7 @@ import {
   SupabaseFaqRepository,
   SupabaseSettingsRepository,
   SupabaseDefaultsRepository,
+  SupabasePushSubscriptionRepository,
 } from './repositories/supabase';
 import { getSqlClient } from './repositories/supabase/client';
 import type {
@@ -57,6 +59,7 @@ import type {
   IFaqRepository,
   ISettingsRepository,
   ISnapshotRepository,
+  IPushSubscriptionRepository,
 } from './repositories/interfaces';
 import type { User } from './core/entities/user';
 import type { Church } from './core/entities/church';
@@ -72,6 +75,7 @@ import type { ScheduleItem } from './core/entities/schedule';
 import type { Devotional } from './core/entities/devotional';
 import type { FaqItem } from './core/entities/content';
 import type { CampSettings, CampDefaults } from './core/entities/settings';
+import type { PushSubscription } from './core/entities/push-subscription';
 
 // Services
 import { makeAuthService, type AuthService } from './services/auth.service';
@@ -96,6 +100,7 @@ import { makeTicketImportService, type TicketImportService } from './services/ti
 import { makeInvoiceImportService, type InvoiceImportService } from './services/invoice-import.service';
 import { makeAuditExportService, type AuditExportService } from './services/audit-export.service';
 import { makeOfflineSignInService, type OfflineSignInService } from './services/offline-signin.service';
+import { makeCronService, type CronService } from './services/cron.service';
 
 export interface Repositories {
   users: IUserRepository;
@@ -114,6 +119,7 @@ export interface Repositories {
   faqs: IFaqRepository;
   settings: ISettingsRepository;
   snapshots: ISnapshotRepository;
+  pushSubscriptions: IPushSubscriptionRepository;
 }
 
 export interface Services {
@@ -142,6 +148,7 @@ export interface Services {
   // Expose raw user repo for auth/me lookup and audit controller
   users: IUserRepository;
   settingsRepo: ISettingsRepository;
+  cron: CronService;
 }
 
 export interface Container {
@@ -175,17 +182,19 @@ export async function buildContainer(): Promise<Container> {
     const faqs: IFaqRepository = new SupabaseFaqRepository(sql);
     const settingsRepo: ISettingsRepository = new SupabaseSettingsRepository(sql);
     const snapshots: ISnapshotRepository = new SupabaseDefaultsRepository(sql);
+    const pushSubscriptions: IPushSubscriptionRepository = new SupabasePushSubscriptionRepository(sql);
 
     const repos: Repositories = {
       users, churches, allocationOverrides, people, classrooms, allocations,
       zones, groups, notes, notifications, incidents, schedule: scheduleRepo,
-      devotionals, faqs, settings: settingsRepo, snapshots,
+      devotionals, faqs, settings: settingsRepo, snapshots, pushSubscriptions,
     };
 
     await Promise.all([
       users.init(), churches.init(), allocationOverrides.init(), people.init(), classrooms.init(), allocations.init(),
       zones.init(), groups.init(), notes.init(), notifications.init(), incidents.init(),
       scheduleRepo.init(), devotionals.init(), faqs.init(), settingsRepo.init(), snapshots.init(),
+      pushSubscriptions.init(),
     ]);
 
     const auth = makeAuthService(users, settingsRepo);
@@ -213,6 +222,7 @@ export async function buildContainer(): Promise<Container> {
       users, churches, people, classrooms, allocations, faqs, scheduleRepo,
       notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
     );
+    const cron = makeCronService({ notifications, people, users, settings: settingsRepo });
 
     const services: Services = {
       auth, settings, person: personSvc, accommodation: accommodationSvc,
@@ -220,7 +230,7 @@ export async function buildContainer(): Promise<Container> {
       importService: importSvc, exportService: exportSvc, allocation, churchImport: churchImportSvc,
       ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
       auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
-      account, dashboard, admin, users, settingsRepo,
+      account, dashboard, admin, users, settingsRepo, cron,
     };
 
     return { repos, services };
@@ -276,6 +286,9 @@ export async function buildContainer(): Promise<Container> {
   const snapshots: ISnapshotRepository = new InMemorySnapshotRepository(
     useJson ? makeJsonPersistence<CampDefaults>('snapshots.json') : undefined,
   );
+  const pushSubscriptions: IPushSubscriptionRepository = new InMemoryPushSubscriptionRepository(
+    useJson ? makeJsonPersistence<PushSubscription>('push-subscriptions.json') : undefined,
+  );
 
   const repos: Repositories = {
     users,
@@ -294,6 +307,7 @@ export async function buildContainer(): Promise<Container> {
     faqs,
     settings: settingsRepo,
     snapshots,
+    pushSubscriptions,
   };
 
   // Init all repos
@@ -314,6 +328,7 @@ export async function buildContainer(): Promise<Container> {
     faqs.init(),
     settingsRepo.init(),
     snapshots.init(),
+    pushSubscriptions.init(),
   ]);
 
   // ----- Services -----
@@ -357,6 +372,7 @@ export async function buildContainer(): Promise<Container> {
     snapshots,
     allocationOverrides,
   );
+  const cron = makeCronService({ notifications, people, users, settings: settingsRepo });
 
   const services: Services = {
     auth,
@@ -383,6 +399,7 @@ export async function buildContainer(): Promise<Container> {
     admin,
     users,
     settingsRepo,
+    cron,
   };
 
   return { repos, services };
