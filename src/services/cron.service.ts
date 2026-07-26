@@ -5,14 +5,18 @@ import type {
   ISettingsRepository,
 } from '../repositories/interfaces/entity-repositories';
 import type { Notification } from '../core/entities/notification';
-import { churchesBehind } from './checkin-warnings';
+import { churchesBehind, warnWindow } from './checkin-warnings';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 
 export interface TickResult {
   ok: true;
   checkinWarningsCreated: number;
+  failed: number;
 }
+
+/** postgres.js SQLSTATE for a unique-constraint violation. */
+const UNIQUE_VIOLATION = '23505';
 
 export interface CronServiceDeps {
   notifications: INotificationRepository;
@@ -35,7 +39,7 @@ export function makeCronService(deps: CronServiceDeps) {
      */
     async run(): Promise<TickResult> {
       const settings = await deps.settings.getSingleton();
-      if (!settings) return { ok: true, checkinWarningsCreated: 0 };
+      if (!settings) return { ok: true, checkinWarningsCreated: 0, failed: 0 };
 
       if (!settings.timezone) {
         // zonedNow silently falls back to the HOST's zone, which on Vercel is UTC — that
@@ -43,11 +47,18 @@ export function makeCronService(deps: CronServiceDeps) {
         console.warn('[cron] settings.timezone is empty; check-in warnings may target the wrong day');
       }
 
+      // Capture the clock ONCE. warnWindow is a cheap settings-only check — an idle tick
+      // (off a camp day, outside the lead window, restriction off) returns here without
+      // ever touching the people table (~10 AES field decrypts per person, ~288 ticks/day).
+      const now = new Date();
+      if (!warnWindow(settings, now)) return { ok: true, checkinWarningsCreated: 0, failed: 0 };
+
       const [people, users] = await Promise.all([deps.people.findAll(), deps.users.findAll()]);
-      const behind = churchesBehind(settings, people, users, new Date());
-      if (behind.length === 0) return { ok: true, checkinWarningsCreated: 0 };
+      const behind = churchesBehind(settings, people, users, now);
+      if (behind.length === 0) return { ok: true, checkinWarningsCreated: 0, failed: 0 };
 
       let created = 0;
+      let failed = 0;
       for (const b of behind) {
         // Deterministic key -> repeated ticks inside the 60-minute lead window produce
         // exactly ONE notice per church login per session. Keyed on the LOGIN id because
@@ -79,13 +90,26 @@ export function makeCronService(deps: CronServiceDeps) {
           created += 1;
         } catch (err) {
           // The partial unique index on dedupe_key rejects the duplicate — that IS the
-          // dedupe working, not a failure. Swallow and continue.
-          const msg = err instanceof Error ? err.message : String(err);
-          if (!/dedupe_key/i.test(msg)) throw err;
+          // dedupe working, not a failure. Detect it by the real SQLSTATE (postgres.js
+          // surfaces this on err.code), not by sniffing the error message: a message merely
+          // MENTIONING the column (e.g. "column dedupe_key does not exist" if migration 0013
+          // hasn't been applied) would otherwise be silently swallowed and misreported as a
+          // successful dedupe.
+          const code = (err as { code?: string })?.code;
+          if (code === UNIQUE_VIOLATION) continue;
+          // Any other failure must not abandon the remaining churches — this loop is the
+          // only chance today's tick gets to warn them, and the caller (pg_net) is
+          // fire-and-forget so nothing else observes a thrown 500.
+          failed += 1;
+          console.error('[cron] checkin-warning save failed', {
+            userId: b.userId,
+            sessionId: b.sessionId,
+            err,
+          });
         }
       }
 
-      return { ok: true, checkinWarningsCreated: created };
+      return { ok: true, checkinWarningsCreated: created, failed };
     },
   };
 }
