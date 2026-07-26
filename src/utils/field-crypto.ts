@@ -84,3 +84,32 @@ export function maybeDecrypt(value: string | null | undefined, aad: string): str
   if (!isEncrypted(value)) return value; // legacy plaintext passthrough (rollout tolerance)
   return decryptField(value, aad);
 }
+
+/**
+ * Boot assertion, mirroring assertSessionSecret(). A missing or malformed key otherwise
+ * boots green and then 500s on EVERY person read — the encrypted columns are unreadable —
+ * which looks identical to a total outage and cannot be diagnosed from a camp site.
+ * Called from createAppInstance() only when PERSISTENCE === 'supabase'; in-memory runs
+ * never touch encrypted columns.
+ */
+export function assertFieldEncryptionKey(): void {
+  const raw = process.env['FIELD_ENCRYPTION_KEY'];
+  if (!raw) {
+    throw new Error(
+      '[SECURITY] Refusing to start: FIELD_ENCRYPTION_KEY is not set. Every encrypted ' +
+      'field (medical, dietary, medications, medicare, blue card, parent contacts, consents, ' +
+      'notes, incidents) would be unreadable. Set it and redeploy.',
+    );
+  }
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(raw, 'base64');
+  } catch {
+    throw new Error('[SECURITY] Refusing to start: FIELD_ENCRYPTION_KEY is not valid base64.');
+  }
+  if (bytes.length !== 32) {
+    throw new Error(
+      `[SECURITY] Refusing to start: FIELD_ENCRYPTION_KEY must decode to 32 bytes (got ${bytes.length}).`,
+    );
+  }
+}

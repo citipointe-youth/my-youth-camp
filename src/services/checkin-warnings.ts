@@ -1,6 +1,7 @@
 import type { CampSettings } from '../core/entities/settings';
 import type { Person } from '../core/entities/person';
 import type { User } from '../core/entities/user';
+import type { CheckInSession } from './checkin-sessions';
 import { allowedWindowSession } from './checkin-sessions';
 import { canAccessPerson } from './person.service';
 import { toActor } from './auth.service';
@@ -37,25 +38,20 @@ function isCheckedIn(p: Person, sessionId: string): boolean {
   return last?.type === 'in';
 }
 
+export interface WarnWindow {
+  session: CheckInSession;
+  windowEnd: string;
+}
+
 /**
- * Which church LOGINS still have students unchecked for a session whose window closes within
- * WARN_LEAD_MINUTES?
- *
- * Per LOGIN, not per church: church accounts are gender-scoped (`b-`/`g-`), so `b-victory`
- * must only ever be told about students it can actually see and act on.
- *
- * Pure — no repositories, no `new Date()`. `now` is injected so the timezone boundary is
- * testable, which matters: this codebase has been bitten by UTC-vs-Brisbane twice.
+ * The settings-only half of the warning check: is there a session whose window closes
+ * within WARN_LEAD_MINUTES right now? Pure and cheap — no people, no users. The tick
+ * calls this FIRST so an idle tick never touches the people table.
  */
-export function churchesBehind(
-  settings: CampSettings,
-  people: Person[],
-  users: User[],
-  now: Date,
-): ChurchBehind[] {
+export function warnWindow(settings: CampSettings, now: Date): WarnWindow | null {
   // D4 condition 1: with the restriction off, the window times exist but are not a real
   // deadline, so "closing soon" would be misleading.
-  if (!settings.churchCheckinTimeRestricted) return [];
+  if (!settings.churchCheckinTimeRestricted) return null;
 
   const tz = settings.timezone || DEFAULT_TZ;
   const days = settings.checkInDays ?? [];
@@ -73,11 +69,34 @@ export function churchesBehind(
   // via buildSessions/AC-1 — when the day simply has no session of that half (first camp day
   // is PM-only, last day is AM-only). That null is what stops us inventing a phantom session.
   const session = allowedWindowSession(days, date, time, windows);
-  if (!session) return [];
+  if (!session) return null;
 
   const windowEnd = session.id.endsWith('~am') ? windows.amEnd : windows.pmEnd;
   const minutesLeft = toMinutes(windowEnd) - toMinutes(time);
-  if (minutesLeft <= 0 || minutesLeft > WARN_LEAD_MINUTES) return [];
+  if (minutesLeft <= 0 || minutesLeft > WARN_LEAD_MINUTES) return null;
+
+  return { session, windowEnd };
+}
+
+/**
+ * Which church LOGINS still have students unchecked for a session whose window closes within
+ * WARN_LEAD_MINUTES?
+ *
+ * Per LOGIN, not per church: church accounts are gender-scoped (`b-`/`g-`), so `b-victory`
+ * must only ever be told about students it can actually see and act on.
+ *
+ * Pure — no repositories, no `new Date()`. `now` is injected so the timezone boundary is
+ * testable, which matters: this codebase has been bitten by UTC-vs-Brisbane twice.
+ */
+export function churchesBehind(
+  settings: CampSettings,
+  people: Person[],
+  users: User[],
+  now: Date,
+): ChurchBehind[] {
+  const gate = warnWindow(settings, now);
+  if (!gate) return [];
+  const { session, windowEnd } = gate;
 
   // Same roster population as checkin.service.getSessionStatus: present, non-leader.
   const roster = people.filter((p) => p.atCamp && p.kind !== 'leader');

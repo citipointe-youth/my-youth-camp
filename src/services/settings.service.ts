@@ -14,6 +14,7 @@ export interface SettingsService {
   update(actor: Actor, patch: unknown): Promise<CampSettings>;
   getMode(): Promise<CampMode>;
   setMode(actor: Actor, mode: CampMode): Promise<CampSettings>;
+  updateDiscountCodeOverrides(actor: Actor, overrides: Record<string, number>): Promise<CampSettings>;
 }
 
 export function makeSettingsService(repo: ISettingsRepository): SettingsService {
@@ -50,6 +51,27 @@ export function makeSettingsService(repo: ISettingsRepository): SettingsService 
       assertCan(actor, 'admin:manage');
       const current = await get();
       const saved = await repo.saveSingleton({ ...current, campMode: mode, updatedAt: nowISO() });
+      invalidateDashboardCache();
+      return saved;
+    },
+
+    /**
+     * Discount-code overrides are editable by director as well as admin, so they get their own
+     * narrowly-scoped capability rather than widening general settings editing (which is
+     * admin:manage and must stay that way).
+     */
+    async updateDiscountCodeOverrides(actor, overrides) {
+      assertCan(actor, 'budget:manage');
+      const clean: Record<string, number> = {};
+      for (const [code, amount] of Object.entries(overrides ?? {})) {
+        const key = code.trim();
+        const n = Number(amount);
+        // Clearing the field removes the override; reject anything not a positive finite number.
+        if (!key || !Number.isFinite(n) || n <= 0) continue;
+        clean[key] = Math.round(n * 100) / 100;
+      }
+      const current = await get();
+      const saved = await repo.saveSingleton({ ...current, discountCodeOverrides: clean, updatedAt: nowISO() });
       invalidateDashboardCache();
       return saved;
     },

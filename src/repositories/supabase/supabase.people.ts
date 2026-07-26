@@ -216,43 +216,43 @@ export class SupabasePersonRepository implements IPersonRepository {
 
   async findByChurch(churchId: string): Promise<Person[]> {
     if (churchId === UNALLOCATED_CHURCH_ID) {
-      return this.hydrate(await this.sql`select * from people where church_id is null order by last_name`);
+      return this.hydrate(await this.sql`select * from people where church_id is null order by last_name, first_name`);
     }
-    return this.hydrate(await this.sql`select * from people where church_id = ${churchId} order by last_name`);
+    return this.hydrate(await this.sql`select * from people where church_id = ${churchId} order by last_name, first_name`);
   }
 
   async findByZone(zone: string): Promise<Person[]> {
-    return this.hydrate(await this.sql`select * from people where zone = ${zone} order by last_name`);
+    return this.hydrate(await this.sql`select * from people where zone = ${zone} order by last_name, first_name`);
   }
 
   async findByGroup(groupId: string): Promise<Person[]> {
-    return this.hydrate(await this.sql`select * from people where group_id = ${groupId} order by last_name`);
+    return this.hydrate(await this.sql`select * from people where group_id = ${groupId} order by last_name, first_name`);
   }
 
   async findByKind(kind: string): Promise<Person[]> {
-    return this.hydrate(await this.sql`select * from people where kind = ${kind} order by last_name`);
+    return this.hydrate(await this.sql`select * from people where kind = ${kind} order by last_name, first_name`);
   }
 
   async findByLifecycle(lifecycle: string): Promise<Person[]> {
-    return this.hydrate(await this.sql`select * from people where lifecycle = ${lifecycle} order by last_name`);
+    return this.hydrate(await this.sql`select * from people where lifecycle = ${lifecycle} order by last_name, first_name`);
   }
 
   async findCampers(): Promise<Person[]> {
     // lifecycle ∈ {arrived, checked_out, departed}
     const rows = await this.sql`
-      select * from people where lifecycle in ('arrived','checked_out','departed') order by last_name
+      select * from people where lifecycle in ('arrived','checked_out','departed') order by last_name, first_name
     `;
     return this.hydrate(rows);
   }
 
   async findAtCamp(): Promise<Person[]> {
-    return this.hydrate(await this.sql`select * from people where at_camp = true order by last_name`);
+    return this.hydrate(await this.sql`select * from people where at_camp = true order by last_name, first_name`);
   }
 
   async search(query: string): Promise<Person[]> {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return [];
-    const rows = await this.sql`select * from people order by last_name`;
+    const rows = await this.sql`select * from people order by last_name, first_name`;
     const matched = rows.filter((r: Record<string, unknown>) => {
       const full = `${r['first_name']} ${r['last_name']}`.toLowerCase();
       return terms.every((t) => full.includes(t));

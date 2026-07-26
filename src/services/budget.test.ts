@@ -4,13 +4,19 @@ import {
   labelForAmount,
   budgetToCsv,
   computeDiscountCodeSummary,
+  applyDiscountOverrides,
   type BudgetPerson,
   type BudgetReport,
 } from './budget';
 
-function p(over: Partial<BudgetPerson> & Pick<BudgetPerson, 'churchId' | 'kind'>): BudgetPerson {
+function p(
+  over: Partial<BudgetPerson> & { id?: string } & Partial<Pick<BudgetPerson, 'churchId' | 'kind'>>,
+): BudgetPerson {
+  const churchId = over.churchId ?? 'c1';
   return {
-    churchName: over.churchId === 'c1' ? 'Victory' : over.churchId === 'c2' ? 'Grace Point' : 'Riverbend',
+    churchId,
+    kind: 'camper',
+    churchName: churchId === 'c1' ? 'Victory' : churchId === 'c2' ? 'Grace Point' : 'Riverbend',
     registrationCost: 180,
     discountCode: null,
     ...over,
@@ -252,5 +258,90 @@ describe('computeDiscountCodeSummary', () => {
       p({ churchId: 'c1', kind: 'camper', registrationCost: null, discountAmount: null, discountCode: 'MYSTERY' }),
     ];
     expect(computeDiscountCodeSummary(noFinancials).rows).toEqual([{ code: 'MYSTERY', count: 1, purpose: null }]);
+  });
+});
+
+describe('applyDiscountOverrides', () => {
+  it('fills a null cost for a person whose code has an override', () => {
+    const out = applyDiscountOverrides(
+      [p({ id: '1', registrationCost: null, discountCode: 'EFTPOS' })],
+      { EFTPOS: 180 },
+    );
+    expect(out[0]?.registrationCost).toBe(180);
+  });
+
+  it('fills a zero cost the same way', () => {
+    const out = applyDiscountOverrides(
+      [p({ id: '1', registrationCost: 0, discountCode: 'EFTPOS' })],
+      { EFTPOS: 180 },
+    );
+    expect(out[0]?.registrationCost).toBe(180);
+  });
+
+  it('NEVER overwrites a genuinely recorded nonzero cost', () => {
+    const out = applyDiscountOverrides(
+      [p({ id: '1', registrationCost: 90, discountCode: 'EFTPOS' })],
+      { EFTPOS: 180 },
+    );
+    expect(out[0]?.registrationCost).toBe(90);
+  });
+
+  it('leaves people whose code has no override untouched', () => {
+    const out = applyDiscountOverrides(
+      [p({ id: '1', registrationCost: 0, discountCode: 'SPONSOR' })],
+      { EFTPOS: 180 },
+    );
+    expect(out[0]?.registrationCost).toBe(0);
+  });
+
+  it('leaves people with no discount code untouched', () => {
+    const out = applyDiscountOverrides(
+      [p({ id: '1', registrationCost: 0, discountCode: null })],
+      { EFTPOS: 180 },
+    );
+    expect(out[0]?.registrationCost).toBe(0);
+  });
+
+  it('matches the code after trimming, consistent with computeDiscountCodeSummary', () => {
+    const out = applyDiscountOverrides(
+      [p({ id: '1', registrationCost: 0, discountCode: '  EFTPOS  ' })],
+      { EFTPOS: 180 },
+    );
+    expect(out[0]?.registrationCost).toBe(180);
+  });
+
+  it('does not mutate its input', () => {
+    const people = [p({ id: '1', registrationCost: 0, discountCode: 'EFTPOS' })];
+    applyDiscountOverrides(people, { EFTPOS: 180 });
+    expect(people[0]?.registrationCost).toBe(0);
+  });
+
+  it('feeds computeBudget so the overridden amount reaches the grand total', () => {
+    const people = [
+      p({ id: '1', registrationCost: 180, discountCode: null }),
+      p({ id: '2', registrationCost: 0, discountCode: 'EFTPOS' }),
+    ];
+    const before = computeBudget(people);
+    const after = computeBudget(applyDiscountOverrides(people, { EFTPOS: 180 }));
+    expect(before.grandTotal).toBe(180);
+    expect(after.grandTotal).toBe(360);
+  });
+
+  it('re-buckets the overridden person into the normal Full category', () => {
+    const people = [
+      p({ id: '1', registrationCost: 180, discountCode: null }),
+      p({ id: '2', registrationCost: 0, discountCode: 'EFTPOS' }),
+    ];
+    const after = computeBudget(applyDiscountOverrides(people, { EFTPOS: 180 }));
+    const labels = after.churches.flatMap((c) => c.campers.map((r) => r.label));
+    expect(labels.some((l) => l.startsWith('Full'))).toBe(true);
+    expect(labels.some((l) => l.startsWith('Sponsored'))).toBe(false);
+  });
+
+  it('is a no-op for an empty override map', () => {
+    const people = [p({ id: '1', registrationCost: 0, discountCode: 'EFTPOS' })];
+    expect(computeBudget(applyDiscountOverrides(people, {})).grandTotal).toBe(
+      computeBudget(people).grandTotal,
+    );
   });
 });

@@ -16,6 +16,9 @@ export const env = {
   //   FIELD_ENCRYPTION_KEY       base64 of a 32-byte key — REQUIRED when PERSISTENCE=supabase
   //   FIELD_ENCRYPTION_KEY_ID    label for the active key (default 'k1')
   //   FIELD_ENCRYPTION_KEY_PREV / _PREV_ID   previous key, decrypt-only, during rotation
+  // - CRON_SECRET — read directly in src/api/controllers/cron.controller.ts. Guards
+  //   GET /internal/cron/tick. Set in Vercel (Sensitive) AND stored in Supabase Vault as
+  //   'cron_secret' for the pg_cron job to send. Rotating means updating BOTH places.
 } as const;
 
 export type Env = typeof env;

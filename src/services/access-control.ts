@@ -28,7 +28,10 @@ export type Action =
   // every person's sensitive data (medical, contacts, notes, incidents, temp passwords) across the
   // whole camp, so they are director + admin ONLY — NOT church/zoneLeader, who hold camper:read*.
   | 'export:compliance'
-  | 'admin:manage';
+  | 'admin:manage'
+  // Discount-code "paid in full" override amounts (budget). Narrowly scoped — director should be
+  // able to manage these without gaining general settings editing (admin:manage).
+  | 'budget:manage';
 
 const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
   // church is the shared per-church login — handles both pre-camp registrations and at-camp check-in
@@ -76,6 +79,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'allocation:manage',
     'incident:manage',
     'export:compliance',
+    'budget:manage',
   ]),
   admin: new Set<Action>([
     'registrant:read',
@@ -97,6 +101,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'incident:manage',
     'export:compliance',
     'admin:manage',
+    'budget:manage',
   ]),
   // firstAid: read-only at-camp access PLUS first-aid record logging (Phase 4).
   // No registrant:read (pre-camp hub is not accessible). attendance:write allows attendance

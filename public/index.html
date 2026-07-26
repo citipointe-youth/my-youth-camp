@@ -153,9 +153,13 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
 .nownext{background:linear-gradient(135deg,var(--violet-d),#1e1b4b);color:#fff;border-radius:16px;padding:14px 16px;margin-bottom:12px;}
 .nownext .now{font-weight:800;}.nownext .nx{font-size:var(--t-sm);color:var(--lav);margin-top:2px;}
 /* Incident alert banner (2026-07-26) — replaces the full-screen "Incident logged" modal that fired
-   on every app open. Compact, non-blocking, sits above the hero on Home; one row per unacknowledged
-   high-severity incident, cleared per device by the "Got it" button (`_ackAlert`). Deliberately
-   red/left-accented rather than the calm `.notice` tint — it still has to read as an alarm. */
+   on every app open. Compact, non-blocking; one row per unacknowledged urgent notice, cleared per
+   device by the "Got it" button (`_ackAlert`). Deliberately red/left-accented rather than the calm
+   `.notice` tint — it still has to read as an alarm.
+   2026-07-27: placement moved from above the hero to immediately ABOVE the "Notices" heading near
+   the bottom of Home (owner request), on BOTH the pre-camp and at-camp home variants. This is the
+   change that the 2026-07-26 "move incidents below Testimonies & Notes" request actually meant —
+   the Incidents menu TILE was moved by mistake and has since been restored to the grid. */
 .inc-banner{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
 .inc-row{display:flex;align-items:center;gap:10px;background:#fff1f2;border:1px solid #fecdd3;border-left:4px solid var(--danger);border-radius:14px;padding:10px 12px;}
 .inc-ico{flex:none;color:var(--danger);display:grid;place-items:center;}
@@ -883,7 +887,7 @@ async function api(path,opt={}){
    instant. Fire-and-forget; failures are ignored (the screen will retry). */
 function _prefetch(){
   const common=['/settings','/home','/notifications'];
-  const byMode=CAMP_MODE==='at-camp'?['/checkin/sessions']:['/registrants'];
+  const byMode=CAMP_MODE==='at-camp'?['/checkin/sessions']:[_scoped('/registrants')];
   // Admin/director land on account & setup screens first; warming these two makes the
   // Accounts, Ministry-contacts and Setup-wizard screens open instantly (no cold round-trip).
   const byRole=(ACTOR&&(ACTOR.role==='admin'||ACTOR.role==='director'))?['/accounts/churches','/accounts/users']:[];
@@ -907,6 +911,15 @@ let LAST_LEADER='';
 // existing "Your name (leader)" fields all pick them up rather than adding a parallel prefill.
 let LEADER_INITIALS='';
 function _isChurchAccount(){return !!(ACTOR&&ACTOR.role==='church');}
+// S6: church logins fetch only their own church's people. The backend fast path
+// (person.service scopedAll -> findByChurch) already exists; this is the SPA half.
+// MUST be used for BOTH the api() call and any _allCached()/_prefetch() key for the
+// same resource — Cache.get is an exact-key lookup, so a mismatch silently disables
+// the prefetch/stale-while-revalidate hit (no error, just slower).
+function _scoped(path){
+  if(!_isChurchAccount()||!ACTOR.churchId)return path;
+  return path+(path.includes('?')?'&':'?')+'churchId='+encodeURIComponent(ACTOR.churchId);
+}
 // Item 2: the name attributed to a sign-in/out or note. ONLY the first-aid log form still asks for
 // a typed name; every other action uses the account's own name automatically — a church login uses
 // its saved initials, every other role uses the logged-in account's display name.
@@ -1210,6 +1223,7 @@ function logout(){
   api('/auth/logout',{method:'POST'}).catch(()=>{});
   localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
   sessionStorage.removeItem('ycp_wizardReturn');
+  try{localStorage.removeItem(_ciqKey());}catch(_){}
   TOKEN=null;ACTOR=null;location.reload();
 }
 // Full-page gate for accounts flagged mustChangePassword (admin-set or new-year temp
@@ -1296,6 +1310,21 @@ function _ampm(t){if(!t||t.indexOf(':')<0)return t||'';let[h,m]=t.split(':').map
 // (one-shot; RENDER.checkin reads then clears it). Absent an explicit tap it falls back to campPhase().
 let _forceCheckinFace=null;
 function openCheckinFace(face){_forceCheckinFace=face;gotoTab('checkin');}
+/* 2026-07-27 — keep the BOTTOM NAV's Sign-in/Check-in label in step with campPhase().
+   `navModel._ci()` has always computed the right label, but `buildTabs()` only ran at
+   login / mode switch, so the label froze at whatever the phase was when the session
+   started: after the Day-1 switchover time passed (or an admin pinned the phase, or the
+   preview toggle flipped) the tab still read "Sign-in" while the app was in check-in.
+   The desktop SIDEBAR never had this bug — `_renderWideNav` runs on every paint().
+   Cheap and idempotent: it only touches the DOM when the phase actually changed. */
+let _navPhase=null;
+function _syncNavPhase(){
+  if(!ACTOR)return;
+  const p=(typeof campPhase==='function')?campPhase():null;
+  if(p===_navPhase)return;
+  _navPhase=p;
+  buildTabs();
+}
 function updateModeUI(){
   const b=document.getElementById('modeBadge'),r=document.getElementById('roleBadge');
   if(PREVIEW_MODE){b.textContent='Preview';b.style.background='#92400e';b.style.color='var(--card)';}
@@ -1441,6 +1470,7 @@ function switchPreviewPhase(){
   if(!PREVIEW_MODE)return;
   _previewPhase=_previewPhase==='signin'?'checkin':'signin';
   updateModeUI();
+  _syncNavPhase(); // the bottom nav's Sign-in/Check-in label must follow the toggle
   toast(_previewPhase==='signin'?'Previewing first-day sign-in':'Previewing through-camp check-in');
   STACK=['home'];RENDER.home();}
 
@@ -1662,6 +1692,13 @@ RENDER.home=async function renderHome(skipModeSync){
         // B-3: publish the authoritative mode so OTHER tabs of this origin pick it up via the
         // 'storage' event (see BOOT). Written every home visit; cheap and idempotent.
         try{localStorage.setItem('ycp_campmode',fresh.campMode);}catch(_){}
+        // 2026-07-27: also adopt the two PHASE inputs. Without these an admin pinning the
+        // phase (or editing the switchover time) never reached an already-open session, so
+        // `campPhase()` — and the Check-in tab label with it — stayed on the stale value.
+        if(SETTINGS){
+          SETTINGS.checkinPhaseOverride=fresh.checkinPhaseOverride;
+          SETTINGS.checkinSwitchoverTime=fresh.checkinSwitchoverTime;
+        }
         if(fresh.campMode!==CAMP_MODE){
           CAMP_MODE=fresh.campMode;
           if(SETTINGS)SETTINGS.campMode=fresh.campMode;
@@ -1670,17 +1707,21 @@ RENDER.home=async function renderHome(skipModeSync){
       }
     }catch(e){}
   }
+  // Re-label the Check-in/Sign-in tab if the phase moved since the nav was last built
+  // (switchover time passed, admin pinned the phase, preview toggle flipped). No-op otherwise.
+  _syncNavPhase();
   if(CAMP_MODE==='at-camp'){await renderHomeAtCamp();return;}
   // Parallel-load the three independent home datasets (was three sequential awaits).
   const [h,regs,feed]=await Promise.all([
     api('/home'),
-    api('/registrants').catch(()=>[]),
+    api(_scoped('/registrants')).catch(()=>[]),
     api('/notifications').catch(()=>[]),
   ]);
   const s=SETTINGS,isWide=['director','admin'].includes(ACTOR.role);
-  // Unacknowledged high-severity incidents sit ABOVE the hero — first thing on the screen.
-  // Incidents can be (and have been) logged pre-camp, so this belongs on both home variants.
-  let body=_alertBannerHtml(feed)+`<div class="hero">${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2>Hi ${esc(ACTOR.displayName)}</h2>
+  // Unacknowledged urgent notices (incident auto-alerts + human-sent) render on BOTH home
+  // variants — incidents can be, and have been, logged pre-camp. 2026-07-27: the banner moved
+  // off the top of the screen to just above the "Notices" heading, matching the at-camp home.
+  let body=`<div class="hero">${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2>Hi ${esc(ACTOR.displayName)}</h2>
     <div class="cd"><div class="big">${h.daysToGo??'—'}</div><div class="meta">days to go<br>${esc(h.startDate||'')}${s&&s.endDate?' – '+esc(s.endDate):''}</div></div></div>`;
   // Bug-2: registrations split by who (Student/Leader) × where they sleep (Tent/Classroom).
   // Replaces the old Campers/Leaders/Ldr-blue-card band. Counts come from the already-loaded
@@ -1741,10 +1782,11 @@ RENDER.home=async function renderHome(skipModeSync){
   // this removes pre-camp zoneLeader/director/admin's only route to RENDER.incidents;
   // pre-camp incident logging is unreachable until at-camp mode.
   // Notices — latest 3 REAL notices (incident auto-alerts are filtered out by `_noticeFeed` and
-  // surface in the banner at the top of this screen instead; feed already loaded in parallel
+  // surface in the alert banner injected directly below instead; feed already loaded in parallel
   // above, expiry handled server-side)
   {const notices=_noticeFeed(feed).slice(0,3);
-    body+=`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
+    body+=_alertBannerHtml(feed)
+    +`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
     <div id="homeNotices" style="margin-top:10px">${notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>'}</div>`;
   }
   paint('home',body,'My Church Hub',isWide?'All churches':(ACTOR.churchName?esc(ACTOR.churchName):esc(ACTOR.displayName)));
@@ -1832,13 +1874,13 @@ async function renderHomeAtCamp(){
     if(ACTOR.role==='director')tiles.push(`<div class="tile" onclick="go('data')"><div class="ic">${ic('note')}</div><div class="l">Student Data Table</div></div>`);
   }
   // Feature 3: Incidents tile for zoneLeader/director/admin (both modes).
-  // 2026-07-26: Incidents moved OUT of the tile grid to a slim full-width link below
-  // "Testimonies & Notes" and above the Notices summary (see `incidentsLinkHtml`).
+  // 2026-07-27: RESTORED to the tile grid. The 2026-07-26 change that demoted it to a slim
+  // full-width link was a misread of the owner's request — what was meant to move below
+  // "Testimonies & Notes" was the urgent-alert BANNER (`_alertBannerHtml`, the red strip with
+  // the "Got it" button), not this menu tile. Do not demote it again.
+  if(canManageIncident())tiles.push(`<div class="tile" onclick="go('incidents')"><div class="ic">${ic('alert')}</div><div class="l">Incidents</div></div>`);
   // Testimonies & Notes → slim full-width bold link below the grid (not a tile).
   const notesLinkHtml=canReadNotes()?`<div class="card tap" onclick="go('notes')" style="margin-top:10px"><div class="rowsb"><div style="font-weight:700">${icSm('note')} Testimonies &amp; Notes</div><span style="color:var(--muted)">›</span></div></div>`:'';
-  // Incidents → same slim link treatment, placed directly BELOW Testimonies & Notes and ABOVE the
-  // Notices summary (owner request 2026-07-26). Was a tile in the grid above.
-  const incidentsLinkHtml=canManageIncident()?`<div class="card tap" onclick="go('incidents')" style="margin-top:10px"><div class="rowsb"><div style="font-weight:700">${icSm('alert')} Incidents</div><span style="color:var(--muted)">›</span></div></div>`:'';
   // Accommodation → one-line strip inside the hero (church, real at-camp only).
   const accomLineHtml=(ACTOR.role==='church'&&!PREVIEW_MODE)?`<div style="margin-top:8px;color:#cfe0ff;font-size:.78rem">${icSm('classroom')} Your accommodation: ${esc(myAccom)}</div>`:'';
   // PC-7: FAQ/Help is a PRE-CAMP aid only — no FAQ tile in at-camp home for any role.
@@ -1859,7 +1901,9 @@ async function renderHomeAtCamp(){
   const _zoneClr=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?ZONE_COLORS[ACTOR.zone]:null;
   const _heroStyle=_zoneClr?` style="background:linear-gradient(135deg,${_zoneClr} 0%,#1e1b4b 78%)"`:'';
   const _heroSub=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?'':`<div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':'Director'}</div>`;
-  const html=_alertBannerHtml(feed)+`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
+  // 2026-07-27: the alert banner is NO LONGER at the head of the screen — it sits immediately
+  // above the "Notices" heading near the bottom (owner request; see the block below).
+  const html=`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
     <h2>Hi ${esc(d.greetingName||ACTOR.displayName)}</h2>
     ${_heroSub}
     ${accomLineHtml}
@@ -1875,8 +1919,8 @@ async function renderHomeAtCamp(){
   })()}
   <div class="tiles">${tiles.join('')}</div>
   ${notesLinkHtml}
-  ${incidentsLinkHtml}
   <div id="homePulse"></div>
+  ${_alertBannerHtml(feed)}
   <div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
   <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>`;
   paint('home','','Home',d.greetingName||ACTOR.displayName);
@@ -2031,7 +2075,7 @@ function telLink(phone){
 let ALLREG=[],CHURCHES=[];
 function _isWideRole(){return ACTOR!=null&&['director','admin','zoneLeader'].includes(ACTOR.role);}
 RENDER.people=async function renderPeople(){
-  ALLREG=await api('/registrants');
+  ALLREG=await api(_scoped('/registrants'));
   const map={};ALLREG.forEach(r=>{if(r.churchId)map[r.churchId]=r.churchName;});
   CHURCHES=Object.entries(map).map(([id,name])=>({id,name}));
   const isDir=_isWideRole();
@@ -2157,6 +2201,31 @@ function _ciLabel(session){
 /* ===== DAILY CHECK-IN ===== */
 // Optimistic check-in queue — queued writes drain in order, survive brief offline.
 const CHECKIN_QUEUE=[];let _draining=false,_onlineHandlerAdded=false;
+// S2 (2026-07-26): the queue is persisted per account so a reload, tab eviction, or iOS
+// reclaiming a backgrounded PWA no longer discards queued attendance taps. Key mirrors
+// _initialsKey()'s convention. Entries carry the initials captured AT QUEUE TIME — draining
+// under LEADER_INITIALS would misattribute a rehydrated entry to whoever is logged in now.
+function _ciqKey(){return 'ycp_ciq_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
+function _persistQueue(){
+  try{
+    if(CHECKIN_QUEUE.length)localStorage.setItem(_ciqKey(),JSON.stringify(CHECKIN_QUEUE));
+    else localStorage.removeItem(_ciqKey());
+  }catch(_){/* quota/private mode — in-memory queue still works */}
+}
+// Rehydrate on boot. Entries for any session other than the one now selected are DROPPED
+// (owner decision) — their window has closed and the POST would 403. The drop is reported
+// so it can be reconciled against the paper sheet rather than vanishing.
+function _restoreQueue(){
+  let saved=[];
+  try{saved=JSON.parse(localStorage.getItem(_ciqKey())||'[]');}catch(_){saved=[];}
+  if(!Array.isArray(saved)||!saved.length)return;
+  const fresh=saved.filter(e=>e&&e.camperId&&e.sessionId===SEL_SESSION);
+  const dropped=saved.length-fresh.length;
+  CHECKIN_QUEUE.push(...fresh);
+  _persistQueue();
+  if(dropped>0)toast(dropped+' queued check-in'+(dropped===1?'':'s')+' from an earlier session were discarded — check the paper sheet');
+  if(CHECKIN_QUEUE.length&&!_draining)drainQueue();
+}
 let _undoTimer=null,_undoCamperId=null,_undoType=null;
 let _lastRoster=null;
 // B-1 (Phase 5): count entries that were hard-dropped on an ONLINE error (4xx etc.) so the
@@ -2166,7 +2235,9 @@ let _lastRoster=null;
 let _checkinFailed=0;
 
 function _queueEntry(camperId,type){
-  CHECKIN_QUEUE.push({camperId,type,sessionId:SEL_SESSION});
+  // initials captured NOW, not at drain time — a rehydrated entry must keep its original author.
+  CHECKIN_QUEUE.push({camperId,type,sessionId:SEL_SESSION,initials:LEADER_INITIALS});
+  _persistQueue();
   _updateSyncDots(camperId,'pending');
   if(!_draining)drainQueue();
   if(!_onlineHandlerAdded){window.addEventListener('online',drainQueue);_onlineHandlerAdded=true;}
@@ -2176,11 +2247,13 @@ async function drainQueue(){
   while(CHECKIN_QUEUE.length>0){
     const entry=CHECKIN_QUEUE[0];
     try{
-      await api('/checkin',{method:'POST',body:{camperId:entry.camperId,sessionId:entry.sessionId,type:entry.type,initials:LEADER_INITIALS}});
-      CHECKIN_QUEUE.shift();_markSynced(entry.camperId);
+      // entry.initials falls back for any entry queued before this change shipped.
+      await api('/checkin',{method:'POST',body:{camperId:entry.camperId,sessionId:entry.sessionId,type:entry.type,initials:entry.initials||LEADER_INITIALS}});
+      CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId);
     }catch(e){
-      if(!navigator.onLine)break; // wait for online event
-      CHECKIN_QUEUE.shift();_markSynced(entry.camperId,'error');_checkinFailed++; // B-1: surface in the banner
+      if(!navigator.onLine)break; // wait for online event; queue stays persisted
+      // Deliberate: an ONLINE failure is a hard drop + banner (owner chose banner only).
+      CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId,'error');_checkinFailed++; // B-1: surface in the banner
     }
   }
   _draining=false;
@@ -2276,7 +2349,7 @@ function _previewSimRoster(regList){
 // Simulated CamperDto-shaped list for the My-group/roster screens (_renderMyGroup), built the
 // same way — everyone `atCamp:true` except the same deterministic excluded 5.
 async function _previewSimCampers(){
-  const regList=await api('/registrants').catch(()=>[]);
+  const regList=await api(_scoped('/registrants')).catch(()=>[]);
   // Fix 2: same canonical population + same notIn computation as _previewSimRoster/openCamper.
   const people=_previewCanonicalPeople(regList);
   const notIn=_previewNotCheckedInIds(people);
@@ -2314,6 +2387,7 @@ async function _renderDailyCheckin(){
   if(!SEL_SESSION)SEL_SESSION=CUR_ID||(SESSIONS[0]&&SESSIONS[0].id);
   const sessionLocked=churchRestricted&&SEL_SESSION!==CUR_ID;
   if(!SEL_SESSION){paint('checkin','<p class="note-hint">No check-in sessions configured. Set camp dates in admin settings.</p>','Daily Check-in','');return;}
+  if(!window._ciqRestored){window._ciqRestored=true;_restoreQueue();}
   // Enriched RosterEntry now includes gender, grade, medicalFlag — no second /campers fetch needed.
   // "Not Signed In" (item 3) needs the students NOT on the roster at all (checkin.service's
   // roster only ever includes atCamp===true — see CLAUDE.md presence model), so fetch the
@@ -2328,7 +2402,7 @@ async function _renderDailyCheckin(){
   // /campers; /registrants is only needed to build the simulated roster during a preview.
   const [st,regList]=await Promise.all([
     previewSim?Promise.resolve({session:null,roster:[]}):api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status'),
-    previewSim?api('/registrants').catch(()=>[]):Promise.resolve([]),
+    previewSim?api(_scoped('/registrants')).catch(()=>[]):Promise.resolve([]),
   ]);
   const roster=previewSim?_previewSimRoster(regList):(st.roster||[]).map(r=>({
     id:r.camperId,name:(r.firstName+' '+r.lastName).trim(),
@@ -2713,7 +2787,7 @@ async function saveFirstAidLog(id){
 let _faRecFilter='today';
 RENDER.records=async function(){
   let recs=[],page=[];
-  try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=100'),api('/campers?pageSize=300').catch(()=>[])]);}
+  try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=100'),api(_scoped('/campers?pageSize=300')).catch(()=>[])]);}
   catch(e){paint('records','<p class="err" style="display:block">'+esc(e.message)+'</p>','First-aid records','');return;}
   window._faRecsAll=recs||[];
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c.firstName+' '+c.lastName+(c.grade?' · Gr '+c.grade:'');});window._faCamperMap=cmap;
@@ -2792,7 +2866,7 @@ async function _renderStudentsBody(){
   // Feature 1: simulate a populated roster while previewing at-camp from a still-pre-camp
   // backend — see _previewSimActive()/_previewSimCampers() above (client-side only).
   const previewSim=_previewSimActive();
-  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
+  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api(_scoped('/campers?pageSize=300')));
   window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
@@ -2910,9 +2984,23 @@ function computeDiscountSummaryClient(regs,filterId){
   const rows=[...counts.entries()].map(([code,count])=>({code,count,purpose:_deriveDiscountPurpose(pairsByCode.get(code)||[])})).sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
   return {totalInScope:people.length,rows};
 }
+// Mirror of applyDiscountOverrides in src/services/budget.ts. Keep the two in step —
+// the SPA computes the budget client-side and would otherwise disagree with the server.
+function _applyDiscountOverrides(people,overrides){
+  const keys=Object.keys(overrides||{});
+  if(!keys.length)return people.slice();
+  return people.map(p=>{
+    const code=(p.discountCode||'').trim();
+    if(!code)return p;
+    const amt=overrides[code];
+    if(amt==null)return p;
+    if(p.registrationCost!=null&&p.registrationCost!==0)return p;
+    return Object.assign({},p,{registrationCost:amt});
+  });
+}
 RENDER.budget=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('budget','<p class="note-hint" style="margin-top:24px;text-align:center">Budget is available to directors only.</p>','Budget & Costings','');return;}
-  const [regs,camperPage]=await Promise.all([api('/registrants'),api('/campers?pageSize=1000').catch(()=>[])]);
+  const [regs,camperPage]=await Promise.all([api(_scoped('/registrants')),api(_scoped('/campers?pageSize=1000')).catch(()=>[])]);
   // Anyone already at camp (esp. leaders, bulk-signed-in on the mode switch) has
   // lifecycle !== 'registered' and drops out of /registrants — merge in /campers
   // (deduped by id) so registration fees for arrived people still count.
@@ -2928,7 +3016,8 @@ RENDER.budget=async function(){
 };
 function drawBudget(){
   const scope=sel('budChurch')||'all';
-  const rep=computeBudgetClient(window._budgetRegs,scope);
+  const _budRegsOvr=_applyDiscountOverrides(window._budgetRegs,SETTINGS.discountCodeOverrides||{});
+  const rep=computeBudgetClient(_budRegsOvr,scope);
   const head=`<div class="hero" style="margin-bottom:14px"><div class="k">Total registration fees</div>
     <div class="big" style="font-size:var(--t-xl);margin-top:6px">${_money(rep.grandTotal)}</div>
     <div class="cd" style="margin-top:8px"><div class="meta">${rep.camperCount} campers · ${rep.leaderCount} leaders · ${rep.churchCount} ${rep.churchCount===1?'church':'churches'}</div></div></div>`;
@@ -2954,9 +3043,17 @@ function drawBudget(){
   };
   const body=rep.churches.length?`<div class="wide-cards">${rep.churches.map(churchCard).join('')}</div>`:emptyState('star','No registrations yet — import students to see the budget.');
   const disc=computeDiscountSummaryClient(window._budgetRegs,scope);
-  const discRow=(r)=>`<div class="rowsb" style="padding:5px 0">
+  const _canBudget=ACTOR&&(ACTOR.role==='admin'||ACTOR.role==='director');
+  const discRow=(r)=>`<div class="rowsb" style="padding:5px 0;flex-wrap:wrap;gap:6px">
     <div style="min-width:0"><span class="budcat-l">${esc(r.code)}</span>${r.purpose?`<span class="gradepill">${esc(r.purpose)}</span>`:''}</div>
-    <b style="white-space:nowrap">${r.count} used of ${disc.totalInScope}</b></div>`;
+    <b style="white-space:nowrap">${r.count} used of ${disc.totalInScope}</b>
+    ${_canBudget?`<div class="dc-ovr" style="flex:0 0 100%;display:flex;gap:8px;align-items:center">
+      <input type="number" inputmode="decimal" min="0" step="0.01" placeholder="Paid-in-full amount"
+             value="${(SETTINGS.discountCodeOverrides||{})[r.code]??''}"
+             style="flex:1;min-width:0"
+             onchange="_saveDiscountOverride('${esc(jsq(r.code))}',this.value)">
+      ${rep.fullAmount!=null?`<button class="btn ghost sm" style="flex:none" onclick="_prefillDiscountOverride('${esc(jsq(r.code))}',${rep.fullAmount})">Mark paid in full</button>`:''}
+    </div>`:''}</div>`;
   const discBody=disc.rows.length?disc.rows.map(discRow).join(''):'<p class="sub" style="padding:6px 0">No discount codes recorded.</p>';
   const discSection=`<div class="card budchurch" data-cid="disc" style="margin-top:14px">
     <div class="rowsb budchurch-hd" onclick="_budToggle('disc')" style="cursor:pointer">
@@ -2968,9 +3065,24 @@ function drawBudget(){
   if(box)box.innerHTML=`<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${discSection}</div></div>`;
 }
 function _budToggle(cid){const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.toggle('open');}
+// Clearing the field removes the override (the code reverts to normal behaviour).
+async function _saveDiscountOverride(code,value){
+  const o=Object.assign({},SETTINGS.discountCodeOverrides||{});
+  const n=parseFloat(value);
+  if(!value||!isFinite(n)||n<=0)delete o[code];else o[code]=n;
+  try{
+    const s=await api('/settings/discount-overrides',{method:'PATCH',body:{overrides:o}});
+    SETTINGS.discountCodeOverrides=s.discountCodeOverrides||{};
+    _invalidate('/settings');
+    toast('Saved');
+    RENDER.budget();
+  }catch(e){toast(e.message||'Could not save');}
+}
+function _prefillDiscountOverride(code,amount){_saveDiscountOverride(code,String(amount));}
 function exportBudget(){
   const scope=sel('budChurch')||'all';
-  const rep=computeBudgetClient(window._budgetRegs,scope);
+  const _budRegsOvr=_applyDiscountOverrides(window._budgetRegs,SETTINGS.discountCodeOverrides||{});
+  const rep=computeBudgetClient(_budRegsOvr,scope);
   const esc2=s=>{const str=String(s);return /[",\n]/.test(str)?'"'+str.replace(/"/g,'""')+'"':str;};
   const lines=[['Church','Audience','Category','Count','UnitPrice','LineTotal'].join(',')];
   const emit=(church,aud,rows)=>rows.forEach(r=>lines.push([esc2(church),aud,esc2(r.label),r.count,r.amount||0,r.lineTotal].join(',')));
@@ -2990,7 +3102,7 @@ function exportBudget(){
    below is an auto-distribution view (7 per tent, leaders in separate tents). */
 RENDER.accom=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('accom','<p class="note-hint" style="margin-top:24px;text-align:center">Accommodation allocations are available to directors only.</p>','Accommodation allocations','');return;}
-  const [regs,rooms,alloc]=await Promise.all([api('/registrants'),api('/accommodation/classrooms'),api('/accommodation/allocations')]);
+  const [regs,rooms,alloc]=await Promise.all([api(_scoped('/registrants')),api('/accommodation/classrooms'),api('/accommodation/allocations')]);
   window._accomRegs=regs||[];window._accomRooms=rooms||[];window._accomAlloc=alloc||{};
   paint('accom','<div id="accomBody"></div>','Accommodation allocations','Classrooms by ministry & gender');
   drawAccom();
@@ -3208,7 +3320,7 @@ let _fdScreen='firstday';
 RENDER.firstday=async function(){
   _fdScreen='firstday';
   paint('firstday','<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','First Day Sign In','Select students to confirm');
-  const [camperPage,regList]=await Promise.all([api('/campers?pageSize=300'),api('/registrants')]);
+  const [camperPage,regList]=await Promise.all([api(_scoped('/campers?pageSize=300')),api(_scoped('/registrants'))]);
   const campers=(Array.isArray(camperPage)?camperPage:camperPage.items||[]).filter(c=>c.kind==='student');
   const camperIds=new Set(campers.map(c=>c.id));
   const registrants=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id));
@@ -3223,7 +3335,7 @@ RENDER.firstday=async function(){
 async function _renderArrival(){
   _fdScreen='checkin';
   paint('checkin','<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','First Day Sign In','Select students to confirm');
-  const [camperPage,regList]=await Promise.all([api('/campers?pageSize=300'),api('/registrants')]);
+  const [camperPage,regList]=await Promise.all([api(_scoped('/campers?pageSize=300')),api(_scoped('/registrants'))]);
   // 2026-07-26: LEADERS are listed on this screen too. They were filtered out of BOTH feeds, so a
   // leader missed by the pre-camp→at-camp bulk sign-in (added later, or arriving on day 1 before
   // the mode switch) could not be signed in from the arrivals screen at all — the only route was
@@ -3331,7 +3443,7 @@ async function _renderMyGroup(screenId){
   // previewing the at-camp view, build a simulated "everyone but 5 already arrived" list instead
   // (client-side only) so the roster/search screens demo populated rather than blank.
   const previewSim=_previewSimActive();
-  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api('/campers?pageSize=300'));
+  const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api(_scoped('/campers?pageSize=300')));
   window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
@@ -3346,7 +3458,7 @@ async function _renderMyGroup(screenId){
 // not-atCamp campers with no sign-out history, deduped by id. Suppressed during the preview sim.
 async function _loadMyNotSignedIn(previewSim,campers){
   if(previewSim)return [];
-  const regList=await api('/registrants').catch(()=>[]);
+  const regList=await api(_scoped('/registrants')).catch(()=>[]);
   const camperIds=new Set((campers||[]).filter(c=>c.kind==='student').map(c=>c.id));
   const nsRegs=(Array.isArray(regList)?regList:[]).filter(c=>c.kind!=='leader'&&!camperIds.has(c.id)&&!c.atCamp);
   const nsCampers=(campers||[]).filter(c=>c.kind==='student'&&!c.atCamp&&!(c.signOutHistory&&c.signOutHistory.length));
@@ -3417,7 +3529,7 @@ async function openCamper(id,push=true){
   let atCamp=p.atCamp;
   if(_previewSimActive()){
     try{
-      const regList=await api('/registrants').catch(()=>[]);
+      const regList=await api(_scoped('/registrants')).catch(()=>[]);
       const notIn=_previewNotCheckedInIds(_previewCanonicalPeople(regList));
       atCamp=_previewIsPresent(id,notIn);
     }catch(e){}
@@ -3570,21 +3682,17 @@ RENDER.faq=async function(){
 RENDER.testimonies=async function(){
   // A testimony is stored as a note with category 'testimony'. The student is optional —
   // the default is a general testimony with no specific student identified.
-  // CH-2: the dropdown previously fetched only /campers (= isCamper, lifecycle ≥ arrived),
-  // so a church login's youth who have NOT yet signed in (lifecycle 'registered') never
-  // appeared and the list looked empty. Mirror RENDER.firstday: pull BOTH /registrants
-  // (pre-arrival youth, kind 'camper') and /campers (arrived students, kind 'student') and
-  // dedupe by id, so every one of the church's young people is selectable.
-  const [campPage,regs]=await Promise.all([
-    api('/campers?pageSize=300').catch(()=>[]),
-    api('/registrants').catch(()=>[]),
-  ]);
+  // 2026-07-27: ONLY students who have signed in are selectable — this REVERSES the earlier
+  // "CH-2" change that merged /registrants in so pre-arrival youth (lifecycle 'registered')
+  // also appeared. `/campers` is exactly the right feed for that: it is `isCamper`, i.e.
+  // lifecycle ≥ arrived, so someone who signed in and later signed out is still listed (a
+  // testimony can be logged after they go home) but someone who never arrived is not.
+  // Do NOT re-add the /registrants merge here — an empty-looking list pre-camp is correct;
+  // the Testimonies tile only exists on the at-camp home anyway.
+  const campPage=await api(_scoped('/campers?pageSize=300')).catch(()=>[]);
   const campers=(Array.isArray(campPage)?campPage:campPage.items||[]).filter(c=>c.kind==='student');
-  const regYouth=(regs||[]).filter(r=>r.kind==='camper'&&r.status!=='cancelled');
-  const byId={};
-  campers.forEach(c=>{byId[c.id]={id:c.id,firstName:c.firstName,lastName:c.lastName,churchName:c.churchName};});
-  regYouth.forEach(r=>{if(!byId[r.id])byId[r.id]={id:r.id,firstName:r.firstName,lastName:r.lastName,churchName:r.churchName};});
-  const items=Object.values(byId).sort((a,b)=>(a.firstName+a.lastName).localeCompare(b.firstName+b.lastName));
+  const items=campers.map(c=>({id:c.id,firstName:c.firstName,lastName:c.lastName,churchName:c.churchName}))
+    .sort((a,b)=>(a.firstName+a.lastName).localeCompare(b.firstName+b.lastName));
   const opts=`<option value="" selected>No specific student identified</option>`
     +items.map(c=>`<option value="${c.id}">${esc(c.firstName+' '+c.lastName)} · ${esc(c.churchName)}</option>`).join('');
   paint('testimonies',`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Submit a testimony</span>${helpTip('Record a God-moment from camp. Choosing a student is optional — leave it blank for a general testimony. Saved for leaders and directors to review.')}</div>
@@ -3604,7 +3712,7 @@ async function submitTestimony(){const camperId=sel('tmCamper'),body=val('tmBody
   try{await api('/notes',{method:'POST',body:payload});toast('Testimony submitted');const t=document.getElementById('tmBody');if(t)t.value='';const s=document.getElementById('tmSensitive');if(s)s.checked=false;}catch(e){toast(e.message);}}
 RENDER.notes=async function(presetFilter){
   // /notes/recent returns bare notes (no camper details) — join /campers for name/church/zone/gender/grade.
-  const [notes,page,incidents,churchRows]=await Promise.all([api('/notes/recent'),api('/campers?pageSize=300').catch(()=>[]),api('/incidents').catch(()=>[]),api('/accounts/churches').catch(()=>[])]);
+  const [notes,page,incidents,churchRows]=await Promise.all([api('/notes/recent'),api(_scoped('/campers?pageSize=300')).catch(()=>[]),api('/incidents').catch(()=>[]),api('/accounts/churches').catch(()=>[])]);
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c;});
   // Left-edge zone accent (2026-07-18): a general note/testimony (no camperId) has no student
   // to take a zone from, so fall back to the zone of the church that logged it (authorChurchId).
@@ -4217,9 +4325,12 @@ RENDER.adminSettings=async function(){
   // forced wizard flow. Every input still lives in the DOM (inside <details>), so the single
   // Save button at the bottom writes them all in one PATCH exactly as before. Notices are NO
   // longer surfaced here (item 4) — they live on the admin console's Communications group.
+  // 2026-07-27: ALL THREE sections start COLLAPSED (owner request) — the first one no longer
+  // carries `open`. Collapse state is cosmetic only; every input is still in the DOM, so
+  // `saveSettings` reads them all regardless of which sections the admin expanded.
   const tick=ok=>ok?'<span class="pill ok">Ready</span>':'<span class="pill">Set up</span>';
   paint('adminSettings',`
-    <details class="setg" open><summary>${icSm('calendar')} Camp details &amp; dates ${tick(!!s.campName&&!!s.startDate&&!!s.endDate)}</summary>
+    <details class="setg"><summary>${icSm('calendar')} Camp details &amp; dates ${tick(!!s.campName&&!!s.startDate&&!!s.endDate)}</summary>
       <div class="card">
         <div class="two-col">
           <div><label>Camp name</label><input class="fld" id="stName" value="${esc(s.campName||'')}"></div>
@@ -4317,6 +4428,9 @@ async function saveSettings(){
     const pmEnd=document.getElementById('stPmEnd')?.value||'22:00';
     await api('/settings',{method:'PATCH',body:{campName:val('stName'),year:Number(val('stYear'))||new Date().getFullYear(),startDate:val('stStart'),endDate:val('stEnd'),timezone:'Australia/Brisbane',checkInDays:days,churchLoginLocked:churchLock,zoneLeaderLoginLocked:zoneLock,churchCheckinTimeRestricted:churchCheckinRestrict,checkinSwitchoverTime:switchover,checkinPhaseOverride:phaseOverride,checkinWindowAmStart:amStart,checkinWindowAmEnd:amEnd,checkinWindowPmStart:pmStart,checkinWindowPmEnd:pmEnd}});
     SETTINGS=await api('/settings',{noCache:true});SESSIONS=[];SEL_SESSION=null;SCHED_DAY=null;DEVO_DAY=null;
+    // The phase override / switchover time just changed under us — re-label the Check-in tab
+    // for THIS session immediately (other sessions pick it up on their next home visit).
+    _syncNavPhase();
     toast('Settings saved');
   }catch(e){toast(e.message);}
 }
@@ -4570,7 +4684,7 @@ async function _loadAllocation(){
   const wrap=document.getElementById('allocWrap'); if(!wrap) return;
   const [unallocated,regs,churches,overrides]=await Promise.all([
     api('/import/unallocated').catch(()=>[]),
-    api('/registrants').catch(()=>[]),
+    api(_scoped('/registrants')).catch(()=>[]),
     api('/accounts/churches').catch(()=>[]),
     api('/import/allocations').catch(()=>[]),
   ]);
@@ -4672,8 +4786,8 @@ let _dataSortKey=null,_dataSortDir=1; // active column sort; null key = default 
 RENDER.data=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('data','<p class="note-hint">This area is restricted to directors and admins.</p>','Data','');return;}
   const [regs,camperPage,churches]=await Promise.all([
-    api('/registrants').catch(()=>[]),
-    api('/campers?pageSize=1000').catch(()=>[]),
+    api(_scoped('/registrants')).catch(()=>[]),
+    api(_scoped('/campers?pageSize=1000')).catch(()=>[]),
     api('/accounts/churches').catch(()=>[]),
   ]);
   // At-camp, anyone already signed in (esp. leaders — bulk-signed-in on the mode switch)
@@ -4836,8 +4950,8 @@ function _stuNorm(r,atCamp){return {id:r.id,firstName:r.firstName,lastName:r.las
   medical:(r.medicalConditions||[]).join(', '),dietary:(r.dietaryRequirements||[]).join(', '),atCamp};}
 RENDER.adminStudents=async function(){
   const [regs,campers,churches]=await Promise.all([
-    api('/registrants').catch(()=>[]),
-    api('/campers').catch(()=>[]),
+    api(_scoped('/registrants')).catch(()=>[]),
+    api(_scoped('/campers')).catch(()=>[]),
     api('/accounts/churches').catch(()=>[]),
   ]);
   const byId={};
@@ -5127,7 +5241,7 @@ const WIZARD_STEPS=[
   {key:'accounts',label:'Accounts',icon:'users',screen:'adminAccounts',summary:'Accounts — login accounts for church leaders, zone leaders and directors.',check:async()=>{try{const u=await api('/accounts/users');return(u||[]).filter(x=>x.role!=='admin').length>0;}catch(e){return false;}}},
   // Item 5a: sits between Accounts and Accommodation rooms — a camp usually imports its
   // registration export right after accounts exist, before setting up rooms/allocation.
-  {key:'import',label:'Import registrations',icon:'upload',screen:'import',summary:'Import registrations — upload your Form, Ticket List and Invoice exports.',check:async()=>{if(SETTINGS&&SETTINGS.formImportedAt)return true;try{const r=await api('/registrants');return(r||[]).length>0;}catch(e){return false;}}},
+  {key:'import',label:'Import registrations',icon:'upload',screen:'import',summary:'Import registrations — upload your Form, Ticket List and Invoice exports.',check:async()=>{if(SETTINGS&&SETTINGS.formImportedAt)return true;try{const r=await api(_scoped('/registrants'));return(r||[]).length>0;}catch(e){return false;}}},
   {key:'accom',label:'Accommodation rooms',icon:'classroom',screen:'adminAccom',summary:'Accommodation rooms — your sleeping rooms and their capacities.',check:async()=>{try{const b=await api('/accommodation/classrooms');return(b||[]).length>0;}catch(e){return false;}}},
   {key:'accomAlloc',label:'Accommodation allocation',icon:'home',screen:'accom',summary:'Accommodation allocation — assign churches to rooms, auto-filled to capacity.',check:async()=>{try{const a=await api('/accommodation/allocations');return Object.values(a||{}).some(arr=>Array.isArray(arr)&&arr.some(e=>e&&Number(e.n)>0));}catch(e){return false;}}},
   // Feature 7 (2026-07-17): Schedule/FAQ/Devotionals merged into ONE step routing to the

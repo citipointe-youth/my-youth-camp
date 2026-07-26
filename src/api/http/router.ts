@@ -26,6 +26,7 @@ import { makeExportController } from '../controllers/export.controller';
 import { makeAccountController } from '../controllers/account.controller';
 import { makeSettingsController } from '../controllers/settings.controller';
 import { makeAdminController } from '../controllers/admin.controller';
+import { makeCronController } from '../controllers/cron.controller';
 
 export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const auth = makeAuthController({ auth: services.auth, users: services.users });
@@ -52,6 +53,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const account = makeAccountController({ account: services.account, auth: services.auth });
   const settingsCtrl = makeSettingsController({ settings: services.settings });
   const admin = makeAdminController({ admin: services.admin });
+  const cronCtrl = makeCronController({ tick: services.cron });
 
   return [
     // ----- First-run admin setup (permanently disabled once admin has a password) -----
@@ -79,6 +81,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     // ----- Settings -----
     { method: 'GET', path: '/settings', auth: false, handler: (r) => settingsCtrl.get(r) },
     { method: 'PATCH', path: '/settings', auth: true, handler: (r) => settingsCtrl.update(r) },
+    { method: 'PATCH', path: '/settings/discount-overrides', auth: true, handler: (r) => settingsCtrl.updateDiscountOverrides(r) },
 
     // ----- Admin -----
     { method: 'POST', path: '/admin/mode', auth: true, handler: (r) => admin.setMode(r) },
@@ -217,5 +220,8 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/accounts/churches/randomize-passwords', auth: true, handler: (r) => account.randomizeChurchPasswords(r) },
     { method: 'PATCH', path: '/accounts/churches/:id', auth: true, handler: (r) => account.updateChurch(r) },
     { method: 'DELETE', path: '/accounts/churches/:id', auth: true, handler: (r) => account.deleteChurch(r) },
+
+    // ----- Internal (scheduler) -----
+    { method: 'GET', path: '/internal/cron/tick', auth: false, handler: (r) => cronCtrl.tick(r) },
   ];
 }

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import {
-  isEncrypted, encryptField, decryptField, maybeEncrypt, maybeDecrypt,
+  isEncrypted, encryptField, decryptField, maybeEncrypt, maybeDecrypt, assertFieldEncryptionKey,
 } from './field-crypto';
 
 // Deterministic 32-byte keys for the test process.
@@ -63,5 +63,28 @@ describe('field-crypto', () => {
     process.env['FIELD_ENCRYPTION_KEY_ID'] = 'k1';
     delete process.env['FIELD_ENCRYPTION_KEY_PREV'];
     delete process.env['FIELD_ENCRYPTION_KEY_PREV_ID'];
+  });
+});
+
+describe('assertFieldEncryptionKey', () => {
+  const OLD = process.env['FIELD_ENCRYPTION_KEY'];
+  afterEach(() => {
+    if (OLD === undefined) delete process.env['FIELD_ENCRYPTION_KEY'];
+    else process.env['FIELD_ENCRYPTION_KEY'] = OLD;
+  });
+
+  it('throws when the key is absent', () => {
+    delete process.env['FIELD_ENCRYPTION_KEY'];
+    expect(() => assertFieldEncryptionKey()).toThrow(/FIELD_ENCRYPTION_KEY/);
+  });
+
+  it('throws when the key is not 32 bytes of base64', () => {
+    process.env['FIELD_ENCRYPTION_KEY'] = 'too-short';
+    expect(() => assertFieldEncryptionKey()).toThrow(/32/);
+  });
+
+  it('passes for a valid 32-byte base64 key', () => {
+    process.env['FIELD_ENCRYPTION_KEY'] = Buffer.alloc(32, 7).toString('base64');
+    expect(() => assertFieldEncryptionKey()).not.toThrow();
   });
 });
