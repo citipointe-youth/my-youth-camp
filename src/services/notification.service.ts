@@ -8,6 +8,7 @@ import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
 import { invalidateDashboardCache } from './dashboard-cache';
+import { canSeeNotification } from './notification-visibility';
 
 export interface NotificationService {
   send(actor: Actor, input: unknown): Promise<Notification>;
@@ -48,27 +49,9 @@ export function makeNotificationService(
   async function getActorFeed(actor: Actor): Promise<Notification[]> {
     const active = await notifRepo.findActive();
     const now = nowISO();
-    return active.filter((n) => {
-      // Scheduled notices are withheld from EVERY audience feed until their publish time
-      // passes (lazy-fire: they surface on the next feed fetch after `scheduledFor`). The
-      // creator manages pending ones via the separate `scheduled()` list, not the feed.
-      if (n.scheduledFor && n.scheduledFor > now) return false;
-      // Leaders-only notices (e.g. incident alerts) are never shown to church/firstAid,
-      // regardless of scope — their bodies can describe a minor.
-      if (n.leadersOnly && actor.role !== 'zoneLeader' && actor.role !== 'director' && actor.role !== 'admin') {
-        return false;
-      }
-      if (n.scope === 'camp') return true;
-      if (n.scope === 'zone') {
-        if (actor.role === 'admin' || actor.role === 'director') return true;
-        return actor.zone != null && n.zone === actor.zone;
-      }
-      if (n.scope === 'church') {
-        if (actor.role === 'admin' || actor.role === 'director') return true;
-        return actor.churchId != null && n.churchId === actor.churchId;
-      }
-      return false;
-    });
+    // Audience rules live in notification-visibility.ts so the push audience resolver
+    // and this feed can never disagree. Do not inline them back here.
+    return active.filter((n) => canSeeNotification(actor, n, now));
   }
 
   return {

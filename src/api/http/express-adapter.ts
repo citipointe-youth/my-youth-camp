@@ -10,6 +10,20 @@ import { RateLimiter } from '../../utils/rate-limiter';
 
 const logger = createLogger('http');
 
+/**
+ * Express's IncomingHttpHeaders values are `string | string[] | undefined`. Collapse
+ * arrays to the first element so route handlers get a flat, predictable shape.
+ */
+function normaliseHeaders(
+  h: Record<string, string | string[] | undefined>,
+): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(h)) {
+    out[k] = Array.isArray(v) ? v[0] : v;
+  }
+  return out;
+}
+
 // Temporarily disabled (2026-07-11, at the owner's request) — the flag-setting in
 // account.service/admin.service, the self-service POST /accounts/me/password endpoint,
 // and the frontend gate (public/index.html, its own matching constant) all stay wired up;
@@ -117,6 +131,7 @@ export function createApp(routes: (Route | BufferRoute)[], authService: AuthServ
           query: req.query as Record<string, string | undefined>,
           body: req.body,
           ip: req.ip,
+          headers: normaliseHeaders(req.headers),
         };
 
         if ('bufferHandler' in route) {

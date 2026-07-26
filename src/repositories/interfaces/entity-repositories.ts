@@ -9,6 +9,7 @@ import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
 import type { Notification } from '../../core/entities/notification';
 import type { Incident } from '../../core/entities/incident';
+import type { PushSubscription } from '../../core/entities/push-subscription';
 import type { ScheduleItem } from '../../core/entities/schedule';
 import type { Devotional } from '../../core/entities/devotional';
 import type { FaqItem } from '../../core/entities/content';
@@ -74,11 +75,26 @@ export interface INotificationRepository extends IRepository<Notification> {
   findByZone(zone: string): Promise<Notification[]>;
   findByChurch(churchId: string): Promise<Notification[]>;
   findActive(): Promise<Notification[]>;
+  /**
+   * Atomically claim notices for push. Sets `push_sent_at = now()` for the given ids that
+   * are still unclaimed and returns ONLY the ids actually claimed. Two concurrent callers
+   * get disjoint sets, so nothing is ever pushed twice. Claim BEFORE sending: a crash
+   * between claim and send loses a push, which is the correct trade here (the in-app feed
+   * is the guaranteed channel; a duplicate safeguarding alert is worse than a missed one).
+   */
+  claimForPush(ids: string[]): Promise<string[]>;
 }
 
 export interface IIncidentRepository extends IRepository<Incident> {
   /** Incidents newest-first, optionally capped. */
   findRecent(limit?: number): Promise<Incident[]>;
+}
+
+export interface IPushSubscriptionRepository extends IRepository<PushSubscription> {
+  findByUser(userId: string): Promise<PushSubscription[]>;
+  findByEndpoint(endpoint: string): Promise<PushSubscription | null>;
+  deleteByEndpoint(endpoint: string): Promise<boolean>;
+  deleteByUser(userId: string): Promise<number>;
 }
 
 export interface IScheduleRepository extends IRepository<ScheduleItem> {

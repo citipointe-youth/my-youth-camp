@@ -13,6 +13,7 @@ import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
 import type { Notification } from '../../core/entities/notification';
 import type { Incident } from '../../core/entities/incident';
+import type { PushSubscription } from '../../core/entities/push-subscription';
 import type { ScheduleItem } from '../../core/entities/schedule';
 import type { Devotional } from '../../core/entities/devotional';
 import type { FaqItem } from '../../core/entities/content';
@@ -31,6 +32,7 @@ import type {
   INoteRepository,
   INotificationRepository,
   IIncidentRepository,
+  IPushSubscriptionRepository,
   IScheduleRepository,
   IDevotionalRepository,
   IFaqRepository,
@@ -336,6 +338,19 @@ export class InMemoryNotificationRepository
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map((n) => this.clone(n));
   }
+
+  async claimForPush(ids: string[]): Promise<string[]> {
+    const claimed: string[] = [];
+    const now = new Date().toISOString();
+    for (const id of ids) {
+      const n = this.store.get(id);
+      if (n && n.pushSentAt == null) {
+        n.pushSentAt = now;
+        claimed.push(id);
+      }
+    }
+    return claimed;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -475,5 +490,40 @@ export class InMemorySnapshotRepository implements ISnapshotRepository {
     this.defaults = JSON.parse(JSON.stringify(defaults)) as CampDefaults;
     await this.persistence.write(this.defaults ? [this.defaults] : []);
     return JSON.parse(JSON.stringify(this.defaults)) as CampDefaults;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Push subscriptions
+// ---------------------------------------------------------------------------
+export class InMemoryPushSubscriptionRepository
+  extends InMemoryBaseRepository<PushSubscription>
+  implements IPushSubscriptionRepository
+{
+  constructor(persistence?: IPersistenceAdapter<PushSubscription>) {
+    super(persistence);
+  }
+
+  async findByUser(userId: string): Promise<PushSubscription[]> {
+    return Array.from(this.store.values())
+      .filter((s) => s.userId === userId)
+      .map((s) => this.clone(s));
+  }
+
+  async findByEndpoint(endpoint: string): Promise<PushSubscription | null> {
+    const hit = Array.from(this.store.values()).find((s) => s.endpoint === endpoint);
+    return hit ? this.clone(hit) : null;
+  }
+
+  async deleteByEndpoint(endpoint: string): Promise<boolean> {
+    const hit = Array.from(this.store.values()).find((s) => s.endpoint === endpoint);
+    if (!hit) return false;
+    return this.delete(hit.id);
+  }
+
+  async deleteByUser(userId: string): Promise<number> {
+    const hits = Array.from(this.store.values()).filter((s) => s.userId === userId);
+    for (const h of hits) await this.delete(h.id);
+    return hits.length;
   }
 }

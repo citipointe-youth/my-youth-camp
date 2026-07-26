@@ -11,6 +11,14 @@ export interface HttpRequest {
   query: Record<string, string | undefined>;
   body: unknown;
   ip?: string;
+  /**
+   * Lower-cased request headers. Populated by the Express adapter. Optional because
+   * controller unit tests construct `HttpRequest` literals directly and must not be
+   * forced to supply it. Array-valued headers are collapsed to their first value.
+   * Added for the `/internal/cron/tick` bearer-secret guard, which cannot use the
+   * app's normal auth layer.
+   */
+  headers?: Record<string, string | undefined>;
 }
 
 export interface Route {

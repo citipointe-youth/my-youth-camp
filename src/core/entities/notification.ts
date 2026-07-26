@@ -28,5 +28,18 @@ export interface Notification {
    * can view/edit/delete it while it is still pending. Null/absent = an ordinary immediate notice.
    */
   scheduledFor?: ISODateString | null;
+  /**
+   * Set the instant this notice was claimed for push delivery. The claim is an atomic
+   * conditional update (`where push_sent_at is null`), which is what makes the inline
+   * incident send and the scheduled sweeper safe to race. Null = not yet pushed.
+   */
+  pushSentAt?: ISODateString | null;
+  /**
+   * Deterministic key for notices the scheduler CREATES (currently only the check-in
+   * window warning: `checkin-warn:<sessionId>:<churchUserId>`). Unique where non-null,
+   * so repeated ticks inside the lead window produce exactly one notice. Null for every
+   * human-authored notice.
+   */
+  dedupeKey?: string | null;
   createdAt: ISODateString;
 }

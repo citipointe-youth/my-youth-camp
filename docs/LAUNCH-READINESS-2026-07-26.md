@@ -505,6 +505,11 @@ leader only sees a notice when they open the app.
 
 ## 7. Pre-launch checklist
 
+> **Verification sweep run 2026-07-26.** Only the code-change items below (B7, B8, S2, S3, S5,
+> S6, S7) were checked against the current tree — read the actual source, not comments or
+> changelogs. Owner-action items (B1–B6, S1, S4, S8–S13, M1–M3) are dashboard/manual checks and
+> were left untouched by this sweep.
+
 ### 🔴 BLOCKING — before telling churches the URL (~2026-08-05)
 
 | # | Action | Why | Effort | Who |
@@ -515,7 +520,7 @@ leader only sees a notice when they open the app.
 | B4 | **Upgrade Supabase to Pro and confirm a backup exists in the dashboard.** | Free tier has no restorable scheduled backups. `POST /admin/reset` TRUNCATEs everything with a guard that latches open after the first export (§3.2). Real minors' data must have a recovery path. | 20 min | Owner (Supabase dashboard) |
 | B5 | **Confirm RLS is on for all 18 tables in prod, and that the anon key returns no rows.** Run both checks in `SECURITY-ACTIONS.md` §4. | Repo migrations are correct; prod state is unverified from here. This is the barrier between a leaked anon key and the whole dataset. | 10 min | Owner (Supabase SQL editor) |
 | B6 | **Confirm `alter role postgres set statement_timeout='15s'` is still applied** — `select rolconfig from pg_roles where rolname='postgres';` | The per-connection `statement_timeout` in `client.ts` is not reliably enforced through the pooler (CMS proved a query ran 4+ min despite it). This is the only real ceiling. Must be re-applied if the project is ever recreated. | 5 min | Owner or Claude (read-only + one ALTER) |
-| B7 | **Fix the dashboard cache key** — add `genderScope` to `_actorKey` in `src/services/dashboard-cache.ts`. | `b-<church>` and `g-<church>` currently share a cache entry and see each other's gender-scoped counts for up to 30s (§2.5). Real bug, one line. | 15 min | Code change |
+| B7 | ✅ **DONE** — **Fix the dashboard cache key** — add `genderScope` to `_actorKey` in `src/services/dashboard-cache.ts`. | `b-<church>` and `g-<church>` currently share a cache entry and see each other's gender-scoped counts for up to 30s (§2.5). Real bug, one line. (Verified 2026-07-26: fixed at `src/services/dashboard-cache.ts:24`, commit `463a519`, regression test `dashboard.service.test.ts:281`.) | 15 min | Code change |
 | B8 | **Decide on the church password keyspace.** Either widen `memorablePassword` to `Word.Word.##` / `Word.###` and re-randomise before distribution, or accept ~11.7k with the per-instance limiter for 10 weeks. | ~11.7k keyspace + an in-memory per-instance limiter ≈ 800 guesses/hr against an enumerable username protecting one church's minors' medical data. Fine for a weekend; this is a 10-week exposure (§4.3). **Decide before the CSV is distributed** — changing it after means re-issuing to everyone. | 1h if changed | Owner decision → code change |
 
 ### 🟡 SHOULD DO — before camp (2026-09-28)
@@ -527,7 +532,7 @@ leader only sees a notice when they open the app.
 | S3 | **Add error tracking** (free-tier Sentry or equivalent) in `error.middleware.ts` + the SPA `_doFetch` catch. | Currently the only signal that anything is broken is a leader telling you, and Vercel log retention may have expired by then (§5.1). | ~1h | Code change |
 | S4 | **Add an external uptime monitor on `GET /health`** with SMS alerting. | `/health` already exists and is auth-free. Cheapest possible early warning. | 15 min | Owner |
 | S5 | **Add `assertFieldEncryptionKey()` to `src/app.ts`** next to `assertSessionSecret()`, guarded on `PERSISTENCE==='supabase'`. | A missing/malformed key currently boots green and then 500s every person read with a generic message — indistinguishable from "the app is broken" (§3.3). | 30 min | Code change |
-| S6 | **Scope the hot reads**: pass `?churchId` from the SPA on `/registrants` and `/campers` for church logins, and honour it in `listCampers`. | Every one of those calls currently does `select * from people` + both full history tables + ~10 AES decrypts per person. 100 leaders × a burst = a lot of avoidable pooler traffic (§2.2). | ~3h | Code change |
+| S6 | ⚠️ **PARTIAL** — **Scope the hot reads**: pass `?churchId` from the SPA on `/registrants` and `/campers` for church logins, and honour it in `listCampers`. | Every one of those calls currently does `select * from people` + both full history tables + ~10 AES decrypts per person. 100 leaders × a burst = a lot of avoidable pooler traffic (§2.2). (Verified 2026-07-26: the backend half is already done — `scopedAll` in `src/services/person.service.ts:138-153` already branches on `opts.churchId` → `repo.findByChurch`, and both `listRegistrants` (`:170`) and `listCampers` (`:189`) route through it, pre-dating this doc. What's still missing: the SPA. Grepped every `api('/registrants')`/`api('/campers…')` call in `public/index.html` — all 25+ call sites still omit `?churchId`, so the indexed fast-path remains dead code in practice.) | ~3h | Code change |
 | S7 | **Harden `POST /admin/reset`**: require a *recent* export (not a latched `lastExportedAt`) even when `force:true`, or env-gate it off during camp season. | The only real barrier today is a client-side modal; the server-side guard latches open after the first export (§3.2). | 1–2h | Code change |
 | S8 | **Time a full-size Form import** against prod with the real final roster. If it nears 30s, raise `maxDuration` in `vercel.json` to 60. | `saveMany` is one round-trip per person inside one transaction; the SPA allows 90s but Vercel kills at 30s (§2.4). | 30 min | Owner + code if needed |
 | S9 | **Real-device pass on iPhone** (a home-indicator model, both Safari and installed-PWA): bottom nav, check-in session picker at 8+ sessions, full unfiltered roster, confirm modals, login autofill. | CSS/layout is never proven by tsc/vitest — CLAUDE.md's own rule. `camp-v43` is a very recent shell rewrite. | 1h | Owner |
