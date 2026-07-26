@@ -3,28 +3,14 @@ import type { PushSubscription } from '../../core/entities/push-subscription';
 import type { IPushSubscriptionRepository } from '../interfaces/entity-repositories';
 import { encryptField, maybeDecrypt } from '../../utils/field-crypto';
 
-/**
- * `maybeDecrypt` throws (GCM auth-tag failure) when a ciphertext is decrypted under the
- * wrong AAD — e.g. a value that was swapped between the p256dh/auth columns. Reading a
- * subscription row must not crash on a single tampered/corrupted field, so decrypt
- * failures here fail soft to `''` rather than propagate.
- */
-function safeDecrypt(value: string | null | undefined, aad: string): string {
-  try {
-    return maybeDecrypt(value, aad) ?? '';
-  } catch {
-    return '';
-  }
-}
-
 export function toPushSub(r: Record<string, unknown>): PushSubscription {
   const id = r['id'] as string;
   return {
     id,
     userId: r['user_id'] as string,
     endpoint: r['endpoint'] as string,
-    p256dh: safeDecrypt(r['p256dh_enc'] as string, `push_subscriptions:p256dh:${id}`),
-    auth: safeDecrypt(r['auth_enc'] as string, `push_subscriptions:auth:${id}`),
+    p256dh: maybeDecrypt(r['p256dh_enc'] as string, `push_subscriptions:p256dh:${id}`) ?? '',
+    auth: maybeDecrypt(r['auth_enc'] as string, `push_subscriptions:auth:${id}`) ?? '',
     consentVersion: Number(r['consent_version'] ?? 1),
     createdAt: new Date(r['created_at'] as string | Date).toISOString(),
     lastSuccessAt: r['last_success_at'] ? new Date(r['last_success_at'] as string | Date).toISOString() : null,

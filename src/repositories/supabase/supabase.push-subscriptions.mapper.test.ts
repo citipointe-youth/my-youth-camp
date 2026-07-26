@@ -45,8 +45,9 @@ describe('push_subscriptions mapper encryption', () => {
     expect(back.failureCount).toBe(0);
   });
 
-  it('binds ciphertext to its own column via AAD', () => {
+  it('rejects ciphertext decrypted under the wrong AAD (bound to column)', () => {
     // Swapping the two ciphertexts must fail to decrypt, proving the AAD is per-column.
+    // A value encrypted under p256dh AAD cannot decrypt under auth AAD.
     const cols = pushSubColumns(sub());
     const swapped = {
       ...cols,
@@ -54,7 +55,6 @@ describe('push_subscriptions mapper encryption', () => {
       auth_enc: cols['p256dh_enc'],
       created_at: new Date('2026-09-29T01:00:00.000Z'),
     };
-    const back = toPushSub(swapped as Record<string, unknown>);
-    expect(back.p256dh).not.toBe('AuthSecretHere');
+    expect(() => toPushSub(swapped as Record<string, unknown>)).toThrow();
   });
 });
