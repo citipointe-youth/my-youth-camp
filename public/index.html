@@ -1210,6 +1210,7 @@ function logout(){
   api('/auth/logout',{method:'POST'}).catch(()=>{});
   localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
   sessionStorage.removeItem('ycp_wizardReturn');
+  try{localStorage.removeItem(_ciqKey());}catch(_){}
   TOKEN=null;ACTOR=null;location.reload();
 }
 // Full-page gate for accounts flagged mustChangePassword (admin-set or new-year temp
@@ -2157,6 +2158,31 @@ function _ciLabel(session){
 /* ===== DAILY CHECK-IN ===== */
 // Optimistic check-in queue — queued writes drain in order, survive brief offline.
 const CHECKIN_QUEUE=[];let _draining=false,_onlineHandlerAdded=false;
+// S2 (2026-07-26): the queue is persisted per account so a reload, tab eviction, or iOS
+// reclaiming a backgrounded PWA no longer discards queued attendance taps. Key mirrors
+// _initialsKey()'s convention. Entries carry the initials captured AT QUEUE TIME — draining
+// under LEADER_INITIALS would misattribute a rehydrated entry to whoever is logged in now.
+function _ciqKey(){return 'ycp_ciq_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
+function _persistQueue(){
+  try{
+    if(CHECKIN_QUEUE.length)localStorage.setItem(_ciqKey(),JSON.stringify(CHECKIN_QUEUE));
+    else localStorage.removeItem(_ciqKey());
+  }catch(_){/* quota/private mode — in-memory queue still works */}
+}
+// Rehydrate on boot. Entries for any session other than the one now selected are DROPPED
+// (owner decision) — their window has closed and the POST would 403. The drop is reported
+// so it can be reconciled against the paper sheet rather than vanishing.
+function _restoreQueue(){
+  let saved=[];
+  try{saved=JSON.parse(localStorage.getItem(_ciqKey())||'[]');}catch(_){saved=[];}
+  if(!Array.isArray(saved)||!saved.length)return;
+  const fresh=saved.filter(e=>e&&e.camperId&&e.sessionId===SEL_SESSION);
+  const dropped=saved.length-fresh.length;
+  CHECKIN_QUEUE.push(...fresh);
+  _persistQueue();
+  if(dropped>0)toast(dropped+' queued check-in'+(dropped===1?'':'s')+' from an earlier session were discarded — check the paper sheet');
+  if(CHECKIN_QUEUE.length&&!_draining)drainQueue();
+}
 let _undoTimer=null,_undoCamperId=null,_undoType=null;
 let _lastRoster=null;
 // B-1 (Phase 5): count entries that were hard-dropped on an ONLINE error (4xx etc.) so the
@@ -2166,7 +2192,9 @@ let _lastRoster=null;
 let _checkinFailed=0;
 
 function _queueEntry(camperId,type){
-  CHECKIN_QUEUE.push({camperId,type,sessionId:SEL_SESSION});
+  // initials captured NOW, not at drain time — a rehydrated entry must keep its original author.
+  CHECKIN_QUEUE.push({camperId,type,sessionId:SEL_SESSION,initials:LEADER_INITIALS});
+  _persistQueue();
   _updateSyncDots(camperId,'pending');
   if(!_draining)drainQueue();
   if(!_onlineHandlerAdded){window.addEventListener('online',drainQueue);_onlineHandlerAdded=true;}
@@ -2176,11 +2204,13 @@ async function drainQueue(){
   while(CHECKIN_QUEUE.length>0){
     const entry=CHECKIN_QUEUE[0];
     try{
-      await api('/checkin',{method:'POST',body:{camperId:entry.camperId,sessionId:entry.sessionId,type:entry.type,initials:LEADER_INITIALS}});
-      CHECKIN_QUEUE.shift();_markSynced(entry.camperId);
+      // entry.initials falls back for any entry queued before this change shipped.
+      await api('/checkin',{method:'POST',body:{camperId:entry.camperId,sessionId:entry.sessionId,type:entry.type,initials:entry.initials||LEADER_INITIALS}});
+      CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId);
     }catch(e){
-      if(!navigator.onLine)break; // wait for online event
-      CHECKIN_QUEUE.shift();_markSynced(entry.camperId,'error');_checkinFailed++; // B-1: surface in the banner
+      if(!navigator.onLine)break; // wait for online event; queue stays persisted
+      // Deliberate: an ONLINE failure is a hard drop + banner (owner chose banner only).
+      CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId,'error');_checkinFailed++; // B-1: surface in the banner
     }
   }
   _draining=false;
@@ -2314,6 +2344,7 @@ async function _renderDailyCheckin(){
   if(!SEL_SESSION)SEL_SESSION=CUR_ID||(SESSIONS[0]&&SESSIONS[0].id);
   const sessionLocked=churchRestricted&&SEL_SESSION!==CUR_ID;
   if(!SEL_SESSION){paint('checkin','<p class="note-hint">No check-in sessions configured. Set camp dates in admin settings.</p>','Daily Check-in','');return;}
+  if(!window._ciqRestored){window._ciqRestored=true;_restoreQueue();}
   // Enriched RosterEntry now includes gender, grade, medicalFlag — no second /campers fetch needed.
   // "Not Signed In" (item 3) needs the students NOT on the roster at all (checkin.service's
   // roster only ever includes atCamp===true — see CLAUDE.md presence model), so fetch the
