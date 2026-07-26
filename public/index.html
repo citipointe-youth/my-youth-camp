@@ -365,10 +365,10 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 /* Schedule-edit rows: let native time/text inputs shrink to their grid track (min-width:auto
    on inputs was overflowing the Time field into the Activity field on narrow phones). */
 .sched-row input{min-width:0;overflow:hidden;}
-/* The time input's native iOS control is chunky and can overflow its grid cell into the Activity
-   field. Tighten its horizontal padding so the value has less white space around it and stays
-   inside the (narrower) time column. */
-.sched-row .sr-t{padding-left:4px;padding-right:2px;font-size:var(--t-xs);letter-spacing:-.2px;}
+/* NOTE: the `.sr-t` overrides live BELOW `.sched-row .fld`, not here. The time input carries BOTH
+   classes and the two selectors have equal specificity (0,2,0), so whichever is declared LAST wins.
+   A `.sr-t` rule placed above `.fld` is silently dead — which is exactly what happened to the
+   original version of this fix, and why the time boxes stayed oversized across three attempts. */
 /* 2026-07-26 — the editor's default 7 empty rows per day made the screen a wall of oversized
    boxes (the inputs inherited the full-size `.fld` padding/type, which is sized for one-per-line
    form fields, not a dense repeating grid). Compact them: shorter rows, smaller type, tighter
@@ -380,7 +380,18 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
    field itself rather than only its track: smaller type + minimal padding (above) and a
    narrower column (set on the grid in `_schedRow`). Keep `.fld`'s height so the row's
    baseline still lines up with the Activity input. */
-.sched-row .sr-t{text-align:center;}
+/* Time field — MUST stay after `.sched-row .fld` above (equal specificity, last one wins).
+   `appearance:none` strips the native control's own chrome, which is the real source of the
+   bulk on iOS: without it the UA gives `input[type=time]` a large intrinsic width that no
+   amount of padding/track narrowing can overcome, and the value just gets clipped by the
+   `overflow:hidden` on `.sched-row input` instead of actually fitting. */
+.sched-row .sr-t{
+  -webkit-appearance:none;appearance:none;
+  padding:8px 2px;font-size:var(--t-xs);letter-spacing:-.2px;
+  text-align:center;width:100%;
+}
+.sched-row .sr-t::-webkit-date-and-time-value{text-align:center;margin:0;}
+.sched-row .sr-t::-webkit-calendar-picker-indicator{display:none;}
 /* First-day arrival confirm bar. Was `position:sticky;bottom:10px`, which pins to the bottom of
    the CONTENT, not the viewport — on the phone body-scroll shell (see the overlay GOTCHA above)
    that left it stranded at the end of a long roster instead of floating over it. Fixed to the
