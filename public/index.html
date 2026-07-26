@@ -71,6 +71,17 @@ html,body{min-height:100dvh;}
 /* A1: explicit root size (= the previous implicit 16px), scaled up at tablet/laptop so
    every rem-based size grows proportionally. This is the core fluid-type mechanism. */
 html{font-size:16px;}
+/* 2026-07-26 — the light-purple strip under the bottom nav (and under the login card) on iOS.
+   The CANVAS background is what paints the area below the body box — the region iOS exposes for a
+   moment when the dynamic toolbar retracts or the keyboard dismisses, before the visual viewport
+   settles (it vanishes on the next scroll, which is exactly the reported symptom). With no
+   background on `html`, the canvas inherits BODY's `--paper`, so that transient strip read as a
+   light-purple bar below the near-white nav / white login gate. Painting `html` white stops the
+   propagation: body keeps `--paper` for the app column, and the strip now matches the nav above it.
+   Side effect (accepted): the letterbox either side of the capped `.app` column between ~540 and
+   980px is now white rather than tinted. At ≥980px `#app` is `max-width:none`, so there is no
+   letterbox there at all and nothing changes. */
+html{background:#fff;}
 /* body background is LIGHT (matches YS Connection) so the home-indicator strip and desktop letterbox
    blend with the near-white nav instead of reading as a black bar.
    NO `overflow:hidden` / fixed `height:100dvh` on body+app (matches YS Connection): iOS mis-positions
@@ -141,6 +152,17 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
 .hero .big{font-size:var(--t-display);font-weight:800;line-height:.9;}.hero .cd .meta{font-size:var(--t-sm);color:#e9d5ff;padding-bottom:4px;}
 .nownext{background:linear-gradient(135deg,var(--violet-d),#1e1b4b);color:#fff;border-radius:16px;padding:14px 16px;margin-bottom:12px;}
 .nownext .now{font-weight:800;}.nownext .nx{font-size:var(--t-sm);color:var(--lav);margin-top:2px;}
+/* Incident alert banner (2026-07-26) — replaces the full-screen "Incident logged" modal that fired
+   on every app open. Compact, non-blocking, sits above the hero on Home; one row per unacknowledged
+   high-severity incident, cleared per device by the "Got it" button (`_ackIncident`). Deliberately
+   red/left-accented rather than the calm `.notice` tint — it still has to read as an alarm. */
+.inc-banner{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
+.inc-row{display:flex;align-items:center;gap:10px;background:#fff1f2;border:1px solid #fecdd3;border-left:4px solid var(--danger);border-radius:14px;padding:10px 12px;}
+.inc-ico{flex:none;color:var(--danger);display:grid;place-items:center;}
+.inc-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.35;cursor:pointer;}
+.inc-txt b{font-size:var(--t-sm);color:var(--danger);font-weight:800;}
+.inc-txt span{font-size:var(--t-xs);color:#7f1d1d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.inc-ack{flex:none;border:none;background:var(--danger);color:#fff;font-family:inherit;font-weight:700;font-size:var(--t-xs);border-radius:999px;padding:7px 13px;cursor:pointer;}
 .notice{display:flex;gap:10px;align-items:flex-start;background:var(--tint);border:1px solid var(--lav);border-radius:14px;padding:12px 14px;margin-bottom:12px;cursor:pointer;transition:background .12s;}
 .notice:active{background:var(--chip);}
 .notice.urg{background:#fef2f2;border-color:#fecaca;}
@@ -180,6 +202,11 @@ h3.sec{font-size:var(--t-xs);font-weight:800;letter-spacing:.08em;text-transform
 .setg .card{border:none;box-shadow:none;border-radius:0;margin:0;}
 .setg .pill.ok{background:#dcfce7;color:#166534;}
 .setg summary .pill{margin-left:0;}
+/* 2026-07-26 — short-value fields in Camp settings were inheriting `.fld`'s full-width rule, so a
+   "6:00 am" time sat in a box the width of the phone (reported: "camp settings boxes are too
+   wide"). Cap ONLY the fixed-width value types (time / date / number) and left-align their value;
+   free-text fields like Camp name keep the full column. */
+.setg input[type="time"],.setg input[type="date"],.setg input[type="number"]{max-width:190px;text-align:left;}
 /* SVG icon system (3.1) + size helpers (C1/C4) */
 .ic-svg{width:20px;height:20px;display:inline-block;vertical-align:middle;flex:none;stroke:currentColor;}
 .ic-svg.ic-sm{width:16px;height:16px;}
@@ -341,7 +368,13 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 /* The time input's native iOS control is chunky and can overflow its grid cell into the Activity
    field. Tighten its horizontal padding so the value has less white space around it and stays
    inside the (narrower) time column. */
-.sched-row .sr-t{padding-left:9px;padding-right:6px;}
+.sched-row .sr-t{padding-left:8px;padding-right:4px;}
+/* 2026-07-26 — the editor's default 7 empty rows per day made the screen a wall of oversized
+   boxes (the inputs inherited the full-size `.fld` padding/type, which is sized for one-per-line
+   form fields, not a dense repeating grid). Compact them: shorter rows, smaller type, tighter
+   radius. Purely the schedule editor — `.fld` elsewhere is untouched. */
+.sched-row .fld{padding:8px 10px;font-size:var(--t-sm);border-radius:10px;}
+.sched-row .iconbtn{padding:6px;}
 /* Top loading bar (#nprog): a thin accent bar that animates whenever a real network request
    is in flight (cache hits skip it). Gives instant "it's working" feedback on button/tab taps
    that otherwise sat still during the 1–1.5s serverless round-trip. Anchored to the BOTTOM edge
@@ -367,18 +400,24 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
    absolute toast anchored to .app landed at the bottom of the tall page instead of on-screen.
    Fixed anchors it to the viewport. Floats near the TOP, just under the sticky header, and slides
    down into view. (top uses the safe-area inset so it clears the notch on standalone iOS.) */
-.toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 60px);transform:translateX(-50%) translateY(-20px);background:linear-gradient(135deg,var(--violet-dd),#1e1b4b);color:#fff;padding:11px 20px;border-radius:999px;font-size:var(--t-sm);font-weight:700;opacity:0;pointer-events:none;transition:.25s;z-index:110;max-width:90%;text-align:center;box-shadow:0 4px 16px rgba(79,70,229,.35);}
+.toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 60px);transform:translateX(-50%) translateY(-20px);background:linear-gradient(135deg,var(--violet-dd),#1e1b4b);color:#fff;padding:11px 20px;border-radius:999px;font-size:var(--t-sm);font-weight:700;opacity:0;pointer-events:none;transition:.25s;z-index:130;max-width:90%;text-align:center;box-shadow:0 4px 16px rgba(79,70,229,.35);}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 /* position:FIXED (not absolute) so the backdrop + bottom sheet track the viewport, not the now-
    growing .app (phone body-scroll model). As absolute, a sheet opened while scrolled down landed
    at the bottom of the tall page. Fixed inset:0 = viewport on both phone and the ≥980px grid. */
-.modal{position:fixed;inset:0;background:rgba(14,10,30,.6);display:none;align-items:flex-end;z-index:50;}
+/* STACKING ORDER (2026-07-26) — the bottom nav `.tabs` is `position:fixed;z-index:100`, so ANY
+   full-viewport overlay must sit ABOVE 100 or the nav punches through it. Reported symptoms: the
+   "Switch to At-Camp" confirm sheet and the "Bulk Church Update" sheet both had their primary
+   button hidden behind the nav (`.modal` was z-index:50, `.ig-wrap` 55, the login gate 60 — all
+   below the nav). Current ladder: nav 100 < modal/guide 120 < toast 130 < login/gate 140 < tooltip
+   200 < undo toast 9999. GOTCHA: a new overlay must be `position:fixed` AND above 100. */
+.modal{position:fixed;inset:0;background:rgba(14,10,30,.6);display:none;align-items:flex-end;z-index:120;}
 .modal.show{display:flex;}
 .sheet{background:#fff;width:100%;border-radius:24px 24px 0 0;padding:20px 17px max(20px,env(safe-area-inset-bottom));animation:rise .2s;max-height:88dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
 .sheet::before{content:"";display:block;width:36px;height:4px;background:#e4e2f5;border-radius:2px;margin:0 auto 14px;}
 .sheet h3{font-size:var(--t-h3);color:var(--navy);margin-bottom:8px;font-weight:800;}
 /* Elvanto export guide (import screen) — full-screen step viewer, swipeable on phone */
-.ig-wrap{position:fixed;inset:0;background:rgba(14,10,30,.72);display:none;z-index:55;align-items:center;justify-content:center;padding:12px;}
+.ig-wrap{position:fixed;inset:0;background:rgba(14,10,30,.72);display:none;z-index:120;align-items:center;justify-content:center;padding:12px;}
 .ig-wrap.show{display:flex;}
 .ig-card{background:#fff;border-radius:20px;width:100%;max-width:720px;max-height:92dvh;display:flex;flex-direction:column;overflow:hidden;animation:rise .2s;}
 .ig-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 16px 10px;flex-shrink:0;}
@@ -461,7 +500,7 @@ textarea{min-height:84px;resize:vertical;}
 /* Login is white-background / purple-text to match the in-app theme (was dark gradient). */
 /* position:FIXED so these full-screen gates cover the viewport regardless of body scroll
    (phone body-scroll model — an absolute gate is sized to the growing .app, not the viewport). */
-#login,#mcpGate{position:fixed;inset:0;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;z-index:60;overflow-y:auto;}
+#login,#mcpGate{position:fixed;inset:0;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;z-index:140;overflow-y:auto;}
 /* Match .app's own containment discipline (460-820px stepped) instead of stretching edge-to-edge on wide screens. */
 #login>*,#mcpGate>*{width:100%;max-width:420px;}
 #login h1,#mcpGate h1{color:var(--violet);font-size:1.85rem;text-align:center;margin-bottom:5px;letter-spacing:-.03em;font-weight:800;}
@@ -582,7 +621,7 @@ textarea{min-height:84px;resize:vertical;}
     <div class="ttl"><span class="t" id="barT">Camp Platform</span><span class="s" id="barS"></span></div>
     <div class="bar-actions">
       <div class="mode-badge" id="modeBadge"></div>
-      <div class="mode-badge" id="dayBadge" onclick="switchDay()" style="cursor:pointer;display:none" title="Tap to switch camp day"></div>
+      <div class="mode-badge" id="dayBadge" onclick="switchPreviewPhase()" style="cursor:pointer;display:none" title="Tap to switch the previewed check-in view"></div>
       <div class="role-badge" id="initialsBadge" style="display:none;cursor:pointer" title="Your initials — tap to change" onclick="promptInitials(true)"></div>
       <div class="role-badge" id="roleBadge"></div>
       <div class="sign-out" onclick="logout()">Sign out</div>
@@ -722,6 +761,16 @@ function _invalidate(path){
   // after the write (item 3) shows the change immediately instead of the stale 30s-cached roster.
   else if(path.startsWith('/attendance')||path.startsWith('/checkin'))Cache.del('/checkin','/registrants','/campers');
   else if(path.startsWith('/notifications'))Cache.del('/notifications');
+  // An incident write is ALWAYS to `/incidents` (POST) or `/incidents/<id>` (DELETE). The id form
+  // used to fall through to the generic `Cache.del(path)` below, which only matches keys equal to
+  // or under `/incidents/<id>` — the cached LIST at key `/incidents` survived, so a deleted
+  // incident stayed on screen until a full reload (reported 2026-07-26). Clear the list key
+  // explicitly. `/notifications` goes too: logging a HIGH incident raises a leadersOnly urgent
+  // notification, and deleting the incident must not leave that feed stale either.
+  else if(path.startsWith('/incidents'))Cache.del('/incidents','/notifications');
+  // Same class of bug as /incidents above: FAQ edit/delete posts to `/faq/<id>`, which would
+  // otherwise leave the cached `/faq` list key intact for up to 30s.
+  else if(path.startsWith('/faq'))Cache.del('/faq');
   else if(path.startsWith('/notes'))Cache.del('/notes');
   // A per-student edit (adminStudents) can touch an ARRIVED student too — campers +
   // the check-in roster derive from the same person record.
@@ -1207,11 +1256,15 @@ function brisbaneNowTime(){
 // Which face the unified Sign-in/Check-in surface shows. 'signin' = Day-1 arrival before the
 // switchover; 'checkin' = daily roll-call. Manual override (admin) wins; otherwise time-driven.
 function campPhase(){
+  // In the at-camp PREVIEW the phase is whatever the preview toggle says (2026-07-26 — the old
+  // Day 1/Day 2 toggle was replaced by a Sign-in / Through-camp one; the point of the preview is
+  // to see each surface, so the toggle wins outright over the time rule AND over the admin's
+  // saved phase override, which belongs to the real camp, not the rehearsal).
+  if(PREVIEW_MODE)return _previewPhase;
   const o=(SETTINGS&&SETTINGS.checkinPhaseOverride)||'auto';
   if(o==='signin'||o==='checkin')return o;
-  const day1=PREVIEW_MODE?(((SETTINGS&&SETTINGS.campDay)||1)===1):(_realCampDayNumber()===1);
   const sw=(SETTINGS&&SETTINGS.checkinSwitchoverTime)||'14:00';
-  return (day1&&brisbaneNowTime()<sw)?'signin':'checkin';
+  return (_realCampDayNumber()===1&&brisbaneNowTime()<sw)?'signin':'checkin';
 }
 // 'HH:MM' (24h) → '2:00 PM'. Used for the home switchover-time hint (item 8).
 function _ampm(t){if(!t||t.indexOf(':')<0)return t||'';let[h,m]=t.split(':').map(Number);const ap=h<12?'AM':'PM';h=h%12;if(h===0)h=12;return h+':'+String(m).padStart(2,'0')+' '+ap;}
@@ -1230,11 +1283,11 @@ function updateModeUI(){
     if(CAMP_MODE==='at-camp'){
       db.style.display='';db.style.background='var(--blue)';db.style.color='var(--card)';
       if(PREVIEW_MODE){
-        // Lead-up-to-camp preview: still a manual, pressable toggle between Day 1/Day 2 so an
-        // admin can eyeball both views before the real thing starts.
-        const day=(SETTINGS&&SETTINGS.campDay)||1;
-        db.innerHTML='Day '+day+' <span style="opacity:.75">'+icSm('arrowr')+'</span>';
-        db.style.cursor='pointer';db.title='Tap to preview a different day';
+        // Lead-up-to-camp preview: a manual, pressable toggle between the two check-in FACES
+        // (first-day arrival sign-in / through-camp daily check-in) so an admin can eyeball both
+        // before the real thing starts. Replaced the old Day 1/Day 2 toggle — see switchPreviewPhase.
+        db.innerHTML=(_previewPhase==='signin'?'Sign-in':'Through camp')+' <span style="opacity:.75">'+icSm('arrowr')+'</span>';
+        db.style.cursor='pointer';db.title='Tap to preview the other check-in view';
       }else{
         // Real at-camp: a plain computed label, not interactive.
         db.innerHTML='Day '+_realCampDayNumber();
@@ -1348,14 +1401,24 @@ function _applyModeChange(mode){
   if(!tabs.has(owner)){STACK=['home'];gotoTab('home');}
 }
 
-/* campDay is client-side only — the backend has no campDay field. Per-device view state, used
-   ONLY during the pre-camp preview of the at-camp view (real at-camp shows a computed, non-
-   clickable day label instead — see updateModeUI/_realCampDayNumber). */
-function switchDay(){
+/* Preview phase toggle (2026-07-26, replaces the old Day 1 / Day 2 `campDay` toggle).
+   In-memory only — never persisted, never sent to the backend, and only meaningful while
+   PREVIEW_MODE is on (real at-camp derives the phase from the clock + the admin's saved
+   `checkinPhaseOverride`; see campPhase()).
+
+   Why this replaced Day 1/Day 2: the two things an admin actually wants to rehearse are the two
+   FACES of the check-in surface — first-day arrival sign-in vs the twice-daily roll-call — and
+   "Day 2" was only ever a proxy for "the second one". It was also a misleading proxy, because it
+   still ran through the switchover-time rule, and it carried a stale implication that testimonies
+   only open on day 2 (they are always open). The toggle now names the faces directly, and
+   whichever one is inactive renders greyed on Home so both are visible at once. */
+let _previewPhase='signin';
+function switchPreviewPhase(){
   if(!PREVIEW_MODE)return;
-  const cur=(SETTINGS&&SETTINGS.campDay)||1;const next=cur===1?2:1;
-  if(SETTINGS)SETTINGS.campDay=next;updateModeUI();
-  toast(next===1?'Day 1 — First Day Sign In':'Day '+next+' — testimonies open');STACK=['home'];RENDER.home();}
+  _previewPhase=_previewPhase==='signin'?'checkin':'signin';
+  updateModeUI();
+  toast(_previewPhase==='signin'?'Previewing first-day sign-in':'Previewing through-camp check-in');
+  STACK=['home'];RENDER.home();}
 
 /* ===== ROUTER ===== */
 const TAB_OF={home:'home',people:'people',student:'people',help:'help',
@@ -1591,7 +1654,9 @@ RENDER.home=async function renderHome(skipModeSync){
     api('/notifications').catch(()=>[]),
   ]);
   const s=SETTINGS,isWide=['director','admin'].includes(ACTOR.role);
-  let body=`<div class="hero">${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2>Hi ${esc(ACTOR.displayName)}</h2>
+  // Unacknowledged high-severity incidents sit ABOVE the hero — first thing on the screen.
+  // Incidents can be (and have been) logged pre-camp, so this belongs on both home variants.
+  let body=_incidentBannerHtml(feed)+`<div class="hero">${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2>Hi ${esc(ACTOR.displayName)}</h2>
     <div class="cd"><div class="big">${h.daysToGo??'—'}</div><div class="meta">days to go<br>${esc(h.startDate||'')}${s&&s.endDate?' – '+esc(s.endDate):''}</div></div></div>`;
   // Bug-2: registrations split by who (Student/Leader) × where they sleep (Tent/Classroom).
   // Replaces the old Campers/Leaders/Ldr-blue-card band. Counts come from the already-loaded
@@ -1651,8 +1716,10 @@ RENDER.home=async function renderHome(skipModeSync){
   // Incidents card deliberately NOT shown on the pre-camp home (admin request, 2026-07-20) —
   // this removes pre-camp zoneLeader/director/admin's only route to RENDER.incidents;
   // pre-camp incident logging is unreachable until at-camp mode.
-  // Notices — latest 3 (feed already loaded in parallel above; expiry handled server-side)
-  {const notices=(feed||[]).slice(0,3);
+  // Notices — latest 3 REAL notices (incident auto-alerts are filtered out by `_noticeFeed` and
+  // surface in the banner at the top of this screen instead; feed already loaded in parallel
+  // above, expiry handled server-side)
+  {const notices=_noticeFeed(feed).slice(0,3);
     body+=`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
     <div id="homeNotices" style="margin-top:10px">${notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>'}</div>`;
   }
@@ -1723,10 +1790,15 @@ async function renderHomeAtCamp(){
   // the hero and the tiles (Day 1 only), enabled during the sign-in phase and greyed after the
   // switchover. Daily Check-in is the first tile, greyed during the sign-in phase and enabled after.
   const phase=campPhase();
-  const isDay1=PREVIEW_MODE?(((SETTINGS&&SETTINGS.campDay)||1)===1):(_realCampDayNumber()===1);
+  // In PREVIEW the First-Day button is ALWAYS rendered (2026-07-26) — the whole point of the new
+  // Sign-in / Through-camp toggle is to see both controls side by side, one live and one greyed.
+  // In real at-camp it stays Day-1-only, unchanged.
+  const isDay1=PREVIEW_MODE?true:(_realCampDayNumber()===1);
   const swLabel=_ampm((SETTINGS&&SETTINGS.checkinSwitchoverTime)||'14:00');
   const dailyDisabled=phase==='signin';
-  tiles.push(`<div class="tile${dailyDisabled?' tdis':''}" onclick="${dailyDisabled?`toast('Daily check-in opens at ${swLabel}')`:"openCheckinFace('checkin')"}"><div class="ic">${ic('check')}</div><div class="l">Daily Check-in</div></div>`);
+  // Greyed-tap copy differs in preview: there is no clock to wait for, you just flip the badge.
+  const dailyBlockedMsg=PREVIEW_MODE?'Tap the “Sign-in” badge up top to switch to the through-camp view':`Daily check-in opens at ${swLabel}`;
+  tiles.push(`<div class="tile${dailyDisabled?' tdis':''}" onclick="${dailyDisabled?`toast('${dailyBlockedMsg}')`:"openCheckinFace('checkin')"}"><div class="ic">${ic('check')}</div><div class="l">Daily Check-in</div></div>`);
   tiles.push(`<div class="tile" onclick="go('testimonies')"><div class="ic">${ic('star')}</div><div class="l">Submit Testimonies</div></div>`);
   tiles.push(`<div class="tile" onclick="go('schedule')"><div class="ic">${ic('calendar')}</div><div class="l">Schedule</div></div>`);
   tiles.push(`<div class="tile" onclick="go('devotional')"><div class="ic">${ic('book')}</div><div class="l">Devotional</div></div>`);
@@ -1743,7 +1815,9 @@ async function renderHomeAtCamp(){
   const accomLineHtml=(ACTOR.role==='church'&&!PREVIEW_MODE)?`<div style="margin-top:8px;color:#cfe0ff;font-size:.78rem">${icSm('classroom')} Your accommodation: ${esc(myAccom)}</div>`:'';
   // PC-7: FAQ/Help is a PRE-CAMP aid only — no FAQ tile in at-camp home for any role.
   // (Admin can still edit FAQ anytime via the Admin console.)
-  const notices=(feed||[]).slice(0,3);
+  // Latest 3 REAL notices — `_noticeFeed` strips incident auto-alerts (they render in the banner
+  // above the hero instead of eating the three home slots; reported 2026-07-26).
+  const notices=_noticeFeed(feed).slice(0,3);
   const noticesHtml=notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>';
   const myDayHtml=ACTOR.role==='church'?renderMyDay(d):'';
   // New Feature 2: director + admin get a glanceable digest strip inside the hero card.
@@ -1757,7 +1831,7 @@ async function renderHomeAtCamp(){
   const _zoneClr=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?ZONE_COLORS[ACTOR.zone]:null;
   const _heroStyle=_zoneClr?` style="background:linear-gradient(135deg,${_zoneClr} 0%,#1e1b4b 78%)"`:'';
   const _heroSub=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?'':`<div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':'Director'}</div>`;
-  const html=`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
+  const html=_incidentBannerHtml(feed)+`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
     <h2>Hi ${esc(d.greetingName||ACTOR.displayName)}</h2>
     ${_heroSub}
     ${accomLineHtml}
@@ -1768,7 +1842,8 @@ async function renderHomeAtCamp(){
     // once the switchover passes. Sits between the hero card and the tile grid.
     if(!isDay1)return '';
     const disabled=phase!=='signin';
-    return `<button class="btn wide-signin${disabled?' bdis':''}" onclick="${disabled?"toast('First-day sign-in has closed for today')":"openCheckinFace('signin')"}">${icSm('check')} First Day Sign In</button>`;
+    const blockedMsg=PREVIEW_MODE?'Tap the “Through camp” badge up top to switch to the sign-in view':'First-day sign-in has closed for today';
+    return `<button class="btn wide-signin${disabled?' bdis':''}" onclick="${disabled?`toast('${blockedMsg}')`:"openCheckinFace('signin')"}">${icSm('check')} First Day Sign In</button>`;
   })()}
   <div class="tiles">${tiles.join('')}</div>
   ${notesLinkHtml}
@@ -1785,6 +1860,45 @@ async function renderHomeAtCamp(){
     const el=document.getElementById('homePulse');
     if(el&&pulseHtml)el.outerHTML=pulseHtml;
   }).catch(()=>{});
+}
+/* ===== INCIDENT ALERTS (2026-07-26) =====
+   `leadersOnly` is set by exactly one code path — `incident.service.log` (every other notification
+   is created with `leadersOnly:false`) — so it is a reliable "this notice was raised by an incident"
+   marker, and the ONLY one available without a schema change.
+
+   Owner decisions driving this block:
+   - Incident-raised notices no longer appear in ANY notice list (home OR the Notices screen). The
+     Incidents screen, the Notes-page record filter and the banner below are the surfaces for them.
+     The backend still creates the notification (encrypted, leaders-only) — it is what this banner
+     reads, and the future push design hangs off the same record.
+   - The full-screen "Incident logged" modal that fired on EVERY app open is replaced by a compact
+     dismissible red strip at the top of Home, acknowledged per device (localStorage, same
+     `_DISMISS_KEY` store the notice dismissals already use).
+   Deliberately NOT changed: a genuine human-sent urgent notice still pops the modal — that is a
+   director choosing to interrupt everyone, which is the point. Only incident auto-alerts moved. */
+const _isIncidentNotice=n=>!!(n&&n.leadersOnly);
+/* Every notice LIST renders through this — keeps the "incidents never appear in a notice feed"
+   rule in one place instead of at each call site. */
+function _noticeFeed(feed){return (feed||[]).filter(n=>!_isIncidentNotice(n));}
+function _incidentAlerts(feed){return (feed||[]).filter(n=>_isIncidentNotice(n)&&n.priority==='urgent'&&!isNoticeDismissed(n.id));}
+function _incidentBannerHtml(feed){
+  const list=_incidentAlerts(feed);
+  if(!list.length)return '';
+  return `<div class="inc-banner" id="incBanner">${list.map(n=>`<div class="inc-row" data-nid="${esc(n.id)}">
+    <span class="inc-ico">${icSm('alert')}</span>
+    <div class="inc-txt" onclick="go('incidents')"><b>${esc(n.title)}</b><span>${esc(n.body)}</span></div>
+    <button class="inc-ack" onclick="_ackIncident('${n.id}')">Got it</button>
+  </div>`).join('')}</div>`;
+}
+/* Acknowledge = this device has seen it. Removes the row in place (no re-render/refetch) and drops
+   the whole banner once the last row goes, so Home doesn't keep an empty container. */
+function _ackIncident(id){
+  const s=_dismissedSet();s.add(id);
+  try{localStorage.setItem(_DISMISS_KEY,JSON.stringify([...s]));}catch(e){}
+  const row=document.querySelector('#incBanner .inc-row[data-nid="'+id+'"]');
+  if(row)row.remove();
+  const b=document.getElementById('incBanner');
+  if(b&&!b.querySelector('.inc-row'))b.remove();
 }
 function noticeCard(n){
   const urg=n.priority==='urgent';
@@ -1813,7 +1927,9 @@ function dismissNotice(btn){
 /* ===== SPRINT 3: URGENT NOTICES, MY DAY, OVERSIGHT PULSE, tel: ===== */
 // Called with an already-fetched feed to avoid a duplicate /notifications request.
 function _checkUrgentNoticesFromFeed(feed){
-  const urgent=(feed||[]).filter(n=>n.priority==='urgent'&&!isNoticeDismissed(n.id));
+  // Incident auto-alerts are excluded here — they render as the compact Home banner
+  // (`_incidentBannerHtml`) instead of this blocking modal. See the INCIDENT ALERTS block above.
+  const urgent=(feed||[]).filter(n=>n.priority==='urgent'&&!_isIncidentNotice(n)&&!isNoticeDismissed(n.id));
   if(!urgent.length)return;
   const n=urgent[0];
   modal(`<div style="text-align:center;padding:8px 0 4px">
@@ -2699,7 +2815,9 @@ async function reveal(id,role){try{const c=await api('/search/contact/'+id+'/'+e
 
 /* ===== NOTICES ===== */
 RENDER.notifs=async function(){
-  const feed=await api('/notifications');
+  // `_noticeFeed` strips incident auto-alerts — owner decision 2026-07-26: an incident never
+  // appears in a notice list, only on the Incidents screen / Notes record filter / Home banner.
+  const feed=_noticeFeed(await api('/notifications'));
   const canSend=['zoneLeader','director','admin'].includes(ACTOR.role);
   const canDelete=['zoneLeader','director','admin'].includes(ACTOR.role);
   paint('notifs',`${canSend?`<button class="btn" onclick="composeNew()">${ic('edit')} Send a notice</button><button class="btn ghost" onclick="go('scheduled')">${icSm('clock')} Scheduled notices</button>`:`<p class="note-hint">Church accounts receive notices; zone leaders &amp; directors send.</p>`}
@@ -2708,7 +2826,7 @@ RENDER.notifs=async function(){
       ${n.priority==='urgent'?'<span class="ntag" style="background:#fdecec;color:var(--danger)">Urgent</span>':''}
       <span class="ntime">${timeFmt(n.createdAt)}</span></div>
       <div class="ntitle">${esc(n.title)}</div><div class="nbody">${esc(n.body)}</div>
-      <div class="rowsb" style="align-items:center;margin-top:6px"><div class="nfrom" style="margin:0">— ${esc(n.senderName)}</div>${canDelete?`<button class="btn ghost sm" onclick="deleteNotice('${n.id}')">Delete</button>`:''}</div></div>`).join('')}`,'Notices',CAMP_MODE==='pre-camp'?'Pre-camp updates':'Camp &amp; zone updates');
+      <div class="rowsb" style="align-items:center;margin-top:6px"><div class="nfrom" style="margin:0">— ${esc(n.senderName)}</div>${canDelete?`<button class="btn ghost sm" onclick="deleteNotice('${n.id}')">Delete</button>`:''}</div></div>`).join('')}`,'Notices',CAMP_MODE==='pre-camp'?'Pre-camp updates':'Camp & zone updates');
 };
 async function deleteNotice(id){if(!await confirmSheet({title:'Delete this notice for everyone?',confirmLabel:'Delete',danger:true}))return;try{await api('/notifications/'+id,{method:'DELETE'});toast('Notice deleted');RENDER.notifs();}catch(e){toast(e.message);}}
 
@@ -3005,7 +3123,7 @@ RENDER.compose=function(){
       :`<button class="on" data-aud="myzone" onclick="setAud(this)">${esc(ACTOR.zone)} Zone</button>`}
     </div>
     ${isDir?`<div id="zoneWrap" style="display:${isZoneEd?'block':'none'}"><label>Zone</label><select id="zoneSel">${ZONES.map(z=>`<option ${ed&&ed.zone===z?'selected':''}>${z}</option>`).join('')}</select></div>`:''}
-    <label>Priority</label><div class="seg" id="priSeg"><button class="${(!ed||ed.priority!=='urgent')?'on':''}" data-pri="normal" onclick="setPri(this)">${icSm('check')} Normal</button><button class="${ed&&ed.priority==='urgent'?'on':''}" data-pri="urgent" onclick="setPri(this)">${icSm('urgent')} Urgent</button></div>
+    <label style="display:flex;align-items:center;gap:6px">Priority ${helpTip('Normal: appears in the recipient’s Notices list and on their home screen. Urgent: also pops up a full-screen alert they must tap to dismiss, next time they open the app. Use Urgent only for something that changes what people do right now.')}</label><div class="seg" id="priSeg"><button class="${(!ed||ed.priority!=='urgent')?'on':''}" data-pri="normal" onclick="setPri(this)">${icSm('check')} Normal</button><button class="${ed&&ed.priority==='urgent'?'on':''}" data-pri="urgent" onclick="setPri(this)">${icSm('urgent')} Urgent</button></div>
     <label>Title</label><input class="fld" id="ntitle" value="${ed?esc(ed.title):''}">
     <label>Message</label><textarea id="nbody">${ed?esc(ed.body):''}</textarea>
     <label>When</label><div class="seg" id="whenSeg"><button class="${when==='now'?'on':''}" data-when="now" onclick="setWhen(this)">Send now</button><button class="${when==='schedule'?'on':''}" data-when="schedule" onclick="setWhen(this)">${icSm('clock')} Schedule</button></div>
@@ -3448,7 +3566,7 @@ RENDER.testimonies=async function(){
     <label>Testimony</label><textarea id="tmBody" placeholder="What happened? Whose story is it? What did God do?" style="min-height:120px"></textarea>
     <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this testimony from church logins on the student's profile.</div></div>
     <label class="tgl"><input type="checkbox" id="tmSensitive"><span class="track"></span></label></div>
-    <button class="btn" style="margin-top:10px" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','Day 2+');
+    <button class="btn" style="margin-top:10px" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','Open all camp');
 };
 async function submitTestimony(){const camperId=sel('tmCamper'),body=val('tmBody');
   const leader=_actingName(); // item 2: account name (church initials / account display name)
@@ -5048,7 +5166,7 @@ async function saveDevo(d){try{await api('/devotional',{method:'POST',body:{day:
 // One editable table row (Time + Activity). Index r keeps input ids unique per day.
 // Inputs are addressed by CLASS within each .sched-row (not index-based ids), so a row can be
 // deleted from the middle without renumbering the rest — saveSchedDay reads the live rows.
-function _schedRow(d,r,t,n){return `<div class="sched-row" style="display:grid;grid-template-columns:86px minmax(0,1fr) auto;gap:8px;margin-bottom:6px;align-items:center">`
+function _schedRow(d,r,t,n){return `<div class="sched-row" style="display:grid;grid-template-columns:80px minmax(0,1fr) auto;gap:8px;margin-bottom:5px;align-items:center">`
   +`<input class="fld sr-t" type="time" value="${esc(t||'')}">`
   +`<input class="fld sr-n" placeholder="Activity" value="${esc(n||'')}">`
   +`<button class="iconbtn danger" type="button" title="Delete row" onclick="this.closest('.sched-row').remove()">${icSm('trash')}</button></div>`;}
@@ -5062,7 +5180,7 @@ async function _acScheduleBody(){
     const n=Math.max(SCHED_MIN_ROWS,items.length);
     let rows='';for(let r=0;r<n;r++){const it=items[r]||{};rows+=_schedRow(d,r,it.startTime,it.title);}
     return `<div class="card"><div class="h3" style="margin-top:0">${dayLong(d)} <span style="color:var(--muted);font-weight:600">· ${d}</span></div>
-      <div style="display:grid;grid-template-columns:96px minmax(0,1fr) auto;gap:6px;font-size:.6rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px"><span>Time</span><span>Activity</span><span style="width:32px"></span></div>
+      <div style="display:grid;grid-template-columns:80px minmax(0,1fr) auto;gap:8px;font-size:.6rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px"><span>Time</span><span>Activity</span><span style="width:32px"></span></div>
       <div id="schedRows_${d}">${rows}</div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button class="btn ghost sm" style="flex:1" onclick="addSchedRow('${d}')">+ Add row</button>

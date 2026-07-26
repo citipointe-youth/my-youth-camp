@@ -275,6 +275,22 @@ describe('dashboard response cache', () => {
     expect(resB.totalExpected).toBe(2); // not resA's cached value, not a mix of both
   });
 
+  // Regression (2026-07-26): `_actorKey` omitted `genderScope`, so the `b-`/`g-` logins of the
+  // SAME church (identical role + churchId + zone) collided in one cache slot and the first
+  // fetch seeded the other gender's figures for the 30s TTL.
+  it('scopes the cache key by genderScope — b-/g- logins of one church never share a slot', async () => {
+    pinClock('2026-07-01T15:00:00Z');
+    const h = await build();
+    await h.personRepo.save(camper({ id: 'm1', churchId: 'c1', gender: 'male', atCamp: true }));
+    await h.personRepo.save(camper({ id: 'f1', churchId: 'c1', gender: 'female', atCamp: true }));
+    await h.personRepo.save(camper({ id: 'f2', churchId: 'c1', gender: 'female', atCamp: true }));
+    const resBoys = await h.svc.home(actor('church', { churchId: 'c1', genderScope: 'male' }), settings());
+    const resGirls = await h.svc.home(actor('church', { churchId: 'c1', genderScope: 'female' }), settings());
+    if (resBoys.mode !== 'at-camp' || resGirls.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(resBoys.totalExpected).toBe(1);
+    expect(resGirls.totalExpected).toBe(2); // not the boys' cached 1
+  });
+
   it('scopes the cache key by zone — a zoneLeader never sees another zone cached in its slot', async () => {
     pinClock('2026-07-01T15:00:00Z');
     const h = await build();

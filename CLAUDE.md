@@ -1481,6 +1481,102 @@ commits if you need the granular diffs.
   sessions, the full unfiltered 400+-entry roster, the First Aid alert box, and the new
   confirm-modal flow (see `docs/FRONTEND-FIXES-PLAN-2026-07-18.md`'s checklist).
 
+## UI/bug batch — incident alerts, overlay stacking, preview phases — deployed 2026-07-26
+
+Admin-requested batch of 10 items from a phone pass. **SPA-only except one backend one-liner**
+(`dashboard-cache.ts`) — no schema/migration change. `npm run typecheck` clean, `npm run test` =
+**580 pass** (+1 new regression test), SPA `node --check` OK. `sw.js` `camp-v43`→`camp-v44`.
+Two design/assessment docs were produced alongside and are NOT implemented — see the bottom of
+this section.
+
+- **Light-purple bar under the bottom nav / login card (screenshots 1, 2, 8).** The CANVAS
+  background paints the strip below the body box that iOS briefly exposes when the dynamic toolbar
+  retracts or the keyboard dismisses (it vanishes on the next scroll — exactly the reported
+  symptom). `html` had no background, so the canvas inherited `body`'s `--paper` and that transient
+  strip read as a light-purple bar under the near-white nav. **`html{background:#fff}`** stops the
+  propagation; `body` keeps `--paper` for the app column. Accepted side effect: the letterbox
+  either side of the capped `.app` column between ~540–980px is now white. At ≥980px `#app` is
+  `max-width:none` so nothing changes there. Supersedes the 2026-07-24 Follow-up 3 reasoning (the
+  light body background was necessary but addressed the *black* bar, not this one).
+- **Deleted incident stayed on screen until reload.** `_invalidate()` had no `/incidents` branch,
+  so a `DELETE /incidents/<id>` fell through to the generic `Cache.del(path)` — which only matches
+  keys equal to or *under* `/incidents/<id>`, leaving the cached `/incidents` LIST key intact for
+  the 30s TTL. Added `else if(path.startsWith('/incidents'))Cache.del('/incidents','/notifications')`.
+  **Notices were checked and are fine** (`/notifications/<id>` already hits a prefix branch), but
+  **`/faq/<id>` had the identical latent bug** and got the same treatment. ⚠️ GOTCHA for future
+  endpoints: any write to `/<resource>/<id>` needs an explicit `_invalidate` branch naming the
+  collection key — the fall-through does NOT clear the list.
+- **Incident alerts: full-screen modal → compact Home banner.** The "Incident logged" bottom sheet
+  fired on **every** app open and was disruptive. Now: **`leadersOnly`** (set by exactly one code
+  path — `incident.service.log`; every other notification is created `leadersOnly:false` — so it is
+  a reliable incident marker with no schema change) drives a new `_isIncidentNotice()`. New helpers
+  `_noticeFeed()` / `_incidentAlerts()` / `_incidentBannerHtml()` / `_ackIncident()` + `.inc-banner`
+  CSS. A red, left-accented strip sits **above the hero on Home** (both pre-camp and at-camp — the
+  pre-camp variant matters, incidents have been logged pre-camp), one row per unacknowledged high
+  incident, tap the text to open Incidents, "Got it" to acknowledge. **Acknowledgement is per
+  device** (`localStorage`, reusing the existing `_DISMISS_KEY` store) — owner chose this over a
+  server-side per-user ack table; a leader on a second device or after clearing site data will be
+  alerted again. **Incident notices no longer appear in ANY notice list** — filtered out of the Home
+  notices AND `RENDER.notifs` (owner decision). The backend still creates the notification: it is
+  what the banner reads, and the push design hangs off the same record. **Deliberately unchanged:**
+  a genuine human-sent urgent notice still pops the modal (`_checkUrgentNoticesFromFeed` now
+  excludes incidents only) — that is a director choosing to interrupt everyone.
+- **Home notices = the 3 most recent REAL notices** (`_noticeFeed(feed).slice(0,3)` on both home
+  variants; both already sliced to 3, the bug was incidents eating the slots).
+- **Bottom sheets were rendering UNDER the bottom nav** (screenshots 5 "Switch to At-Camp" and 7
+  "Bulk Church Update" — both had their primary button hidden). `.tabs` is `z-index:100`; `.modal`
+  was **50**, `.ig-wrap` 55, `#login`/`#mcpGate` 60 — all below it. New documented ladder:
+  **nav 100 < modal/guide 120 < toast 130 < login/gate 140 < tooltip 200 < undo toast 9999.**
+  ⚠️ GOTCHA (now recorded in the CSS): a full-viewport overlay must be `position:fixed` **AND**
+  above 100. This is the companion rule to the 2026-07-24 Follow-up 7 `absolute`→`fixed` sweep.
+- **Schedule editor rows compacted.** The 7 default empty rows per day inherited full-size `.fld`
+  padding/type (sized for one-per-line form fields, not a dense repeating grid). `.sched-row .fld`
+  now has its own tighter padding/font/radius; time column `86px`→`80px` (header grid updated to
+  match — they must stay in sync).
+- **Camp settings short fields capped.** `.setg input[type=time|date|number]{max-width:190px}` —
+  a "6:00 am" value no longer sits in a phone-width box. Free-text fields (camp name) unchanged.
+- **Notices subtitle showed a literal `&amp;`.** `_paint` sets the title/subtitle via
+  **`.textContent`**, so an HTML entity is never decoded. `'Camp &amp; zone updates'` → `'Camp &
+  zone updates'`. The other ~20 `&amp;` occurrences are inside `innerHTML` strings and are correct
+  — only `paint()`'s 3rd/4th args must use a bare `&`.
+- **Send-a-notice: Normal vs Urgent tooltip.** `helpTip` beside the Priority label explaining that
+  Urgent additionally pops a full-screen alert on next open.
+- **At-camp preview: Day 1 / Day 2 toggle → Sign-in / Through camp.** `SETTINGS.campDay` and
+  `switchDay()` are **gone**, replaced by an in-memory `_previewPhase` + `switchPreviewPhase()`.
+  Rationale: the two things worth rehearsing are the two FACES of the check-in surface, and "Day 2"
+  was a misleading proxy (it still ran through the switchover-time rule, and implied testimonies
+  only open on day 2 — they are always open). `campPhase()` now returns `_previewPhase` outright in
+  preview, ahead of both the time rule and the admin's saved `checkinPhaseOverride` (which belongs
+  to the real camp). The header badge reads "Sign-in ›" / "Through camp ›" and toggles on tap. On
+  Home, `isDay1` is forced true in preview so the First-Day button and the Daily Check-in tile are
+  **both always rendered, one live and one greyed**; greyed-tap copy is preview-aware ("Tap the
+  … badge up top"). Testimonies screen subtitle "Day 2+" → **"Open all camp"**.
+- **`dashboard-cache.ts` `_actorKey` was missing `genderScope`** (the ONE backend change). Found by
+  the launch-readiness pass below, then confirmed with a test that fails without the fix. `b-victory`
+  and `g-victory` are both `role:church` with the same `churchId`/`zone`, so they **collided in one
+  30s cache slot** — whichever fetched first seeded the other gender's dashboard figures. Counts
+  only (no names/PII crossed) but still one gender's roster reported to the other custodian. Latent
+  since Feature 2 / migration `0006` (2026-07-17). +1 regression test in `dashboard.service.test.ts`.
+  ⚠️ Any future scoping dimension must be added to that key too.
+
+**Two docs produced, NOT implemented (owner reviews before anything ships):**
+- **`docs/superpowers/specs/2026-07-26-web-push-design.md`** — Web Push (PWA) via Vercel Cron,
+  covering three triggers only: high-severity incidents, scheduled notices firing at their real
+  minute (replacing today's lazy-fire), and check-in-window-closing warnings (the deferred item 10).
+  Supersedes/absorbs `2026-07-23-web-push-design.md`. Includes the privacy assessment. Headline
+  recommendation: **title-only payloads — a server-stored `body` never enters a push payload**
+  (`notifications.body` is encrypted at rest when `leadersOnly`; shipping it to Apple to render on
+  a lock screen would defeat that). Notes a real blocker: `HttpRequest` (`src/api/http/types.ts`)
+  has **no `headers` field**, so a `CRON_SECRET`-guarded route cannot read `Authorization` today.
+  Would need migration `0013`.
+- **`docs/LAUNCH-READINESS-2026-07-26.md`** — assessment for the ~2026-08-05 launch to ~100
+  leaders. Biggest finding: prod is still on the **transaction-mode pooler (port 6543)** with
+  `max: 5` — the exact configuration behind YS Connection's multi-day outage at 30–40 users —
+  and `docs/SESSION-MODE-CUTOVER.md` is written but marked not-yet-done. Compounding it,
+  `getSessionStatus`/`/home`/`/registrants`/`/campers`/search **all** call `personRepo.findAll()`,
+  and the SPA never passes `?churchId`, so the indexed fast-path is dead code in practice. 8
+  BLOCKING items, most of them owner-side dashboard checks.
+
 ## Accommodation fold-in fix + override relocation — deployed 2026-07-20
 
 Admin-requested batch of 3 items, found while testing against a realistic sample data set

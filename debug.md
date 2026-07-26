@@ -137,6 +137,27 @@ check "expected vs actual" before touching code.
 >   — the phone `.app` is not viewport-height, it grows with scrolling content. "Toast/modal/gate
 >   appears at the bottom of the page or off-screen" → this class of bug.
 
+> **2026-07-26 batch (incident alerts, overlay stacking, preview phases) — new/changed symbols
+> (grep the name):**
+> - **`_isIncidentNotice(n)` / `_noticeFeed(feed)` / `_incidentAlerts(feed)` / `_incidentBannerHtml(feed)`
+>   / `_ackIncident(id)`** (declared just above `noticeCard`) — the incident-alert system.
+>   `leadersOnly` is set by exactly ONE backend path (`incident.service.log`; everything else is
+>   created `leadersOnly:false`), so it is the reliable "raised by an incident" marker.
+>   `_noticeFeed` is the single filter every notice LIST renders through — home AND `RENDER.notifs`.
+>   The full-screen "Incident logged" modal is gone; `_checkUrgentNoticesFromFeed` now fires only
+>   for human-sent urgent notices. Acknowledgement is **per device** (`localStorage`, shared
+>   `_DISMISS_KEY` store) — by design, not a bug if a second device re-alerts.
+> - **`_previewPhase` + `switchPreviewPhase()`** replace `SETTINGS.campDay` + `switchDay()`, both
+>   **deleted**. `campPhase()` returns `_previewPhase` outright while `PREVIEW_MODE` — ahead of the
+>   time rule AND the admin's `checkinPhaseOverride`. Header badge (`#dayBadge`) reads
+>   "Sign-in ›"/"Through camp ›". `isDay1` is forced `true` in preview so BOTH the First-Day button
+>   and the Daily Check-in tile always render, one greyed.
+> - **Z-INDEX LADDER (new, documented in the CSS above `.modal`):** nav `.tabs` 100 < `.modal`/
+>   `.ig-wrap` 120 < `.toast` 130 < `#login`/`#mcpGate` 140 < `.htip-pop` 200 < `#undoToast` 9999.
+> - **`.inc-banner`/`.inc-row`/`.inc-txt`/`.inc-ack` CSS** (above `.notice`); **`html{background:#fff}`**
+>   (canvas colour, the bottom-strip fix); **`.sched-row .fld`** (compact editor rows);
+>   **`.setg input[type=time|date|number]`** (capped settings fields).
+
 ## Frontend — `public/index.html` (single ~2,920-line SPA)
 
 This one file is the only real navigation cost in the repo. Map below (line numbers are a
@@ -457,6 +478,20 @@ tolerate absence via `?? false`.
 | **First Aid alert box: "no medical conditions" looks alarming, or "no leader contact" looks calm** | Swapped 2026-07-19 (`openStudentInfo`, grep the name) — reassuring cases use `.fa-neutral` (new class, same quiet shell as `.fa-lead`), the actionable "no leader contact on file" case uses `.fa-alert`. If it looks inverted again, check which class each branch returns. |
 | **Mode switch / full reset / new-year rollover: no confirmation dialog appears, or a native browser popup appears instead of the app's own dialog** | These 3 (`switchMode`, `adminReset`, `doNewYear`) were moved off native `confirm()`/`prompt()` onto the `.sheet`/`#modal` system 2026-07-19 — `_switchModeConfirmed`, `_adminResetConfirmed` (grep the names) are the continuation functions the modal's Confirm button calls. The other ~13 `confirm()`/`prompt()` sites in the file are unchanged/native by design (see `docs/FRONTEND-FIXES-PLAN-2026-07-18.md`). |
 | **Camp mode changes but no toast appears (only the badge/tabs update silently)** | `_applyModeChange` (grep the name) now toasts on every genuine change — check its `mode===CAMP_MODE` early-return isn't firing when it shouldn't (e.g. `SETTINGS.campMode` was already mutated elsewhere before this ran). Covers both the cross-tab `storage` listener and the on-refocus `visibilitychange` handler, since both funnel through this one function. |
+
+### 2026-07-26 batch (incident alerts, overlay stacking, preview phases)
+
+| Symptom | Go to |
+|---|---|
+| **A deleted row (incident, FAQ, …) stays on screen until reload** | `_invalidate(path)` (`public/index.html`) — a write to `/<resource>/<id>` falls through to the generic `Cache.del(path)`, which matches only keys equal to or UNDER `/<resource>/<id>` and therefore **leaves the cached collection key `/<resource>` intact** for the 30s TTL. `/incidents` and `/faq` got explicit branches 2026-07-26; `/notifications`, `/notes`, `/registrants`, `/accounts` already had prefix branches. **Any NEW id-suffixed write endpoint needs its own branch naming the collection key.** |
+| **A light-purple bar appears under the bottom nav (or under the login card) and vanishes when you scroll** | `html{background:#fff}` (near `html{font-size:16px}`). The CANVAS paints the strip iOS briefly exposes below the body box when the dynamic toolbar retracts / the keyboard dismisses; with no background on `html` the canvas inherits `body`'s `--paper`. If the purple bar returns, that rule was removed or a later `html` rule overrode it. NOT the same bug as the 2026-07-24 *black* bar (that one was fixed by making `body` light — both fixes are needed). |
+| **A bottom sheet / overlay renders UNDER the bottom nav (its button is unreachable)** | The z-index ladder above `.modal` in the CSS: `.tabs` is **100**, so every full-viewport overlay must be `position:fixed` **AND** above 100. `.modal`/`.ig-wrap` 120, `.toast` 130, `#login`/`#mcpGate` 140. A new overlay that copies an old `z-index:50`-era rule will be covered by the nav. |
+| **An incident alert pops a full-screen modal on every app open** | Should not anymore — incidents render as the `.inc-banner` strip above the hero (`_incidentBannerHtml`), acknowledged per device by `_ackIncident`. If the modal returns, `_checkUrgentNoticesFromFeed`'s `!_isIncidentNotice(n)` filter was dropped. A **human-sent** urgent notice still popping the modal is BY DESIGN. |
+| **An incident appears in the Notices list (home or the Notices screen)** | Both lists render through **`_noticeFeed()`**, which drops `leadersOnly` notices (owner decision 2026-07-26 — incidents live on the Incidents screen, the Notes record filter and the Home banner only). If one shows up, a call site bypassed `_noticeFeed`. |
+| **An incident alert re-appears after acknowledging** | Expected on a DIFFERENT device / after clearing site data — acknowledgement is `localStorage`-only (`_DISMISS_KEY`), the owner's explicit choice over a server-side ack table. Same device re-alerting IS a bug: check `_ackIncident` wrote to `_DISMISS_KEY` and that `isNoticeDismissed` reads the same key. |
+| **Preview shows "Day 1"/"Day 2", or only one of First-Day-Sign-In / Daily Check-in** | `SETTINGS.campDay`/`switchDay()` were **deleted** 2026-07-26 → `_previewPhase`/`switchPreviewPhase()`. Both controls must render in preview (`isDay1` is forced `true`), one greyed by `campPhase()`. If the phase ignores the badge, check `campPhase()`'s `if(PREVIEW_MODE)return _previewPhase` early-return still precedes the `checkinPhaseOverride` check. |
+| **A `paint()` title/subtitle shows a literal `&amp;` (or `&lt;`)** | `_paint` writes them with **`.textContent`** — entities are never decoded. Use a bare `&` in `paint()`'s 3rd/4th args; `&amp;` is correct only inside `innerHTML` body strings. |
+| **`b-<church>` and `g-<church>` see each other's dashboard counts** | `dashboard-cache.ts` `_actorKey` must include **`genderScope`** (added 2026-07-26; it was missing from the moment gender scoping landed in migration `0006`). Key = `${role}:${churchId}:${zone}:${genderScope}`. Covered by `dashboard.service.test.ts` → "scopes the cache key by genderScope". Any future scoping dimension goes here too. |
 
 ### 2026-07-19 fix batch (two-pass frontend review — 14 findings)
 
