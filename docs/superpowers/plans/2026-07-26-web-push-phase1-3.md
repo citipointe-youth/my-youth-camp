@@ -2413,7 +2413,7 @@ extra reload on every installed device.
 
 - [ ] **Step 1: Bump the cache**
 
-`public/sw.js` line 1: `const CACHE = 'camp-v45';` → `const CACHE = 'camp-v46';`
+`public/sw.js` line 1: `const CACHE = 'camp-v46';` → `const CACHE = 'camp-v47';`
 
 Do **not** add `push` to `API_RE` yet — that belongs with the service-worker push handlers in the
 later phase. Nothing in Parts A or B calls a `/push` endpoint from the SPA.
@@ -2427,7 +2427,7 @@ later phase. Nothing in Parts A or B calls a `/push` endpoint from the SPA.
   under the "Delivered" heading if that matches the file's convention.
 - `CLAUDE.md`: add a batch section for this update — the tick route + migration `0013`/`0014`, S2,
   and the discount overrides — following the existing dated-section style, and note `sw.js`
-  `camp-v45`→`camp-v46`.
+  `camp-v46`→`camp-v47` (v45→v46 was consumed by the 2026-07-26 early merge of the SPA UI batch).
 - `debug.md`: add the new symbols to the map — `_ciqKey`/`_persistQueue`/`_restoreQueue`
   ("queued check-in lost on reload" → these), `_saveDiscountOverride`/`_applyDiscountOverrides`
   ("budget total ignores an override" → these), and `churchesBehind`/`makeCronService`.
