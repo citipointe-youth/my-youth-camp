@@ -22,6 +22,8 @@ export function toNotif(r: Record<string, unknown>): Notification {
     audienceEstimate: r['audience_estimate'] as number,
     expiresAt: r['expires_at'] ? (r['expires_at'] as Date).toISOString() : undefined,
     scheduledFor: r['scheduled_for'] ? (r['scheduled_for'] as Date).toISOString() : null,
+    pushSentAt: r['push_sent_at'] ? new Date(r['push_sent_at'] as string | Date).toISOString() : null,
+    dedupeKey: (r['dedupe_key'] as string | null) ?? null,
     createdAt: (r['created_at'] as Date).toISOString(),
   };
 }
@@ -44,6 +46,8 @@ export function notifColumns(n: Notification): Record<string, unknown> {
     audience_estimate: n.audienceEstimate,
     expires_at: n.expiresAt ?? null,
     scheduled_for: n.scheduledFor ?? null,
+    push_sent_at: n.pushSentAt ?? null,
+    dedupe_key: n.dedupeKey ?? null,
     created_at: n.createdAt,
   };
 }
@@ -94,7 +98,9 @@ export class SupabaseNotificationRepository implements INotificationRepository {
         priority = excluded.priority,
         expires_at = excluded.expires_at,
         scheduled_for = excluded.scheduled_for,
-        audience_estimate = excluded.audience_estimate
+        audience_estimate = excluded.audience_estimate,
+        push_sent_at = excluded.push_sent_at,
+        dedupe_key = excluded.dedupe_key
     `;
     return n;
   }
@@ -112,5 +118,16 @@ export class SupabaseNotificationRepository implements INotificationRepository {
   async deleteAll(): Promise<number> {
     const rows = await this.sql`delete from notifications returning id`;
     return rows.length;
+  }
+
+  async claimForPush(ids: string[]): Promise<string[]> {
+    // postgres.js `in ${sql(arr)}` THROWS on an empty array — guard first.
+    if (ids.length === 0) return [];
+    const rows = await this.sql`
+      update notifications set push_sent_at = now()
+       where id in ${this.sql(ids)} and push_sent_at is null
+      returning id
+    `;
+    return rows.map((r) => r['id'] as string);
   }
 }
