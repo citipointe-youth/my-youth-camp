@@ -2941,6 +2941,20 @@ function computeDiscountSummaryClient(regs,filterId){
   const rows=[...counts.entries()].map(([code,count])=>({code,count,purpose:_deriveDiscountPurpose(pairsByCode.get(code)||[])})).sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
   return {totalInScope:people.length,rows};
 }
+// Mirror of applyDiscountOverrides in src/services/budget.ts. Keep the two in step —
+// the SPA computes the budget client-side and would otherwise disagree with the server.
+function _applyDiscountOverrides(people,overrides){
+  const keys=Object.keys(overrides||{});
+  if(!keys.length)return people.slice();
+  return people.map(p=>{
+    const code=(p.discountCode||'').trim();
+    if(!code)return p;
+    const amt=overrides[code];
+    if(amt==null)return p;
+    if(p.registrationCost!=null&&p.registrationCost!==0)return p;
+    return Object.assign({},p,{registrationCost:amt});
+  });
+}
 RENDER.budget=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('budget','<p class="note-hint" style="margin-top:24px;text-align:center">Budget is available to directors only.</p>','Budget & Costings','');return;}
   const [regs,camperPage]=await Promise.all([api('/registrants'),api('/campers?pageSize=1000').catch(()=>[])]);
@@ -2959,7 +2973,8 @@ RENDER.budget=async function(){
 };
 function drawBudget(){
   const scope=sel('budChurch')||'all';
-  const rep=computeBudgetClient(window._budgetRegs,scope);
+  const _budRegsOvr=_applyDiscountOverrides(window._budgetRegs,SETTINGS.discountCodeOverrides||{});
+  const rep=computeBudgetClient(_budRegsOvr,scope);
   const head=`<div class="hero" style="margin-bottom:14px"><div class="k">Total registration fees</div>
     <div class="big" style="font-size:var(--t-xl);margin-top:6px">${_money(rep.grandTotal)}</div>
     <div class="cd" style="margin-top:8px"><div class="meta">${rep.camperCount} campers · ${rep.leaderCount} leaders · ${rep.churchCount} ${rep.churchCount===1?'church':'churches'}</div></div></div>`;
@@ -2985,9 +3000,17 @@ function drawBudget(){
   };
   const body=rep.churches.length?`<div class="wide-cards">${rep.churches.map(churchCard).join('')}</div>`:emptyState('star','No registrations yet — import students to see the budget.');
   const disc=computeDiscountSummaryClient(window._budgetRegs,scope);
-  const discRow=(r)=>`<div class="rowsb" style="padding:5px 0">
+  const _canBudget=ACTOR&&(ACTOR.role==='admin'||ACTOR.role==='director');
+  const discRow=(r)=>`<div class="rowsb" style="padding:5px 0;flex-wrap:wrap;gap:6px">
     <div style="min-width:0"><span class="budcat-l">${esc(r.code)}</span>${r.purpose?`<span class="gradepill">${esc(r.purpose)}</span>`:''}</div>
-    <b style="white-space:nowrap">${r.count} used of ${disc.totalInScope}</b></div>`;
+    <b style="white-space:nowrap">${r.count} used of ${disc.totalInScope}</b>
+    ${_canBudget?`<div class="dc-ovr" style="flex:0 0 100%;display:flex;gap:8px;align-items:center">
+      <input type="number" inputmode="decimal" min="0" step="0.01" placeholder="Paid-in-full amount"
+             value="${(SETTINGS.discountCodeOverrides||{})[r.code]??''}"
+             style="flex:1;min-width:0"
+             onchange="_saveDiscountOverride('${esc(jsq(r.code))}',this.value)">
+      ${rep.fullAmount!=null?`<button class="btn ghost sm" style="flex:none" onclick="_prefillDiscountOverride('${esc(jsq(r.code))}',${rep.fullAmount})">Mark paid in full</button>`:''}
+    </div>`:''}</div>`;
   const discBody=disc.rows.length?disc.rows.map(discRow).join(''):'<p class="sub" style="padding:6px 0">No discount codes recorded.</p>';
   const discSection=`<div class="card budchurch" data-cid="disc" style="margin-top:14px">
     <div class="rowsb budchurch-hd" onclick="_budToggle('disc')" style="cursor:pointer">
@@ -2999,9 +3022,24 @@ function drawBudget(){
   if(box)box.innerHTML=`<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${discSection}</div></div>`;
 }
 function _budToggle(cid){const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.toggle('open');}
+// Clearing the field removes the override (the code reverts to normal behaviour).
+async function _saveDiscountOverride(code,value){
+  const o=Object.assign({},SETTINGS.discountCodeOverrides||{});
+  const n=parseFloat(value);
+  if(!value||!isFinite(n)||n<=0)delete o[code];else o[code]=n;
+  try{
+    const s=await api('/settings/discount-overrides',{method:'PATCH',body:{overrides:o}});
+    SETTINGS.discountCodeOverrides=s.discountCodeOverrides||{};
+    _invalidate('/settings');
+    toast('Saved');
+    RENDER.budget();
+  }catch(e){toast(e.message||'Could not save');}
+}
+function _prefillDiscountOverride(code,amount){_saveDiscountOverride(code,String(amount));}
 function exportBudget(){
   const scope=sel('budChurch')||'all';
-  const rep=computeBudgetClient(window._budgetRegs,scope);
+  const _budRegsOvr=_applyDiscountOverrides(window._budgetRegs,SETTINGS.discountCodeOverrides||{});
+  const rep=computeBudgetClient(_budRegsOvr,scope);
   const esc2=s=>{const str=String(s);return /[",\n]/.test(str)?'"'+str.replace(/"/g,'""')+'"':str;};
   const lines=[['Church','Audience','Category','Count','UnitPrice','LineTotal'].join(',')];
   const emit=(church,aud,rows)=>rows.forEach(r=>lines.push([esc2(church),aud,esc2(r.label),r.count,r.amount||0,r.lineTotal].join(',')));
