@@ -850,7 +850,17 @@ async function _doFetch(path,opt){
     if(e&&e.name==='AbortError')throw new Error('Request timed out — check your connection and try again.');
     throw new Error('Network error — is the server running?');
   }finally{clearTimeout(timer);}
-  if(res.status===401&&TOKEN){sessionExpired();throw new Error('Session expired — please sign in again.');}
+  // A 401 on any path except the login POST means the session is gone. This used to be guarded
+  // on `TOKEN`, which broke on a CASCADE: _prefetch() fires 5 requests at once, the first 401
+  // runs sessionExpired() (which nulls TOKEN), and the remaining four then fell through this
+  // branch and surfaced the server's raw string — "Missing bearer token" — as an alarming toast
+  // that a refresh appeared to "fix". sessionExpired() is idempotent, so the cascade now
+  // collapses into one banner. /auth/login is excluded because ITS 401 is "wrong password",
+  // which must keep its own message on the login form.
+  if(res.status===401&&path.indexOf('/auth/login')!==0){
+    if(TOKEN)sessionExpired();
+    throw new Error('Session expired — please sign in again.');
+  }
   if(res.status===204)return null;
   let j=null;try{j=await res.json();}catch(e){j=null;}
   if(!res.ok){
@@ -5415,6 +5425,14 @@ async function _tryRestoreSession(){
     const stash=localStorage.getItem('ycp_preview_stash');
     if(stash){try{_previewStash=JSON.parse(stash);ACCOUNT_PREVIEW=true;document.getElementById('previewBanner').classList.add('show');}catch(_){}}
     if(MUST_CHANGE_PASSWORD_ENFORCED&&ACTOR.mustChangePassword){_showChangePasswordGate();return;}
+    // Validate the stored token against an AUTHENTICATED route before showing the app.
+    // GET /settings is deliberately auth:false (the login screen needs the camp name/branding),
+    // so it happily 200s for a dead session — restore then sailed on, hid the login screen, and
+    // the app blew up one tick later when _prefetch()'s authed calls all 401'd. Session tokens
+    // are stateless HMAC with a 24h TTL (auth.service.ts), so this fires for anyone returning
+    // the next day. On failure _doFetch() already runs sessionExpired(); the catch below clears
+    // localStorage so the next load goes straight to a clean login screen.
+    await api('/auth/me',{noCache:true});
     SETTINGS=await api('/settings');
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
     document.getElementById('login').style.display='none';

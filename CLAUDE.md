@@ -2129,3 +2129,44 @@ fixes to `master`. `npm run typecheck` clean, `npm run test` = **634 pass / 48 f
    `checkinPhaseOverride` + `checkinSwitchoverTime`** — previously it copied only `campMode`, so an
    admin's phase change never reached an already-open session at all. The **desktop sidebar never
    had this bug** (`_renderWideNav` runs on every `paint()`); it was bottom-nav-only.
+
+## Session-restore auth fix — deployed 2026-07-27
+
+Reported symptom: *"I loaded in and saw a 'Missing bearer token' error; on refresh it had fixed."*
+Confirmed from the Vercel runtime logs (five 401s in one tick — `/home`, `/notifications`,
+`/checkin/sessions`, `/accounts/churches`, `/accounts/users`, i.e. exactly `_prefetch()`'s set,
+with **`/settings` conspicuously absent**). Two independent defects, both in `public/index.html`,
+both fixed. `sw.js` → `camp-v50`.
+
+1. **`_tryRestoreSession()` validated nothing.** `GET /settings` is deliberately **`auth: false`**
+   (`router.ts:82` — the login screen renders camp name/branding before anyone has a token), and it
+   was the only call the restore path made before hiding the login screen. So an **expired token
+   passed the gate**: the app rendered as if signed in and only collapsed a tick later when
+   `_prefetch()`'s authenticated calls 401'd. Restore now does **`await api('/auth/me',{noCache:true})`**
+   — an `auth: true` route — before touching `/settings`. On failure `_doFetch` already runs
+   `sessionExpired()` and the existing `catch` clears `localStorage`, so the next load is a clean
+   login screen. **Never use an `auth:false` route as a session probe**; `/settings` and `/setup`
+   are the two that look tempting.
+2. **The 401 handler was guarded on `&& TOKEN`.** `_prefetch()` issues five requests in the same
+   tick. The first 401 called `sessionExpired()`, which nulls `TOKEN` — so the remaining four fell
+   *past* the guard and threw the server's raw message, `Missing bearer token`, into a toast. That
+   is the string the owner saw. The guard is now `path.indexOf('/auth/login')!==0`:
+   `sessionExpired()` is idempotent so a cascade collapses into one banner, and `/auth/login` stays
+   excluded because **its** 401 means *wrong password* and must keep its own message on the form.
+
+Not a bug, worth knowing: sessions are **stateless HMAC, 24h TTL, no sliding refresh**
+(`TOKEN_TTL_MS`, `auth.service.ts:10`). Everyone re-logs in daily; the fix just makes that land as
+"Session expired — please sign in again." instead of a raw error.
+
+### Still outstanding (owner decision)
+
+- **Migration `0014` (pg_cron push tick) is applied to nothing.** Prerequisite 1 is now satisfied —
+  `GET /internal/cron/tick` is live in prod (verified: returns 401 without the bearer, so the route
+  is registered). Prerequisite 2 is not: it needs `CRON_SECRET` set in Vercel **and** the same value
+  in Supabase Vault as `cron_secret`. **The Vercel MCP server has no env-var tool**, so the Vercel
+  half must be done by hand (dashboard, or `vercel env add` once the CLI is installed); the Supabase
+  half can be done over MCP. Note this is a **Supabase pg_cron** schedule, not a Vercel cron —
+  `vercel.json` has no `crons` key on purpose, because Hobby-plan Vercel crons are daily-only and
+  the check-in-window warning needs `*/5`.
+- **Migration history drift on `0009`–`0012`** (recorded under generated timestamp versions), so a
+  `supabase db push` would try to re-run them. Unchanged.
