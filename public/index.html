@@ -8,8 +8,13 @@
      EXTERNAL script/resource loading, base-uri hijacks and form-action exfiltration.
      style-src/font-src allow Google Fonts (Plus Jakarta Sans, loaded below) — the only
      external resource this app loads; connect-src 'self' covers all API calls (relative
-     paths, same origin). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'">
+     paths, same origin).
+     img-src MUST keep `data:` — the site map is stored as a data: URI in settings and is
+     rendered by <img> in three places (crop probe, settings preview, the Map screen). With
+     a bare 'self' the browser blocks every one of them and the upload fails at the probe
+     with "Could not read that image file" (2026-07-29). It stays a same-origin policy:
+     data: images are inert and can't exfiltrate. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#1e1b4b">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1255,7 +1260,15 @@ function _clampTip(btn){const pop=btn.querySelector('.htip-pop');if(!pop)return;
   const scr=btn.closest('.screen'),sr=scr?scr.getBoundingClientRect():null;
   const bl=sr?Math.max(0,sr.left):0;
   const br=sr?Math.min(document.documentElement.clientWidth,sr.right):document.documentElement.clientWidth;
-  const vw=br,vh=document.documentElement.clientHeight;
+  // The phone layout's bottom nav is `position:fixed` over the content, so the usable bottom
+  // is its TOP edge, not the viewport's — measuring to clientHeight let a bubble low on the
+  // page (e.g. the Site map tip in Camp settings) open downward into the nav and read as
+  // hidden. On the ≥980px layout .tabs is display:none and this falls back to the viewport.
+  const vw=br;
+  const tabs=document.querySelector('.tabs');
+  const tabsRect=tabs?tabs.getBoundingClientRect():null;   // display:none ⇒ height 0, so it's ignored
+  const tabsTop=tabsRect&&tabsRect.height>0?tabsRect.top:Infinity;
+  const vh=Math.min(document.documentElement.clientHeight,tabsTop);
   const r=pop.getBoundingClientRect();let shift=0;
   if(r.right>vw-m)shift=(vw-m)-r.right;
   if(r.left+shift<bl+m)shift=(bl+m)-(r.left+shift);

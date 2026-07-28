@@ -296,7 +296,12 @@ Owner-requested batch (25 numbered items + 3 folded in mid-session). SPA + backe
   becomes the secondary. A gender that already lists two leaders is untouched.
 - **8 — Site map (NEW).** `settings.siteMapImage` (**migration `0016`**) holds a client-baked
   `data:image/...` URI; the server stores an opaque string and the Zod schema rejects anything that
-  isn't a data-image URI (no remote URL → no SSRF/tracking-pixel surface, no CSP violation).
+  isn't a data-image URI (no remote URL → no SSRF/tracking-pixel surface).
+  **The page CSP must keep `img-src 'self' data:`** — this is the app's only data-URI image, and a
+  bare `img-src 'self'` blocks all three `<img>` sites (crop probe, settings preview, Map screen).
+  The symptom is a misleading "Could not read that image file" toast on a valid PNG, because the
+  block surfaces as the probe `Image`'s `onerror`. Missed in the original port (2026-07-28) and
+  fixed 2026-07-29; YS Connection's CSP already allowed it, which is why the cropper worked there.
   A "Map" button sits on the Home hero for every role (firstAid has no home screen, so it gets one
   on its Search landing) and is hidden entirely until a map is uploaded. Upload + crop live in
   Admin → Camp settings → Camp details & dates. **The crop tool is a port of YS Connection's logo
