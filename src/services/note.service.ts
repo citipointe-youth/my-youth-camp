@@ -11,14 +11,22 @@ import { nowISO } from '../utils/date';
 import { toCsvString } from '../utils/csv';
 import { z } from 'zod';
 
+/* Bug 19 (2026-07-28) — "Validation failed" when adding a note from the Students screen.
+   The SPA posts `sessionId: SEL_SESSION`, and `SEL_SESSION` is genuinely `null` anywhere outside
+   the daily check-in screen (it is only set when a session is picked there). Zod's `.optional()`
+   accepts `undefined` but NOT `null`, so every note added from a student's profile / the Students
+   list was rejected before it reached the service — while the same modal opened from check-in
+   worked, which is why it looked intermittent. `.nullish()` accepts both; `?? null` downstream
+   already handled the null case. The SPA was fixed to omit the key too — either alone is
+   sufficient, both together mean neither side can reintroduce it. */
 const AddNoteSchema = z.object({
   // Optional: a testimony may be "general" (no specific student). Empty string is
   // treated as absent.
-  camperId: z.string().optional(),
+  camperId: z.string().nullish(),
   body: z.string().min(1).max(2000),
-  sessionId: z.string().optional(),
-  category: z.string().max(40).optional(),
-  sensitive: z.boolean().optional(),
+  sessionId: z.string().nullish(),
+  category: z.string().max(40).nullish(),
+  sensitive: z.boolean().nullish(),
 });
 
 export interface NoteService {

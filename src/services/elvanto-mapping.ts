@@ -79,11 +79,35 @@ export function yesToConsent(raw?: string | null): boolean {
   return (raw ?? '').trim().toLowerCase() === 'yes';
 }
 
-/** First non-empty value among the given header aliases (values are pre-trimmed by parseCsv). */
+/**
+ * First non-empty value among the given header aliases (values are pre-trimmed by parseCsv).
+ *
+ * Item 12 (2026-07-28): the exact-key lookup is tried first (fast path, unchanged), then a
+ * normalised one — lowercase, non-alphanumerics stripped — so a real export whose header reads
+ * "First name", "FIRST NAME" or "First  Name" still resolves instead of reporting the column as
+ * missing on every row. Alias lists throughout the importers stay as-is; this only widens what
+ * each alias matches.
+ */
 export function field(row: Record<string, string>, ...aliases: string[]): string {
   for (const a of aliases) {
     const v = row[a];
     if (v != null && v.trim() !== '') return v.trim();
   }
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const wanted = new Set(aliases.map(norm));
+  for (const [k, v] of Object.entries(row)) {
+    if (v != null && v.trim() !== '' && wanted.has(norm(k))) return v.trim();
+  }
   return '';
+}
+
+/**
+ * True when every cell in the row is blank. Item 12 (2026-07-28): a trailing empty line — which
+ * spreadsheets and Elvanto exports both routinely produce — was reported as
+ * "Missing firstName or lastName", so an import that fully succeeded still surfaced errors in
+ * the preview. An entirely-blank row is not an error, it is padding; the importers skip it
+ * silently and count it as skipped.
+ */
+export function isBlankRow(row: Record<string, string>): boolean {
+  return Object.values(row).every((v) => v == null || String(v).trim() === '');
 }

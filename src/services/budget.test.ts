@@ -239,10 +239,26 @@ describe('computeDiscountCodeSummary', () => {
     ];
     expect(computeDiscountCodeSummary(half).rows).toEqual([{ code: 'HALF', count: 2, purpose: '50% Off' }]);
 
+    // Item C (2026-07-28): a code that wipes out the WHOLE ticket price is the "bought the wrong
+    // ticket, pay only the difference" correction, not a sponsored place — it is still counted,
+    // but labelled for what it is so the budget can't be misread as free places given away.
+    // (This supersedes the earlier "100% Off" label; 100% is no longer reachable via the tier
+    // buckets, which now top out below the 97% threshold.)
     const full: BudgetPerson[] = [
       p({ churchId: 'c1', kind: 'camper', registrationCost: 150, discountAmount: 150, discountCode: 'ALIVE100' }),
     ];
-    expect(computeDiscountCodeSummary(full).rows).toEqual([{ code: 'ALIVE100', count: 1, purpose: '100% Off' }]);
+    expect(computeDiscountCodeSummary(full).rows).toEqual([
+      { code: 'ALIVE100', count: 1, purpose: 'Ticket difference — already paid' },
+    ]);
+  });
+
+  it('still labels a genuine 70% concession as a percentage, not a ticket difference (item C)', () => {
+    const seventy: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 133, discountCode: 'HARDSHIP' }),
+    ];
+    expect(computeDiscountCodeSummary(seventy).rows).toEqual([
+      { code: 'HARDSHIP', count: 1, purpose: '70% Off' },
+    ]);
   });
 
   it('falls back to a flat dollar label when the percentage is not close to a standard tier', () => {

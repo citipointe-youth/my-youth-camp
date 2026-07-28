@@ -1,6 +1,83 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-28 - 28-ITEM BUG/IMPROVEMENT BATCH (owner list, 25 numbered + 3 folded in)
+-----------------------------------------------------------------------------------
+SPA + backend + migration 0016 (settings.site_map_image, APPLIED TO PROD BEFORE THE CODE
+PUSH - supabase.settings writes every column on every save). Verified: npm run typecheck
+clean, npm run test = 670 pass / 48 files (was 634), SPA node --check OK. sw.js
+camp-v50 -> camp-v51. Full detail in CLAUDE.md ("28-item bug/improvement batch"); symptom
+router in debug.md ("2026-07-28 - 28-item bug/improvement batch").
+
+  SCHEDULE
+  * "+ Add row" inserts after the last-focused row (_schedLastRow/_schedFocus).
+  * Plan view rebuilt as a proportional, colour-coded timeline (SCHED_CATEGORIES /
+    schedCategory / _schedMinutes / _schedHeight / .sch-* CSS). Colour by title keyword;
+    height by minutes until the next item, last item runs to 24:00. Admin editor gained a
+    helpTip quoting the same keyword list (_schedKeywordHelp).
+  * Camp-date moves now carry devotionals AND schedule items with them (remapDays /
+    applyDayMoves in settings.service.ts). Re-keyed by day POSITION, delete-then-re-save so
+    an overlapping shift can't clobber mid-pass. Shrinking hides rather than deletes.
+
+  ACCOMMODATION & BUDGET
+  * Second-level classroom split: a 7-9/10-12 bracket over 50 splits again into single year
+    levels Y7..Y12 (up to 12 pools per church, gender honoured). Leaders spread across them.
+  * FIXED: budget category rows rendered blank (_budScopeRows never set `label`).
+  * Budget reachable from the admin console, Data Export/Reset, and the sidebar in BOTH
+    modes for admin + director; Accommodation setup gained a link to the allocations map.
+
+  ACCOUNTS / HOME / FIRST AID
+  * FIXED: the two gendered church logins are edited as one unit - one BASE username with
+    b-/g- re-applied per account. Previously editing one silently rewrote the other and the
+    pair collided. Accounts screen now shows one joined blue/pink card per church.
+  * Church logins greeted by their FULL ministry name (was truncated to the first word).
+  * First aid: "Signed in only" filter, on by default, on both Search and All Students.
+  * FIXED: revealing a parent number for a not-yet-arrived student returned "Camper not
+    found" (revealContact required lifecycle >= arrived, resolveContacts did not).
+  * Cross-gender secondary contact: a gender with a primary but no backup borrows the
+    opposite gender's primary as the secondary.
+  * NEW: camp site map (migration 0016) - upload + crop in Camp settings, "Map" button on
+    the Home hero for every role. Crop tool ported from YS Connection's logo cropper and
+    generalised from a fixed square to an arbitrary aspect ratio.
+
+  ADMIN / DATA / RESET
+  * "Factory reset" renamed "Data reset" and now holds all three clearing tools.
+  * NEW resetLogs (POST /admin/reset-logs) - clears exactly the compliance-workbook
+    contents (attendance history, notes, testimonies, first-aid records, incidents) and
+    returns everyone to not-signed-in. Keeps registrations, churches, accounts and setup.
+  * FIXED: incidents (and push subscriptions) survived a full reset - makeAdminService was
+    never given those repos, so the wipe list was silently incomplete.
+  * Typed destructive confirmations are now case-insensitive.
+  * Notices + Scheduled notices merged into one screen, moved under the Data heading.
+  * Every admin-console tile has an icon (new ICONS keys: swap, dollar, map).
+  * Removed the standalone sign-in/out CSV export button (already a workbook sheet).
+  * Every audit sheet is newest-first; the sign-in/out running totals are still folded
+    chronologically BEFORE the reverse, so each row's counts stay correct.
+  * Tooltips clamp inside the .screen, not just the viewport (laptop sidebar clipping).
+  * FIXED: the light-purple strip under the bottom nav (body is now white with --paper on
+    .app alone, plus .tabs::after extending the nav surface 120px below it).
+  * Incident high toggle reads "High - alert zones"; the infobox was reworded to match.
+  * "Got it" acknowledgement banner is incident-only; church/firstAid never acknowledge.
+  * FIXED: "Validation failed" adding a note outside the check-in screen - the SPA posted
+    sessionId:null and Zod .optional() rejects null. AddNoteSchema now uses .nullish().
+
+  IMPORTS
+  * FIXED: spurious "Missing firstName or lastName" from trailing blank rows (isBlankRow);
+    field() gained a normalised header fallback so header casing/spacing variants resolve.
+  * Multiple tickets/invoices for one person (wrong-ticket + pay-the-difference code):
+    invoice money fields now ACCUMULATE across rows and both importers warn + set
+    needsReview. Accumulation starts from the file, never the stored value, so re-importing
+    the same export is idempotent.
+  * Pending deletions are named in the dry-run preview (was a bare count).
+  * A discount code averaging >=97% of the ticket price is labelled "Ticket difference -
+    already paid" instead of reading as "100% Off". Still counted.
+
+  COPY
+  * Sonnet sub-agent consistency review of every tooltip/hint/infobox string; ~10 accuracy
+    and conciseness fixes applied (see CLAUDE.md for the list and the one deliberate
+    non-change: "ministry" vs "church" is left as an owner vocabulary decision).
+
+
 2026-07-16 — FIELD ENCRYPTION AT REST (people/notes sensitive columns)
 -----------------------------------------------------------------------------------
 Backend + migrations only (no SPA change, sw.js not bumped). Design:

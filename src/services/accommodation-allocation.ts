@@ -10,8 +10,20 @@ export interface AllocationOccupant {
   grade?: number | null;          // PC-10: school grade (7..12), null for leaders
 }
 
-/** PC-10: school-grade bracket for the large-pool split. */
-export type GradeBracket = '7-9' | '10-12';
+/**
+ * PC-10: school-grade bracket for the large-pool split.
+ *
+ * Bug 5 (2026-07-28) added a SECOND level: a bracket sub-pool that is itself over
+ * SPLIT_THRESHOLD splits again into single year levels (`'Y7'`…`'Y12'`), so a very large
+ * ministry gets up to 6 pools per gender (12 per church) instead of two oversized ones.
+ * The value is persisted verbatim in `classroom_allocations.bracket` (a text column), so
+ * widening the union needs no migration.
+ */
+export type GradeBracket = '7-9' | '10-12' | 'Y7' | 'Y8' | 'Y9' | 'Y10' | 'Y11' | 'Y12';
+const YEARS_IN_BRACKET: Record<'7-9' | '10-12', readonly number[]> = {
+  '7-9': [7, 8, 9],
+  '10-12': [10, 11, 12],
+};
 
 export interface AllocationGroup {
   key: string;        // `${churchId}|${gender}` or, when split, `${churchId}|${gender}|${bracket}`
@@ -25,11 +37,16 @@ export interface AllocationGroup {
 // PC-10: a church×gender classroom pool larger than this splits into 7-9 / 10-12 sub-pools.
 export const SPLIT_THRESHOLD = 50;
 
-export function bracketOfGrade(grade: number | null | undefined): GradeBracket | null {
+export function bracketOfGrade(grade: number | null | undefined): '7-9' | '10-12' | null {
   if (grade == null) return null;
   if (grade >= 7 && grade <= 9) return '7-9';
   if (grade >= 10 && grade <= 12) return '10-12';
   return null;
+}
+/** Human label for a group key's bracket segment (used by the allocation UIs). */
+export function bracketLabel(b: GradeBracket | undefined): string {
+  if (!b) return '';
+  return b.startsWith('Y') ? `Year ${b.slice(1)}` : `Years ${b}`;
 }
 
 export interface ClassroomLike { id: string; name: string; capacity: number }
@@ -47,13 +64,14 @@ interface GenderTally {
   youth1012: number;    // classroom youth in grades 10-12
   youthOther: number;   // classroom youth with no/unknown grade (kept with 7-9 when splitting)
   leaders: number;      // classroom leaders (no grade)
+  byYear: Map<number, number>; // classroom youth per single year level (bug 5, second-level split)
 }
 interface ChurchTally {
   id: string; name: string; total: number; classroom: number;
   male: GenderTally; female: GenderTally;
 }
 
-function newGender(): GenderTally { return { cls: 0, youth79: 0, youth1012: 0, youthOther: 0, leaders: 0 }; }
+function newGender(): GenderTally { return { cls: 0, youth79: 0, youth1012: 0, youthOther: 0, leaders: 0, byYear: new Map() }; }
 
 // A church qualifies for classroom groups only once 75%+ of its (non-cancelled) people are
 // classroom-kind. Below that, its classroom-kind people have no room to be placed in — see
@@ -82,6 +100,7 @@ function tallyChurches(occupants: readonly AllocationOccupant[]): Map<string, Ch
         if (b === '7-9') g.youth79++;
         else if (b === '10-12') g.youth1012++;
         else g.youthOther++;
+        if (b != null && o.grade != null) g.byYear.set(o.grade, (g.byYear.get(o.grade) ?? 0) + 1);
       }
     }
   }
@@ -92,6 +111,38 @@ function tallyChurches(occupants: readonly AllocationOccupant[]): Map<string, Ch
 // people splits into two grade-bracket sub-pools (7-9 / 10-12); that gender's leaders divide
 // evenly across the two (odd leader → the extra goes to 7-9). Youth with no/unknown grade ride
 // with the 7-9 bracket. A pool at or below the threshold stays one group with the original key.
+// Split `total` leaders as evenly as possible across `n` buckets; any remainder goes to the
+// EARLIEST buckets (matching the pre-existing "odd leader → 7-9" behaviour).
+function spreadLeaders(total: number, n: number): number[] {
+  if (n <= 0) return [];
+  const base = Math.floor(total / n);
+  let extra = total % n;
+  return Array.from({ length: n }, () => base + (extra-- > 0 ? 1 : 0));
+}
+
+// Bug 5 (2026-07-28): a bracket sub-pool that is ITSELF over SPLIT_THRESHOLD splits again into
+// single year levels. Youth with no/unknown grade ride with the bracket's lowest year (they
+// already rode with the 7-9 bracket before this change). That gender's leaders re-spread evenly
+// across whichever year levels actually have people.
+function yearGroupsFor(
+  c: ChurchTally, gender: AllocationGender, g: GenderTally,
+  bracket: '7-9' | '10-12', leaders: number, extraYouth: number,
+): AllocationGroup[] {
+  const base = { churchId: c.id, church: c.name, gender };
+  const years = YEARS_IN_BRACKET[bracket].filter((y, i) => (g.byYear.get(y) ?? 0) > 0 || (i === 0 && extraYouth > 0));
+  if (years.length === 0) return [];
+  const ld = spreadLeaders(leaders, years.length);
+  const out: AllocationGroup[] = [];
+  years.forEach((y, i) => {
+    const n = (g.byYear.get(y) ?? 0) + (i === 0 ? extraYouth : 0) + ld[i]!;
+    if (n > 0) {
+      const b = `Y${y}` as GradeBracket;
+      out.push({ key: `${c.id}|${gender}|${b}`, ...base, n, bracket: b });
+    }
+  });
+  return out;
+}
+
 function groupsForGender(
   c: ChurchTally, gender: AllocationGender, g: GenderTally,
 ): AllocationGroup[] {
@@ -105,8 +156,16 @@ function groupsForGender(
   const n79 = g.youth79 + g.youthOther + ld79;
   const n1012 = g.youth1012 + ld1012;
   const out: AllocationGroup[] = [];
-  if (n79 > 0) out.push({ key: `${c.id}|${gender}|7-9`, ...base, n: n79, bracket: '7-9' });
-  if (n1012 > 0) out.push({ key: `${c.id}|${gender}|10-12`, ...base, n: n1012, bracket: '10-12' });
+  // Each bracket is emitted as ONE group unless it too exceeds the threshold, in which case it
+  // becomes one group per year level (bug 5).
+  if (n79 > 0) {
+    if (n79 > SPLIT_THRESHOLD) out.push(...yearGroupsFor(c, gender, g, '7-9', ld79, g.youthOther));
+    else out.push({ key: `${c.id}|${gender}|7-9`, ...base, n: n79, bracket: '7-9' });
+  }
+  if (n1012 > 0) {
+    if (n1012 > SPLIT_THRESHOLD) out.push(...yearGroupsFor(c, gender, g, '10-12', ld1012, 0));
+    else out.push({ key: `${c.id}|${gender}|10-12`, ...base, n: n1012, bracket: '10-12' });
+  }
   return out;
 }
 

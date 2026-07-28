@@ -187,3 +187,76 @@ describe('search.service: search() — church "All churches" cross-scope (items 
     expect(ben?.camper.parentPhone).toBe('0400111000');
   });
 });
+
+/* Item 22 (2026-07-28) — CROSS-GENDER SECONDARY CONTACT.
+   When a ministry lists exactly one male and one female leader (the default fixture above), each
+   gender's students previously had a primary and nobody else. The opposite gender's primary now
+   becomes their secondary point of contact. Where a gender already lists a backup, nothing
+   changes — their own backup stays the secondary. */
+describe('search.service: cross-gender secondary contact (item 22)', () => {
+  it('gives a female student the male primary as her SECOND contact', async () => {
+    const contacts = await svc.resolveContacts(actor('firstAid'), 'p1'); // p1 is female
+    expect(contacts.filter((c) => c.role !== 'parent').map((c) => c.role))
+      .toEqual(['female-primary', 'male-primary']);
+  });
+
+  it('gives a male student the female primary as his SECOND contact', async () => {
+    await people.save(person({ id: 'pm', gender: 'male' }));
+    const contacts = await svc.resolveContacts(actor('firstAid'), 'pm');
+    expect(contacts.filter((c) => c.role !== 'parent').map((c) => c.role))
+      .toEqual(['male-primary', 'female-primary']);
+  });
+
+  it('two male leaders + one female: males keep their own backup, females borrow the male primary', async () => {
+    await churches.save(church({
+      contacts: {
+        male: {
+          primary: { name: 'Sam Male', phone: '0411000001' },
+          backup: { name: 'Sid Male', phone: '0411000003' },
+        },
+        female: {
+          primary: { name: 'Pat Female', phone: '0411000002' },
+          backup: { name: '', phone: '' },
+        },
+      },
+    }));
+    const male = await svc.resolveContacts(actor('firstAid'), 'p1');   // p1 is female
+    expect(male.filter((c) => c.role !== 'parent').map((c) => c.role))
+      .toEqual(['female-primary', 'male-primary']);
+
+    await people.save(person({ id: 'pm2', gender: 'male' }));
+    const forMale = await svc.resolveContacts(actor('firstAid'), 'pm2');
+    expect(forMale.filter((c) => c.role !== 'parent').map((c) => c.role))
+      .toEqual(['male-primary', 'male-backup']);   // own backup wins — no borrowing needed
+  });
+
+  it('falls back to the whole opposite-gender list when a gender has no contacts at all', async () => {
+    await churches.save(church({
+      contacts: {
+        male: { primary: { name: 'Sam Male', phone: '0411000001' }, backup: { name: 'Sid', phone: '0411000003' } },
+        female: { primary: { name: '', phone: '' }, backup: { name: '', phone: '' } },
+      },
+    }));
+    const contacts = await svc.resolveContacts(actor('firstAid'), 'p1'); // female, no female contacts
+    expect(contacts.filter((c) => c.role !== 'parent').map((c) => c.role))
+      .toEqual(['male-primary', 'male-backup']);
+  });
+});
+
+/* Bug 21 (2026-07-28) — revealContact used to require lifecycle >= arrived while resolveContacts
+   did not, so the Student Info card showed a masked parent number for a student who had not
+   signed in yet and tapping it returned "Camper not found". */
+describe('search.service: revealContact for a not-yet-arrived registrant (bug 21)', () => {
+  it('reveals the parent number for a person who is registered but not at camp', async () => {
+    await people.save(person({ id: 'notyet', lifecycle: 'registered', atCamp: false }));
+    const revealed = await svc.revealContact(actor('firstAid'), 'notyet', 'parent');
+    expect(revealed.phone).toBe('0499111222'); // unmasked
+  });
+
+  it('still refuses a person outside the actor\'s access scope', async () => {
+    await people.save(person({ id: 'other', churchId: 'c2', churchName: 'Grace' }));
+    await expect(
+      svc.revealContact(actor('church', { churchId: 'c1', churchName: 'Victory' }), 'other', 'parent'),
+    ).rejects.toThrow(/not found/i);
+  });
+});

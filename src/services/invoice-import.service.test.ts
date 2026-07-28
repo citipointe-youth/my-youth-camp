@@ -303,3 +303,77 @@ describe('InvoiceImportService.importInvoicesCsv — negative amounts', () => {
     expect(p.discountAmount).toBe(-15.5);
   });
 });
+
+/* Item A (2026-07-28) — THE WRONG-TICKET / PAY-THE-DIFFERENCE CASE.
+   Someone buys a $150 ticket, is told to buy the correct $190 one with a code covering what they
+   already paid, and pays the $40 difference. That's two invoice rows for one registrant. The old
+   behaviour was last-row-wins, so the budget recorded only whichever row came second. */
+describe('invoice-import: multiple invoices for one person (item A)', () => {
+  const twoInvoices = [
+    HDR,
+    'INV-1,Robin,Thompson,0400000001,150,0,150,0,0,',
+    'INV-2,Robin,Thompson,0400000001,190,150,40,0,0,TOPUP150',
+  ].join('\n');
+
+  it('sums amount paid and discount across both invoices, and takes the LATEST ticket total', async () => {
+    const { svc, personRepo } = await build([
+      person({ id: 'ivy', firstName: 'Robin', lastName: 'Thompson', invoiceNumber: 'INV-1' }),
+    ]);
+    // Both rows resolve to the same person: INV-1 by invoice number, INV-2 by billing name.
+    await svc.importInvoicesCsv(actor('admin'), { csvData: twoInvoices });
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.amountPaid).toBe(190);          // 150 + 40 — what they actually paid
+    expect(p.discountAmount).toBe(150);      // 0 + 150
+    expect(p.registrationCost).toBe(190);    // the corrected ticket they're attending on
+    expect(p.discountCode).toBe('TOPUP150');
+  });
+
+  it('flags the person for review and warns, so the budget is not silently trusted', async () => {
+    const { svc, personRepo } = await build([
+      person({ id: 'ivy', firstName: 'Robin', lastName: 'Thompson', invoiceNumber: 'INV-1' }),
+    ]);
+    const res = await svc.importInvoicesCsv(actor('admin'), { csvData: twoInvoices });
+    expect(res.warnings.some((w) => /2 invoices in this file/i.test(w.message))).toBe(true);
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.needsReview).toBe(true);
+    expect(p.needsReviewReason).toMatch(/Multiple invoices/i);
+  });
+
+  it('is idempotent — re-importing the same file does NOT double-count', async () => {
+    const { svc, personRepo } = await build([
+      person({ id: 'ivy', firstName: 'Robin', lastName: 'Thompson', invoiceNumber: 'INV-1' }),
+    ]);
+    await svc.importInvoicesCsv(actor('admin'), { csvData: twoInvoices });
+    await svc.importInvoicesCsv(actor('admin'), { csvData: twoInvoices });
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.amountPaid).toBe(190);   // NOT 380 — accumulation starts from the file, not the row
+    expect(p.discountAmount).toBe(150);
+  });
+
+  it('a single invoice is unchanged — no review flag, values taken straight from the row', async () => {
+    const { svc, personRepo } = await build([
+      person({ id: 'solo', firstName: 'Robin', lastName: 'Thompson', invoiceNumber: 'INV-1' }),
+    ]);
+    await svc.importInvoicesCsv(actor('admin'), {
+      csvData: [HDR, 'INV-1,Robin,Thompson,0400000001,190,0,190,0,0,'].join('\n'),
+    });
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.amountPaid).toBe(190);
+    expect(p.needsReview).toBe(false);
+  });
+});
+
+/* Item 12 (2026-07-28): a trailing blank line is spreadsheet padding, not a defect — it used to
+   surface as a "Missing firstName or lastName"-class error on a file that imported perfectly. */
+describe('invoice-import: blank padding rows (item 12)', () => {
+  it('skips an entirely-blank row without reporting an error or a warning', async () => {
+    const { svc } = await build([person({ id: 'x', invoiceNumber: 'INV-9' })]);
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: [HDR, 'INV-9,Robin,Thompson,0400000001,190,0,190,0,0,', ',,,,,,,,,'].join('\n'),
+    });
+    expect(res.errors).toEqual([]);
+    expect(res.warnings).toEqual([]);
+    expect(res.updated).toBe(1);
+    expect(res.skipped).toBe(1);
+  });
+});

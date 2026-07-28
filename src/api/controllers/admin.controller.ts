@@ -15,6 +15,14 @@ export function makeAdminController(services: AdminControllerServices) {
       return services.admin.reset(req.ctx.actor, { force: body?.force, confirmWipe: body?.confirmWipe });
     },
 
+    // Item 9 (2026-07-28) — clears only the compliance-workbook data (attendance history,
+    // notes/testimonies/first-aid records, incidents). Same body shape as reset.
+    async resetLogs(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      const body = req.body as { force?: boolean; confirmWipe?: string } | undefined;
+      return services.admin.resetLogs(req.ctx.actor, { force: body?.force, confirmWipe: body?.confirmWipe });
+    },
+
     async saveDefaults(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.admin.saveDefaults(req.ctx.actor);

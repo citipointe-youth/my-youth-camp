@@ -313,3 +313,64 @@ describe('TicketImportService.importTicketsCsv — dryRun', () => {
     expect(all).toHaveLength(0);
   });
 });
+
+/* Item A/B (2026-07-28) — TWO ACTIVE TICKETS FOR ONE PERSON.
+   The "bought the wrong ticket, then bought the right one" flow produces two Active ticket rows
+   for one registrant. Matching already handled it (same person, later row wins — which is the
+   corrected ticket); what was missing was any signal that a person's accommodation had been
+   decided by one of two competing tickets. */
+describe('TicketImportService — duplicate active tickets (item A/B)', () => {
+  const csv = [
+    'First Name,Last Name,Ticket Number,Ticket Type,Ticket Status',
+    'Ada,Lovelace,TKT-001,Tent Accomodation,Active',
+    'Ada,Lovelace,TKT-002,Classroom Accomodation,Active',
+  ].join('\n');
+
+  it('keeps the LAST ticket\'s accommodation and creates no duplicate person', async () => {
+    const { svc, personRepo } = await build(undefined, [person({ id: 'ada', firstName: 'Ada', lastName: 'Lovelace' })]);
+    await svc.importTicketsCsv(actor('admin'), { csvData: csv });
+    const all = await personRepo.findAll();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.accommodationKind).toBe('classroom');
+    expect(all[0]!.accommodationKindConfidence).toBe('confirmed');
+  });
+
+  it('warns naming the winning ticket, and flags the person for review', async () => {
+    const { svc, personRepo } = await build(undefined, [person({ id: 'ada', firstName: 'Ada', lastName: 'Lovelace' })]);
+    const res = await svc.importTicketsCsv(actor('admin'), { csvData: csv });
+    expect(res.warnings.some((w) => /2 active tickets/i.test(w.message) && /TKT-002/.test(w.message))).toBe(true);
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.needsReview).toBe(true);
+    expect(p.needsReviewReason).toMatch(/Multiple active tickets/i);
+  });
+
+  it('a single ticket raises no warning and no review flag', async () => {
+    const { svc, personRepo } = await build(undefined, [person({ id: 'ada', firstName: 'Ada', lastName: 'Lovelace' })]);
+    const res = await svc.importTicketsCsv(actor('admin'), {
+      csvData: 'First Name,Last Name,Ticket Number,Ticket Type,Ticket Status\nAda,Lovelace,TKT-001,Tent Accomodation,Active',
+    });
+    expect(res.warnings.filter((w) => /active tickets/i.test(w.message))).toEqual([]);
+    expect((await personRepo.findAll())[0]!.needsReview).toBe(false);
+  });
+});
+
+/* Item 12 (2026-07-28): a trailing blank line is padding, not a missing-name error. */
+describe('TicketImportService — blank padding rows (item 12)', () => {
+  it('skips an entirely-blank row silently instead of reporting a missing-name error', async () => {
+    const { svc } = await build(undefined, [person({ id: 'ada', firstName: 'Ada', lastName: 'Lovelace' })]);
+    const res = await svc.importTicketsCsv(actor('admin'), {
+      csvData: 'First Name,Last Name,Ticket Number,Ticket Status\nAda,Lovelace,TKT-001,Active\n,,,',
+    });
+    expect(res.errors).toEqual([]);
+    expect(res.skipped).toBe(1);
+  });
+
+  it('resolves a header whose casing/spacing differs from the canonical alias', async () => {
+    const { svc, personRepo } = await build(undefined, [person({ id: 'ada', firstName: 'Ada', lastName: 'Lovelace' })]);
+    const res = await svc.importTicketsCsv(actor('admin'), {
+      csvData: 'first name,LAST NAME,Ticket  Number,Ticket Status\nAda,Lovelace,TKT-009,Active',
+    });
+    expect(res.errors).toEqual([]);
+    expect((await personRepo.findAll())[0]!.ticketNumber).toBe('TKT-009');
+  });
+});

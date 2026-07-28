@@ -89,7 +89,7 @@ html{background:#fff;}
    app's short 100dvh edge instead of the true viewport bottom (the nav "floated" with a gap below,
    in Safari AND standalone — verified 2026-07-24). A natural `min-height` shell lets the fixed nav
    anchor to the real viewport bottom. Screens still scroll internally (see `.stage`/`.screen`). */
-body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--paper);display:flex;justify-content:center;min-height:100dvh;overscroll-behavior:none;}
+body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:#fff;display:flex;justify-content:center;min-height:100dvh;overscroll-behavior:none;}
 /* min-height (NOT fixed height) + NO overflow:hidden — see the body note above: an overflow:hidden
    ancestor breaks `position:fixed` on iOS, floating the bottom nav. The internal scroll lives on the
    screens (`.stage`/`.screen`), not here, so dropping the clip doesn't let the shell scroll. The
@@ -138,6 +138,16 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
    this full-inset reservation keeps the icons off the very edge. (Supersedes the Bug-3 2026-07-17
    fractional-inset tweak, which had under-reserved the safe area.) */
 .tabs{display:flex;background:#fff;border-top:1px solid var(--line);padding:4px 6px max(6px,env(safe-area-inset-bottom));gap:2px;box-shadow:0 -2px 10px rgba(30,27,75,.05);position:fixed;left:0;right:0;bottom:0;z-index:100;}
+/* Bug 15 (2026-07-28) — the light-purple strip UNDER the bottom nav, still reported after the
+   2026-07-26 `html{background:#fff}` fix. That fix only covered the CANVAS; the strip iOS
+   exposes below the layout viewport (dynamic toolbar retracting / keyboard dismissing) is also
+   painted by the BODY box, which carried `--paper`. Two changes together close it:
+   (1) `body` is now white and `--paper` lives on `.app` alone (which is where the tinted app
+       column is actually wanted — the letterbox at 540–980px was already documented as white);
+   (2) `.tabs::after` extends the nav's own white surface 120px BELOW it. It sits inside the
+       nav's stacking context (z-index 100) and starts at `top:100%`, so it can never cover
+       page content — there is no content below the nav's bottom edge. */
+.tabs::after{content:"";position:absolute;left:0;right:0;top:100%;height:120px;background:#fff;pointer-events:none;}
 .tab{flex:1;text-align:center;padding:7px 4px 6px;font-size:var(--t-xs);color:var(--muted);cursor:pointer;border:none;background:none;position:relative;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:12px;transition:background .15s,color .15s;}
 .tab .ic{display:block;transition:transform .15s;}
 .tab.on{color:var(--blue);font-weight:700;background:var(--chip);}
@@ -148,6 +158,13 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
 .hero:before{content:"";position:absolute;left:-20px;bottom:-30px;width:100px;height:100px;background:rgba(124,58,237,.3);border-radius:50%;}
 .hero .k{font-size:var(--t-2xs);letter-spacing:.16em;text-transform:uppercase;color:#d8b4fe;font-weight:700;}
 .hero h2{font-size:var(--t-h1);margin:5px 0 2px;font-weight:800;}
+/* Bug 14 (2026-07-28): a church login's greeting is now the FULL ministry name (backend
+   `greetingName` no longer truncates to the first word), so a long one has to fit. `.long` is
+   applied by the render when the name is long: half the type size, and normal wrapping so it
+   runs onto a second line rather than off the card edge. `overflow-wrap` catches a single
+   unbroken word. The watermark occupies the right ~35% of the hero, hence the width cap. */
+.hero h2.long{font-size:calc(var(--t-h1) / 2);line-height:1.3;max-width:66%;}
+.hero h2{overflow-wrap:anywhere;}
 .hero .cd{display:flex;gap:12px;align-items:flex-end;margin-top:12px;}
 .hero .big{font-size:var(--t-display);font-weight:800;line-height:.9;}.hero .cd .meta{font-size:var(--t-sm);color:#e9d5ff;padding-bottom:4px;}
 .nownext{background:linear-gradient(135deg,var(--violet-d),#1e1b4b);color:#fff;border-radius:16px;padding:14px 16px;margin-bottom:12px;}
@@ -396,6 +413,59 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 }
 .sched-row .sr-t::-webkit-date-and-time-value{text-align:center;margin:0;}
 .sched-row .sr-t::-webkit-calendar-picker-indicator{display:none;}
+/* ── Schedule plan view (bug 2, 2026-07-28) ────────────────────────────────
+   Colour-coded, proportionally-sized timeline. Each category sets --sch (accent) and
+   --sch-bg (surface) once; the shared `.sch-item` rule consumes both, so adding a
+   category = one CSS line + one SCHED_CATEGORIES entry. Row HEIGHT is inline
+   (`min-height`, from `_schedHeight`) because it is data-derived, not a style choice. */
+.sch-list{display:flex;flex-direction:column;gap:7px;}
+.sch-item{display:grid;grid-template-columns:62px minmax(0,1fr);gap:10px;align-items:center;
+  background:var(--sch-bg);border:1px solid var(--line);border-left:5px solid var(--sch);
+  border-radius:var(--r);padding:10px 13px;box-shadow:var(--shadow-sm);}
+.sch-time{font-weight:800;color:var(--sch);font-size:var(--t-sm);line-height:1.25;}
+.sch-dur{display:block;font-weight:600;font-size:var(--t-2xs);color:var(--muted);letter-spacing:.01em;}
+.sch-title{font-weight:700;font-size:var(--t-lg);color:var(--ink);line-height:1.3;}
+.sch-legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
+.sch-key{font-size:var(--t-2xs);font-weight:700;padding:3px 9px;border-radius:999px;
+  background:var(--sch-bg);color:var(--sch);border:1px solid var(--sch);}
+.sch-session{--sch:var(--violet);--sch-bg:var(--tint);}
+.sch-zone{--sch:var(--rose);--sch-bg:#fff1f3;}
+.sch-preshow{--sch:#0e7490;--sch-bg:#ecfeff;}
+.sch-meal{--sch:var(--warn);--sch-bg:#fffaf0;}
+.sch-other{--sch:#94a3b8;--sch-bg:var(--card);}
+/* ── Paired church accounts (bug 13, 2026-07-28) ───────────────────────────
+   One card per church holding both gender logins, so it reads (and edits) as a unit.
+   Very light blue / very light pink halves use the existing gender tokens. */
+.ch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-top:4px;}
+.ch-pair{border:1px solid var(--line);border-radius:var(--r);background:var(--card);overflow:hidden;box-shadow:var(--shadow-sm);}
+.ch-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;}
+.ch-name{font-weight:700;font-size:var(--t-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ch-sub{font-size:var(--t-micro);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ch-halves{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line);}
+.ch-half{padding:9px 10px 10px;min-width:0;}
+.ch-half+.ch-half{border-left:1px solid var(--line);}
+.ch-m{background:var(--male-bg);}
+.ch-f{background:var(--female-bg);}
+.ch-m .ch-g{color:var(--male);}
+.ch-f .ch-g{color:var(--female);}
+.ch-g{font-size:var(--t-micro);font-weight:800;text-transform:uppercase;letter-spacing:.05em;}
+.ch-u{font-size:var(--t-2xs);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;}
+.ch-half .iconbtn{background:rgba(255,255,255,.72);}
+/* First-aid "Signed in only" filter (bug 20, 2026-07-28) */
+.fa-signedin{display:flex;align-items:center;gap:8px;margin:10px 0 4px;font-size:var(--t-sm);font-weight:600;color:var(--ink-2);}
+.fa-signedin input{width:18px;height:18px;accent-color:var(--blue);flex:0 0 auto;margin:0;}
+/* ── Site map (item 8, 2026-07-28) ─────────────────────────────────────────
+   Fit-to-width by default; tapping toggles a 250%-wide zoom that scrolls in both directions,
+   the same pattern the Elvanto import guide uses for its wide screenshots. */
+.map-wrap{overflow:auto;-webkit-overflow-scrolling:touch;border-radius:var(--r);border:1px solid var(--line);background:var(--card);}
+.map-img{display:block;width:100%;height:auto;cursor:zoom-in;}
+.map-img.zoom{width:250%;max-width:none;cursor:zoom-out;}
+/* The Map button sits in the hero's top-right corner, above the watermark. */
+.hero-map{position:absolute;top:14px;right:14px;z-index:2;display:inline-flex;align-items:center;gap:5px;
+  background:rgba(255,255,255,.17);border:1px solid rgba(255,255,255,.34);color:#fff;
+  font:600 var(--t-xs)/1 inherit;font-family:inherit;padding:7px 11px;border-radius:999px;cursor:pointer;}
+.hero-map:hover{background:rgba(255,255,255,.26);}
+.hero-map svg{width:14px;height:14px;}
 /* First-day arrival confirm bar. Was `position:sticky;bottom:10px`, which pins to the bottom of
    the CONTENT, not the viewport — on the phone body-scroll shell (see the overlay GOTCHA above)
    that left it stranded at the end of a long roster instead of floating over it. Fixed to the
@@ -694,6 +764,9 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="adminFaqEdit"></section>
     <section class="screen" id="atCampInfo"></section>
     <section class="screen" id="adminContacts"></section>
+    <!-- Item 8 (2026-07-28): site map. A RENDER.<x> with no matching container here paints
+         NOTHING and fails silently (see debug.md "Incidents screen is completely blank"). -->
+    <section class="screen" id="sitemap"></section>
   </div>
   <nav class="tabs" id="tabs" style="display:none"></nav>
   <div class="modal" id="modal" role="dialog" aria-modal="true" onclick="if(event.target===this)closeModal()"><div class="sheet" id="sheet"></div></div>
@@ -1051,7 +1124,12 @@ arrowl:'<path d="M19 12H5M11 6l-6 6 6 6"/>',
 download:'<path d="M12 3v12M7 11l5 5 5-5"/><path d="M5 21h14"/>',
 upload:'<path d="M12 21V9M7 13l5-5 5 5"/><path d="M5 3h14"/>',
 diamond:'<path d="M12 2 22 12 12 22 2 12Z"/>',
-plus:'<path d="M12 5v14M5 12h14"/>'
+plus:'<path d="M12 5v14M5 12h14"/>',
+// 2026-07-28 — added for the admin-console icon sweep (item 11), the Budget tile (item B)
+// and the site-map feature (item 8).
+swap:'<path d="M4 8h13l-3-3M20 16H7l3 3"/>',
+dollar:'<path d="M12 3v18"/><path d="M16.5 7.5A3.5 3.5 0 0 0 13 5h-2a3 3 0 0 0 0 6h2a3 3 0 0 1 0 6h-2a3.5 3.5 0 0 1-3.5-2.5"/>',
+map:'<path d="M9 4 3 6.5v13L9 17l6 2.5 6-2.5v-13L15 6.5Z"/><path d="M9 4v13M15 6.5v13"/>'
 };
 // ACC_LABEL must come AFTER ICONS (icSm references ICONS; hoisting doesn't help const TDZ).
 const ACC_LABEL={tent:icSm('tent')+' All tents',classroom:icSm('classroom')+' All classrooms',mixed:icSm('tent')+icSm('classroom')+' Mixed'};
@@ -1069,6 +1147,13 @@ function emptyState(n,msg){return `<div class="emptyst">${icXl(n)}<div class="em
    contrast; .hero already has position:relative + overflow:hidden, so a right-bleeding mark
    clips cleanly the same way the existing :before/:after decorative circles do. Emit this as
    the FIRST child of .hero so normal-flow text paints on top of it. */
+/* Item 8 (2026-07-28): the "Map" button on the hero's top-right. Rendered for EVERY role, and
+   only when a site map has actually been uploaded — with no map the button would lead to an
+   empty screen, so it stays hidden until the admin sets one. */
+function heroMapBtn(){
+  if(!(SETTINGS&&SETTINGS.siteMapImage))return '';
+  return `<button type="button" class="hero-map" onclick="go('sitemap')" aria-label="Open the camp site map">${icSm('map')} Map</button>`;
+}
 function heroMark(){
   return `<svg viewBox="0 0 512 512" style="position:absolute;right:-14px;top:50%;transform:translateY(-50%);width:132px;height:132px;opacity:.16;pointer-events:none" aria-hidden="true">
     <path d="M256 146 L388 388 H124 Z" fill="#fff"/>
@@ -1149,6 +1234,10 @@ function _confirmSheetPick(v){
 /* helpTip(text[,opts]) — a small "?" bubble explaining a feature in plain language for a leader
    who didn't design the app. Shows on hover (desktop) and on tap (mobile). `opts.left` anchors the
    bubble to the right edge so it doesn't run off-screen when the icon ends a heading row. */
+// Bug 14: "Hi <name>" drops to half size (and wraps) once the name is too long for one line of
+// the hero at full size. 14 chars is the measured fit at --t-h1 on the narrowest phone with the
+// "Hi " prefix and the watermark; shorter names are unaffected.
+function _heroNameCls(name){return String(name||'').length>14?' class="long"':'';}
 function helpTip(text,opts){const o=opts||{};return `<button type="button" class="htip${o.left?' tip-left':''}" aria-label="Help: ${esc(text)}" onclick="_toggleTip(event,this)">?<span class="htip-pop">${esc(text)}</span></button>`;}
 function _toggleTip(e,btn){e.stopPropagation();const open=btn.classList.contains('open');document.querySelectorAll('.htip.open').forEach(t=>t.classList.remove('open'));if(!open){btn.classList.add('open');_clampTip(btn);}}
 // Keep the bubble fully on-screen regardless of where the "?" sits. Resets to the CSS-default
@@ -1158,10 +1247,18 @@ function _clampTip(btn){const pop=btn.querySelector('.htip-pop');if(!pop)return;
   const left=btn.classList.contains('tip-left');
   pop.style.transform=left?'none':'translateX(-50%)';
   pop.classList.remove('flip-up');
-  const m=8,vw=document.documentElement.clientWidth,vh=document.documentElement.clientHeight;
+  // Bug 6 (2026-07-28): clamp inside the SCREEN, not just the window. On the ≥980px layout the
+  // content sits in a 220px-inset `#stage .screen` that is `overflow:hidden` both ways — a bubble
+  // clamped only to the viewport still runs under the sidebar/off the screen's own edge and gets
+  // clipped away. Falling back to the viewport keeps the phone behaviour identical.
+  const m=8;
+  const scr=btn.closest('.screen'),sr=scr?scr.getBoundingClientRect():null;
+  const bl=sr?Math.max(0,sr.left):0;
+  const br=sr?Math.min(document.documentElement.clientWidth,sr.right):document.documentElement.clientWidth;
+  const vw=br,vh=document.documentElement.clientHeight;
   const r=pop.getBoundingClientRect();let shift=0;
   if(r.right>vw-m)shift=(vw-m)-r.right;
-  if(r.left+shift<m)shift=m-(r.left+shift);
+  if(r.left+shift<bl+m)shift=(bl+m)-(r.left+shift);
   if(shift)pop.style.transform=left?`translateX(${shift}px)`:`translateX(calc(-50% + ${shift}px))`;
   // Vertical: the bubble sits below the "?"; if that runs off the bottom (short laptop
   // viewport, tip low on the page) and there's more room above, flip it up.
@@ -1491,7 +1588,10 @@ const TAB_OF={home:'home',people:'people',student:'people',help:'help',
   adminChurchImport:'admin',adminRecords:'admin',adminCloseOut:'admin',adminWizard:'admin',adminStudents:'admin',
   checkin:'checkin',search:'search',students:'students',allstudents:'allstudents',records:'records',notifs:'home',compose:'notifs',scheduled:'notifs',
   data:'data',
-  camper:'students',myyouth:'students',firstday:'checkin',schedule:'schedule',devotional:'home',faq:'home',notes:'home',testimonies:'home',budget:'home',accom:'home',import:'import'};
+  camper:'students',myyouth:'students',firstday:'checkin',schedule:'schedule',devotional:'home',faq:'home',notes:'home',testimonies:'home',budget:'home',accom:'home',import:'import',
+  // Item 8: reached from the Home hero, so Home stays the highlighted tab (firstAid has no home
+  // tab — `gotoTab` maps home→search for them, and the sidebar falls back to the id itself).
+  sitemap:'home'};
 
 function _showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -1624,8 +1724,9 @@ function navModel(role,mode){
   if(role==='church'||role==='zoneLeader')
     return {tabs:[T('home','home','Home'),_ci(),T('students','users','Students'),T('notifs','bell','Notices')],extras:[]};
   if(role==='director')
+    // Item B: director keeps Budget & Costings at-camp too (they hold `budget:manage`).
     return {tabs:[T('home','home','Home'),_ci(),T('students','users','Students'),T('notifs','bell','Notices')],
-            extras:[T('notes','note','Notes')]};
+            extras:[T('notes','note','Notes'),T('budget','dollar','Budget & Costings'),T('accom','classroom','Accommodation Allocations')]};
   /* admin at-camp — D2/AC-5: exactly these 6 in the sidebar, in this order.
      Bottom tabs keep Admin (not Notices) to fit 4 slots; the sidebar shows the full 6. */
   return {tabs:[T('home','home','Home'),_ci(),T('students','users','Students'),T('admin','gear','Admin')],
@@ -1640,8 +1741,12 @@ function navSidebar(role,mode){
   if(role==='admin'&&mode==='at-camp'){
     const T=(id,icon,label)=>({id,icon,label});
     const ciLabel=(typeof campPhase==='function'&&campPhase()==='signin')?'Sign-in':'Check In';
+    // Item B (2026-07-28): Budget & Costings added to the at-camp admin sidebar, alongside
+    // Accommodation Allocations — it was pre-camp-only, so an admin on a laptop mid-camp had no
+    // route to it at all.
     return [T('home','home','Home'),T('checkin','check',ciLabel),T('students','users','Students'),
-            T('notifs','bell','Notices'),T('accom','classroom','Accommodation Allocations'),T('admin','gear','Admin Settings')];
+            T('notifs','bell','Notices'),T('accom','classroom','Accommodation Allocations'),
+            T('budget','dollar','Budget & Costings'),T('admin','gear','Admin Settings')];
   }
   return [...m.tabs,...m.extras];
 }
@@ -1731,7 +1836,7 @@ RENDER.home=async function renderHome(skipModeSync){
   // Unacknowledged urgent notices (incident auto-alerts + human-sent) render on BOTH home
   // variants — incidents can be, and have been, logged pre-camp. 2026-07-27: the banner moved
   // off the top of the screen to just above the "Notices" heading, matching the at-camp home.
-  let body=`<div class="hero">${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2>Hi ${esc(ACTOR.displayName)}</h2>
+  let body=`<div class="hero">${heroMapBtn()}${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2${_heroNameCls(ACTOR.displayName)}>Hi ${esc(ACTOR.displayName)}</h2>
     <div class="cd"><div class="big">${h.daysToGo??'—'}</div><div class="meta">days to go<br>${esc(h.startDate||'')}${s&&s.endDate?' – '+esc(s.endDate):''}</div></div></div>`;
   // Bug-2: registrations split by who (Student/Leader) × where they sleep (Tent/Classroom).
   // Replaces the old Campers/Leaders/Ldr-blue-card band. Counts come from the already-loaded
@@ -1913,8 +2018,8 @@ async function renderHomeAtCamp(){
   const _heroSub=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?'':`<div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':'Director'}</div>`;
   // 2026-07-27: the alert banner is NO LONGER at the head of the screen — it sits immediately
   // above the "Notices" heading near the bottom (owner request; see the block below).
-  const html=`<div class="hero"${_heroStyle}>${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
-    <h2>Hi ${esc(d.greetingName||ACTOR.displayName)}</h2>
+  const html=`<div class="hero"${_heroStyle}>${heroMapBtn()}${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
+    <h2${_heroNameCls(d.greetingName||ACTOR.displayName)}>Hi ${esc(d.greetingName||ACTOR.displayName)}</h2>
     ${_heroSub}
     ${accomLineHtml}
     ${digestHtml}</div>
@@ -1963,11 +2068,15 @@ const _isIncidentNotice=n=>!!(n&&n.leadersOnly);
 /* Every notice LIST renders through this — keeps the "incidents never appear in a notice feed"
    rule in one place instead of at each call site. */
 function _noticeFeed(feed){return (feed||[]).filter(n=>!_isIncidentNotice(n));}
-/* EVERY unacknowledged urgent notice renders here — incident auto-alerts AND human-sent ones.
-   (2026-07-26 follow-up: the first cut left human-sent urgent notices on the old bottom-sheet
-   modal, which meant Home could show an alert at the TOP and another at the BOTTOM at the same
-   time — reported immediately. There is now exactly ONE alert surface.) */
-function _urgentAlerts(feed){return (feed||[]).filter(n=>n.priority==='urgent'&&!isNoticeDismissed(n.id));}
+/* The "Got it" acknowledgement banner. There is exactly ONE alert surface (the 2026-07-26
+   bottom-sheet path is deleted).
+   Bug 18 (2026-07-28): it is now limited to INCIDENT auto-alerts (`leadersOnly`). Acknowledgement
+   was only ever meant for an incident that leadership must confirm they have seen; an ordinary
+   urgent notice from a director is read in the Notices list like any other, with no per-device
+   "Got it" state to chase. Because `leadersOnly` notices are filtered out server-side for church
+   and firstAid, those roles now never see this banner and never acknowledge anything — which is
+   the intended outcome, not a regression. */
+function _urgentAlerts(feed){return (feed||[]).filter(n=>n.priority==='urgent'&&_isIncidentNotice(n)&&!isNoticeDismissed(n.id));}
 function _alertBannerHtml(feed){
   const list=_urgentAlerts(feed);
   if(!list.length)return '';
@@ -2186,7 +2295,7 @@ function _paintPerson(s){
     ${isL?`<div class="card"><div class="lbl" style="margin-top:0">Blue card (WWC) ${helpTip(_BLUE_CARD_HELP)}</div>
       ${s.blueCardCollected?'<p class="note-hint">Blue card collected</p>':(['director','admin'].includes(ACTOR.role)?`<button class="btn alt" onclick="markReg('${s.id}',{blueCardCollected:true})">Mark blue card collected</button>`:'<p class="note-hint">Not yet collected — a director or admin can mark this.</p>')}
     </div>`:''}`;
-  paint('student',body,isL?'Leader':'Camper',esc(s.churchName));
+  paint('student',body,isL?'Leader':'Student',esc(s.churchName));
   if(STACK[STACK.length-1]!=='student')STACK.push('student');
 }
 async function markReg(id,patch){try{const u=await api('/registrants/'+id,{method:'PATCH',body:patch});toast('Updated');if(ALLREG){const i=ALLREG.findIndex(r=>r.id===id);if(i>=0)ALLREG[i]=u;else ALLREG.push(u);}_paintPerson(u);}catch(e){toast(e.message);}}
@@ -2552,12 +2661,11 @@ function undoCheck(){
   _queueEntry(id,type==='in'?'out':'in');
 }
 async function doCheck(camperId,type){_performCheck(camperId,type,'');}
-const _SENSITIVE_HELP='Notes show on the student\'s profile by default. Mark this sensitive to hide it from church logins — only zone leaders, directors and admins will be able to see it.';
 function notePrompt(camperId,name){
   const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:_actingName(),body:'',sensitive:false};
   modal(`<h3>Note · ${esc(name)}</h3>
     <label>Note</label><textarea id="noteBody" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
-    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this note from church logins on the student's profile.</div></div>
+    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this note from church logins — zone leaders, directors and admins still see it.</div></div>
     <label class="tgl"><input type="checkbox" id="noteSensitive" ${d.sensitive?'checked':''}><span class="track"></span></label></div>
     <button class="btn" style="margin-top:10px" onclick="reviewNote('${camperId}','${esc(jsq(name))}')">Review ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
@@ -2581,7 +2689,11 @@ function reviewNote(camperId,name){
 async function confirmNote(camperId){const d=window._draft;if(!d)return;
   // Backend attributes the note to the logged-in actor; the typed leader name is folded into the body.
   const body=d.leader&&d.leader!==ACTOR.displayName?`${d.body}\n— logged by ${d.leader}`:d.body;
-  try{await api('/notes',{method:'POST',body:{camperId,body,sessionId:SEL_SESSION,category:'note',sensitive:!!d.sensitive}});window._draft=null;closeModal();toast('Note submitted');}catch(e){toast(e.message);}}
+  // Bug 19: SEL_SESSION is null outside the check-in screen — omit the key entirely rather than
+  // posting `sessionId: null` (see AddNoteSchema in src/services/note.service.ts).
+  const payload={camperId,body,category:'note',sensitive:!!d.sensitive};
+  if(SEL_SESSION)payload.sessionId=SEL_SESSION;
+  try{await api('/notes',{method:'POST',body:payload});window._draft=null;closeModal();toast('Note submitted');}catch(e){toast(e.message);}}
 
 /* ===== FIRST AID ===== */
 /* ===== FIRST AID (Phase 4) =====
@@ -2593,8 +2705,25 @@ function _faBubble(c){const g=c.gender==='female'?'female':'male';return `<div c
 // Allergy-type dietary items are surfaced in the medical alert too (so an allergen can't hide in a
 // "dietary" card). Anything matching /allerg|anaphyl|intoleran|coeliac|celiac/ is treated as clinical.
 const _ALLERGY_RE=/allerg|anaphyl|intoleran|coeliac|celiac/i;
+/* Bug 20 (2026-07-28): "Signed in" filter, ON by default on BOTH first-aid lists. A first-aider
+   is almost always dealing with someone physically on site, so the default view hides people who
+   have not signed in (or have signed out). Toggling it off restores the full roster — the rows
+   themselves already flag off-site people in red, so nothing is hidden irretrievably.
+   Presence is only meaningful at-camp: pre-camp nobody has signed in, so the filter is inert
+   there (same reasoning as the red "Not on site" flag in `faResultRow`). */
+let _faSignedInOnly=true;
+const _faPresenceMatters=()=>CAMP_MODE==='at-camp';
+function _faSignedInFilter(list){return _faPresenceMatters()&&_faSignedInOnly?list.filter(c=>c.atCamp):list;}
+function _faSignedInToggleHtml(onchange){
+  if(!_faPresenceMatters())return '';
+  return `<label class="fa-signedin"><input type="checkbox" id="faSignedIn"${_faSignedInOnly?' checked':''} onchange="${onchange}">
+    <span>Signed in only</span>${helpTip('On by default — shows only people currently signed in to camp. Turn it off to include anyone signed out or not yet arrived (they show with a red "Not on site" flag).')}</label>`;
+}
+function _faSetSignedIn(el,redraw){_faSignedInOnly=!!el.checked;redraw();}
 function renderSearchFirstAid(){
   paint('search',`<div class="search"><span>${ic('search')}</span><input id="q" placeholder="Search any student by name…" oninput="runFaSearch(this.value)" aria-label="Search students"></div>
+    ${_faSignedInToggleHtml("_faSetSignedIn(this,()=>runFaSearch((document.getElementById('q')||{}).value||''))")}
+    ${SETTINGS&&SETTINGS.siteMapImage?`<button class="btn ghost sm" style="margin-top:8px" onclick="go('sitemap')">${icSm('map')} Site map</button>`:''}
     <div id="results"><p class="note-hint">Type a name to find any student across the camp.</p></div>`,'Find a student','First Aid');
   const q=document.getElementById('q');if(q)q.focus();
 }
@@ -2602,7 +2731,9 @@ let faT;function runFaSearch(v){clearTimeout(faT);faT=setTimeout(async()=>{
   const box=document.getElementById('results');if(!box)return;
   if(!v.trim()){box.innerHTML='<p class="note-hint">Type a name to find any student.</p>';return;}
   try{const res=await api('/search?q='+encodeURIComponent(v));
-    box.innerHTML=res.length?res.map(r=>faResultRow(r.camper||{})).join(''):'<p class="note-hint">No student matches.</p>';
+    const hits=_faSignedInFilter((res||[]).map(r=>r.camper||{}));
+    box.innerHTML=hits.length?hits.map(faResultRow).join('')
+      :(_faPresenceMatters()&&_faSignedInOnly?'<p class="note-hint">No signed-in student matches. Turn off “Signed in only” to search everyone.</p>':'<p class="note-hint">No student matches.</p>');
   }catch(e){toast(e.message);}
 },200);}
 // Shared first-aid person row (search + All Students). FA1: anyone NOT currently on site
@@ -2651,6 +2782,7 @@ RENDER.allstudents=async function(){
     <button class="on" data-g="all" onclick="_asSetGrade('all')">All grades</button>
     ${grades.map(g=>`<button data-g="${g}" onclick="_asSetGrade('${g}')">Yr ${g}</button>`).join('')}</div>`;
   paint('allstudents',`<div class="selrow">${churchSel}${zoneSelEl}</div>${genderBtns}${gradeBtns}
+    ${_faSignedInToggleHtml('_faSetSignedIn(this,drawAllStudents)')}
     <div id="asList"></div>`,'All Students','First Aid');
   drawAllStudents();
 };
@@ -2660,8 +2792,8 @@ function drawAllStudents(){
   const box=document.getElementById('asList');if(!box)return;
   const cid=sel('asChurch')||'';
   const zn=sel('asZone')||'all';
-  const filtersApplied=!!cid||_asGender!=='all'||_asGrade!=='all'||zn!=='all';
-  let list=window._allStu||[];
+  const filtersApplied=!!cid||_asGender!=='all'||_asGrade!=='all'||zn!=='all'||(_faPresenceMatters()&&_faSignedInOnly);
+  let list=_faSignedInFilter(window._allStu||[]);
   if(cid)list=list.filter(c=>c.churchId===cid);
   if(_asGender!=='all')list=list.filter(c=>c.gender===_asGender);
   if(_asGrade!=='all')list=list.filter(c=>String(c.grade)===_asGrade);
@@ -2709,7 +2841,7 @@ async function openStudentInfo(id){
     : `<div class="fa-alert"><div class="ah">${icSm('phone')} No leader contact on file</div><div class="fa-calm" style="color:var(--alert-ink)">Ask admin to add one before relying on this contact.</div></div>`;
   const medicare=c.hasMedicare?`<div class="card"><div class="lbl" style="margin-top:0">Medicare</div>
     <div class="kv"><span class="k">Number</span><span class="v" id="mcn" style="cursor:pointer;color:var(--blue)" onclick="revealMedicare('${c.id}')">[tap to show]</span></div>
-    <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2)">Revealing is logged for the audit trail.</div></div>`:'';
+    <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2)">Revealing is recorded in the server audit log (who, when, which student). It is not part of the compliance workbook.</div></div>`:'';
   const dietCard=otherDiet.length?`<div class="card"><div class="lbl" style="margin-top:0">Dietary (non-allergy)</div>
     ${otherDiet.map(d=>`<span class="fa-diet">${esc(d)}</span>`).join('')}</div>`:'';
   const parent=(c.parentGuardianName||parentContact)?`<div class="fa-last">
@@ -2894,7 +3026,7 @@ function switchStudentsTab(sub){
 }
 let sT;function doSearch(v){clearTimeout(sT);sT=setTimeout(()=>runSearch(v),200);}
 async function runSearch(v){const box=document.getElementById('results');if(!box)return;
-  if(!v.trim()){box.innerHTML='<p class="note-hint">Type a name to find any camper or leader across the camp.</p>';return;}
+  if(!v.trim()){box.innerHTML='<p class="note-hint">Type a name to find any student or leader across the camp.</p>';return;}
   try{const res=await api('/search?q='+encodeURIComponent(v));
     box.innerHTML=res.length?res.map(r=>{const c=r.camper||{};const name=(c.firstName+' '+c.lastName).trim();
       const contacts=r.contacts||[];const prim=contacts.find(x=>x.type==='primary');const back=contacts.find(x=>x.type==='backup');
@@ -2910,19 +3042,39 @@ async function runSearch(v){const box=document.getElementById('results');if(!box
       <div style="display:flex;gap:8px;margin-top:9px">
         ${prim?`<button class="btn sm" style="flex:1" onclick="reveal('${c.id}','${esc(jsq(prim.role))}')">${icSm('phone')} Call primary</button>`:''}
         ${back?`<button class="btn alt sm" style="flex:1" onclick="reveal('${c.id}','${esc(jsq(back.role))}')">Secondary</button>`:''}
-      </div></div>`;}).join(''):'<p class="note-hint">No camper matches.</p>';
+      </div></div>`;}).join(''):'<p class="note-hint">No matches.</p>';
   }catch(e){toast(e.message);}}
 async function reveal(id,role){try{const c=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));toast(c.name+': '+fmtPhone(c.phone));}catch(e){toast(e.message);}}
 
 /* ===== NOTICES ===== */
-RENDER.notifs=async function(){
+/* Item 10 (2026-07-28): "Notices" and "Scheduled notices" are ONE screen with two sub-tabs
+   (Sent / Scheduled), replacing the two separate admin-console menu entries. `RENDER.scheduled`
+   is kept as a thin alias so existing deep links (`go('scheduled')`) and the compose flow's
+   returns still work — they now land on this screen with the Scheduled tab selected. */
+let NOTICE_SUB='sent';
+const _noticeSeg=()=>`<div class="seg" style="margin-bottom:10px">
+  <button class="${NOTICE_SUB==='sent'?'on':''}" onclick="switchNoticeTab('sent')">Sent</button>
+  <button class="${NOTICE_SUB==='scheduled'?'on':''}" onclick="switchNoticeTab('scheduled')">Scheduled</button></div>`;
+function switchNoticeTab(t){NOTICE_SUB=t;RENDER.notifs();}
+RENDER.notifs=async function(sub){
+  if(sub==='sent'||sub==='scheduled')NOTICE_SUB=sub;
   // `_noticeFeed` strips incident auto-alerts — owner decision 2026-07-26: an incident never
   // appears in a notice list, only on the Incidents screen / Notes record filter / Home banner.
-  const feed=_noticeFeed(await api('/notifications'));
   const canSend=['zoneLeader','director','admin'].includes(ACTOR.role);
-  const canDelete=['zoneLeader','director','admin'].includes(ACTOR.role);
-  paint('notifs',`${canSend?`<button class="btn" onclick="composeNew()">${ic('edit')} Send a notice</button><button class="btn ghost" onclick="go('scheduled')">${icSm('clock')} Scheduled notices</button>`:`<p class="note-hint">Church accounts receive notices; zone leaders &amp; directors send.</p>`}
-    ${feed.length?'':`<p class="note-hint">No ${CAMP_MODE==='pre-camp'?'pre-camp':'camp'} notices yet. Directors and Zone Leaders can post camp, zone or church updates here.</p>`}${feed.map(n=>`<div class="ncard ${n.priority==='urgent'?'urgent':n.scope==='zone'?'zone':''}">
+  const canDelete=canSend;
+  // Only senders get the Scheduled tab — a church login has nothing pending to manage.
+  const seg=canSend?_noticeSeg():'';
+  if(canSend&&NOTICE_SUB==='scheduled'){
+    const list=await api('/notifications/scheduled').catch(()=>[]);
+    window._schedList=list;
+    const rows=list.length?list.map(_schedNoticeCard).join('')
+      :'<p class="note-hint">No scheduled notices. Compose a notice and choose “Schedule” to send it later.</p>';
+    paint('notifs',`<button class="btn" onclick="composeNew()">${ic('edit')} Send a notice</button>${seg}${rows}`,'Notices','Pending delivery');
+    return;
+  }
+  const feed=_noticeFeed(await api('/notifications'));
+  paint('notifs',`${canSend?`<button class="btn" onclick="composeNew()">${ic('edit')} Send a notice</button>`:`<p class="note-hint">Church accounts receive notices; zone leaders, directors and admins send.</p>`}${seg}
+    ${feed.length?'':`<p class="note-hint">No ${CAMP_MODE==='pre-camp'?'pre-camp':'camp'} notices yet. Directors, zone leaders and admins can post camp, zone or church updates here.</p>`}${feed.map(n=>`<div class="ncard ${n.priority==='urgent'?'urgent':n.scope==='zone'?'zone':''}">
       <div class="ntop"><span class="ntag">${n.scope==='camp'?icSm('diamond')+' Camp-wide':n.scope==='church'?'Church':esc(n.zone||'')+' Zone'}</span>
       ${n.priority==='urgent'?'<span class="ntag" style="background:#fdecec;color:var(--danger)">Urgent</span>':''}
       <span class="ntime">${timeFmt(n.createdAt)}</span></div>
@@ -2953,8 +3105,14 @@ function _budScopeRows(people,full){
   people.forEach(p=>{const k=p.registrationCost==null?'null':String(p.registrationCost);
     let r=by.get(k);if(!r){r={amount:p.registrationCost==null?null:p.registrationCost,count:0,codes:new Map()};by.set(k,r);}
     r.count++;const c=(p.discountCode||'').trim();if(c)r.codes.set(c,(r.codes.get(c)||0)+1);});
+  // Bug 4 (2026-07-28): `label` was never set here, but `drawBudget`'s `catRow` renders
+  // `esc(r.label)` — so every category line under a church's "Campers"/"Leaders" heading was
+  // BLANK, and a null-cost row showed only the bare warning triangle with no text beside it.
+  // `_budLabel` is the SPA mirror of `labelForAmount` in src/services/budget.ts; `full` (the
+  // highest recorded cost in scope) was already being threaded in for exactly this purpose and
+  // was simply unused.
   const rows=[...by.values()].map(r=>{let hint=null;if(r.codes.size===1){const [code,n]=[...r.codes.entries()][0];if(n===r.count)hint=code;}
-    return {amount:r.amount,count:r.count,lineTotal:(r.amount||0)*r.count,unrecorded:r.amount==null,codeHint:hint};});
+    return {amount:r.amount,label:_budLabel(r.amount,full),count:r.count,lineTotal:(r.amount||0)*r.count,unrecorded:r.amount==null,codeHint:hint};});
   rows.sort((a,b)=>a.amount==null?1:b.amount==null?-1:b.amount-a.amount);
   return rows;
 }
@@ -2978,6 +3136,9 @@ function _deriveDiscountPurpose(pairs){
   const valid=pairs.filter(x=>x.cost>0&&x.discount!=null);
   if(!valid.length)return null;
   const avgPercent=valid.reduce((s,x)=>s+(x.discount/x.cost)*100,0)/valid.length;
+  // Item C (2026-07-28) — mirrors budget.ts: a ~full-price code is a "bought the wrong ticket,
+  // pay the difference" correction, not a concession. Still counted, but labelled honestly.
+  if(avgPercent>=97)return 'Ticket difference — already paid';
   const bucket=[25,50,70,100].find(b=>Math.abs(avgPercent-b)<=3);
   if(bucket!=null)return bucket+'% Off';
   const avgDollar=Math.round(valid.reduce((s,x)=>s+x.discount,0)/valid.length);
@@ -3125,13 +3286,29 @@ function accomChurches(regs){
   const by={};
   (regs||[]).filter(r=>r.status!=='cancelled').forEach(r=>{
     const c=by[r.churchId]||(by[r.churchId]={id:r.churchId,name:r.churchName,total:0,classroom:0,none:0,
-      male:{cls:0,y79:0,y1012:0,yOther:0,ld:0},female:{cls:0,y79:0,y1012:0,yOther:0,ld:0}});
+      male:{cls:0,y79:0,y1012:0,yOther:0,ld:0,byYear:{}},female:{cls:0,y79:0,y1012:0,yOther:0,ld:0,byYear:{}}});
     c.total++;
     if(r.accommodationKind==='classroom'){c.classroom++;const g=r.gender==='male'?c.male:c.female;g.cls++;
-      if(r.kind==='leader')g.ld++;else{const b=_bracketOfGrade(r.grade);if(b==='7-9')g.y79++;else if(b==='10-12')g.y1012++;else g.yOther++;}}
+      if(r.kind==='leader')g.ld++;else{const b=_bracketOfGrade(r.grade);if(b==='7-9')g.y79++;else if(b==='10-12')g.y1012++;else g.yOther++;
+        if(b)g.byYear[r.grade]=(g.byYear[r.grade]||0)+1;}}
     else if(r.accommodationKind!=='tent')c.none++;   // no accommodation type recorded yet
   });
   return by;
+}
+// Bug 5 (2026-07-28) — mirrors the backend's SECOND-level split: a 7-9 / 10-12 sub-pool that is
+// itself over the threshold splits again into single year levels (up to 6 per gender, 12 per
+// church). Keep this in step with `groupsForGender`/`yearGroupsFor` in
+// src/services/accommodation-allocation.ts — the backend is the tested source of truth.
+const _ACCOM_YEARS={'7-9':[7,8,9],'10-12':[10,11,12]};
+function _spreadLeaders(total,n){if(n<=0)return [];const base=Math.floor(total/n);let extra=total%n;
+  return Array.from({length:n},()=>base+(extra-->0?1:0));}
+function _accomYearGroups(c,gender,g,bracket,leaders,extraYouth,lbl){
+  const years=_ACCOM_YEARS[bracket].filter((y,i)=>(g.byYear[y]||0)>0||(i===0&&extraYouth>0));
+  if(!years.length)return [];
+  const ld=_spreadLeaders(leaders,years.length);const out=[];
+  years.forEach((y,i)=>{const n=(g.byYear[y]||0)+(i===0?extraYouth:0)+ld[i];
+    if(n>0)out.push({key:c.id+'|'+gender+'|Y'+y,church:c.name,gender,label:lbl+' Yr '+y,n,bracket:'Y'+y});});
+  return out;
 }
 function _accomGenderGroups(c,gender,g){
   if(g.cls===0)return [];
@@ -3139,8 +3316,14 @@ function _accomGenderGroups(c,gender,g){
   if(g.cls<=ACCOM_SPLIT_THRESHOLD)return [{key:c.id+'|'+gender,church:c.name,gender,label:lbl,n:g.cls}];
   const ld79=Math.ceil(g.ld/2),ld1012=g.ld-ld79;
   const n79=g.y79+g.yOther+ld79,n1012=g.y1012+ld1012;const out=[];
-  if(n79>0)out.push({key:c.id+'|'+gender+'|7-9',church:c.name,gender,label:lbl+' Yr 7–9',n:n79,bracket:'7-9'});
-  if(n1012>0)out.push({key:c.id+'|'+gender+'|10-12',church:c.name,gender,label:lbl+' Yr 10–12',n:n1012,bracket:'10-12'});
+  if(n79>0){
+    if(n79>ACCOM_SPLIT_THRESHOLD)out.push(..._accomYearGroups(c,gender,g,'7-9',ld79,g.yOther,lbl));
+    else out.push({key:c.id+'|'+gender+'|7-9',church:c.name,gender,label:lbl+' Yr 7–9',n:n79,bracket:'7-9'});
+  }
+  if(n1012>0){
+    if(n1012>ACCOM_SPLIT_THRESHOLD)out.push(..._accomYearGroups(c,gender,g,'10-12',ld1012,0,lbl));
+    else out.push({key:c.id+'|'+gender+'|10-12',church:c.name,gender,label:lbl+' Yr 10–12',n:n1012,bracket:'10-12'});
+  }
   return out;
 }
 function accomGroups(regs){
@@ -3300,26 +3483,25 @@ async function sendNotif(){const title=document.getElementById('ntitle').value.t
     if(!await confirmSheet({title:'Send '+(window._pri==='urgent'?'URGENT ':'')+(p.scope==='camp'?'camp-wide':p.zone+' zone')+' notice?',confirmLabel:'Send'}))return;
   }
   try{
-    if(editingId){await api('/notifications/'+editingId,{method:'PATCH',body:p});window._editNotice=null;window._editNoticeId=null;toast('Notice updated');go('scheduled');}
+    if(editingId){await api('/notifications/'+editingId,{method:'PATCH',body:p});window._editNotice=null;window._editNoticeId=null;toast('Notice updated');NOTICE_SUB='scheduled';gotoTab('notifs');}
     else{await api('/notifications',{method:'POST',body:p});
-      if(scheduledFor){toast('Scheduled for '+_schedLabel(scheduledFor));go('scheduled');}
+      if(scheduledFor){toast('Scheduled for '+_schedLabel(scheduledFor));NOTICE_SUB='scheduled';gotoTab('notifs');}
       else{toast('Delivered');back();}}
   }catch(e){toast(e.message);}}
 // Scheduled notices management (item 9) — creator sees own; director/admin see all.
-RENDER.scheduled=async function(){
-  const list=await api('/notifications/scheduled').catch(()=>[]);
-  window._schedList=list;
-  const rows=list.length?list.map(n=>`<div class="ncard ${n.priority==='urgent'?'urgent':n.scope==='zone'?'zone':''}">
+/* One pending-notice card — extracted so the merged Notices screen (item 10) owns the markup. */
+function _schedNoticeCard(n){return `<div class="ncard ${n.priority==='urgent'?'urgent':n.scope==='zone'?'zone':''}">
       <div class="ntop"><span class="ntag">${n.scope==='camp'?icSm('diamond')+' Camp-wide':n.scope==='church'?'Church':esc(n.zone||'')+' Zone'}</span>
       ${n.priority==='urgent'?'<span class="ntag" style="background:#fdecec;color:var(--danger)">Urgent</span>':''}
       <span class="ntime">${icSm('clock')} ${esc(_schedLabel(n.scheduledFor))}</span></div>
       <div class="ntitle">${esc(n.title)}</div><div class="nbody">${esc(n.body)}</div>
       <div class="rowsb" style="align-items:center;margin-top:8px"><div class="nfrom" style="margin:0">— ${esc(n.senderName)}</div>
-        <div style="display:flex;gap:6px"><button class="btn ghost sm" onclick="editNotice('${n.id}')">Edit</button><button class="btn ghost sm" onclick="deleteScheduled('${n.id}')">Delete</button></div></div></div>`).join(''):'<p class="note-hint">No scheduled notices. Compose a notice and choose “Schedule” to send it later.</p>';
-  paint('scheduled',`<button class="btn" onclick="composeNew()">${ic('edit')} New notice</button>${rows}`,'Scheduled notices','Pending delivery');
-};
+        <div style="display:flex;gap:6px"><button class="btn ghost sm" onclick="editNotice('${n.id}')">Edit</button><button class="btn ghost sm" onclick="deleteScheduled('${n.id}')">Delete</button></div></div></div>`;}
+// Kept as an alias (item 10): the two screens merged, but `go('scheduled')` is still reachable
+// from older links and from the compose flow. Redirect to the merged screen's Scheduled tab.
+RENDER.scheduled=function(){NOTICE_SUB='scheduled';return gotoTab('notifs');};
 function editNotice(id){const n=(window._schedList||[]).find(x=>x.id===id);if(!n){toast('Notice not found — refresh');return;}window._editNotice=n;go('compose');}
-async function deleteScheduled(id){if(!await confirmSheet({title:'Delete this scheduled notice?',confirmLabel:'Delete',danger:true}))return;try{await api('/notifications/'+id,{method:'DELETE'});toast('Deleted');RENDER.scheduled();}catch(e){toast(e.message);}}
+async function deleteScheduled(id){if(!await confirmSheet({title:'Delete this scheduled notice?',confirmLabel:'Delete',danger:true}))return;try{await api('/notifications/'+id,{method:'DELETE'});toast('Deleted');NOTICE_SUB='scheduled';RENDER.notifs();}catch(e){toast(e.message);}}
 
 /* ===== MY YOUTH at-camp ===== */
 
@@ -3393,7 +3575,7 @@ function fdDraw(){
   }
   const pendingCount=pending.size;
   let html=`
-    <div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">First-day arrivals</span>${helpTip('Tick each student as they arrive on day one, then Confirm to sign them in. This marks them on site — use the daily check-in for the twice-daily roll call after that.')}</div>
+    <div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">First-day arrivals</span>${helpTip('Tick each person as they arrive on day one, then Confirm to sign them in. This marks them on site — use the daily check-in for the twice-daily roll call after that.')}</div>
     <div class="filters" style="margin-bottom:10px">
       <select onchange="window._fdGender=this.value;fdDraw()">
         <option value="all" ${gen==='all'?'selected':''}>All genders</option>
@@ -3440,7 +3622,7 @@ async function fdConfirmAll(){
       .catch(()=>fail++)
   ));
   if(fail)toast(fail+' failed — please retry');
-  else toast(ok+' student'+(ok===1?'':'s')+' signed in');
+  else toast(ok+' signed in');
   fdDraw();
 }
 
@@ -3641,17 +3823,61 @@ function signInConfirmList(id,name,isLeader){
 }
 function _confirmSignInList(id,name,isLeader){closeModal();signInPrompt(id,name,isLeader);}
 
-/* ===== SCHEDULE ===== */
+/* ===== SCHEDULE =====
+   Bug 2 (2026-07-28): the plan view was a flat time+title list. It is now a proportional,
+   colour-coded timeline. Two pure helpers drive it so the rules live in one place and the
+   admin editor's tooltip can quote the same keyword list:
+   - `schedCategory(title)` — keyword match on the activity name (see SCHED_CATEGORIES).
+   - `_schedMinutes(a,b)` — a row's length = the NEXT row's start minus this one's; the LAST
+     row of the day runs to end of day (24:00), which is what "Lights Out" wants. A next-start
+     that is earlier than this one (bad data / past-midnight) also falls back to end of day. */
+// Keyword → category. Order matters: the first entry whose keywords match wins, so the more
+// specific "zone battle" is tested before the generic meal words. Matching is lowercase
+// substring, so "Zone Battles" and "Session 2" both match.
+const SCHED_CATEGORIES=[
+  ['session',   'Session',     ['session']],
+  ['zone',      'Zone battle', ['zone battle']],
+  ['preshow',   'Pre show',    ['pre show','preshow','pre-show']],
+  ['meal',      'Meal',        ['breakfast','lunch','dinner','morning tea','afternoon tea','dessert']],
+];
+// The keyword list shown to the admin in the editor tooltip — one source of truth with the above.
+function _schedKeywordHelp(){return SCHED_CATEGORIES.map(c=>c[1]+': '+c[2].map(k=>'"'+k+'"').join(', ')).join(' · ')
+  +'. Anything else is shown in grey.';}
+function schedCategory(title){
+  const t=String(title||'').toLowerCase();
+  for(const [id,,keys] of SCHED_CATEGORIES){if(keys.some(k=>t.indexOf(k)>=0))return id;}
+  return 'other';
+}
+function _schedMins(hhmm){const m=/^(\d{1,2}):(\d{2})/.exec(String(hhmm||''));return m?(+m[1])*60+(+m[2]):null;}
+// Length of the row starting at `a`, given the next row's start `b` (null = last of the day).
+function _schedMinutes(a,b){
+  const s=_schedMins(a);if(s==null)return 60;
+  const e=b==null?24*60:_schedMins(b);
+  if(e==null||e<=s)return Math.max(15,24*60-s);   // last row / bad data → runs to end of day
+  return e-s;
+}
+// Proportional height. Deliberately compressed (not linear) so a 30-minute item stays tappable
+// and an 8-hour overnight block doesn't push everything else off the screen.
+function _schedHeight(mins){return Math.round(Math.min(190,Math.max(54,40+mins*0.38)));}
+function _schedDur(mins){const h=Math.floor(mins/60),m=mins%60;return h&&m?h+'h '+m+'m':h?h+'h':m+'m';}
 let SCHED_DAY=null;
 RENDER.schedule=async function(){
   if(!SCHED_DAY)SCHED_DAY=(SETTINGS?.checkInDays&&SETTINGS.checkInDays[0])||null;
   if(!SCHED_DAY){paint('schedule','<p class="note-hint">No camp days configured.</p>','Schedule','');return;}
-  const items=await api('/schedule?day='+SCHED_DAY);
+  const items=(await api('/schedule?day='+SCHED_DAY)).slice()
+    .sort((a,b)=>String(a.startTime||'').localeCompare(String(b.startTime||'')));
   const days=SETTINGS?.checkInDays||[];
   const daySeg=days.length>1?`<div class="seg">${days.map(d=>`<button class="${d===SCHED_DAY?'on':''}" onclick="selSchedDay('${d}')">${new Date(d+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',timeZone:'UTC'})}</button>`).join('')}</div>`:'';
-  paint('schedule',daySeg+`<div class="card">${items.length?items.map(i=>`<div style="display:flex;gap:11px;margin-bottom:9px">
-    <div style="font-weight:800;color:var(--blue);width:56px;flex:none">${esc(i.startTime)}</div>
-    <div><div class="nm">${esc(i.title)}</div></div></div>`).join(''):'<p class="sub">No items for this day.</p>'}</div>`,'Schedule',dayLong(SCHED_DAY));
+  const rows=items.map((i,ix)=>{
+    const mins=_schedMinutes(i.startTime,ix+1<items.length?items[ix+1].startTime:null);
+    const cat=schedCategory(i.title);
+    return `<div class="sch-item sch-${cat}" style="min-height:${_schedHeight(mins)}px">
+      <div class="sch-time">${esc(i.startTime||'')}<span class="sch-dur">${_schedDur(mins)}</span></div>
+      <div class="sch-body"><div class="sch-title">${esc(i.title)}</div></div></div>`;
+  }).join('');
+  const legend=items.length?`<div class="sch-legend">${SCHED_CATEGORIES.map(c=>`<span class="sch-key sch-${c[0]}">${esc(c[1])}</span>`).join('')}</div>`:'';
+  paint('schedule',daySeg+(items.length?`<div class="sch-list">${rows}</div>${legend}`
+    :'<div class="card"><p class="sub">No items for this day.</p></div>'),'Schedule',dayLong(SCHED_DAY));
 };
 function selSchedDay(d){SCHED_DAY=d;RENDER.schedule();}
 
@@ -3709,7 +3935,7 @@ RENDER.testimonies=async function(){
     <div class="infobox" style="font-size:.82rem">Record a testimony or God-moment from camp. Pick a student if it's about one, or leave it as a general testimony. It is saved with the records that leaders &amp; directors review.</div>
     <div class="card"><label>Student (optional)</label><select id="tmCamper">${opts}</select>
     <label>Testimony</label><textarea id="tmBody" placeholder="What happened? Whose story is it? What did God do?" style="min-height:120px"></textarea>
-    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive ${helpTip(_SENSITIVE_HELP)}</div><div class="sub">Hides this testimony from church logins on the student's profile.</div></div>
+    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this testimony from church logins — zone leaders, directors and admins still see it.</div></div>
     <label class="tgl"><input type="checkbox" id="tmSensitive"><span class="track"></span></label></div>
     <button class="btn" style="margin-top:10px" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','Open all camp');
 };
@@ -3821,14 +4047,14 @@ RENDER.incidents=async function(){
       <div style="font-size:var(--t-body);margin:6px 0;white-space:pre-wrap">${esc(i.summary)}</div>
       <div class="sub">${esc(i.createdByName||'—')} · ${dtFmt(i.createdAt)}</div></div>`;
   }).join(''):emptyState('alert','No incidents logged yet.');
-  paint('incidents',`<div class="infobox" style="font-size:.82rem">Log a safeguarding or operational incident. <b>Low</b> is just recorded. <b>High</b> also alerts all leaders, directors and admins with an urgent notice.</div>
+  paint('incidents',`<div class="infobox" style="font-size:.82rem">Log a safeguarding or operational incident. <b>Low</b> is just recorded. <b>High</b> also sends an urgent alert to zone leaders, directors and admins.</div>
     <div class="card">
       <label>What happened?</label>
       <textarea class="fld" id="incSummary" placeholder="Describe the incident — who, what, when, action taken" style="min-height:120px"></textarea>
       <label style="margin-top:8px">Severity</label>
       <div class="seg" style="margin-top:4px">
         <button type="button" class="on" id="incSev-low" onclick="setIncSeverity('low')">Low · record</button>
-        <button type="button" id="incSev-high" onclick="setIncSeverity('high')">High · alert everyone</button>
+        <button type="button" id="incSev-high" onclick="setIncSeverity('high')">High · alert zones</button>
       </div>
       <button class="btn" style="margin-top:12px" onclick="submitIncident()">Log incident</button>
     </div>
@@ -3854,12 +4080,18 @@ async function deleteIncident(id){
 RENDER.admin=function(){
   const isAdmin=ACTOR.role==='admin';
   const isAdminOrDirector=['admin','director'].includes(ACTOR.role);
-  const modeTile=isAdmin?`<div class="tile" onclick="switchMode()"><div class="l">Switch to ${CAMP_MODE==='pre-camp'?'At-Camp':'Pre-Camp'}</div></div>`:'';
-  const dataTile=isAdmin?`<div class="tile" onclick="go('adminData')"><div class="l">Data Export/Reset</div></div>`:isAdminOrDirector?`<div class="tile" onclick="go('adminData')"><div class="l">Records &amp; Export</div></div>`:'';
-  const importTile=isAdmin?`<div class="tile" onclick="go('import')"><div class="l">Data Import</div></div>`:'';
+  // Item 11 (2026-07-28): every console tile now carries an icon, matching the two that already
+  // had one. `_adminTile` is the single tile builder so a new entry can't miss its glyph.
+  const _adminTile=(icon,label,action)=>`<div class="tile" onclick="${action}"><div class="ic">${ic(icon)}</div><div class="l">${label}</div></div>`;
+  const modeTile=isAdmin?_adminTile('swap',`Switch to ${CAMP_MODE==='pre-camp'?'At-Camp':'Pre-Camp'}`,'switchMode()'):'';
+  const dataTile=isAdminOrDirector?_adminTile('download',isAdmin?'Data Export/Reset':'Records &amp; Export',"go('adminData')"):'';
+  const importTile=isAdmin?_adminTile('upload','Data Import',"go('import')"):'';
   // At camp, the setup wizard gives way to per-student data edits (no more CSV uploads mid-camp).
-  const wizardTile=isAdmin&&CAMP_MODE==='pre-camp'?`<div class="tile" onclick="go('adminWizard')"><div class="l">Setup Wizard</div></div>`:'';
-  const studentsTile=isAdmin&&CAMP_MODE==='at-camp'?`<div class="tile" onclick="go('adminStudents')"><div class="l">Individual Student Data Edit</div></div>`:'';
+  const wizardTile=isAdmin&&CAMP_MODE==='pre-camp'?_adminTile('check','Setup Wizard',"go('adminWizard')"):'';
+  const studentsTile=isAdmin&&CAMP_MODE==='at-camp'?_adminTile('users','Individual Student Data Edit',"go('adminStudents')"):'';
+  // Item B (2026-07-28): Budget & Costings had no entry point from the admin console — it was
+  // only reachable from the pre-camp desktop sidebar. Admin + director both hold `budget:manage`.
+  const budgetTile=isAdminOrDirector?_adminTile('dollar','Budget &amp; Costings',"go('budget')"):'';
   // Tiles grouped under three headings (re-ordered per admin request):
   // Camp setup = Setup Wizard, Camp settings, Accommodation, At-Camp Info, Switch mode.
   // People & churches = Accounts & churches, Ministry contacts.
@@ -3867,27 +4099,26 @@ RENDER.admin=function(){
   // not explicitly listed in the request but there's no other home for it in this console).
   // Reviewed 2026-07-18 (frontend assessment, two independent passes): grouping is considered
   // settled — please don't reactively reshuffle again without a deliberate pass.
+  // Item 10 (2026-07-28): the "Communications" group is gone — Notices and Scheduled notices are
+  // now ONE screen (sub-tabs), and its single tile lives under Data with the rest of the
+  // record-keeping. Item B added Budget & Costings alongside it.
   paint('admin',`<div class="h3" style="margin:14px 0 6px">Camp setup</div>
     <div class="tiles">
       ${wizardTile}
-      <div class="tile" onclick="go('adminSettings')"><div class="l">Camp settings</div></div>
-      <div class="tile" onclick="go('adminAccom')"><div class="l">Accommodation</div></div>
-      <div class="tile" onclick="go('atCampInfo')"><div class="l">At-Camp Info</div></div>
+      ${_adminTile('gear','Camp settings',"go('adminSettings')")}
+      ${_adminTile('tent','Accommodation',"go('adminAccom')")}
+      ${_adminTile('calendar','At-Camp Info',"go('atCampInfo')")}
       ${modeTile}
     </div>
     <div class="h3" style="margin:16px 0 6px">People &amp; churches</div>
     <div class="tiles">
-      <div class="tile" onclick="go('adminAccounts')"><div class="l">Accounts &amp; churches</div></div>
-      <div class="tile" onclick="go('adminContacts')"><div class="l">Ministry contacts</div></div>
-    </div>
-    <div class="h3" style="margin:16px 0 6px">Communications</div>
-    <div class="tiles">
-      <div class="tile" onclick="gotoTab('notifs')"><div class="ic">${ic('bell')}</div><div class="l">Notices</div></div>
-      <div class="tile" onclick="go('scheduled')"><div class="ic">${ic('clock')}</div><div class="l">Scheduled notices</div></div>
+      ${_adminTile('key','Accounts &amp; churches',"go('adminAccounts')")}
+      ${_adminTile('phone','Ministry contacts',"go('adminContacts')")}
     </div>
     <div class="h3" style="margin:16px 0 6px">Data</div>
     <div class="tiles">
-      ${importTile}${dataTile}${studentsTile}
+      ${_adminTile('bell','Notices',"gotoTab('notifs')")}
+      ${importTile}${dataTile}${budgetTile}${studentsTile}
     </div>`,'Admin console','Back office');
 };
 
@@ -3937,40 +4168,41 @@ RENDER.adminAccounts=async function(){
     onName:`editLeaderName('${u.id}')`,onPass:`changePassword('${u.id}')`,onDel:`delAcct('${u.id}')`,
     onPreview:u.status!=='inactive'?`confirmEnterAccountPreview('${u.id}')`:''
   })));
-  // Feature 2: each church now has TWO gender-scoped logins (b-/g-). Render one tile per login.
+  // Feature 2: each church has TWO gender-scoped logins (b-/g-).
+  // Bug 13 (2026-07-28): they used to render as two INDEPENDENT tiles, both of whose "Account
+  // Info" buttons opened the same modal that only ever found the FIRST account — so editing the
+  // girls' username silently rewrote the boys' one and the pair collided. They are now drawn as
+  // ONE joined card per church (shared name/zone/username/delete at the top, a blue "Boys" half
+  // and a pink "Girls" half below for the per-account actions), matching how they must be edited.
   const churchUsers=users.filter(u=>u.role==='church');
-  const genderLabel=g=>g==='male'?'Boys':g==='female'?'Girls':'';
-  const churchTileItems=[];
-  churches.forEach(c=>{
+  const churchCards=churches.map(c=>{
     const accts=churchUsers.filter(u=>u.churchId===c.id)
       .sort((a,b)=>String(a.genderScope||'').localeCompare(String(b.genderScope||'')));
-    if(!accts.length){
-      churchTileItems.push(acctTile({
-        title:esc(c.name),
-        sub:'Church · '+esc(c.zone||'—')+'<span style="color:var(--danger)"> · no login</span>',
-        onName:`editChurchName('${c.id}')`,
-        onPass:`toast('No login account for this church')`,
-        onDel:`delChurch('${c.id}')`,
-        onPreview:''
-      }));
-      return;
-    }
-    accts.forEach(cu=>{const g=genderLabel(cu.genderScope);
-      churchTileItems.push(acctTile({
-        title:esc(c.name)+(g?' · '+g:''),
-        sub:'Church · '+esc(c.zone||'—')+(cu.username?' · @'+esc(cu.username):'')+(cu.status==='inactive'?' · inactive':''),
-        onName:`editChurchName('${c.id}')`,
-        onPass:`changePassword('${cu.id}')`,
-        onDel:`delChurch('${c.id}')`,
-        onPreview:(cu.status!=='inactive')?`confirmEnterAccountPreview('${cu.id}')`:''
-      }));
-    });
+    const head=`<div class="ch-head">
+        <div style="min-width:0">
+          <div class="ch-name">${esc(c.name)}</div>
+          <div class="ch-sub">Church · ${esc(c.zone||'—')}${accts.length?' · @'+esc(_churchUserBase(accts[0].username)):'<span style="color:var(--danger)"> · no login</span>'}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex:0 0 auto">
+          <button class="iconbtn" title="Account Info" aria-label="Account Info" onclick="editChurchName('${c.id}')">${ic('edit')}</button>
+          <button class="iconbtn danger" title="Delete church + both logins" aria-label="Delete church and both logins" onclick="delChurch('${c.id}')">${ic('trash')}</button>
+        </div></div>`;
+    if(!accts.length)return `<div class="ch-pair">${head}<p class="note-hint" style="margin:8px 0 0">No login accounts for this church yet.</p></div>`;
+    const half=cu=>{const male=cu.genderScope==='male';
+      return `<div class="ch-half ${male?'ch-m':'ch-f'}">
+        <div class="ch-g">${male?'Boys':'Girls'}${cu.status==='inactive'?' · inactive':''}</div>
+        <div class="ch-u">@${esc(cu.username||'—')}</div>
+        <div style="display:flex;gap:4px;margin-top:8px">
+          <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="changePassword('${cu.id}')">${ic('key')}</button>
+          ${cu.status!=='inactive'?`<button class="iconbtn" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="confirmEnterAccountPreview('${cu.id}')">${ic('preview')}</button>`:''}
+        </div></div>`;};
+    return `<div class="ch-pair">${head}<div class="ch-halves">${accts.map(half).join('')}</div></div>`;
   });
-  const cr=tileGrid(churchTileItems);
+  const cr=churches.length?`<div class="ch-grid">${churchCards.join('')}</div>`:'<p class="note-hint">None yet.</p>';
   const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option>`;
   paint('adminAccounts',`
     <div class="card"><div class="lbl" style="margin-top:0">Leadership accounts</div>${lr}</div>
-    <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('You do not usually need to add churches by hand — any church named in a registration upload is auto-created (zone defaults to Yellow; add its login + zone afterwards via Account Info). The per-church accommodation override (which corrects wrong ticket types at the next upload) is set in Admin → Accommodation setup.')}</div>
+    <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('Churches named in a registration upload are auto-created, with the zone defaulting to Yellow — set the zone and login via Account Info. Accommodation overrides live in Admin → Accommodation setup.')}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" onclick="randomizeChurchPasswords()">${icSm('key')} Randomise &amp; export passwords</button>
       <button class="btn ghost sm" onclick="bulkChurchUpdate()">${icSm('key')} Bulk Church Update</button></div></div>${cr}</div>
     <div class="card"><div class="lbl" style="margin-top:0">Add leadership account</div>
@@ -4002,6 +4234,13 @@ async function addAcct(){const role=sel('aR');const nm=val('aName').trim();const
   try{await api('/accounts/users',{method:'POST',body});toast('Account created');await _rAccts();}catch(e){toast(e.message);}}
 const _findUser=id=>(window._allUsers||[]).find(u=>u.id===id)||{};
 const _findChurch=id=>(window._allChurches||[]).find(c=>c.id===id)||{};
+/* Bug 13 helpers — a church's two logins are `b-<base>` (boys) and `g-<base>` (girls). The admin
+   only ever edits the BASE; the prefixes are re-applied on save so the pair can never collide or
+   lose its gender split. `_churchUserBase` tolerates a legacy un-prefixed username. */
+const _churchUserBase=u=>String(u||'').replace(/^[bg]-/,'');
+const _churchAccts=churchId=>(window._allUsers||[]).filter(u=>u.role==='church'&&u.churchId===churchId)
+  .sort((a,b)=>String(a.genderScope||'').localeCompare(String(b.genderScope||'')));
+const _churchPrefix=cu=>cu.genderScope==='male'?'b-':cu.genderScope==='female'?'g-':'';
 const _OVERRIDE_TIP='When set, EVERYONE from this church — students and leaders — is switched to this accommodation type on the next registration upload — use it to correct wrong ticket purchases. Leave as "No override" if this ministry deliberately splits ticket types (e.g. seniors buy classroom).';
 function editLeaderName(id){const u=_findUser(id);
   modal(`<h3>Account Info</h3>
@@ -4026,23 +4265,38 @@ async function saveLeaderName(id,role){const nm=val('enName').trim();const sp=nm
   try{await api('/accounts/users/'+id,{method:'PATCH',body});closeModal();toast('Saved');await _rAccts();}catch(e){toast(e.message);}}
 const _accOvSel=(id,s,onchange)=>`<select id="${id}"${onchange?` onchange="${onchange}"`:''}><option value=""${!s?' selected':''}>No override</option><option value="tent"${s==='tent'?' selected':''}>Tent</option><option value="classroom"${s==='classroom'?' selected':''}>Classroom</option></select>`;
 function editChurchName(id){const c=_findChurch(id);
-  const cu=(window._allUsers||[]).find(u=>u.role==='church'&&u.churchId===id)||{};
+  const accts=_churchAccts(id);
+  const base=accts.length?_churchUserBase(accts[0].username):'';
   modal(`<h3>Account Info</h3>
     <label>Church name</label><input class="fld" id="ecnName" value="${esc(c.name||'')}">
     <div class="warnbox" style="margin-top:8px">${icSm('alert')} Must match the registration export exactly — registrations are matched by name.</div>
-    ${cu.id?`<label>Username</label><input class="fld" id="ecnUser" value="${esc(cu.username||'')}" autocapitalize="none" autocorrect="off" spellcheck="false">`:'<p class="note-hint" style="margin:6px 0 0">No login account for this church yet.</p>'}
-    <label>Zone ${helpTip('Changing zone here does not move students already imported for this church — they keep their current zone until you re-upload the registration CSV.')}</label>${zoneSel('ecnZone',c.zone)}
-    <p class="note-hint" style="margin-top:8px">Accommodation override has moved to Admin → Accommodation setup.</p>
-    <button class="btn" style="margin-top:10px" onclick="saveChurchName('${id}','${cu.id||''}')">Save</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);}
-async function saveChurchName(id,userId){const name=val('ecnName');if(!name){toast('Enter a church name');return;}
+    ${accts.length?`<label>Login username ${helpTip('One username for the church. Both logins are updated together — the boys account becomes b-<name> and the girls account g-<name>, so they can never collide.')}</label>
+      <input class="fld" id="ecnUser" value="${esc(base)}" autocapitalize="none" autocorrect="off" spellcheck="false">
+      <p class="note-hint" style="margin:5px 0 0">Logins: <b id="ecnPrev"></b></p>`
+      :'<p class="note-hint" style="margin:6px 0 0">No login account for this church yet.</p>'}
+    <label>Zone ${helpTip('Changing zone here does not move students already imported for this church — they keep their current zone until you re-upload the registration CSV. Both gender logins move together.')}</label>${zoneSel('ecnZone',c.zone)}
+    <button class="btn" style="margin-top:10px" onclick="saveChurchName('${id}')">Save</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+  const inp=document.getElementById('ecnUser');
+  if(inp){const draw=()=>{const p=document.getElementById('ecnPrev');
+      if(p)p.textContent='b-'+(inp.value.trim()||'…')+'  ·  g-'+(inp.value.trim()||'…');};
+    inp.oninput=draw;draw();}
+}
+// Saves the church + BOTH gender logins as one unit (bug 13). The typed value is the base; the
+// b-/g- prefix is re-applied per account from its own genderScope.
+async function saveChurchName(id){const name=val('ecnName');if(!name){toast('Enter a church name');return;}
+  const accts=_churchAccts(id);
+  const hasUserField=!!document.getElementById('ecnUser');
+  const base=hasUserField?_churchUserBase(val('ecnUser').trim()):'';
+  if(hasUserField&&accts.length){
+    if(!/^[A-Za-z0-9._-]{2,38}$/.test(base)){toast('Username: letters, numbers, . _ - only (2–38 chars, no b-/g- prefix)');return;}
+  }
   try{
     await api('/accounts/churches/'+id,{method:'PATCH',body:{name,zone:sel('ecnZone')}});
-    if(userId){
-      const cu=_findUser(userId);const username=val('ecnUser').trim();
-      if(username!==(cu.username||'')){
-        if(!/^[A-Za-z0-9._-]{2,40}$/.test(username)){toast('Church saved — username invalid (letters, numbers, . _ - only)');await _rAccts();return;}
-        await api('/accounts/users/'+userId,{method:'PATCH',body:{username}});
+    if(hasUserField){
+      for(const cu of accts){
+        const want=_churchPrefix(cu)+base;
+        if(want!==(cu.username||''))await api('/accounts/users/'+cu.id,{method:'PATCH',body:{username:want}});
       }
     }
     closeModal();toast('Church updated');await _rAccts();
@@ -4098,41 +4352,47 @@ async function randomizeChurchPasswords(){
    a blank password leaves that church's password unchanged. */
 function bulkChurchUpdate(){
   const churches=(window._allChurches||[]);const users=(window._allUsers||[]);
-  const gLbl=g=>g==='male'?'Boys':g==='female'?'Girls':'';
   const rows=churches.map(c=>{
-    // Feature 2: a church has two gender-scoped logins (b-/g-) — list a row for each.
+    // Bug 13: ONE username field per church (the shared base) — the b-/g- prefixes are re-applied
+    // per account on save. Passwords stay per account, so each gender keeps its own field.
     const accts=users.filter(u=>u.role==='church'&&u.churchId===c.id)
       .sort((a,b)=>String(a.genderScope||'').localeCompare(String(b.genderScope||'')));
     if(!accts.length)return `<div style="padding:8px 0;border-top:1px solid var(--line)"><div style="font-weight:700;font-size:.82rem;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div><div class="sub" style="color:var(--danger)">No login account — add one first.</div></div>`;
-    return accts.map(cu=>{const g=gLbl(cu.genderScope);return `<div style="padding:8px 0;border-top:1px solid var(--line)">
-      <div style="font-weight:700;font-size:.82rem;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}${g?' · '+g:''}</div>
-      <div style="display:flex;gap:6px">
-        <input class="fld" data-bcu="${cu.id}" data-cur="${esc(cu.username||'')}" value="${esc(cu.username||'')}" placeholder="username" autocapitalize="none" autocorrect="off" spellcheck="false" style="flex:1;margin:0">
-        <input class="fld" data-bcp="${cu.id}" type="text" placeholder="new password (blank = keep)" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" style="flex:1;margin:0">
-      </div></div>`;}).join('');
+    const base=_churchUserBase(accts[0].username);
+    const pw=cu=>`<input class="fld ${cu.genderScope==='male'?'ch-m':'ch-f'}" data-bcp="${cu.id}" type="text" placeholder="${cu.genderScope==='male'?'boys':'girls'} password (blank = keep)" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" style="flex:1;margin:0">`;
+    return `<div style="padding:8px 0;border-top:1px solid var(--line)">
+      <div style="font-weight:700;font-size:.82rem;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div>
+      <div style="display:flex;gap:6px;margin-bottom:5px">
+        <input class="fld" data-bcbase="${c.id}" data-cur="${esc(base)}" value="${esc(base)}" placeholder="username (no b-/g-)" autocapitalize="none" autocorrect="off" spellcheck="false" style="flex:1;margin:0">
+      </div>
+      <div style="display:flex;gap:6px">${accts.map(pw).join('')}</div></div>`;
   }).join('');
   modal(`<h3>Bulk Church Update</h3>
-    <p class="sub" style="margin:2px 0 6px">Update usernames and passwords for several churches at once. The username is pre-filled — edit any you want to change. Leave a password blank to keep the current one.</p>
+    <p class="sub" style="margin:2px 0 6px">Update usernames and passwords for several churches at once. The username is shared — saving it updates <b>b-name</b> and <b>g-name</b> together. Leave a password blank to keep the current one.</p>
     <div style="max-height:54vh;overflow:auto;margin:4px 0 10px">${rows||'<p class="note-hint">No churches yet.</p>'}</div>
     <button class="btn" onclick="saveBulkChurch()">Save all</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
 async function saveBulkChurch(){
-  const userInputs=[...document.querySelectorAll('#sheet [data-bcu]')];
-  const passById={};document.querySelectorAll('#sheet [data-bcp]').forEach(p=>passById[p.getAttribute('data-bcp')]=p.value);
+  const baseInputs=[...document.querySelectorAll('#sheet [data-bcbase]')];
   // Validate everything first so one bad row never leaves a half-applied batch.
   const jobs=[];
-  for(const inp of userInputs){
-    const id=inp.getAttribute('data-bcu');const cur=inp.getAttribute('data-cur')||'';
-    const uname=inp.value.trim();const pass=(passById[id]||'').trim();
-    if(uname!==cur){
-      if(!/^[A-Za-z0-9._-]{2,40}$/.test(uname)){toast('Invalid username: '+(uname||'(empty)'));return;}
-      jobs.push({type:'username',id,username:uname});
+  for(const inp of baseInputs){
+    const churchId=inp.getAttribute('data-bcbase');const cur=inp.getAttribute('data-cur')||'';
+    const base=_churchUserBase(inp.value.trim());
+    if(base!==cur){
+      if(!/^[A-Za-z0-9._-]{2,38}$/.test(base)){toast('Invalid username: '+(base||'(empty)'));return;}
+      // One job per gender account — each keeps its own b-/g- prefix (bug 13).
+      for(const cu of _churchAccts(churchId)){
+        const want=_churchPrefix(cu)+base;
+        if(want!==(cu.username||''))jobs.push({type:'username',id:cu.id,username:want});
+      }
     }
-    if(pass){
-      if(pass.length<6){toast('Passwords must be 6+ characters');return;}
-      jobs.push({type:'password',id,password:pass});
-    }
+  }
+  for(const p of document.querySelectorAll('#sheet [data-bcp]')){
+    const pass=(p.value||'').trim();if(!pass)continue;
+    if(pass.length<6){toast('Passwords must be 6+ characters');return;}
+    jobs.push({type:'password',id:p.getAttribute('data-bcp'),password:pass});
   }
   if(!jobs.length){toast('No changes to save');return;}
   let unC=0,pwC=0;
@@ -4177,7 +4437,10 @@ RENDER.adminAccom=async function(){
       <span style="font-size:var(--t-sm)">${esc(c.name)}</span>
       <span style="flex:none">${_accOvSel('aco_'+c.id,c.accommodationOverride,`saveChurchOverride('${c.id}',this.value)`)}</span>
     </div>`).join('')||'<p class="note-hint">No churches yet.</p>';
-  paint('adminAccom',`<div class="infobox">Classrooms have a name &amp; capacity. Tent City is auto-distributed (7 per tent) — no setup needed.</div>
+  // Item 23 (2026-07-28): a direct route from setup to the allocations map. Setting up rooms and
+  // then placing groups in them is one continuous task, but the two screens had no link.
+  paint('adminAccom',`<button class="btn" onclick="go('accom')">${icSm('classroom')} Go to accommodation allocations ${icSm('arrowr')}</button>
+    <div class="infobox">Classrooms have a name &amp; capacity. Tent City is auto-distributed (7 per tent) — no setup needed.</div>
     <div class="card"><h3 class="sec" style="margin-top:0">Classrooms</h3>${tileGrid}</div>
     <div class="card"><div class="lbl" style="margin-top:0">Add a room</div>
       <div style="display:flex;gap:6px;align-items:flex-end">
@@ -4350,7 +4613,17 @@ RENDER.adminSettings=async function(){
         </div>
         <label>At-camp check-in days (auto-generated)</label>
         <div id="stDaysPreview" class="sub" style="background:var(--tint);border-radius:10px;padding:9px 11px;font-size:.8rem;color:var(--violet-d)"></div>
-        <p class="note-hint">Setting the start date pre-fills the end date to the 4th day; adjust it as needed. Check-in days are generated from the range — one Morning and one Afternoon session per day.</p>
+        <p class="note-hint">Setting the start date pre-fills the end date to the 4th day; adjust it as needed. Check-in days are generated from the range — one Morning and one Afternoon session per day. Moving the dates carries your schedule and devotionals across with them, day for day.</p>
+        <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+          <label>Site map ${helpTip('Shown behind the “Map” button on the home screen. Upload your venue map and crop it — pick a taller shape for a portrait map, wider for a landscape one.')}</label>
+          <div id="stMapPreview">${_siteMapPreviewHtml(s.siteMapImage)}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <button class="btn ghost sm" type="button" onclick="document.getElementById('stMapFile').click()">${icSm('upload')} ${s.siteMapImage?'Replace map':'Upload map'}</button>
+            ${s.siteMapImage?`<button class="btn ghost sm" type="button" onclick="removeSiteMap()">${icSm('trash')} Remove map</button>`:''}
+            <input type="file" id="stMapFile" accept="image/*" style="display:none" onchange="siteMapFileChosen(this)">
+          </div>
+          <p class="note-hint" style="text-align:left">Saved as soon as you confirm the crop — you don't need to press Save Settings.</p>
+        </div>
       </div>
     </details>
     <details class="setg"><summary>${icSm('clock')} Check-in &amp; timing ${tick(true)}</summary>
@@ -4418,6 +4691,159 @@ function onStartDateChange(){
   if(start&&endEl&&(!endEl.value||new Date(endEl.value)<new Date(start))){endEl.value=_addDays(start,3);}
   renderCheckinDaysPreview();
 }
+/* ===== SITE MAP (item 8, 2026-07-28) =====================================
+   Upload → crop → bake to a data URI → PATCH /settings {siteMapImage}. The crop tool is ported
+   from YS Connection's logo cropper (`_openLogoCropModal`/`_cropRectFor`/`_cropClampPan` in
+   `Project 7 - Connection Made Simple`) with ONE generalisation: that one is hard-wired to a
+   square viewport, this one takes an aspect ratio, because a venue map is rarely square and the
+   owner asked to keep the shape flexible. The pan/zoom/clamp maths is otherwise the same, with
+   the single `vp` size replaced by `vpW`/`vpH` throughout.
+
+   Output is baked at ~1400px on the long edge — the sample site map is 621x849 with small
+   building labels, and anything smaller loses them. PNG is tried first (flat colour + text
+   compresses well and stays crisp); if that exceeds the schema cap it falls back to high-quality
+   JPEG rather than failing the upload. */
+const _MAP_OUT_LONG_EDGE=1400;
+const _MAP_MAX_CHARS=1_600_000;   // must stay <= the schema's max on siteMapImage
+const _MAP_RATIOS=[['3:4',3/4,'Portrait'],['9:16',9/16,'Tall'],['1:1',1,'Square'],['4:3',4/3,'Landscape']];
+let _mapCrop=null;
+
+function _siteMapPreviewHtml(src){
+  return src
+    ? `<img src="${esc(src)}" alt="Current site map" style="max-width:180px;width:100%;border-radius:12px;border:1px solid var(--line);display:block">`
+    : '<p class="note-hint" style="text-align:left;margin:0">No site map uploaded — the Map button is hidden from the home screen.</p>';
+}
+function siteMapFileChosen(input){
+  const file=input.files&&input.files[0];
+  input.value='';                     // allow re-choosing the same file later
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=()=>_openMapCropModal(String(reader.result));
+  reader.onerror=()=>toast('Could not read that image file');
+  reader.readAsDataURL(file);
+}
+function _openMapCropModal(dataUrl){
+  const probe=new Image();
+  probe.onload=()=>{
+    // Default to the ratio closest to the image's own shape, so the common case needs no choice.
+    const natRatio=probe.naturalWidth/probe.naturalHeight;
+    let best=0;_MAP_RATIOS.forEach((r,i)=>{if(Math.abs(r[1]-natRatio)<Math.abs(_MAP_RATIOS[best][1]-natRatio))best=i;});
+    _mapCrop={dataUrl,natW:probe.naturalWidth,natH:probe.naturalHeight,zoom:1,panX:0,panY:0,dragging:false,ratio:_MAP_RATIOS[best][1]};
+    modal(`<h3>Crop your site map</h3>
+      <p class="sub" style="margin:4px 0 10px">Drag to reposition and zoom to frame it. The shaded area is exactly what people will see. Pick the shape that suits your map.</p>
+      <div class="seg" id="mapRatioSeg" style="margin-bottom:10px">${_MAP_RATIOS.map((r,i)=>`<button type="button" class="${i===best?'on':''}" data-r="${r[1]}" onclick="_mapSetRatio(${r[1]},this)">${r[2]}</button>`).join('')}</div>
+      <div id="mapVp" style="width:min(300px,80vw);margin:0 auto;overflow:hidden;position:relative;border-radius:12px;background:var(--tint-2);touch-action:none">
+        <img id="mapImg" src="${dataUrl}" draggable="false" alt="" style="position:absolute;left:0;top:0;transform-origin:top left;user-select:none;-webkit-user-drag:none">
+      </div>
+      <label style="margin-top:12px">Zoom</label>
+      <input type="range" id="mapZoom" min="1" max="4" step="0.01" value="1" oninput="_mapZoomChange(this.value)" style="width:100%">
+      <button class="btn" style="margin-top:10px" onclick="_mapCropConfirm()">Use this crop</button>
+      <button class="btn ghost" style="margin-top:6px" onclick="_mapCropCancel()">Cancel</button>`,()=>{_mapCrop=null;});
+    _mapApplyRatio();
+    _mapCenter();_mapApplyTransform();_mapBindDrag();
+  };
+  probe.onerror=()=>toast('Could not read that image file');
+  probe.src=dataUrl;
+}
+// Viewport height follows the chosen ratio; width is whatever the modal allows.
+function _mapApplyRatio(){const el=document.getElementById('mapVp');if(el&&_mapCrop)el.style.aspectRatio=String(_mapCrop.ratio);}
+function _mapSetRatio(r,btn){
+  if(!_mapCrop)return;
+  _mapCrop.ratio=r;
+  document.querySelectorAll('#mapRatioSeg button').forEach(b=>b.classList.toggle('on',b===btn));
+  _mapApplyRatio();
+  // The viewport just changed shape, so the previous pan may no longer cover it.
+  _mapCenter();_mapApplyTransform();
+}
+function _mapVpSize(){const el=document.getElementById('mapVp');
+  if(!el)return{w:300,h:300/(_mapCrop?_mapCrop.ratio:1)};
+  const r=el.getBoundingClientRect();return{w:r.width,h:r.height};}
+// Scale at which the image exactly COVERS the viewport at zoom 1 (whichever axis is tighter).
+function _mapDispSizeFor(natW,natH,zoom,vpW,vpH){
+  const scale=Math.max(vpW/natW,vpH/natH)*zoom;
+  return{scale,w:natW*scale,h:natH*scale};}
+function _mapDispSize(){const{w:vpW,h:vpH}=_mapVpSize();
+  const d=_mapDispSizeFor(_mapCrop.natW,_mapCrop.natH,_mapCrop.zoom,vpW,vpH);return{...d,vpW,vpH};}
+// Clamp the pan so the image never reveals empty space past its own edges.
+function _mapClampPan(panX,panY,dispW,dispH,vpW,vpH){
+  return{x:Math.min(0,Math.max(vpW-dispW,panX)),y:Math.min(0,Math.max(vpH-dispH,panY))};}
+// Source rect in the image's OWN natural pixels that reproduces what the viewport shows.
+function _mapRectFor(imgW,imgH,panX,panY,zoom,vpW,vpH){
+  const{scale}=_mapDispSizeFor(imgW,imgH,zoom,vpW,vpH);
+  return{sx:-panX/scale,sy:-panY/scale,sw:vpW/scale,sh:vpH/scale};}
+function _mapCenter(){const{w,h,vpW,vpH}=_mapDispSize();
+  const c=_mapClampPan((vpW-w)/2,(vpH-h)/2,w,h,vpW,vpH);_mapCrop.panX=c.x;_mapCrop.panY=c.y;}
+function _mapApplyTransform(){const img=document.getElementById('mapImg');if(!img||!_mapCrop)return;
+  const{scale}=_mapDispSize();img.style.transform=`translate(${_mapCrop.panX}px, ${_mapCrop.panY}px) scale(${scale})`;}
+function _mapBindDrag(){const vp=document.getElementById('mapVp');if(!vp)return;
+  vp.onpointerdown=e=>{if(!_mapCrop)return;_mapCrop.dragging=true;_mapCrop.startX=e.clientX;_mapCrop.startY=e.clientY;
+    _mapCrop.startPanX=_mapCrop.panX;_mapCrop.startPanY=_mapCrop.panY;
+    if(vp.setPointerCapture)vp.setPointerCapture(e.pointerId);};
+  vp.onpointermove=e=>{if(!_mapCrop||!_mapCrop.dragging)return;
+    const{w,h,vpW,vpH}=_mapDispSize();
+    const c=_mapClampPan(_mapCrop.startPanX+(e.clientX-_mapCrop.startX),_mapCrop.startPanY+(e.clientY-_mapCrop.startY),w,h,vpW,vpH);
+    _mapCrop.panX=c.x;_mapCrop.panY=c.y;_mapApplyTransform();};
+  vp.onpointerup=vp.onpointercancel=()=>{if(_mapCrop)_mapCrop.dragging=false;};
+  vp.onwheel=e=>{if(!_mapCrop)return;e.preventDefault();
+    const next=Math.max(1,Math.min(4,_mapCrop.zoom+(e.deltaY<0?0.1:-0.1)));
+    const s=document.getElementById('mapZoom');if(s)s.value=next;_mapZoomChange(next);};
+}
+// Zoom about the viewport's centre so it feels like zooming into what you're looking at.
+function _mapZoomChange(val){
+  if(!_mapCrop)return;
+  const before=_mapDispSize();
+  const fx=(before.vpW/2-_mapCrop.panX)/before.w, fy=(before.vpH/2-_mapCrop.panY)/before.h;
+  _mapCrop.zoom=Math.max(1,Math.min(4,parseFloat(val)||1));
+  const after=_mapDispSize();
+  const c=_mapClampPan(after.vpW/2-fx*after.w,after.vpH/2-fy*after.h,after.w,after.h,after.vpW,after.vpH);
+  _mapCrop.panX=c.x;_mapCrop.panY=c.y;_mapApplyTransform();
+}
+function _mapCropCancel(){_mapCrop=null;closeModal();}
+async function _mapCropConfirm(){
+  if(!_mapCrop)return;
+  const img=document.getElementById('mapImg');
+  const{w:vpW,h:vpH}=_mapVpSize();
+  const rect=_mapRectFor(_mapCrop.natW,_mapCrop.natH,_mapCrop.panX,_mapCrop.panY,_mapCrop.zoom,vpW,vpH);
+  // Output keeps the crop's aspect ratio, long edge capped — never upscale past the source.
+  const ratio=vpW/vpH;
+  let outW=ratio>=1?_MAP_OUT_LONG_EDGE:Math.round(_MAP_OUT_LONG_EDGE*ratio);
+  let outH=ratio>=1?Math.round(_MAP_OUT_LONG_EDGE/ratio):_MAP_OUT_LONG_EDGE;
+  if(outW>rect.sw&&outH>rect.sh){outW=Math.round(rect.sw);outH=Math.round(rect.sh);}
+  const canvas=document.createElement('canvas');canvas.width=outW;canvas.height=outH;
+  const ctx=canvas.getContext('2d');
+  ctx.imageSmoothingQuality='high';
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,outW,outH);   // flatten transparency (the sample map is RGBA)
+  ctx.drawImage(img,rect.sx,rect.sy,rect.sw,rect.sh,0,0,outW,outH);
+  // PNG keeps map text crisp; fall back to JPEG (then a smaller JPEG) if it's over the cap.
+  let dataUrl=canvas.toDataURL('image/png');
+  if(dataUrl.length>_MAP_MAX_CHARS)dataUrl=canvas.toDataURL('image/jpeg',0.92);
+  if(dataUrl.length>_MAP_MAX_CHARS)dataUrl=canvas.toDataURL('image/jpeg',0.8);
+  if(dataUrl.length>_MAP_MAX_CHARS){toast('That image is too large even after compression — try a smaller crop');return;}
+  _mapCrop=null;closeModal();
+  await _saveSiteMap(dataUrl);
+}
+async function _saveSiteMap(dataUrl){
+  try{
+    await api('/settings',{method:'PATCH',body:{siteMapImage:dataUrl}});
+    SETTINGS=await api('/settings',{noCache:true});
+    toast(dataUrl?'Site map saved':'Site map removed');
+    await RENDER.adminSettings();
+  }catch(e){toast(e.message);}
+}
+async function removeSiteMap(){
+  if(!await confirmSheet({title:'Remove the site map?',body:'The Map button disappears from everyone’s home screen.',confirmLabel:'Remove',danger:true}))return;
+  await _saveSiteMap(null);
+}
+/* The map screen itself — a full-bleed, pinch/scroll-zoomable image. Reachable from the Map
+   button on the home hero (all roles) and hidden entirely when no map is set. */
+RENDER.sitemap=function(){
+  const src=SETTINGS&&SETTINGS.siteMapImage;
+  if(!src){paint('sitemap',emptyState('map','No site map has been uploaded yet.'),'Site map','');return;}
+  paint('sitemap',`<div class="map-wrap"><img src="${esc(src)}" alt="Camp site map" class="map-img" id="siteMapImg" onclick="_mapToggleZoom()"></div>
+    <p class="note-hint">Tap the map to zoom in, tap again to fit.</p>`,'Site map',SETTINGS.campName||'');
+};
+function _mapToggleZoom(){const el=document.getElementById('siteMapImg');if(el)el.classList.toggle('zoom');}
+
 async function saveSettings(){
   try{
     const days=_datesBetween(val('stStart'),val('stEnd'));
@@ -4606,7 +5032,9 @@ RENDER.adminData=async function(){
   // Admin-only: newYear/clearNotifications both assert admin:manage server-side (director lacks
   // it), so hide these two cards for a director reaching this screen via the Data tab's
   // Records & Export button — same isAdmin gate already used below for Save Defaults/Factory Reset.
-  const notifSection=(isAdmin&&CAMP_MODE==='at-camp')?`<div class="card"><div class="h3" style="margin-top:0">Notifications</div><button class="btn red" onclick="adminClear()">Clear all notifications</button></div>`:'';
+  // Item 9 (2026-07-28): "Clear all notifications" moved OUT of its own section into the renamed
+  // "Data reset" block at the bottom (see `dataResetCard`), where the other clearing tools live.
+  // It is also no longer at-camp-only — clearing test notices before camp is a normal thing to do.
   // R9: surface temp passwords still waiting from a new-year rollover so the admin knows to
   // download the workbook (which includes them once, then clears them) rather than lose them.
   const tempBanner=pendingTemps?`<div class="warnbox">${icSm('alert')} ${pendingTemps} restored account${pendingTemps===1?'':'s have'} a temporary password from the last rollover. Download the audit workbook below — its "Temp Passwords" tab lists them (included once, then cleared). Share each securely with its leader.</div>`:'';
@@ -4614,10 +5042,12 @@ RENDER.adminData=async function(){
     <div class="lbl" style="margin-top:0">Compliance Export</div>
     <div class="kv"><span class="k">Last exported</span><span class="v">${esc(exported)}</span></div>
     ${tempBanner}
-    <p class="note-hint" style="text-align:left">Download the full audit workbook (xlsx) or the sign-in/out log (CSV) as standalone files. The xlsx includes: Summary, Attendees, Sign-in/Sign-out Log, Daily Check-in Log, Notes &amp; Testimonies, and Temp Passwords (if applicable).</p>
+    <p class="note-hint" style="text-align:left">Download the full audit workbook (xlsx). It includes: Summary, Attendees, Sign-in &amp; Sign-out Log, Daily Check-in Log, Notes &amp; Testimonies, First-Aid Records, Incidents, and Temp Passwords (if applicable).</p>
     <button class="btn" style="width:100%;margin-top:8px" onclick="downloadAuditExport()">${icSm('download')} Download audit workbook (.xlsx)</button>
-    <button class="btn alt" style="width:100%;margin-top:8px" onclick="downloadCsvExport('/export/signin-out',_exportName('sign-in-out-log','csv'))">${icSm('download')} Sign-in/out log (.csv)</button>
   </div>`;
+  // Item 25 (2026-07-28): the standalone "Sign-in/out log (.csv)" button is gone — that data is
+  // already a sheet in the workbook above, so the second button was a redundant partial export.
+  // The backend route (`/export/signin-out`) is left in place; nothing in the UI calls it now.
   const closeOutCard=isAdmin?`<div class="card" style="border:1px solid #fbbf24">
     <div class="lbl" style="margin-top:0;color:#92400e">Close-out camp</div>
     <p class="note-hint" style="text-align:left;color:#92400e">Complete all 3 steps before rolling over to a new year.</p>
@@ -4628,12 +5058,22 @@ RENDER.adminData=async function(){
       <div class="kv"><span class="k">Last saved</span><span class="v">${esc(defaultsSaved)}</span></div>
       <button class="btn" style="margin-top:8px" onclick="adminSaveDefaults()">Save Defaults</button>
       <p class="note-hint" style="text-align:left">Snapshots the current churches, accounts, accommodation, FAQ, schedule &amp; devotionals as the reusable baseline. Run this once camp is fully configured. The end-of-camp purge &amp; restore is the separate <b>Close-Out Camp</b> step below.</p></div>`:'';
-  const factoryResetCard=isAdmin?`<div class="card"><div class="h3" style="margin-top:0">Factory reset</div>
-      <button class="btn red" onclick="adminReset()">Full reset (wipe to bare)</button>
+  // Item 9 (2026-07-28): "Factory reset" is now "Data reset" and holds all three clearing tools,
+  // ordered least → most destructive: clear notifications, reset logs, full reset.
+  const dataResetCard=isAdmin?`<div class="card"><div class="h3" style="margin-top:0">Data reset</div>
+      <button class="btn ghost" onclick="adminClear()">Clear all notifications</button>
+      <p class="note-hint" style="text-align:left">Deletes every notice (sent and scheduled). Nothing else is affected.</p>
+      <button class="btn red" style="margin-top:12px" onclick="adminResetLogs()">Reset logs</button>
+      <p class="note-hint" style="text-align:left">Clears everything the compliance workbook exports — check-ins, sign-in/out history, notes &amp; testimonies, first-aid records and incidents — and returns everyone to “not signed in”. Registrations, churches, accounts and setup are kept.</p>
+      <button class="btn red" style="margin-top:12px" onclick="adminReset()">Full reset (wipe to bare)</button>
       <p class="note-hint" style="text-align:left">Deletes ALL data and every non-admin account, keeping only this admin account &amp; the camp settings. No restore. Signs you out.</p></div>`:'';
-  // PC-1: order = 1. Save Defaults, 2. Compliance Export, 3. Close-Out, 4. Factory Reset.
+  // Item B (2026-07-28): a route to Budget & Costings from here (admin + director both hold
+  // `budget:manage`, and this screen is a director's main landing point for records).
+  const budgetCard=`<div class="card tap" onclick="go('budget')"><div class="rowsb"><div><div style="font-weight:600">Budget &amp; Costings</div><div class="sub">Registration fee totals by church, with discount-code breakdown</div></div><span class="pill info">View ›</span></div></div>`;
+  // PC-1 order, updated: 1. Data table, 2. Budget, 3. Save Defaults, 4. Compliance Export,
+  // 5. Close-Out, 6. Data reset.
   paint('adminData',
-    `${dataTableCard}${notifSection}${saveDefaultsCard}${complianceCard}${closeOutCard}${factoryResetCard}`,
+    `${dataTableCard}${budgetCard}${saveDefaultsCard}${complianceCard}${closeOutCard}${dataResetCard}`,
     'Data Export/Reset','Export & reset');
 };
 /* Standalone import screen (its own "Data Import" admin console tile / nav entry) — also
@@ -5067,31 +5507,68 @@ function adminNewYear(){
     <button class="btn" onclick="closeModal();go('adminRecords')">Go to Records &amp; Export ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
+/* Typed destructive confirmations (2026-07-28).
+   The backend still requires the phrase EXACTLY (`CONFIRM_WIPE_STRING` in admin.service.ts is a
+   protocol constant, not user input), but what the admin TYPES is now compared
+   case-insensitively and with surrounding whitespace trimmed — a phone that auto-capitalises
+   "i understand…" should not read as a failed confirmation. The canonical string is what gets
+   sent over the wire regardless of how it was typed. */
+const _CONFIRM_PHRASE='I understand this cannot be undone';
+const _confirmPhraseOk=v=>String(v||'').trim().toLowerCase()===_CONFIRM_PHRASE.toLowerCase();
 function adminReset(){
   modal(`<h3>FULL RESET — wipe to bare</h3>
-    <p class="sub" style="margin:8px 0 14px">This permanently deletes EVERY church, EVERY login account (except this admin), and ALL registrants, campers, notes, notifications, and the saved setup scaffold (accommodation, FAQ, schedule, devotionals). Only this admin account and the camp settings remain.<br><br>This is NOT the year rollover (that keeps your churches &amp; scaffold). It cannot be undone, and you will be signed out immediately.</p>
-    <label>Type exactly: I understand this cannot be undone</label>
-    <input class="fld" id="resetConfirmText" oninput="onResetConfirmChange()" placeholder="I understand this cannot be undone" autocomplete="off">
+    <p class="sub" style="margin:8px 0 14px">This permanently deletes EVERY church, EVERY login account (except this admin), and ALL registrants, campers, notes, incidents, notifications, and the saved setup scaffold (accommodation, FAQ, schedule, devotionals). Only this admin account and the camp settings remain.<br><br>This is NOT the year rollover (that keeps your churches &amp; scaffold). It cannot be undone, and you will be signed out immediately.</p>
+    <label>Type: ${esc(_CONFIRM_PHRASE)}</label>
+    <input class="fld" id="resetConfirmText" oninput="onResetConfirmChange()" placeholder="${esc(_CONFIRM_PHRASE)}" autocomplete="off" autocapitalize="none">
     <button class="btn red" id="resetConfirmBtn" disabled style="margin-top:10px" onclick="_adminResetConfirmed()">Confirm full reset</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
 function onResetConfirmChange(){
-  const v=document.getElementById('resetConfirmText')?.value||'';
   const btn=document.getElementById('resetConfirmBtn');
-  if(btn)btn.disabled=(v!=='I understand this cannot be undone');
+  if(btn)btn.disabled=!_confirmPhraseOk(document.getElementById('resetConfirmText')?.value);
+}
+function _exportFirstModal(what){
+  modal(`<h3>Export required first</h3>
+    <p class="sub" style="margin:8px 0 14px">No audit export has been run. Download the records first in Records &amp; Export, then retry the ${esc(what)}.</p>
+    <button class="btn" onclick="closeModal();go('adminData')">Go to Records &amp; Export ${icSm('arrowr')}</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
 async function _adminResetConfirmed(){
   closeModal();
   try{
-    await api('/admin/reset',{method:'POST',body:{force:true,confirmWipe:'I understand this cannot be undone'}});
+    await api('/admin/reset',{method:'POST',body:{force:true,confirmWipe:_CONFIRM_PHRASE}});
     alert('Full reset complete. Signing out.');logout();
   }catch(e){
-    if(e.message&&e.message.toLowerCase().includes('export')){
-      modal(`<h3>Export required first</h3>
-        <p class="sub" style="margin:8px 0 14px">No audit export has been run. Download the records first in Records &amp; Export, then retry the reset.</p>
-        <button class="btn" onclick="closeModal();go('adminRecords')">Go to Records &amp; Export ${icSm('arrowr')}</button>
-        <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
-    }else{toast(e.message);}
+    if(e.message&&e.message.toLowerCase().includes('export'))_exportFirstModal('reset');
+    else toast(e.message);
+  }
+}
+/* Item 9 (2026-07-28) — Reset logs: clears exactly what a compliance workbook contains
+   (attendance history, notes/testimonies/first-aid records, incidents) and returns everyone to
+   "not signed in". Registrations, churches, accounts and the whole setup scaffold are kept.
+   Same typed confirmation as a full reset (owner's request). */
+function adminResetLogs(){
+  modal(`<h3>Reset logs</h3>
+    <p class="sub" style="margin:8px 0 14px">Clears everything the compliance workbook exports: every check-in, every sign-in/sign-out, all notes &amp; testimonies, all first-aid records and all incidents. Everyone returns to <b>not signed in</b>.<br><br><b>Kept:</b> registrations, churches, accounts, accommodation, schedule, devotionals, FAQ and camp settings. Notifications are cleared separately (button above). This cannot be undone.</p>
+    <label>Type: ${esc(_CONFIRM_PHRASE)}</label>
+    <input class="fld" id="rlConfirmText" oninput="onResetLogsConfirmChange()" placeholder="${esc(_CONFIRM_PHRASE)}" autocomplete="off" autocapitalize="none">
+    <button class="btn red" id="rlConfirmBtn" disabled style="margin-top:10px" onclick="_adminResetLogsConfirmed()">Confirm reset logs</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+}
+function onResetLogsConfirmChange(){
+  const btn=document.getElementById('rlConfirmBtn');
+  if(btn)btn.disabled=!_confirmPhraseOk(document.getElementById('rlConfirmText')?.value);
+}
+async function _adminResetLogsConfirmed(){
+  closeModal();
+  try{
+    const r=await api('/admin/reset-logs',{method:'POST',body:{force:true,confirmWipe:_CONFIRM_PHRASE}});
+    toast(`Logs cleared · ${r.people||0} rosters reset, ${r.notes||0} notes, ${r.incidents||0} incidents`);
+    Cache.clear();   // attendance, notes, incidents and the dashboard are all now stale
+    await RENDER.adminData();
+  }catch(e){
+    if(e.message&&e.message.toLowerCase().includes('export'))_exportFirstModal('log reset');
+    else toast(e.message);
   }
 }
 async function adminClear(){if(!await confirmSheet({title:'Clear all notifications?',confirmLabel:'Clear',danger:true}))return;
@@ -5318,9 +5795,15 @@ async function saveDevo(d){try{await api('/devotional',{method:'POST',body:{day:
 // Inputs are addressed by CLASS within each .sched-row (not index-based ids), so a row can be
 // deleted from the middle without renumbering the rest — saveSchedDay reads the live rows.
 function _schedRow(d,r,t,n){return `<div class="sched-row" style="display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:6px;margin-bottom:5px;align-items:center">`
-  +`<input class="fld sr-t" type="time" value="${esc(t||'')}">`
-  +`<input class="fld sr-n" placeholder="Activity" value="${esc(n||'')}">`
+  +`<input class="fld sr-t" type="time" value="${esc(t||'')}" onfocus="_schedFocus(this)">`
+  +`<input class="fld sr-n" placeholder="Activity" value="${esc(n||'')}" onfocus="_schedFocus(this)">`
   +`<button class="iconbtn danger" type="button" title="Delete row" onclick="this.closest('.sched-row').remove()">${icSm('trash')}</button></div>`;}
+// Bug 1 (2026-07-28): "+ Add row" inserts AFTER the row the admin last typed in / focused,
+// not always at the end. `_schedLastRow` holds that row element; it is cleared automatically
+// when the row is removed from the DOM (the `.isConnected` check below), and a day whose rows
+// were never touched still appends at the end.
+let _schedLastRow=null;
+function _schedFocus(inp){_schedLastRow=inp.closest('.sched-row');}
 const SCHED_MIN_ROWS=7;
 async function _acScheduleBody(){
   const days=SETTINGS?.checkInDays||[];
@@ -5330,7 +5813,8 @@ async function _acScheduleBody(){
       .sort((a,b)=>String(a.startTime||'').localeCompare(String(b.startTime||'')));
     const n=Math.max(SCHED_MIN_ROWS,items.length);
     let rows='';for(let r=0;r<n;r++){const it=items[r]||{};rows+=_schedRow(d,r,it.startTime,it.title);}
-    return `<div class="card"><div class="h3" style="margin-top:0">${dayLong(d)} <span style="color:var(--muted);font-weight:600">· ${d}</span></div>
+    return `<div class="card"><div class="h3" style="margin-top:0">${dayLong(d)} <span style="color:var(--muted);font-weight:600">· ${d}</span>
+      ${helpTip('Activities are colour-coded on the schedule screen by keyword — '+_schedKeywordHelp()+' Each item is sized by how long it runs (until the next item starts).',{left:true})}</div>
       <div style="display:grid;grid-template-columns:80px minmax(0,1fr) auto;gap:8px;font-size:.6rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px"><span>Time</span><span>Activity</span><span style="width:32px"></span></div>
       <div id="schedRows_${d}">${rows}</div>
       <div style="display:flex;gap:6px;margin-top:8px">
@@ -5340,7 +5824,15 @@ async function _acScheduleBody(){
   return blocks.join('');
 }
 function addSchedRow(d){const wrap=document.getElementById('schedRows_'+d);if(!wrap)return;
-  wrap.insertAdjacentHTML('beforeend',_schedRow(d,wrap.children.length,'',''));}
+  const html=_schedRow(d,wrap.children.length,'','');
+  // Insert after the last-focused row, but only if that row still belongs to THIS day's table
+  // (each day is its own `#schedRows_<d>` wrapper) and is still in the document.
+  const last=_schedLastRow;
+  if(last&&last.isConnected&&last.parentElement===wrap){last.insertAdjacentHTML('afterend',html);
+    const added=last.nextElementSibling;if(added){_schedLastRow=added;const f=added.querySelector('.sr-t');if(f)f.focus();}
+    return;}
+  wrap.insertAdjacentHTML('beforeend',html);
+  _schedLastRow=wrap.lastElementChild;}
 // Table is the source of truth: saving replaces the whole day's schedule with the
 // filled rows (time + title both present). Cleared rows are dropped.
 async function saveSchedDay(d){

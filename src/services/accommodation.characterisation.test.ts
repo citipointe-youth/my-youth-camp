@@ -248,11 +248,15 @@ describe('AccommodationService allocations', () => {
   // the bracket on save, so the reloaded 2-part key matched no live group and the allocation
   // silently vanished. This pins the full save→load round-trip for a 3-part key.
   it('round-trips a PC-10 split (3-part) allocation key through persistence', async () => {
-    // 60 male classroom youth in grades 7-9 → pool of 60 > 50 → splits; the 7-9 sub-pool
-    // has 60 people (no 10-12 youth, no leaders), key `c1|male|7-9`.
-    const big = Array.from({ length: 60 }, (_, i) =>
-      reg({ id: `m${i}`, churchId: 'c1', gender: 'male', grade: 8 }),
-    );
+    // 60 male classroom youth: 40 in grade 8 and 20 in grade 11 → gender pool 60 > 50, so it
+    // splits into brackets; NEITHER bracket exceeds 50, so both stay whole and the 7-9 key is
+    // `c1|male|7-9`. (Bug 5, 2026-07-28: a bracket that IS over 50 splits again into year
+    // levels — covered in accommodation-allocation.test.ts. This case deliberately keeps a
+    // bracket key so the 3-part persistence round-trip is still what's being pinned here.)
+    const big = [
+      ...Array.from({ length: 40 }, (_, i) => reg({ id: `m${i}`, churchId: 'c1', gender: 'male', grade: 8 })),
+      ...Array.from({ length: 20 }, (_, i) => reg({ id: `s${i}`, churchId: 'c1', gender: 'male', grade: 11 })),
+    ];
     const { svc } = await build({
       rooms: [room({ id: 'rm1', capacity: 100 })],
       churches: [church({ id: 'c1' })],

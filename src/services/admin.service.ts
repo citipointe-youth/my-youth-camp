@@ -12,6 +12,8 @@ import type {
   ISettingsRepository,
   ISnapshotRepository,
   IAllocationOverrideRepository,
+  IIncidentRepository,
+  IPushSubscriptionRepository,
 } from '../repositories/interfaces/entity-repositories';
 import type { CampSettings } from '../core/entities/settings';
 import type { Church } from '../core/entities/church';
@@ -48,8 +50,16 @@ export interface WipeOpts {
 
 const CONFIRM_WIPE_STRING = 'I understand this cannot be undone';
 
+/** What `resetLogs` cleared, for the confirmation toast. */
+export interface ResetLogsResult {
+  people: number;      // people whose attendance history was cleared
+  notes: number;       // notes + testimonies + first-aid records deleted
+  incidents: number;
+}
+
 export interface AdminService {
   reset(actor: Actor, opts?: WipeOpts): Promise<{ ok: true }>;
+  resetLogs(actor: Actor, opts?: WipeOpts): Promise<ResetLogsResult>;
   saveDefaults(actor: Actor): Promise<{ ok: true }>;
   newYear(actor: Actor, year: number, opts?: WipeOpts): Promise<NewYearResult>;
   clearNotifications(actor: Actor): Promise<{ deleted: number }>;
@@ -70,6 +80,11 @@ export function makeAdminService(
   settingsRepo: ISettingsRepository,
   snapshotRepo: ISnapshotRepository,
   overrideRepo: IAllocationOverrideRepository,
+  // Bug 16 (2026-07-28): incidents (and push subscriptions) survived a "full reset" because the
+  // service was never given those repos — the wipe list was silently incomplete. Added here so
+  // reset() clears them; also backs the new resetLogs().
+  incidentRepo: IIncidentRepository,
+  pushSubRepo: IPushSubscriptionRepository,
 ): AdminService {
   const settingsService = makeSettingsService(settingsRepo);
 
@@ -115,6 +130,10 @@ export function makeAdminService(
         noteRepo.deleteAll(),
         devotionalRepo.deleteAll(),
         overrideRepo.deleteAll(),
+        // Bug 16: these two were missing — incidents survived a "full reset" (reported), and
+        // orphaned push subscriptions would have kept pushing to deleted accounts' devices.
+        incidentRepo.deleteAll(),
+        pushSubRepo.deleteAll(),
       ]);
 
       // Delete every non-admin account (keep the single admin).
@@ -123,6 +142,51 @@ export function makeAdminService(
 
       invalidateDashboardCache();
       return { ok: true };
+    },
+
+    /**
+     * RESET LOGS (item 9, 2026-07-28) — clears everything a compliance workbook export
+     * contains, and nothing else. Registrations, churches, accounts, accommodation, schedule,
+     * devotionals, FAQ and settings are all kept, so the camp stays fully configured.
+     *
+     * Cleared: every person's check-in and sign-in/sign-out history (and their presence is
+     * returned to "not signed in", so the roster is genuinely back to a pre-activity state
+     * rather than showing people at camp with no arrival record), all notes/testimonies/
+     * first-aid records, and all incidents. Notifications are DELIBERATELY not touched — they
+     * are their own button on the same screen.
+     *
+     * Guarded by the same export-or-force gate as a full reset: destroying the audit trail
+     * without a saved export is exactly what that guard exists to prevent.
+     */
+    async resetLogs(actor, opts) {
+      if (actor.role !== 'admin') throw new ForbiddenError('Only admin can reset logs');
+      await assertExportedOrForce(opts);
+
+      const people = await personRepo.findAll();
+      const touched = people.filter(
+        (p) => p.checkInHistory.length > 0 || p.signOutHistory.length > 0 || p.atCamp,
+      );
+      if (touched.length) {
+        const now = nowISO();
+        await personRepo.saveMany(
+          touched.map((p) => ({
+            ...p,
+            checkInHistory: [],
+            signOutHistory: [],
+            atCamp: false,
+            // Anyone who had arrived/departed goes back to 'registered'; a cancelled or
+            // already-registered person keeps their lifecycle untouched.
+            lifecycle: p.lifecycle === 'cancelled' || p.lifecycle === 'registered' ? p.lifecycle : 'registered',
+            updatedAt: now,
+          })),
+        );
+      }
+
+      const [notes, incidents] = await Promise.all([noteRepo.findAll(), incidentRepo.findAll()]);
+      await Promise.all([noteRepo.deleteAll(), incidentRepo.deleteAll()]);
+
+      invalidateDashboardCache();
+      return { people: touched.length, notes: notes.length, incidents: incidents.length };
     },
 
     async saveDefaults(actor) {

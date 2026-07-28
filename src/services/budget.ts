@@ -245,7 +245,16 @@ const DISCOUNT_PERCENT_TOLERANCE = 3;
 function deriveDiscountPurpose(pairs: { cost: number; discount: number }[]): string | null {
   const valid = pairs.filter((p) => p.cost > 0 && p.discount != null);
   if (!valid.length) return null;
+  /* Item C (2026-07-28) — TICKET-DIFFERENCE CODES.
+     When someone buys the wrong ticket and is issued a code covering what they already paid, the
+     discount is (nearly) the whole ticket price. Counted as an ordinary concession that reads as
+     "100% Off", which is materially misleading: nobody was sponsored, they simply paid in two
+     instalments. Such a code is still COUNTED in the summary (the owner's call) but is labelled
+     for what it is, so a director reading the budget isn't left thinking free places were given
+     away. The test is a discount at/above ~97% of the ticket price, which is exactly the
+     already-paid-the-difference shape and never a real 70%-or-less concession tier. */
   const avgPercent = valid.reduce((s, p) => s + (p.discount / p.cost) * 100, 0) / valid.length;
+  if (avgPercent >= 97) return 'Ticket difference — already paid';
   const bucket = DISCOUNT_PERCENT_BUCKETS.find((b) => Math.abs(avgPercent - b) <= DISCOUNT_PERCENT_TOLERANCE);
   if (bucket != null) return `${bucket}% Off`;
   const avgDollar = Math.round(valid.reduce((s, p) => s + p.discount, 0) / valid.length);

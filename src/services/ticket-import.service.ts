@@ -5,7 +5,7 @@ import type { AccommodationKind, PaymentStatus } from '../core/types/enums';
 import { assertCan } from './access-control';
 import { BadRequestError } from '../core/errors/app-error';
 import { parseCsv } from '../utils/csv';
-import { field } from './elvanto-mapping';
+import { field, isBlankRow } from './elvanto-mapping';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import {
@@ -99,10 +99,17 @@ export function makeTicketImportService(
       const index = buildNameIndex(allPersons);
       const touched = new Map<string, Person>();
       const occurrencesSeen = new Set<string>();
+      // Item A/B: how many Active ticket rows in THIS file resolved to each person (see the
+      // duplicate-ticket note in the matched branch below).
+      const ticketRowsByPerson = new Map<string, number>();
 
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]!;
         const rowNum = i + 2;
+        // Item 12 (2026-07-28): an entirely-blank row (trailing newline / spreadsheet padding) is
+        // padding, not a defect — skip it silently instead of reporting a missing-name error on a
+        // file that otherwise imports perfectly.
+        if (isBlankRow(row)) { skipped++; continue; }
 
         try {
           const firstName = field(row, 'First Name', 'firstName', 'first_name');
@@ -169,6 +176,16 @@ export function makeTicketImportService(
 
           if (match.status === 'matched') {
             const existing = touched.get(match.person.id) ?? match.person;
+            /* Item A/B (2026-07-28) — SECOND ACTIVE TICKET FOR THE SAME PERSON.
+               The "bought the wrong ticket, then bought the right one with a difference-only
+               discount code" flow produces two Active ticket rows for one registrant. Matching
+               already handles it correctly (same person, later row's ticket type wins — which is
+               the corrected ticket), so no duplicate person is created. What was missing was any
+               SIGNAL: the admin had no way to know a person's accommodation had been decided by
+               one of two competing tickets. Warn, and flag for review so the roster gets a human
+               check before it's trusted. */
+            const dupTickets = (ticketRowsByPerson.get(match.person.id) ?? 0) + 1;
+            ticketRowsByPerson.set(match.person.id, dupTickets);
             // Bug 2: the church accommodation override applies to EVERYONE in the church
             // (students AND leaders), not just youth — matches import.service + allocate.
             const churchOverride = churchOverrideById.get(existing.churchId);
@@ -206,6 +223,19 @@ export function makeTicketImportService(
               accommodationKindConfidence: finalConfidence,
               updatedAt: now,
             };
+
+            if (dupTickets > 1) {
+              const kindLabel = finalKind ?? 'unchanged';
+              warnings.push({
+                row: rowNum,
+                message:
+                  `${firstName} ${lastName} has ${dupTickets} active tickets in this file — ` +
+                  `kept "${kindLabel}" from ticket #${ticketNumber || '—'} (this row). Flagged for review.`,
+              });
+              merged.needsReview = true;
+              merged.needsReviewReason =
+                `Multiple active tickets found (${dupTickets}) — accommodation taken from ticket #${ticketNumber || '—'}`;
+            }
 
             const firstTouch = !touched.has(merged.id);
             touched.set(merged.id, merged);

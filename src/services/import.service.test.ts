@@ -443,3 +443,57 @@ describe('import: unallocated + overrides', () => {
     expect(await overrideRepo.findAll()).toHaveLength(0);
   });
 });
+
+/* Item A follow-up (2026-07-28) — NAME who is about to be deleted.
+   The Form import is authoritative: anyone absent from the file is removed. The result carried
+   only a `deleted` COUNT, so a spelling change or a wrong export could silently drop real
+   registrants and the admin would only find out afterwards. Each absent person now gets its own
+   warning row, visible in the dry-run preview BEFORE anything is confirmed. */
+describe('ImportService.importCsv — warns by name about pending deletions', () => {
+  const seed = 'First Name,Last Name,Church,Grade\nSam,Lee,Victory,9\nJo,Kim,Victory,10';
+
+  it('names each absent person in a warning, and does so on a DRY RUN before any deletion', async () => {
+    const { svc, personRepo } = await build();
+    await svc.importCsv(actor('admin'), { csvData: seed });
+
+    const res = await svc.importCsv(actor('admin'), {
+      csvData: 'First Name,Last Name,Church,Grade\nSam,Lee,Victory,9',
+      dryRun: true,
+    });
+    expect(res.deleted).toBe(1);
+    expect(res.warnings.some((w) => /Jo Kim/.test(w.message) && /DELETED/.test(w.message))).toBe(true);
+    // Dry run: nobody was actually removed.
+    expect(await personRepo.findAll()).toHaveLength(2);
+  });
+
+  it('raises no deletion warning when everyone in the DB is still in the file', async () => {
+    const { svc } = await build();
+    await svc.importCsv(actor('admin'), { csvData: seed });
+    const res = await svc.importCsv(actor('admin'), { csvData: seed, updateExisting: true });
+    expect(res.deleted).toBe(0);
+    expect(res.warnings.filter((w) => /will be DELETED/.test(w.message))).toEqual([]);
+  });
+});
+
+/* Item 12 (2026-07-28): a trailing blank line is spreadsheet padding, not a defect. It used to
+   report "Missing firstName or lastName" on a file that otherwise imported perfectly — the
+   reported "throws first/last name not detected but then imports successfully" symptom. */
+describe('ImportService.importCsv — blank padding rows (item 12)', () => {
+  it('skips an entirely-blank row without an error', async () => {
+    const { svc } = await build();
+    const res = await svc.importCsv(actor('admin'), {
+      csvData: 'First Name,Last Name,Church,Grade\nSam,Lee,Victory,9\n,,,',
+    });
+    expect(res.errors).toEqual([]);
+    expect(res.created).toBe(1);
+    expect(res.skipped).toBe(1);
+  });
+
+  it('still reports a genuinely half-filled row as an error', async () => {
+    const { svc } = await build();
+    const res = await svc.importCsv(actor('admin'), {
+      csvData: 'First Name,Last Name,Church,Grade\nSam,,Victory,9',
+    });
+    expect(res.errors.some((e) => /Missing firstName or lastName/.test(e.message))).toBe(true);
+  });
+});

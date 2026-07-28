@@ -6,7 +6,7 @@ import { assertCan } from './access-control';
 import { BadRequestError } from '../core/errors/app-error';
 import { parseCsv } from '../utils/csv';
 import { nowISO } from '../utils/date';
-import { field } from './elvanto-mapping';
+import { field, isBlankRow } from './elvanto-mapping';
 import {
   buildNameIndex, findPersonMatch, mergeOwnedFields,
 } from './person-matching';
@@ -127,6 +127,10 @@ const OWNED_KEYS = [
   'taxAmount',
   'accommodationKind',
   'accommodationKindConfidence',
+  // Item A (2026-07-28): the multi-invoice review flag has to be an owned key or
+  // `mergeOwnedFields` silently drops it (it only copies keys named here).
+  'needsReview',
+  'needsReviewReason',
 ] as const satisfies readonly (keyof Person)[];
 
 export function makeInvoiceImportService(personRepo: IPersonRepository): InvoiceImportService {
@@ -164,10 +168,18 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
       const nameIndex = buildNameIndex(allPeople);
 
       const touched = new Map<string, Person>();
+      /* Item A (2026-07-28): running per-person money totals for THIS run only — see the
+         accumulation note at the single-match branch below. Keyed by person id. */
+      const moneyByPerson = new Map<string, {
+        amountPaid: number | null; discountAmount: number | null;
+        feesAmount: number | null; taxAmount: number | null; rows: number;
+      }>();
 
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]!;
         const rowNum = i + 2;
+        // Item 12 (2026-07-28): see import.service.ts — a blank padding row is skipped silently.
+        if (isBlankRow(row)) { skipped++; continue; }
 
         try {
           const invoiceNumber = field(row, 'Invoice Number', 'Invoice #', 'Invoice ID', 'invoiceNumber') || null;
@@ -279,11 +291,48 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
           // Single match.
           const person = matchedPeople[0]!;
           const incoming: Partial<Person> = {};
+
+          /* Item A (2026-07-28) — MULTIPLE INVOICES FOR ONE PERSON.
+             Real case: someone buys the wrong ticket ($150), is told to buy the correct one
+             ($190) with a discount code covering the difference, and pays $40. That is two
+             invoice rows for one registrant. The old behaviour was last-row-wins, so the budget
+             recorded whichever row happened to come second and under-reported what was actually
+             paid.
+             Now the money fields ACCUMULATE across rows within a run: amountPaid / discountAmount
+             / feesAmount / taxAmount are summed, and registrationCost takes the LATEST row's
+             ticket total (the corrected ticket is the one they're actually attending on).
+             Accumulation starts from the rows in THIS file, never from the stored value — so
+             re-importing the same export is idempotent and cannot double-count. */
+          const prior = moneyByPerson.get(person.id);
+          const sum = (a: number | null | undefined, b: number | null) =>
+            b === null ? (a ?? null) : (a ?? 0) + b;
+          const acc = {
+            amountPaid: sum(prior?.amountPaid, amountPaid),
+            discountAmount: sum(prior?.discountAmount, discountAmount),
+            feesAmount: sum(prior?.feesAmount, feesAmount),
+            taxAmount: sum(prior?.taxAmount, taxAmount),
+            rows: (prior?.rows ?? 0) + 1,
+          };
+          moneyByPerson.set(person.id, acc);
+          if (prior) {
+            warnings.push({
+              row: rowNum,
+              message:
+                `${person.firstName} ${person.lastName} has ${acc.rows} invoices in this file — ` +
+                `amounts summed (paid ${acc.amountPaid ?? 0}, discount ${acc.discountAmount ?? 0}); ` +
+                `ticket total taken from this row. Flagged for review.`,
+            });
+            // Gate (item A/B): a person with more than one invoice is worth a human look before
+            // the budget is trusted — same review flag the Ticket List import uses.
+            incoming.needsReview = true;
+            incoming.needsReviewReason = `Multiple invoices found (${acc.rows}) — amounts were summed`;
+          }
+
           if (ticketTotal !== null) incoming.registrationCost = ticketTotal;
-          if (discountAmount !== null) incoming.discountAmount = discountAmount;
-          if (amountPaid !== null) incoming.amountPaid = amountPaid;
-          if (feesAmount !== null) incoming.feesAmount = feesAmount;
-          if (taxAmount !== null) incoming.taxAmount = taxAmount;
+          if (acc.discountAmount !== null) incoming.discountAmount = acc.discountAmount;
+          if (acc.amountPaid !== null) incoming.amountPaid = acc.amountPaid;
+          if (acc.feesAmount !== null) incoming.feesAmount = acc.feesAmount;
+          if (acc.taxAmount !== null) incoming.taxAmount = acc.taxAmount;
           if (discountCode) incoming.discountCode = discountCode;
 
           const alreadyConfirmed =

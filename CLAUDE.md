@@ -224,6 +224,170 @@ Fixes — all switched `position:absolute`→`position:fixed` so they track the 
 GOTCHA for future overlays: any full-viewport overlay/toast MUST be `position:fixed`, never
 `position:absolute` — the phone `.app` is not viewport-height, it grows with the scrolling content.
 
+## 28-item bug/improvement batch — deployed 2026-07-28
+
+Owner-requested batch (25 numbered items + 3 folded in mid-session). SPA + backend +
+**migration `0016`** (`settings.site_map_image`, **applied to prod BEFORE the code push** —
+`supabase.settings` writes every column on every save, so the column must exist first).
+`npm run typecheck` clean, `npm run test` = **670 pass** (was 634; 36 new), SPA `node --check` OK.
+`sw.js` `camp-v50`→`camp-v51`. Full symptom router for everything below: `debug.md`, section
+"2026-07-28 — 28-item bug/improvement batch".
+
+### Schedule
+- **1 — "+ Add row" inserts after the last-focused row** (`_schedLastRow`/`_schedFocus`/
+  `addSchedRow`), falling back to append when nothing has been touched or the remembered row
+  belongs to another day's table.
+- **2 — The schedule plan view is now a proportional, colour-coded timeline.** `RENDER.schedule`
+  + `SCHED_CATEGORIES`/`schedCategory()`/`_schedMinutes()`/`_schedHeight()` + `.sch-*` CSS.
+  Colour comes from a keyword match on the activity TITLE (session → violet, zone battle → rose,
+  pre show → teal, meal words → amber, everything else → grey). Each item's height is the time
+  until the NEXT item starts; the last item of the day runs to 24:00 (what "Lights Out" wants).
+  Heights are deliberately compressed (`40 + mins*0.38`, clamped 54–190px) so a 30-minute item
+  stays tappable and an overnight block doesn't push the day off screen. The admin editor is
+  visually unchanged but gained a `helpTip` quoting the keyword list via `_schedKeywordHelp()` —
+  one source of truth with `SCHED_CATEGORIES`.
+- **3 — Moving the camp dates now carries day-keyed content with it.** `remapDays()` +
+  `applyDayMoves()` in `settings.service.ts` (wired with the devotional + schedule repos in
+  `container.ts`). Devotionals and schedule items are stored against an absolute DATE but authored
+  per day NUMBER, so shifting the start date used to strand every one of them on dates the app no
+  longer reads — the data was intact but every screen went blank. They are now re-keyed by
+  POSITION (old day 1 → new day 1). Rows are deleted then re-saved, because an overlapping shift
+  means day 2's old date IS day 1's new date. **Shrinking the camp hides rather than deletes** the
+  surplus day, so lengthening again (or fixing a mistyped date) recovers it. Applied to the
+  schedule as well as devotionals — identical mechanism, identical silent-loss failure.
+
+### Accommodation & budget
+- **5 — Second-level classroom split.** A church×gender pool over `SPLIT_THRESHOLD` (50) still
+  splits into `7-9`/`10-12`; a bracket that is ITSELF over 50 now splits again into single year
+  levels `Y7`…`Y12` — up to 6 pools per gender, 12 per church, gender always honoured.
+  `yearGroupsFor`/`spreadLeaders` (`accommodation-allocation.ts`, tested) + the SPA mirrors
+  `_accomYearGroups`/`_spreadLeaders`. Leaders halve across brackets then spread evenly across
+  that bracket's year levels (remainder to the earliest year); unknown-grade youth ride with the
+  bracket's lowest year. `classroom_allocations.bracket` is unconstrained `text` — no migration.
+- **4 — Budget category rows were blank.** `_budScopeRows` built rows with no `label` while
+  `drawBudget`'s `catRow` renders `esc(r.label)`, so every line under a church's Campers/Leaders
+  heading was empty (a null-cost row showed a bare warning triangle). `_budLabel(amount, full)`
+  now fills it; `full` was already being passed in for exactly this purpose and was unused.
+- **23 / B — Navigation to allocations and budget.** Admin → Accommodation setup gained a button
+  straight to the allocations map. Budget & Costings gained an admin-console tile, a card on Data
+  Export/Reset, and a sidebar entry for admin AND director in BOTH modes (it was pre-camp-only, so
+  an admin on a laptop mid-camp had no route to it at all).
+
+### Accounts, home, first aid
+- **13 — The two gendered church logins are edited as ONE unit.** Previously both `b-`/`g-` tiles
+  opened the same modal, which only ever found the FIRST account — so editing the girls' username
+  silently rewrote the boys' one and the pair collided into an unusable state. Account Info and
+  Bulk Church Update now take a single BASE username and re-apply the `b-`/`g-` prefix per account
+  (`_churchUserBase`/`_churchAccts`/`_churchPrefix`); church name, zone and delete already applied
+  to both. Passwords stay per account (owner's call). The accounts screen renders one joined
+  `.ch-pair` card per church with a light-blue Boys half and a light-pink Girls half, so the UI
+  matches how the pair actually behaves.
+- **14 — A church login is greeted by its FULL name.** `dashboard.service.greetingName` no longer
+  truncates to the first word for `role==='church'` (a personal leadership login still gets its
+  first name). `_heroNameCls` drops names over 14 chars to half size and lets them wrap.
+- **20 — First aid: "Signed in only" filter, ON by default** on both Search and All Students.
+  Inert pre-camp (nobody has signed in yet). `_faSignedInOnly`/`_faSignedInFilter`.
+- **21 — First aid: revealing a parent number no longer 404s.** `search.service.revealContact`
+  required lifecycle ≥ arrived while `resolveContacts` deliberately did not, so the Student Info
+  card would render a masked number for a not-yet-arrived student that could never be revealed.
+  `canAccessPerson` is still the real gate.
+- **22 — Cross-gender secondary contact.** `contactsForPerson()`: a person leads with their own
+  gender's contacts, and if that gender has a primary but no backup, the OPPOSITE gender's primary
+  becomes the secondary. A gender that already lists two leaders is untouched.
+- **8 — Site map (NEW).** `settings.siteMapImage` (**migration `0016`**) holds a client-baked
+  `data:image/...` URI; the server stores an opaque string and the Zod schema rejects anything that
+  isn't a data-image URI (no remote URL → no SSRF/tracking-pixel surface, no CSP violation).
+  A "Map" button sits on the Home hero for every role (firstAid has no home screen, so it gets one
+  on its Search landing) and is hidden entirely until a map is uploaded. Upload + crop live in
+  Admin → Camp settings → Camp details & dates. **The crop tool is a port of YS Connection's logo
+  cropper** (`_openLogoCropModal`/`_cropRectFor`/`_cropClampPan` in `Project 7`) generalised from a
+  fixed square to an arbitrary aspect ratio — `vp` became `vpW`/`vpH` throughout and the modal
+  offers Portrait/Tall/Square/Landscape, defaulting to whichever is closest to the image's own
+  shape. Output is ~1400px on the long edge (the sample map's building labels are unreadable
+  below that), PNG first with a JPEG 0.92 → 0.8 fallback if it exceeds the 1.6M-char cap.
+
+### Admin console, data & reset
+- **9 — "Data reset" (was "Factory reset").** Three tools, least → most destructive: Clear all
+  notifications (moved here, and no longer at-camp-only), **Reset logs** (NEW), Full reset.
+- **`resetLogs` (NEW, `POST /admin/reset-logs`)** clears exactly what a compliance workbook
+  contains — every person's check-in and sign-in/out history (returning them to "not signed in";
+  `cancelled` people keep their lifecycle), all notes/testimonies/first-aid records, all incidents.
+  Registrations, churches, accounts, accommodation, schedule, devotionals, FAQ and settings are all
+  kept. Notifications are deliberately NOT included (their own button). Guarded by the same
+  export-or-force gate as a full reset.
+- **16 — Incidents survived a "full reset".** `makeAdminService` was never given the incident or
+  push-subscription repos, so `reset()`'s wipe list was silently incomplete — no compiler or test
+  covered it. Both are now constructor params and both are cleared. **Any new repository must be
+  added to `reset()` in the same commit.**
+- **Typed confirmations are case-insensitive** (`_CONFIRM_PHRASE`/`_confirmPhraseOk`) — a phone
+  auto-capitalising "I understand…" no longer reads as a failed confirmation. The canonical string
+  still goes over the wire; only the typed comparison is loosened.
+- **10 — Notices + Scheduled notices merged** into one screen with Sent/Scheduled sub-tabs
+  (`RENDER.notifs(sub)`, `NOTICE_SUB`), moved under the **Data** heading. The "Communications"
+  group is gone; `RENDER.scheduled` survives as a redirecting alias.
+- **11 — Every admin-console tile has an icon** (`_adminTile` is now the single tile builder, so a
+  new entry can't miss its glyph). Three new `ICONS` keys: `swap`, `dollar`, `map`.
+- **25 — The standalone "Sign-in/out log (.csv)" export button is gone** — that data is already a
+  sheet in the workbook. The backend route is left in place, unused.
+- **24 — Every audit sheet is newest-first.** The Sign-in & Sign-out timeline still folds its
+  running totals CHRONOLOGICALLY and reverses afterwards, so each row's counts remain correct for
+  the moment it happened and the top row carries the live totals.
+- **6 — Tooltips clamp inside the `.screen`, not just the viewport**, so a bubble can't be clipped
+  by the ≥980px `overflow:hidden` content column / run under the sidebar.
+- **7 — The "accommodation override has moved…" note is removed** from Account Info.
+- **15 — The light-purple strip under the bottom nav.** The 2026-07-26 `html{background:#fff}` fix
+  only covered the CANVAS; the strip iOS exposes below the layout viewport is also painted by the
+  BODY box, which still carried `--paper`. `body` is now white with `--paper` on `.app` alone, and
+  **`.tabs::after`** extends the nav's white surface 120px below it (inside the nav's own stacking
+  context, starting at `top:100%`, so it can never cover content).
+- **17 — Incident high-severity toggle reads "High · alert zones"** (and the screen's infobox was
+  reworded to match it rather than the reverse).
+- **18 — The "Got it" banner is incident-only.** `_urgentAlerts` also requires
+  `_isIncidentNotice(n)`; acknowledgement was only ever meant for incidents. Since `leadersOnly`
+  notices are filtered server-side for church/firstAid, **those roles now never acknowledge
+  anything** — the intended outcome. An ordinary urgent notice is read in the Notices list.
+- **19 — "Validation failed" when adding a note from the Students screen.** The SPA posted
+  `sessionId: SEL_SESSION`, which is genuinely `null` outside the check-in screen, and Zod's
+  `.optional()` rejects `null`. `AddNoteSchema` now uses `.nullish()` and the SPA omits the key.
+  **New optional fields on schemas the SPA posts to should be `.nullish()`, not `.optional()`.**
+
+### Imports (items 12 + the three folded-in items)
+- **12 — Spurious "Missing firstName or lastName" on a file that imports fine.** A trailing blank
+  line is spreadsheet padding, not a defect: `isBlankRow()` (`elvanto-mapping.ts`) skips an
+  entirely-blank row silently in all three importers. `field()` also gained a normalised header
+  fallback (lowercase, non-alphanumerics stripped) so "First name" / "FIRST NAME" / "First  Name"
+  resolve. A genuinely half-filled row still errors.
+- **Ticket-type corrections + the accommodation override — verified, not rewritten.** The Ticket
+  List update path already re-parses `Ticket Type` every run and applies `churchOverride` ahead of
+  it; a regression test now pins that.
+- **Multiple tickets / invoices for one person (the "bought the wrong ticket, pay the difference
+  with a code" flow).** Tickets: the later row's type already won (the corrected ticket) — it now
+  also warns naming the winning ticket and sets `needsReview`. Invoices: money fields ACCUMULATE
+  across rows (`amountPaid`/`discountAmount`/`feesAmount`/`taxAmount` summed, `registrationCost`
+  from the latest row), plus a warning and `needsReview`. ⚠ Accumulation starts from the rows in
+  THIS file, never from the stored value, so **re-importing the same export is idempotent and
+  cannot double-count** — covered by a test; don't "simplify" it to read the person's existing value.
+- **Pending deletions are named.** The Form import is authoritative and deletes anyone absent from
+  the file; the result carried only a COUNT, so a spelling change or wrong export could silently
+  drop real registrants. Each absent person now gets a warning naming them and their church (capped
+  at 50), visible in the DRY-RUN preview before anything is confirmed.
+- **Ticket-difference discount codes are labelled honestly.** A code averaging ≥97% of the ticket
+  price is the pay-the-difference correction, not a sponsored place. Still counted in the budget's
+  discount breakdown (owner's decision) but labelled "Ticket difference — already paid" rather than
+  reading as "100% Off".
+
+### Copy pass (Sonnet sub-agent review, same session)
+A consistency review of every `helpTip`, `.note-hint`, `.infobox`/`.warnbox`, `.sub` and
+`emptyState` string. Applied: the detail-screen header said "Camper" (the only user-facing use of
+that word — now "Student"); two notices strings omitted admin from who can send; the first-day
+arrival tooltip and toast said "student" although the roster includes leaders; the wide-role search
+placeholder said "camper"; the Churches and site-map tooltips were trimmed; the duplicated
+sensitive-note explanation lost its redundant bubble (the always-visible `.sub` stayed, and the now
+unused `_SENSITIVE_HELP` const was deleted); the incident infobox was reworded to match the
+"alert zones" button. **Deliberately NOT applied:** the reviewer's proposal to rename every
+"ministry" to "church" on the accommodation/budget screens — the owner uses both terms naturally
+(their own bug list says "ministry"), so that is a vocabulary decision for them, not a cleanup.
+
 ## Migration files consolidated — 2026-07-16
 
 `supabase/migrations/` was collapsed from 24 files (`001`–`023`, incl. a duplicate
@@ -250,9 +414,13 @@ Since then: **`0010`** (scheduled notices — `notifications.scheduled_for`), **
 **`0012`** (2026-07-24 — drops `sign_out_history.parents_met`; applied to prod after the code
 push that stopped writing it). Since then: **`0013`** (push subscriptions + notification claim
 columns — **applied to prod** 2026-07-26), **`0014`** (pg_cron/pg_net + the tick schedule —
-committed but **deliberately NOT applied**), **`0015`** (discount-code overrides — **not
-applied**). Next migration = `0016`. See the 2026-07-26 web-push section at the bottom of this
-file for the gating conditions on `0014`/`0015`.
+committed but **deliberately NOT applied**), **`0015`** (discount-code overrides — **applied to
+prod 2026-07-27**, immediately before that push; the "not applied" note here was stale and was
+corrected on 2026-07-28 after verifying `settings.discount_code_overrides` exists in prod), and
+**`0016`** (2026-07-28 — `settings.site_map_image text` for the site-map feature, **applied to
+prod BEFORE the code push**, as `supabase.settings` writes every column on every save).
+Next migration = `0017`. See the 2026-07-26 web-push section at the bottom of this file for the
+gating conditions on `0014`.
 
 **Prod reconciled 2026-07-16 (code) + 2026-07-17 (DB).** The code-ref removal (dropping
 `tentPrice`/`classroomPrice` from the settings entity/schema/seed/mapper + fixtures)

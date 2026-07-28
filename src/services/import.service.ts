@@ -14,7 +14,7 @@ import { parseCsv } from '../utils/csv';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import {
-  cleanCareText, field, normalizeDate, parseGradeOrLeader, yesToConsent,
+  cleanCareText, field, isBlankRow, normalizeDate, parseGradeOrLeader, yesToConsent,
 } from './elvanto-mapping';
 import { invalidateDashboardCache } from './dashboard-cache';
 import { z } from 'zod';
@@ -174,6 +174,10 @@ export function makeImportService(
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]!;
         const rowNum = i + 2;
+        // Item 12 (2026-07-28): an entirely-blank row (trailing newline / spreadsheet padding) is
+        // padding, not a defect — skip it silently instead of reporting a missing-name error on a
+        // file that otherwise imports perfectly.
+        if (isBlankRow(row)) { skipped++; continue; }
 
         try {
           const firstName = field(row, 'First Name', 'firstName', 'first_name');
@@ -416,6 +420,31 @@ export function makeImportService(
       // Anyone in the DB but not in the uploaded CSV is removed (the upload is authoritative).
       const absentIds = allPersons.map((p) => p.id).filter((id) => !seenIds.has(id));
       const deleted = absentIds.length;
+
+      /* Item A follow-up (2026-07-28): NAME the people this import is about to delete.
+         The result already carried a `deleted` COUNT, but a count gives an admin no way to spot
+         that a spelling change or a wrong export has silently dropped real registrants — the
+         deletion only becomes visible after it has happened. Each absent person now gets its own
+         warning row, so the dry-run preview lists them by name and church before anything is
+         confirmed. Capped so a first-ever import against a populated DB can't produce hundreds
+         of rows; the count is still authoritative. */
+      const DELETE_WARNING_CAP = 50;
+      const absentSetForWarning = new Set(absentIds);
+      const absentPeople = allPersons.filter((p) => absentSetForWarning.has(p.id));
+      for (const p of absentPeople.slice(0, DELETE_WARNING_CAP)) {
+        warnings.push({
+          row: 0,
+          message:
+            `${p.firstName} ${p.lastName} (${p.churchName || 'no church'}) is no longer in this file ` +
+            'and will be DELETED — check the name spelling in the export if this is unexpected',
+        });
+      }
+      if (absentPeople.length > DELETE_WARNING_CAP) {
+        warnings.push({
+          row: 0,
+          message: `…and ${absentPeople.length - DELETE_WARNING_CAP} more people will be deleted (${absentPeople.length} in total)`,
+        });
+      }
 
       if (!opts.dryRun) {
         if (touched.size > 0) await personRepo.saveMany([...touched.values()]);

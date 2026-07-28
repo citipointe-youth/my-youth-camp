@@ -160,17 +160,21 @@ describe('audit-export: sign-in/out log running totals (chronological across stu
     expect(lines[0]).toBe(
       'First Name,Last Name,Church,Zone,Gender,Grade,Event Type,Timestamp (local),Reason,Authorised By,Leader Initials,Total Students Signed In,Total Leaders Signed In',
     );
-    // 4 real events (cam1 has none — it was only ever noted, not signed) in chronological order.
+    // 4 real events (cam1 has none — it was only ever noted, not signed).
+    // Item 24 (2026-07-28): rows are presented NEWEST FIRST, so the most recent event is row 0
+    // and the running totals read downward from the current state. The totals themselves are
+    // still computed chronologically, so each row carries the counts as at the moment it
+    // happened — only the row ORDER is reversed.
     const dataRows = lines.slice(1);
     expect(dataRows).toHaveLength(4);
-    expect(dataRows[0]).toContain('Leo'); // T1: leader1 in -> students 0, leaders 1
-    expect(dataRows[0]!.endsWith('0,1')).toBe(true);
-    expect(dataRows[1]).toContain('Yolanda'); // T2: youth1 in -> students 1, leaders 1
-    expect(dataRows[1]!.endsWith('1,1')).toBe(true);
-    expect(dataRows[2]).toContain('Lena'); // T3: leader2 in -> students 1, leaders 2
-    expect(dataRows[2]!.endsWith('1,2')).toBe(true);
-    expect(dataRows[3]).toContain('Yolanda'); // T4: youth1 out -> students 0, leaders 2
-    expect(dataRows[3]!.endsWith('0,2')).toBe(true);
+    expect(dataRows[0]).toContain('Yolanda'); // T4: youth1 out -> students 0, leaders 2
+    expect(dataRows[0]!.endsWith('0,2')).toBe(true);
+    expect(dataRows[1]).toContain('Lena'); // T3: leader2 in -> students 1, leaders 2
+    expect(dataRows[1]!.endsWith('1,2')).toBe(true);
+    expect(dataRows[2]).toContain('Yolanda'); // T2: youth1 in -> students 1, leaders 1
+    expect(dataRows[2]!.endsWith('1,1')).toBe(true);
+    expect(dataRows[3]).toContain('Leo'); // T1: leader1 in -> students 0, leaders 1
+    expect(dataRows[3]!.endsWith('0,1')).toBe(true);
   });
 
   it('exportMasterWorkbook: Sign-in & Sign-out Log sheet carries the same running totals', async () => {
@@ -181,9 +185,13 @@ describe('audit-export: sign-in/out log running totals (chronological across stu
     expect(header).toContain('Total Leaders Signed In');
     // cam1 (from the outer beforeEach — lifecycle 'arrived', no sign history) contributes
     // no row at all (it's neither a no-show nor an event); the sheet is just the 4 events.
+    // Item 24: newest first, so the LAST row is now the OLDEST event (leader1 in -> 0 students,
+    // 1 leader) and the FIRST data row carries the live totals.
+    const firstData = (sheet.getRow(2).values as unknown[]).map((v) => (v == null ? '' : v));
+    expect(firstData.slice(-2)).toEqual([0, 2]); // most recent event (youth1 out)
     const lastRow = sheet.getRow(sheet.rowCount).values as unknown[];
     const lastCells = lastRow.map((v) => (v == null ? '' : v));
-    expect(lastCells.slice(-2)).toEqual([0, 2]); // final row (youth1 out) matches the CSV totals
+    expect(lastCells.slice(-2)).toEqual([0, 1]); // oldest event (leader1 in)
   });
 });
 
@@ -230,7 +238,10 @@ describe('audit-export: Feature 4 — leader initials captured in the audit trai
   });
 });
 
-describe('audit-export: Daily Check-in Log & Notes are sorted chronologically (item 6)', () => {
+// Item 24 (2026-07-28) flipped these sheets to NEWEST-FIRST. The property being pinned is
+// unchanged — rows are sorted by real timestamp, never by person/array iteration order — only
+// the direction differs, so each expectation below is the exact reverse of the 2026-07-23 one.
+describe('audit-export: Daily Check-in Log & Notes are sorted by timestamp, newest first (items 6 + 24)', () => {
   beforeEach(async () => {
     // Two people whose check-in entries are deliberately out of order both within a person's
     // own history and interleaved across people — the log must re-sort by timestamp, not trust
@@ -251,7 +262,7 @@ describe('audit-export: Daily Check-in Log & Notes are sorted chronologically (i
     }));
   });
 
-  it('exportMasterWorkbook: Daily Check-in Log rows come out strictly in timestamp order', async () => {
+  it('exportMasterWorkbook: Daily Check-in Log rows come out strictly newest-first', async () => {
     const wb = await load();
     const sheet = wb.getWorksheet('Daily Check-in Log')!;
     const header = (sheet.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
@@ -261,20 +272,20 @@ describe('audit-export: Daily Check-in Log & Notes are sorted chronologically (i
       const cells = (sheet.getRow(r).values as unknown[]).map((v) => String(v ?? ''));
       students.push(cells[studentCol] ?? '');
     }
-    // Expected chronological order by raw ISO timestamp:
-    // c1 (Zack, 07-01 13:00) < c2 (Amy, 07-01 13:30) < c3 (Zack, 07-02 08:00) < c4 (Amy, 07-02 13:00)
-    expect(students).toEqual(['Zack Zeta', 'Amy Alpha', 'Zack Zeta', 'Amy Alpha']);
+    // Newest first by raw ISO timestamp:
+    // c4 (Amy, 07-02 13:00) > c3 (Zack, 07-02 08:00) > c2 (Amy, 07-01 13:30) > c1 (Zack, 07-01 13:00)
+    expect(students).toEqual(['Amy Alpha', 'Zack Zeta', 'Amy Alpha', 'Zack Zeta']);
   });
 
-  it('exportCheckInLogCsv: rows come out strictly in timestamp order', async () => {
+  it('exportCheckInLogCsv: rows come out strictly newest-first', async () => {
     const csv = await svc.exportCheckInLogCsv(actor);
     const lines = csv.trim().split('\n');
     const dataRows = lines.slice(1);
     const firstNames = dataRows.map((l) => l.split(',')[0]);
-    expect(firstNames).toEqual(['Zack', 'Amy', 'Zack', 'Amy']);
+    expect(firstNames).toEqual(['Amy', 'Zack', 'Amy', 'Zack']);
   });
 
-  it('Notes & Testimonies sheet rows come out in createdAt order', async () => {
+  it('Notes & Testimonies sheet rows come out newest-createdAt first', async () => {
     // The outer beforeEach already added a firstaid note then a testimony (in that call order,
     // so createdAt is non-decreasing) for cam1 — add an earlier-dated testimony for ck1 to force
     // a real reorder relative to insertion order.
@@ -298,7 +309,9 @@ describe('audit-export: Daily Check-in Log & Notes are sorted chronologically (i
     const greatIdx = bodies.findIndex((b) => b.includes('Great week'));
     expect(recentIdx).toBeGreaterThanOrEqual(0);
     expect(greatIdx).toBeGreaterThanOrEqual(0);
-    expect(recentIdx).toBeLessThan(greatIdx);
+    // 'Recent testimony' was forced to 2020 and 'Great week' to 2025, so newest-first puts
+    // 'Great week' ABOVE it — the sort is by createdAt, never by insertion order.
+    expect(greatIdx).toBeLessThan(recentIdx);
   });
 });
 

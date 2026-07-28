@@ -31,6 +31,9 @@ function toSettings(r: Record<string, unknown>): CampSettings {
     ticketsImportedAt: (r['tickets_imported_at'] as Date | null)?.toISOString() ?? null,
     invoicesImportedAt: (r['invoices_imported_at'] as Date | null)?.toISOString() ?? null,
     discountCodeOverrides: (r['discount_code_overrides'] as Record<string, number>) ?? {},
+    // Item 8 (2026-07-28) — migration 0016. Tolerate absence on read (an un-migrated DB
+    // simply has no map) exactly like the other late-added columns.
+    siteMapImage: (r['site_map_image'] as string | null) ?? null,
     createdAt: (r['created_at'] as Date).toISOString(),
     updatedAt: (r['updated_at'] as Date).toISOString(),
   };
@@ -64,6 +67,7 @@ function settingsCols(s: CampSettings): Record<string, unknown> {
     tickets_imported_at: s.ticketsImportedAt ?? null,
     invoices_imported_at: s.invoicesImportedAt ?? null,
     discount_code_overrides: s.discountCodeOverrides ?? {},
+    site_map_image: s.siteMapImage ?? null,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   };
@@ -78,6 +82,7 @@ const UPDATE_COLS = [
   'last_temp_passwords', 'last_exported_at',
   'defaults_saved_at', 'form_imported_at', 'tickets_imported_at', 'invoices_imported_at',
   'discount_code_overrides',
+  'site_map_image',
   'updated_at',
 ] as const;
 

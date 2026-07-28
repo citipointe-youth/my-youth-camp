@@ -90,6 +90,16 @@ export const UpdateSettingsSchema = z.object({
   checkinWindowPmStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
   checkinWindowPmEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
   campMode: z.enum(CAMP_MODES).optional(),
+  /* Item 8 (2026-07-28): site map. Client-baked `data:image/...` URI or null to remove it.
+     Rejecting anything that isn't a data-image URI keeps a remote URL (and with it an SSRF /
+     tracking-pixel surface, and a CSP violation on render) out of the settings row entirely —
+     same rule YS Connection applies to its logo. The 1.6M cap is ~1.2MB of image, chosen so a
+     1400px-wide site map stays legible; base64 is ~4/3 the byte size. */
+  siteMapImage: z.string()
+    .max(1_600_000)
+    .refine((v) => v.startsWith('data:image/'), 'siteMapImage must be a data:image/... URI')
+    .nullable()
+    .optional(),
 });
 
 export type UpdateSettingsInput = z.infer<typeof UpdateSettingsSchema>;

@@ -60,6 +60,28 @@ function makeContacts(church: Church, gender: 'male' | 'female', opts?: { mask?:
   return contacts;
 }
 
+/**
+ * Bug 22 (2026-07-28): the ministry-leader contacts shown for a person, with a cross-gender
+ * SECONDARY fallback.
+ *
+ * The rule: a person always leads with their own gender's contacts. If that gender has a primary
+ * but no backup, the OPPOSITE gender's primary becomes the secondary point of contact — the
+ * common case being a ministry that lists exactly one male and one female leader, where each
+ * gender's students would otherwise have a primary and nobody else. Where a gender lists two
+ * leaders (primary + backup) nothing changes: their own backup is already the secondary.
+ *
+ * The existing "no same-gender contacts at all → use the opposite gender's list" fallback is
+ * unchanged and still takes precedence (there is no primary to lead with).
+ */
+function contactsForPerson(church: Church, gender: 'male' | 'female', opts?: { mask?: boolean }): MaskedContact[] {
+  const opposite = gender === 'male' ? 'female' : 'male';
+  const own = makeContacts(church, gender, opts);
+  if (own.length === 0) return makeContacts(church, opposite, opts);
+  if (own.some((c) => c.type === 'backup')) return own;
+  const oppositePrimary = makeContacts(church, opposite, opts).find((c) => c.type === 'primary');
+  return oppositePrimary ? [...own, oppositePrimary] : own;
+}
+
 // Synthetic contact role for a camper's parent/guardian (Bug 1 — the masked+audited reveal
 // swap: leader contacts are now shown plainly on Student Info, and the parent number is the
 // one behind the mask + audit gate instead). Not a real ChurchContact, so it's handled
@@ -124,13 +146,8 @@ export function makeSearchService(
     const gender = person.gender === 'female' ? 'female' : 'male';
     const oppositeGender = gender === 'male' ? 'female' : 'male';
 
-    const primary = makeContacts(church, gender);
-    const contacts: MaskedContact[] = [...primary];
-
-    // Cross-gender fallback: if no same-gender contacts, add opposite
-    if (primary.length === 0) {
-      contacts.push(...makeContacts(church, oppositeGender));
-    }
+    // Own-gender contacts, with the cross-gender fallbacks in `contactsForPerson` (bug 22).
+    const contacts: MaskedContact[] = contactsForPerson(church, gender);
 
     const raw = new Map<string, ChurchContact & { gender: 'male' | 'female'; type: 'primary' | 'backup' }>();
     raw.set(`${gender}-primary`, { ...church.contacts[gender].primary, gender, type: 'primary' });
@@ -190,11 +207,7 @@ export function makeSearchService(
       let leaderContacts: MaskedContact[] = [];
       if (church) {
         const gender = person.gender === 'female' ? 'female' : 'male';
-        const oppositeGender = gender === 'male' ? 'female' : 'male';
-        leaderContacts = makeContacts(church, gender, { mask: false });
-        if (leaderContacts.length === 0) {
-          leaderContacts = makeContacts(church, oppositeGender, { mask: false });
-        }
+        leaderContacts = contactsForPerson(church, gender, { mask: false });
       }
       const parentContact = makeParentContact(person, { mask: true });
       return [...leaderContacts, ...(parentContact ? [parentContact] : [])];
@@ -203,7 +216,12 @@ export function makeSearchService(
     async revealContact(actor, camperId, contactRole) {
       assertCan(actor, 'camper:read:sensitive');
       const person = await personRepo.findById(camperId);
-      if (!person || !isCamper(person)) throw new NotFoundError('Camper not found');
+      // Bug 21 (2026-07-28): this used to also require `isCamper(person)` (lifecycle >= arrived),
+      // while `resolveContacts` above deliberately does NOT — so the Student Info card would
+      // happily render a masked parent number for a student who had not signed in yet, and
+      // tapping it returned "Camper not found". The two must agree on who is resolvable; the
+      // real access gate is `canAccessPerson` below, which is unchanged.
+      if (!person) throw new NotFoundError('Camper not found');
       if (!canAccessPerson(actor, person)) {
         throw new NotFoundError('Camper not found');
       }

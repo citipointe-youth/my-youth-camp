@@ -85,6 +85,11 @@ function buildSignInOutTimeline(people: Person[]): { noShows: Person[]; events: 
     else studentsSignedIn += delta;
     return { ...e, studentsSignedIn, leadersSignedIn };
   });
+  // Item 24 (2026-07-28): rows are presented NEWEST FIRST so the current state of camp is at the
+  // top of the sheet. The running totals above MUST be computed in chronological order first —
+  // reversing after the fold keeps each row's "signed in" counts correct for the moment that row
+  // happened (the top row therefore carries the live totals, which is the useful reading).
+  events.reverse();
   return { noShows, events };
 }
 
@@ -198,7 +203,8 @@ export function makeAuditExportService(
       for (const p of people) {
         for (const ci of p.checkInHistory) checkinEntries.push({ p, ci });
       }
-      checkinEntries.sort((a, b) => a.ci.timestamp.localeCompare(b.ci.timestamp));
+      // Item 24 (2026-07-28): newest first — the most recent activity is at the top of the sheet.
+      checkinEntries.sort((a, b) => b.ci.timestamp.localeCompare(a.ci.timestamp));
       for (const { p, ci } of checkinEntries) {
         checkinLog.addRow([
           `${p.firstName} ${p.lastName}`, p.churchName, p.zone,
@@ -216,7 +222,7 @@ export function makeAuditExportService(
       notesSheet.getRow(1).font = { bold: true };
       const generalNotes = notes
         .filter((note) => note.category !== 'firstaid') // → dedicated First-Aid Records sheet
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // item 24: newest first
       for (const note of generalNotes) {
         const p = note.camperId ? personMap.get(note.camperId) : undefined;
         notesSheet.addRow([
@@ -242,7 +248,7 @@ export function makeAuditExportService(
       ];
       const firstAidNotes = notes
         .filter((note) => note.category === 'firstaid')
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // item 24: newest first
       for (const note of firstAidNotes) {
         const p = note.camperId ? personMap.get(note.camperId) : undefined;
         const fa = parseFirstAidBody(note.body);
@@ -259,7 +265,7 @@ export function makeAuditExportService(
 
       // ----- Incidents (Feature 3) — summary is decrypted by the repo mapper on read -----
       const incidentsRaw = await incidentRepo.findRecent();
-      const incidents = [...incidentsRaw].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const incidents = [...incidentsRaw].sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // item 24: newest first
       const incidentsSheet = wb.addWorksheet('Incidents');
       incidentsSheet.addRow(['Summary', 'Severity', 'Logged by', 'Logged at', 'Zone']);
       incidentsSheet.getRow(1).font = { bold: true };
@@ -338,7 +344,7 @@ export function makeAuditExportService(
       for (const p of people) {
         for (const ci of p.checkInHistory) checkinEntries.push({ p, ci });
       }
-      checkinEntries.sort((a, b) => a.ci.timestamp.localeCompare(b.ci.timestamp));
+      checkinEntries.sort((a, b) => b.ci.timestamp.localeCompare(a.ci.timestamp)); // item 24: newest first
       for (const { p, ci } of checkinEntries) {
         rows.push([
           p.firstName, p.lastName, p.churchName, p.zone,

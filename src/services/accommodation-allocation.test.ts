@@ -235,3 +235,75 @@ describe('tent distribution (7 per tent, leaders separate)', () => {
     expect(c2.m.stu).toBe(3);      // the cancelled person never appears
   });
 });
+
+// Bug 5 (2026-07-28): SECOND-LEVEL SPLIT. A 7-9 / 10-12 bracket sub-pool that is itself over
+// SPLIT_THRESHOLD splits again into single year levels (`Y7`…`Y12`), so a very large ministry
+// gets manageable per-year pools instead of two 60+ person ones. Gender is still honoured, so
+// the ceiling is 6 pools per gender / 12 per church.
+describe('computeGroups — per-year-level split (bug 5)', () => {
+  const many = (n: number, over: Partial<AllocationOccupant>) =>
+    Array.from({ length: n }, () => occ(over));
+
+  it('splits an over-threshold 7-9 bracket into one group per year level', () => {
+    const people = [
+      ...many(30, { gender: 'male', grade: 7 }),
+      ...many(20, { gender: 'male', grade: 8 }),
+      ...many(10, { gender: 'male', grade: 9 }),
+    ];
+    const groups = computeGroups(people).filter((g) => g.gender === 'male');
+    expect(groups.map((g) => g.key).sort()).toEqual(['c1|male|Y7', 'c1|male|Y8', 'c1|male|Y9']);
+    expect(groups.find((g) => g.key === 'c1|male|Y7')!.n).toBe(30);
+    expect(groups.find((g) => g.key === 'c1|male|Y8')!.n).toBe(20);
+    expect(groups.find((g) => g.key === 'c1|male|Y9')!.n).toBe(10);
+  });
+
+  it('leaves a bracket that is under the threshold as a single bracket group', () => {
+    // Gender pool 60 > 50 so it splits into brackets, but each bracket is <= 50 and stays whole.
+    const people = [
+      ...many(40, { gender: 'male', grade: 8 }),
+      ...many(20, { gender: 'male', grade: 11 }),
+    ];
+    const groups = computeGroups(people).filter((g) => g.gender === 'male');
+    expect(groups.map((g) => g.key).sort()).toEqual(['c1|male|10-12', 'c1|male|7-9']);
+  });
+
+  it('spreads that gender\'s leaders across the year-level pools, remainder to the earliest', () => {
+    // 60 grade-7/8/9 youth (all three years present) + 4 male leaders. Leaders halve across
+    // brackets first (ceil(4/2)=2 to 7-9), then spread across the three year levels: 1,1,0.
+    const people = [
+      ...many(20, { gender: 'male', grade: 7 }),
+      ...many(20, { gender: 'male', grade: 8 }),
+      ...many(20, { gender: 'male', grade: 9 }),
+      ...many(4, { gender: 'male', kind: 'leader', grade: null }),
+    ];
+    const groups = computeGroups(people).filter((g) => g.gender === 'male');
+    const n = (k: string) => groups.find((g) => g.key === k)!.n;
+    expect(n('c1|male|Y7') + n('c1|male|Y8') + n('c1|male|Y9')).toBe(62); // 60 youth + 2 leaders
+    expect(n('c1|male|Y7')).toBe(21);  // remainder leader goes to the earliest year
+    expect(n('c1|male|Y8')).toBe(21);
+    expect(n('c1|male|Y9')).toBe(20);
+  });
+
+  it('keeps unknown-grade youth with the lowest year of the 7-9 bracket', () => {
+    const people = [
+      ...many(40, { gender: 'female', grade: 7 }),
+      ...many(15, { gender: 'female', grade: 9 }),
+      ...many(3, { gender: 'female', grade: null }),
+    ];
+    const groups = computeGroups(people).filter((g) => g.gender === 'female');
+    expect(groups.find((g) => g.key === 'c1|female|Y7')!.n).toBe(43); // 40 + the 3 unknown-grade
+    expect(groups.find((g) => g.key === 'c1|female|Y9')!.n).toBe(15);
+  });
+
+  it('every person is still accounted for exactly once after both splits', () => {
+    const people = [
+      ...many(30, { gender: 'male', grade: 7 }),
+      ...many(25, { gender: 'male', grade: 8 }),
+      ...many(30, { gender: 'male', grade: 11 }),
+      ...many(25, { gender: 'male', grade: 12 }),
+      ...many(5, { gender: 'male', kind: 'leader', grade: null }),
+    ];
+    const total = computeGroups(people).reduce((s, g) => s + g.n, 0);
+    expect(total).toBe(people.length);
+  });
+});

@@ -59,6 +59,14 @@ export interface CampSettings {
    * {} wherever read.
    */
   discountCodeOverrides?: Record<string, number>;
+  /**
+   * Item 8 (2026-07-28): the camp site map, shown behind the "Map" button on the Home hero.
+   * A `data:image/...` URI baked client-side by the crop tool (the same approach YS Connection
+   * uses for its logo) — the server never processes image bytes, it just stores an opaque
+   * string. Null when no map has been uploaded, which is also what hides the Map button.
+   * Optional like the other late-added fields so existing fixtures compile.
+   */
+  siteMapImage?: string | null;
   createdAt: ISODateString;
   updatedAt: ISODateString;
 }

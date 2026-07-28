@@ -14,6 +14,8 @@ import {
   InMemorySettingsRepository,
   InMemorySnapshotRepository,
   InMemoryAllocationOverrideRepository,
+  InMemoryIncidentRepository,
+  InMemoryPushSubscriptionRepository,
 } from '../repositories/in-memory';
 import type { User, Actor } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
@@ -188,6 +190,8 @@ interface Repos {
   settingsRepo: InMemorySettingsRepository;
   snapshotRepo: InMemorySnapshotRepository;
   overrideRepo: InMemoryAllocationOverrideRepository;
+  incidentRepo: InMemoryIncidentRepository;
+  pushSubRepo: InMemoryPushSubscriptionRepository;
 }
 
 async function makeRepos(): Promise<Repos> {
@@ -205,6 +209,8 @@ async function makeRepos(): Promise<Repos> {
     settingsRepo: new InMemorySettingsRepository(),
     snapshotRepo: new InMemorySnapshotRepository(),
     overrideRepo: new InMemoryAllocationOverrideRepository(),
+    incidentRepo: new InMemoryIncidentRepository(),
+    pushSubRepo: new InMemoryPushSubscriptionRepository(),
   };
   await Promise.all([
     repos.userRepo.init(),
@@ -220,6 +226,8 @@ async function makeRepos(): Promise<Repos> {
     repos.settingsRepo.init(),
     repos.snapshotRepo.init(),
     repos.overrideRepo.init(),
+    repos.incidentRepo.init(),
+    repos.pushSubRepo.init(),
   ]);
   return repos;
 }
@@ -239,6 +247,8 @@ function build(r: Repos) {
     r.settingsRepo,
     r.snapshotRepo,
     r.overrideRepo,
+    r.incidentRepo,
+    r.pushSubRepo,
   );
 }
 
@@ -258,6 +268,13 @@ async function seedEverything(r: Repos): Promise<void> {
     r.notifRepo.save(notification({ id: 'n2', scope: 'zone', zone: 'Yellow' })),
     r.noteRepo.save(note({ id: 'nt1' })),
     r.devotionalRepo.save(devotional({ id: 'd1' })),
+    // Bug 16 (2026-07-28): incidents were never part of the wipe — seed one so a reset that
+    // leaves it behind fails loudly.
+    r.incidentRepo.save({
+      id: 'inc1', summary: 'Something happened', severity: 'low',
+      createdById: 'u1', createdByName: 'Admin', createdByRole: 'admin', zone: 'Yellow',
+      createdAt: NOW,
+    }),
   ]);
   await r.settingsRepo.saveSingleton(settings());
 }
@@ -720,5 +737,88 @@ describe('AdminService.setMode', () => {
     await svc.setMode(actor('admin'), 'pre-camp'); // already pre-camp — no-op
     const lead1 = await fresh.personRepo.findById('lead1');
     expect(lead1!.atCamp).toBe(true); // untouched — before.campMode was never 'at-camp'
+  });
+});
+
+// =============================================================================
+// resetLogs (item 9, 2026-07-28) + the reset wipe gap it shares with bug 16
+// =============================================================================
+describe('AdminService.resetLogs', () => {
+  let repos: Repos;
+  beforeEach(async () => {
+    repos = await makeRepos();
+    await seedEverything(repos);
+    // A person with real activity: checked in, signed in, currently at camp.
+    await repos.personRepo.save(person({
+      id: 'active', lifecycle: 'arrived', atCamp: true,
+      checkInHistory: [
+        { id: 'ci1', sessionId: '2026-07-01~pm', sessionLabel: 'Wed PM', type: 'in', leaderId: 'AB', timestamp: NOW },
+      ],
+      signOutHistory: [
+        { id: 'so1', type: 'in', leaderName: 'AB', authorId: 'u1', timestamp: NOW },
+      ],
+    }));
+  });
+
+  it('forbids non-admin roles', async () => {
+    const svc = build(repos);
+    for (const role of ['church', 'zoneLeader', 'director'] as const) {
+      await expect(svc.resetLogs(actor(role))).rejects.toBeInstanceOf(ForbiddenError);
+    }
+  });
+
+  it('clears attendance history, notes and incidents, and returns everyone to not-signed-in', async () => {
+    const svc = build(repos);
+    const result = await svc.resetLogs(actor('admin'));
+    expect(result.notes).toBe(1);
+    expect(result.incidents).toBe(1);
+
+    const active = (await repos.personRepo.findAll()).find((p) => p.id === 'active')!;
+    expect(active.checkInHistory).toEqual([]);
+    expect(active.signOutHistory).toEqual([]);
+    expect(active.atCamp).toBe(false);
+    expect(active.lifecycle).toBe('registered');
+
+    expect(await repos.noteRepo.findAll()).toEqual([]);
+    expect(await repos.incidentRepo.findAll()).toEqual([]);
+  });
+
+  it('KEEPS registrations, churches, accounts and the whole setup scaffold', async () => {
+    const svc = build(repos);
+    await svc.resetLogs(actor('admin'));
+    // The people themselves survive — only their activity was cleared.
+    expect((await repos.personRepo.findAll()).length).toBeGreaterThan(0);
+    expect(await repos.churchRepo.findAll()).toHaveLength(2);
+    expect(await repos.userRepo.findAll()).toHaveLength(2);
+    expect(await repos.classroomRepo.findAll()).toHaveLength(1);
+    expect(await repos.faqRepo.findAll()).toHaveLength(1);
+    expect(await repos.scheduleRepo.findAll()).toHaveLength(1);
+    expect(await repos.devotionalRepo.findAll()).toHaveLength(1);
+    // Notifications are their own button on the same screen — deliberately untouched here.
+    expect(await repos.notifRepo.findAll()).toHaveLength(2);
+  });
+
+  it('leaves a cancelled person cancelled rather than reviving them as registered', async () => {
+    await repos.personRepo.save(person({ id: 'gone', lifecycle: 'cancelled', atCamp: false }));
+    const svc = build(repos);
+    await svc.resetLogs(actor('admin'));
+    const gone = (await repos.personRepo.findAll()).find((p) => p.id === 'gone')!;
+    expect(gone.lifecycle).toBe('cancelled');
+  });
+
+  it('is guarded by the export-or-force wipe guard like a full reset', async () => {
+    await repos.settingsRepo.saveSingleton(settings({ lastExportedAt: null }));
+    const svc = build(repos);
+    await expect(svc.resetLogs(actor('admin'))).rejects.toBeInstanceOf(WipeGuardError);
+  });
+});
+
+describe('AdminService.reset — bug 16: incidents were surviving a full reset', () => {
+  it('clears incidents along with everything else', async () => {
+    const repos = await makeRepos();
+    await seedEverything(repos);
+    expect(await repos.incidentRepo.findAll()).toHaveLength(1);
+    await build(repos).reset(actor('admin'));
+    expect(await repos.incidentRepo.findAll()).toEqual([]);
   });
 });

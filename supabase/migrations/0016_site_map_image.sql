@@ -1,0 +1,11 @@
+-- 0016_site_map_image.sql
+-- Item 8 (2026-07-28): the camp site map shown behind the Home hero's "Map" button.
+--
+-- Stored as a client-baked `data:image/...` URI (the crop tool bakes the raster; the server
+-- never touches image bytes), mirroring how YS Connection stores its uploaded logo. Nullable
+-- with no default: null simply means "no map uploaded", which is also what hides the button.
+--
+-- ⚠ MUST be applied to prod BEFORE (or with) the code deploy: `supabase.settings` writes ALL
+-- settings columns on every save, so without this column every settings save — and the mode
+-- switch and new-year rollover that go through it — would fail. Reads tolerate its absence.
+alter table settings add column if not exists site_map_image text;

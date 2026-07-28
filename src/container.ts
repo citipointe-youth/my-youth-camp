@@ -198,7 +198,9 @@ export async function buildContainer(): Promise<Container> {
     ]);
 
     const auth = makeAuthService(users, settingsRepo);
-    const settings = makeSettingsService(settingsRepo);
+    // Item 3 (2026-07-28): the devotional + schedule repos let a camp-date change carry day-keyed
+  // content across to the new dates (see remapDays in settings.service.ts).
+  const settings = makeSettingsService(settingsRepo, { devotionals, schedule: scheduleRepo });
     const personSvc = makePersonService(people);
     const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
     const checkIn = makeCheckInService(people, settingsRepo);
@@ -221,6 +223,7 @@ export async function buildContainer(): Promise<Container> {
     const admin = makeAdminService(
       users, churches, people, classrooms, allocations, faqs, scheduleRepo,
       notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
+      incidents, pushSubscriptions,
     );
     const cron = makeCronService({ notifications, people, users, settings: settingsRepo });
 
@@ -333,7 +336,9 @@ export async function buildContainer(): Promise<Container> {
 
   // ----- Services -----
   const auth = makeAuthService(users, settingsRepo);
-  const settings = makeSettingsService(settingsRepo);
+  // Item 3 (2026-07-28): the devotional + schedule repos let a camp-date change carry day-keyed
+  // content across to the new dates (see remapDays in settings.service.ts).
+  const settings = makeSettingsService(settingsRepo, { devotionals, schedule: scheduleRepo });
   const personSvc = makePersonService(people);
   const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
   const checkIn = makeCheckInService(people, settingsRepo);
@@ -371,6 +376,8 @@ export async function buildContainer(): Promise<Container> {
     settingsRepo,
     snapshots,
     allocationOverrides,
+    incidents,
+    pushSubscriptions,
   );
   const cron = makeCronService({ notifications, people, users, settings: settingsRepo });
 

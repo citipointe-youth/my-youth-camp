@@ -189,7 +189,14 @@ export function makeDashboardService(
         const dashboard: AtCampDashboard = {
           mode: 'at-camp',
           campName: settings.campName,
-          greetingName: actor.displayName.split(' ')[0] ?? actor.displayName,
+          // Bug 14 (2026-07-28): was `displayName.split(' ')[0]`, which turned a church login
+          // named "Citipointe Pine Rivers" into "Hi Citipointe" — a real ambiguity when several
+          // campuses share a first word. A church account's displayName IS the ministry name and
+          // must be shown in full; a personal leadership login still greets by first name.
+          greetingName:
+            actor.role === 'church'
+              ? actor.displayName
+              : (actor.displayName.split(' ')[0] ?? actor.displayName),
           totalAtCamp,
           totalExpected,
           checkInsDue,
