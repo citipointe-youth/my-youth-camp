@@ -53,12 +53,35 @@ export interface CampSettings {
   ticketsImportedAt?: string | null;
   invoicesImportedAt?: string | null;
   /**
-   * Per-discount-code override amounts, code -> dollars. A registrant using that code whose
-   * registrationCost is null/0 is budgeted at this amount instead. Empty object = no overrides.
+   * DEPRECATED (2026-07-29) — superseded by `discountCodeTags`. Per-discount-code override
+   * amounts, code -> dollars. Nothing reads this any more; the column is left in place and
+   * still round-trips so a rollback is possible. Migration `0017` seeded `discountCodeTags`
+   * with `'inperson'` for every key that was in here, which is what the field always meant.
+   */
+  discountCodeOverrides?: Record<string, number>;
+  /**
+   * How the admin has classified each discount code, code -> 'inperson' | 'sponsor' |
+   * 'discount'. This is the payment half of a ticket's budget classification (the other half
+   * is the person's accommodationKind) — see `src/services/budget.ts`. A code that is absent
+   * here is a plain full-price ticket. Empty object = nothing tagged.
    * Optional (like the checkinWindow* fields above) so existing fixtures compile; defaults to
    * {} wherever read.
    */
-  discountCodeOverrides?: Record<string, number>;
+  discountCodeTags?: Record<string, 'inperson' | 'sponsor' | 'discount'>;
+  /**
+   * Admin-set reference prices for a full-price ticket, in dollars. These are the "no-code
+   * invoice" prices every discount code is defined against: they value a ticket whose code is
+   * tagged 'inperson' (money collected by hand, so no invoice records it) and they are what
+   * "discounted" is measured against on the Budget screen.
+   *
+   * ⚠ These two columns existed once before and were deliberately DROPPED by migration `0004`,
+   * when the budget moved to per-registrant `registrationCost`. They came back in `0017` for
+   * the classification rework and now have a narrower job: a reference price, NOT the source
+   * of every registrant's cost. Don't restore the old "price × headcount" behaviour.
+   * Null = not set, which makes the 'inperson' tag fall back to the person's recorded amount.
+   */
+  tentPrice?: number | null;
+  classroomPrice?: number | null;
   /**
    * Item 8 (2026-07-28): the camp site map, shown behind the "Map" button on the Home hero.
    * A `data:image/...` URI baked client-side by the crop tool (the same approach YS Connection

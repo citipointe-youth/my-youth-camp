@@ -1,6 +1,72 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-29 - SEVEN-ITEM OWNER BATCH (schedule, budget classification, imports, login UX)
+-----------------------------------------------------------------------------------
+SPA + backend + migration 0017 (settings.discount_code_tags / tent_price / classroom_price,
+MUST BE APPLIED TO PROD BEFORE THE CODE PUSH - supabase.settings writes every column on
+every save). Verified: npm run typecheck clean, npm run test = 688 pass / 48 files (was
+670), SPA node --check OK. sw.js camp-v52 -> camp-v53. Design:
+docs/superpowers/specs/2026-07-29-seven-item-batch-design.md. Symptom router in debug.md.
+
+  1. SCHEDULE - shorter rows, duration inline.
+     * The duration moved ONTO the time line ("9:00 - 30m") instead of a second line under
+       it; .sch-item time column 62px -> 92px, .sch-dur no longer display:block.
+     * _schedHeight recut min(190,max(54,40+mins*0.38)) -> min(133,max(38,28+mins*0.27)):
+       a uniform ~30% reduction at every point (30m 54->38px, 1h 63->44px, cap 190->133px).
+     * .sch-list gap 7->5px, .sch-item padding 10px 13px -> 7px 11px.
+
+  2. BUDGET - ticket classification replaced the Full/Half/Part cost bands.
+     * A category is now a TicketClass: accommodation kind (tent|classroom) x an admin tag on
+       the DISCOUNT CODE (inperson|sponsor|discount), plus "Accommodation not recorded".
+       Nine buckets, fixed order, same for campers and leaders.
+     * budget.ts: classifyTicket / personValue / labelForClass / labelForRow are new;
+       labelForAmount and applyDiscountOverrides are DELETED. computeBudget's 2nd arg is now
+       an options object {tags, prices, filterChurchId}. CategoryRow.key is a TicketClass;
+       new CategoryRow.valueMissingCount; `amount` is now "uniform unit price or null".
+     * !! THE GRAND TOTAL NOW READS AS MONEY RECEIVED, NOT VALUE OF ALL PLACES. personValue
+       prefers amountPaid over registrationCost, and a 'sponsor'-tagged code contributes $0.
+       This follows from the owner's decision that a full sponsor counts as $0. To read it
+       the other way, swap the last two lines of personValue + its SPA mirror _personValue.
+     * The Budget screen's per-code dollar field ("Mark paid in full") is replaced by a
+       classification dropdown. PATCH /settings/discount-overrides -> /settings/discount-tags;
+       SettingsService.updateDiscountCodeOverrides -> updateDiscountCodeTags. Same
+       budget:manage gate (admin + director).
+     * settings.tentPrice / classroomPrice are BACK (dropped by 0004, restored by 0017) with
+       a narrower job: a reference full price, editable in Admin -> Camp settings -> Ticket
+       prices. They value an 'inperson' ticket and define what "discounted" measures against.
+       They are NOT the source of any registrant's recorded cost.
+     * Migration 0017 seeds discount_code_tags with 'inperson' for every key that was in
+       discount_code_overrides - that is exactly what that field meant. The old column is
+       left in place, unused, so a rollback is possible.
+
+  3. ADMIN - "Clear all notifications" removed from Data Export/Reset (owner request). The
+     backend route DELETE /admin/notifications is left in place, unused - same precedent as
+     the retired sign-in/out CSV export. adminClear() deleted from the SPA.
+
+  4. IMPORT - first/last names are capitalised. New titleCaseName() in elvanto-mapping.ts,
+     applied in import.service / ticket-import.service / invoice-import.service. Fixes ONLY
+     names that are entirely upper- or entirely lower-case; anything already mixed-case is
+     untouched, so McDonald / O'Brien / de Silva / van Wyk survive. Import path only - no
+     backfill script; the authoritative Form import re-reads everyone every run.
+
+  5. iOS - keyboard-dismiss scroll restore. _fixViewportGap() ported verbatim from YS
+     Connection: a same-position scrollTo on the next frame, on visualViewport.resize with a
+     delegated focusout fallback. NOT a replacement for the 2026-07-26/28 html+body background
+     and .tabs::after rules - those paint over the exposed strip, this restores the scroll.
+
+  6. LOGIN - two help links under the card (phones only, same UA test as YS): public/install.html
+     (Add to Home Screen) and public/save-password.html (save the login to the phone's password
+     manager by hand). Standalone static pages, not in-app overlays - the SPA shell isn't up on
+     the login screen. Both derive the site address from location.host; neither calls /settings.
+
+  7. LOGIN - remember-password review. Applied: the last username is remembered in
+     localStorage['ycp_lastuser'] and prefilled (never the password); doLogin waits 150ms before
+     tearing down the form so Safari's save heuristic can fire; #mcpGate is a real <form> with a
+     hidden username field. DECLINED by the owner: firing navigator.credentials.store() on the
+     change-password path.
+
+
 2026-07-28 - 28-ITEM BUG/IMPROVEMENT BATCH (owner list, 25 numbered + 3 folded in)
 -----------------------------------------------------------------------------------
 SPA + backend + migration 0016 (settings.site_map_image, APPLIED TO PROD BEFORE THE CODE

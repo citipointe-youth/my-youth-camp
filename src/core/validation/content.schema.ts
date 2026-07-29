@@ -90,6 +90,12 @@ export const UpdateSettingsSchema = z.object({
   checkinWindowPmStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
   checkinWindowPmEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
   campMode: z.enum(CAMP_MODES).optional(),
+  /* 2026-07-29 (migration 0017): admin-set reference prices for a full-price ticket, used by the
+     budget's ticket classification. `.nullish()` NOT `.optional()` — clearing the field is a
+     normal edit and the SPA posts an explicit `null` for it, which `.optional()` would reject
+     (it accepts only `undefined`). Same rule the 2026-07-28 AddNoteSchema fix established. */
+  tentPrice: z.number().min(0).nullish(),
+  classroomPrice: z.number().min(0).nullish(),
   /* Item 8 (2026-07-28): site map. Client-baked `data:image/...` URI or null to remove it.
      Rejecting anything that isn't a data-image URI keeps a remote URL (and with it an SSRF /
      tracking-pixel surface, and a CSP violation on render) out of the settings row entirely —

@@ -224,6 +224,117 @@ Fixes — all switched `position:absolute`→`position:fixed` so they track the 
 GOTCHA for future overlays: any full-viewport overlay/toast MUST be `position:fixed`, never
 `position:absolute` — the phone `.app` is not viewport-height, it grows with the scrolling content.
 
+## Seven-item owner batch — deployed 2026-07-29
+
+Owner-requested batch. SPA + backend + **migration `0017`** (`settings.discount_code_tags`,
+`tent_price`, `classroom_price` — **applied to prod BEFORE the code push**, as
+`supabase.settings` writes every column on every save). `npm run typecheck` clean,
+`npm run test` = **688 pass** (was 670; 18 new), SPA `node --check` OK. `sw.js`
+`camp-v52`→`camp-v53`. Design: `docs/superpowers/specs/2026-07-29-seven-item-batch-design.md`.
+Symptom router: `debug.md`, section "2026-07-29 — seven-item owner batch".
+
+### 1 — Schedule rows ~30% shorter, duration inline
+The duration moved ONTO the time line (`9:00 · 30m`) instead of sitting on a second line under
+it — `.sch-dur` lost `display:block` and the `.sch-item` time column widened `62px`→`92px` to
+fit. `_schedHeight` was recut `min(190,max(54,40+mins*0.38))` → `min(133,max(38,28+mins*0.27))`,
+a uniform ~30% reduction at every point of the curve (30m 54→38px, 1h 63→44px, cap 190→133px).
+`.sch-list` gap 7→5px, `.sch-item` padding `10px 13px`→`7px 11px`. The compression (rather than
+a linear scale) is still deliberate — a 30-minute item must stay tappable.
+
+### 2 — Budget: TICKET CLASSIFICATION replaced the Full/Half/Part cost bands
+The owner does not think in cost bands, and the tent/classroom split was invisible in the budget
+entirely. A category is now a **`TicketClass`**: the accommodation kind crossed with a payment
+**tag the admin sets on the DISCOUNT CODE**, plus one bucket for unrecorded accommodation.
+
+| tag | tent | classroom |
+|---|---|---|
+| *(no code / untagged)* | Tent | Classroom |
+| `inperson` | Tent — paid in person | Classroom — paid in person |
+| `sponsor` | Tent full sponsor | Classroom full sponsor |
+| `discount` | Discounted tent | Discounted classroom |
+
+plus **Accommodation not recorded** (flagged with the warning triangle, never dropped — the
+grand-total-equals-sum-of-rows invariant still holds and is still tested). Nine buckets, fixed
+display order, **identical for campers and leaders**.
+
+The tag lives on the CODE, not the person, because the codes already ARE the mechanism: a
+no-code invoice is a plain full-price ticket and every concession, sponsorship and
+pay-at-the-desk arrangement is expressed as a code against that baseline. One tag covers
+everyone who used it — no per-person data entry.
+
+- **`src/services/budget.ts`** — new `classifyTicket`/`personValue`/`labelForClass`/`labelForRow`;
+  **`labelForAmount` and `applyDiscountOverrides` are DELETED**. `computeBudget`'s second
+  argument is now an options object `{tags, prices, filterChurchId}`, not a bare church id.
+  `CategoryRow.key` is a `TicketClass`; new `CategoryRow.valueMissingCount`; `amount` now means
+  "the uniform per-person value, or null when the row's members paid different amounts" — which
+  is NOT the same as `unrecorded` (true only for the `'unknown'` row). `budgetToCsv` writes a
+  BLANK UnitPrice cell for a mixed row (a `0` there reads as "free" beside a non-zero LineTotal).
+- **⚠ THE GRAND TOTAL NOW READS AS "MONEY RECEIVED", NOT "VALUE OF ALL PLACES".** `personValue`
+  prefers `amountPaid` over `registrationCost`, and a `sponsor`-tagged code contributes `$0`.
+  This follows directly from the owner's decision that a full sponsor counts as $0: a
+  100%-discount invoice records `registrationCost: 180, amountPaid: 0`, so preferring
+  `registrationCost` would count every sponsored place as revenue and contradict it. Precedent
+  already existed in `_paidOrCostRow`. **To read it the other way, swap the last two lines of
+  `personValue` AND its SPA mirror `_personValue` — nothing else changes.**
+- **The Budget screen's per-code dollar field is gone.** "Mark paid in full" (shipped
+  2026-07-27) is replaced by a classification dropdown — the tag implies the value, so there is
+  nothing to type. `PATCH /settings/discount-overrides` → **`PATCH /settings/discount-tags`**;
+  `SettingsService.updateDiscountCodeOverrides` → `updateDiscountCodeTags`. Same **`budget:manage`**
+  gate (admin + director). Unknown tag values are silently dropped, not rejected — clearing a tag
+  is a normal edit, and the dropdown's "plain" option submits an empty string.
+- **`settings.tentPrice`/`classroomPrice` are BACK** (they were deliberately dropped by migration
+  `0004`) with a **narrower job**: a reference full price, editable in Admin → Camp settings →
+  **Ticket prices**. They value an `inperson` ticket and define what "discounted" is measured
+  against. **They are NOT the source of any registrant's recorded cost — do not restore the old
+  price × headcount behaviour.** Null = not set, which makes an `inperson` tag fall back to the
+  person's recorded amount (the Budget screen warns when that is happening).
+- **Migration `0017`** seeds `discount_code_tags` with `'inperson'` for every key that was in
+  `discount_code_overrides` — that is exactly what that field meant (EFTPOS/cash collected at
+  registration). The old column is left in place and still round-trips, unused, so a rollback is
+  possible. `docs/PLANNED-IMPROVEMENTS.md`'s 2026-07-20 section is now marked BUILT-THEN-SUPERSEDED
+  (it had been stale since the day it shipped).
+
+### 3 — "Clear all notifications" removed from Data Export/Reset
+Owner request. The backend route `DELETE /admin/notifications` is **left in place, unused** —
+same precedent as the 2026-07-28 removal of the standalone sign-in/out CSV button. `adminClear()`
+is deleted from the SPA. Notices are deleted individually on the Notices screen. Don't re-add a
+bulk button without asking.
+
+### 4 — Imported first/last names are capitalised
+New `titleCaseName()` in `elvanto-mapping.ts`, applied at the name read sites in
+`import.service`, `ticket-import.service` and `invoice-import.service`. It fixes **only** names
+that are entirely upper-case or entirely lower-case; anything already mixed-case is returned
+untouched, so `McDonald`, `O'Brien`, `de Silva` and `van Wyk` survive. Deliberately NOT inside
+`field()` (that helper also reads church names, ticket types and emails) and NOT in
+`offline-signin.service` (it matches, never stores). **Import path only — no backfill script
+against prod**; the authoritative Form import re-reads every registrant on every run, so
+existing bad names self-correct on the next import.
+
+### 5 — iOS keyboard-dismiss scroll restore
+`_fixViewportGap()`, ported verbatim from YS Connection: a same-position `scrollTo` on the next
+frame, wired to `visualViewport.resize` with a delegated `focusout` fallback. On the phone
+body-scroll shell, closing the keyboard restores the viewport but not the scroll position and
+leaves the sticky header / fixed nav laid out against the stale keyboard-open height. **This is
+NOT a replacement for the 2026-07-26/28 `html`+`body` background and `.tabs::after` rules** —
+those paint over the exposed strip, this restores the scroll. Both are needed.
+
+### 6 — Two login-screen help links
+`public/install.html` (Add to Home Screen) and `public/save-password.html` (save the login to the
+phone's password manager by hand, for when it never offers). **Standalone static pages, not
+in-app overlays** — the SPA shell isn't up on the login screen, which is why YS does it this way
+too. Rendered by `_loginTips()` on iOS/Android user agents only. Both derive the site address
+from `location.host` so they are correct on any deployment, and **neither calls `/settings`** (the
+camp app has no `ministryConfig.branding.appName`; that block was dropped in the port).
+
+### 7 — Remember-password review
+Applied: the last username is saved to `localStorage['ycp_lastuser']` and prefilled at boot
+(**never the password**), which also gives the password manager a stable id to match on;
+`doLogin` now `await`s ~150ms before hiding the form, because Safari's save-heuristic can miss a
+credential whose password field is torn down in the same tick; `#mcpGate` is a real `<form>` with
+a hidden `autocomplete="username"` field (that gate is dormant — `MUST_CHANGE_PASSWORD_ENFORCED`
+is `false` — so this is pre-emptive). **Deliberately NOT applied** (owner declined): firing
+`navigator.credentials.store()` on the change-password path as well as login.
+
 ## 28-item bug/improvement batch — deployed 2026-07-28
 
 Owner-requested batch (25 numbered items + 3 folded in mid-session). SPA + backend +
@@ -424,7 +535,10 @@ prod 2026-07-27**, immediately before that push; the "not applied" note here was
 corrected on 2026-07-28 after verifying `settings.discount_code_overrides` exists in prod), and
 **`0016`** (2026-07-28 — `settings.site_map_image text` for the site-map feature, **applied to
 prod BEFORE the code push**, as `supabase.settings` writes every column on every save).
-Next migration = `0017`. See the 2026-07-26 web-push section at the bottom of this file for the
+Since then: **`0017`** (2026-07-29 — `settings.discount_code_tags` plus the returning
+`tent_price`/`classroom_price`, for the budget ticket classification; **must be applied to prod
+BEFORE the code push**, and it also back-fills the tags from the retired `discount_code_overrides`).
+Next migration = `0018`. See the 2026-07-26 web-push section at the bottom of this file for the
 gating conditions on `0014`.
 
 **Prod reconciled 2026-07-16 (code) + 2026-07-17 (DB).** The code-ref removal (dropping

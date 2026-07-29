@@ -5,7 +5,7 @@ import type { AccommodationKind, PaymentStatus } from '../core/types/enums';
 import { assertCan } from './access-control';
 import { BadRequestError } from '../core/errors/app-error';
 import { parseCsv } from '../utils/csv';
-import { field, isBlankRow } from './elvanto-mapping';
+import { field, isBlankRow, titleCaseName } from './elvanto-mapping';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import {
@@ -112,8 +112,8 @@ export function makeTicketImportService(
         if (isBlankRow(row)) { skipped++; continue; }
 
         try {
-          const firstName = field(row, 'First Name', 'firstName', 'first_name');
-          const lastName = field(row, 'Last Name', 'lastName', 'last_name');
+          const firstName = titleCaseName(field(row, 'First Name', 'firstName', 'first_name'));
+          const lastName = titleCaseName(field(row, 'Last Name', 'lastName', 'last_name'));
           if (!firstName || !lastName) {
             errors.push({ row: rowNum, message: 'Missing firstName or lastName' });
             skipped++;

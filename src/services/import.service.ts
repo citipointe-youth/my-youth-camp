@@ -14,7 +14,7 @@ import { parseCsv } from '../utils/csv';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import {
-  cleanCareText, field, isBlankRow, normalizeDate, parseGradeOrLeader, yesToConsent,
+  cleanCareText, field, isBlankRow, normalizeDate, parseGradeOrLeader, titleCaseName, yesToConsent,
 } from './elvanto-mapping';
 import { invalidateDashboardCache } from './dashboard-cache';
 import { z } from 'zod';
@@ -180,8 +180,8 @@ export function makeImportService(
         if (isBlankRow(row)) { skipped++; continue; }
 
         try {
-          const firstName = field(row, 'First Name', 'firstName', 'first_name');
-          const lastName = field(row, 'Last Name', 'lastName', 'last_name');
+          const firstName = titleCaseName(field(row, 'First Name', 'firstName', 'first_name'));
+          const lastName = titleCaseName(field(row, 'Last Name', 'lastName', 'last_name'));
           if (!firstName || !lastName) {
             errors.push({ row: rowNum, message: 'Missing firstName or lastName' });
             skipped++;

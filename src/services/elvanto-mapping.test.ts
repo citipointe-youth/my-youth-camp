@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ELVANTO_HEADERS, cleanCareText, normalizeDate, formatDateAU,
-  parseGradeOrLeader, yesToConsent, field,
+  parseGradeOrLeader, yesToConsent, field, titleCaseName,
 } from './elvanto-mapping';
 
 describe('elvanto-mapping', () => {
@@ -44,5 +44,44 @@ describe('elvanto-mapping', () => {
     expect(field(row, 'First Name', 'firstName')).toBe('Ada');
     expect(field(row, 'firstName', 'First Name')).toBe('Ada');
     expect(field(row, 'Missing')).toBe('');
+  });
+
+  describe('titleCaseName', () => {
+    it('title-cases ALL-CAPS names', () => {
+      expect(titleCaseName('JOHN')).toBe('John');
+      expect(titleCaseName('SMITH')).toBe('Smith');
+    });
+
+    it('title-cases all-lower-case names', () => {
+      expect(titleCaseName('john')).toBe('John');
+    });
+
+    it('title-cases each part of a hyphenated all-caps name', () => {
+      expect(titleCaseName('MARY-JANE')).toBe('Mary-Jane');
+    });
+
+    it("title-cases around straight and curly apostrophes", () => {
+      expect(titleCaseName("O'BRIEN")).toBe("O'Brien");
+      expect(titleCaseName('O’BRIEN')).toBe('O’Brien');
+    });
+
+    it('title-cases each word of a space-separated all-caps name', () => {
+      expect(titleCaseName('MARY ANNE')).toBe('Mary Anne');
+    });
+
+    it('leaves mixed-case names completely unchanged', () => {
+      expect(titleCaseName('McDonald')).toBe('McDonald');
+      expect(titleCaseName('de Silva')).toBe('de Silva');
+      expect(titleCaseName('van Wyk')).toBe('van Wyk');
+    });
+
+    it('leaves empty/blank input unchanged', () => {
+      expect(titleCaseName('')).toBe('');
+      expect(titleCaseName('   ')).toBe('   ');
+    });
+
+    it('handles non-ASCII letters', () => {
+      expect(titleCaseName('JOSÉ')).toBe('José');
+    });
   });
 });

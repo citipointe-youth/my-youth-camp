@@ -31,6 +31,12 @@ function toSettings(r: Record<string, unknown>): CampSettings {
     ticketsImportedAt: (r['tickets_imported_at'] as Date | null)?.toISOString() ?? null,
     invoicesImportedAt: (r['invoices_imported_at'] as Date | null)?.toISOString() ?? null,
     discountCodeOverrides: (r['discount_code_overrides'] as Record<string, number>) ?? {},
+    // 2026-07-29 — migration 0017. Ticket classification: the payment tag per discount code,
+    // plus the two admin-set reference prices. Tolerate absence on read like every other
+    // late-added column; the WRITE side below is what actually requires the migration.
+    discountCodeTags: (r['discount_code_tags'] as CampSettings['discountCodeTags']) ?? {},
+    tentPrice: (r['tent_price'] as number | null) ?? null,
+    classroomPrice: (r['classroom_price'] as number | null) ?? null,
     // Item 8 (2026-07-28) — migration 0016. Tolerate absence on read (an un-migrated DB
     // simply has no map) exactly like the other late-added columns.
     siteMapImage: (r['site_map_image'] as string | null) ?? null,
@@ -67,6 +73,9 @@ function settingsCols(s: CampSettings): Record<string, unknown> {
     tickets_imported_at: s.ticketsImportedAt ?? null,
     invoices_imported_at: s.invoicesImportedAt ?? null,
     discount_code_overrides: s.discountCodeOverrides ?? {},
+    discount_code_tags: s.discountCodeTags ?? {},
+    tent_price: s.tentPrice ?? null,
+    classroom_price: s.classroomPrice ?? null,
     site_map_image: s.siteMapImage ?? null,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
@@ -82,6 +91,7 @@ const UPDATE_COLS = [
   'last_temp_passwords', 'last_exported_at',
   'defaults_saved_at', 'form_imported_at', 'tickets_imported_at', 'invoices_imported_at',
   'discount_code_overrides',
+  'discount_code_tags', 'tent_price', 'classroom_price',
   'site_map_image',
   'updated_at',
 ] as const;

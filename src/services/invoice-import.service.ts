@@ -6,7 +6,7 @@ import { assertCan } from './access-control';
 import { BadRequestError } from '../core/errors/app-error';
 import { parseCsv } from '../utils/csv';
 import { nowISO } from '../utils/date';
-import { field, isBlankRow } from './elvanto-mapping';
+import { field, isBlankRow, titleCaseName } from './elvanto-mapping';
 import {
   buildNameIndex, findPersonMatch, mergeOwnedFields,
 } from './person-matching';
@@ -188,8 +188,8 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
           // is very often a PARENT, not the registrant (e.g. invoice billed to "Robin Thompson"
           // for attendee "Ivy Thompson") — that's exactly why invoice-number matching is tier 1
           // and this name is only a fallback (see the "billing-contact name only" warning below).
-          const billingFirst = field(row, 'First Name', 'Billing First Name', 'Payer First Name') || '';
-          const billingLast = field(row, 'Last Name', 'Billing Last Name', 'Payer Last Name') || '';
+          const billingFirst = titleCaseName(field(row, 'First Name', 'Billing First Name', 'Payer First Name') || '');
+          const billingLast = titleCaseName(field(row, 'Last Name', 'Billing Last Name', 'Payer Last Name') || '');
           const billingPhone = field(row, 'Phone', 'Billing Phone', 'Payer Phone', 'Mobile Number') || null;
 
           const ticketTotalRaw = field(row, 'Ticket Total', 'Tickets Total', 'registrationCost') || '';

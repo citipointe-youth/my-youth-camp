@@ -1,12 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeBudget,
-  labelForAmount,
+  labelForClass,
+  labelForRow,
+  classifyTicket,
+  personValue,
   budgetToCsv,
   computeDiscountCodeSummary,
-  applyDiscountOverrides,
   type BudgetPerson,
   type BudgetReport,
+  type DiscountTagMap,
+  type TicketClass,
+  type BasePrices,
 } from './budget';
 
 function p(
@@ -19,9 +24,13 @@ function p(
     churchName: churchId === 'c1' ? 'Victory' : churchId === 'c2' ? 'Grace Point' : 'Riverbend',
     registrationCost: 180,
     discountCode: null,
+    accommodationKind: 'tent',
+    amountPaid: null,
     ...over,
   };
 }
+
+const NO_PRICES: BasePrices = { tent: null, classroom: null };
 
 /** The core invariant: grand total === Σ of every category line total across all churches. */
 function sumOfAllLines(r: BudgetReport): number {
@@ -33,155 +42,259 @@ function sumOfAllLines(r: BudgetReport): number {
   return s;
 }
 
-describe('labelForAmount — dataset-relative smart labels', () => {
-  it('highest positive = Full, 0 = Sponsored, half-of-full = Half, other = Part', () => {
-    expect(labelForAmount(180, 180)).toBe('Full — $180');
-    expect(labelForAmount(0, 180)).toBe('Sponsored — $0');
-    expect(labelForAmount(90, 180)).toBe('Half — $90');
-    expect(labelForAmount(120, 180)).toBe('Part — $120');
-  });
-  it('null = Cost not recorded', () => {
-    expect(labelForAmount(null, 180)).toBe('Cost not recorded');
-  });
-  it('does not hardcode 180 — full anchor follows the data', () => {
-    expect(labelForAmount(250, 250)).toBe('Full — $250');
-    expect(labelForAmount(125, 250)).toBe('Half — $125');
+describe('labelForClass', () => {
+  it('labels every ticket class', () => {
+    expect(labelForClass('tent')).toBe('Tent');
+    expect(labelForClass('tent-inperson')).toBe('Tent — paid in person');
+    expect(labelForClass('tent-discount')).toBe('Discounted tent');
+    expect(labelForClass('tent-sponsor')).toBe('Tent full sponsor');
+    expect(labelForClass('classroom')).toBe('Classroom');
+    expect(labelForClass('classroom-inperson')).toBe('Classroom — paid in person');
+    expect(labelForClass('classroom-discount')).toBe('Discounted classroom');
+    expect(labelForClass('classroom-sponsor')).toBe('Classroom full sponsor');
+    expect(labelForClass('unknown')).toBe('Accommodation not recorded');
   });
 });
 
-describe('computeBudget — mixed tiers', () => {
-  const people: BudgetPerson[] = [
-    // Grace Point: 3 full campers, 2 half, 2 sponsored, 2 sponsored leaders
-    p({ churchId: 'c2', kind: 'camper', registrationCost: 180 }),
-    p({ churchId: 'c2', kind: 'camper', registrationCost: 180 }),
-    p({ churchId: 'c2', kind: 'camper', registrationCost: 180 }),
-    p({ churchId: 'c2', kind: 'camper', registrationCost: 90 }),
-    p({ churchId: 'c2', kind: 'camper', registrationCost: 90 }),
-    p({ churchId: 'c2', kind: 'camper', registrationCost: 0 }),
-    p({ churchId: 'c2', kind: 'camper', registrationCost: 0 }),
-    p({ churchId: 'c2', kind: 'leader', registrationCost: 0 }),
-    p({ churchId: 'c2', kind: 'leader', registrationCost: 0 }),
-    // Victory: 7 full campers
-    ...Array.from({ length: 7 }, () => p({ churchId: 'c1', kind: 'camper', registrationCost: 180 })),
-  ];
-
-  it('full anchor is the highest positive cost', () => {
-    expect(computeBudget(people).fullAmount).toBe(180);
+describe('labelForRow', () => {
+  it('appends the unit price when there is one', () => {
+    expect(labelForRow('tent', 180)).toBe('Tent — $180');
   });
-
-  it('per-church camper categories carry count, amount, lineTotal', () => {
-    const r = computeBudget(people);
-    const gp = r.churches.find((c) => c.churchId === 'c2')!;
-    const full = gp.campers.find((row) => row.amount === 180)!;
-    expect(full.count).toBe(3);
-    expect(full.lineTotal).toBe(540);
-    const half = gp.campers.find((row) => row.amount === 90)!;
-    expect(half).toMatchObject({ count: 2, lineTotal: 180 });
-    const spon = gp.campers.find((row) => row.amount === 0)!;
-    expect(spon).toMatchObject({ count: 2, lineTotal: 0 });
-  });
-
-  it('leaders are a separate group', () => {
-    const gp = computeBudget(people).churches.find((c) => c.churchId === 'c2')!;
-    expect(gp.leaderCount).toBe(2);
-    expect(gp.leaders).toHaveLength(1);
-    expect(gp.leaders[0]).toMatchObject({ amount: 0, count: 2, lineTotal: 0 });
-  });
-
-  it('church total = Σ camper lines + Σ leader lines', () => {
-    const gp = computeBudget(people).churches.find((c) => c.churchId === 'c2')!;
-    expect(gp.total).toBe(540 + 180 + 0 + 0); // 720
-  });
-
-  it('grand total = Σ church totals AND = Σ of every line total (the acceptance invariant)', () => {
-    const r = computeBudget(people);
-    expect(r.grandTotal).toBe(720 + 7 * 180); // Grace Point 720 + Victory 1260 = 1980
-    expect(r.grandTotal).toBe(sumOfAllLines(r));
-  });
-
-  it('churches are sorted by name', () => {
-    const r = computeBudget(people);
-    expect(r.churches.map((c) => c.churchName)).toEqual(['Grace Point', 'Victory']);
+  it('omits the price when amount is null (mixed row)', () => {
+    expect(labelForRow('tent', null)).toBe('Tent');
   });
 });
 
-describe('computeBudget — edge cases (J5)', () => {
-  it('all-sponsored church: total 0, invariant holds', () => {
-    const people = Array.from({ length: 5 }, () => p({ churchId: 'c1', kind: 'camper', registrationCost: 0 }));
-    const r = computeBudget(people);
-    expect(r.grandTotal).toBe(0);
-    expect(r.grandTotal).toBe(sumOfAllLines(r));
-    expect(r.churches[0]!.campers[0]!.label).toBe('Sponsored — $0');
+describe('classifyTicket — all nine outcomes', () => {
+  const tags: DiscountTagMap = { INPERSON1: 'inperson', SPONSOR1: 'sponsor', DISC1: 'discount' };
+
+  it('tent, no code → tent', () => {
+    expect(classifyTicket(p({ accommodationKind: 'tent', discountCode: null }), tags)).toBe('tent');
+  });
+  it('tent, untagged code → tent', () => {
+    expect(classifyTicket(p({ accommodationKind: 'tent', discountCode: 'RANDOMCODE' }), tags)).toBe('tent');
+  });
+  it('tent + inperson tag → tent-inperson', () => {
+    expect(classifyTicket(p({ accommodationKind: 'tent', discountCode: 'INPERSON1' }), tags)).toBe('tent-inperson');
+  });
+  it('tent + sponsor tag → tent-sponsor', () => {
+    expect(classifyTicket(p({ accommodationKind: 'tent', discountCode: 'SPONSOR1' }), tags)).toBe('tent-sponsor');
+  });
+  it('tent + discount tag → tent-discount', () => {
+    expect(classifyTicket(p({ accommodationKind: 'tent', discountCode: 'DISC1' }), tags)).toBe('tent-discount');
+  });
+  it('classroom, no code → classroom', () => {
+    expect(classifyTicket(p({ accommodationKind: 'classroom', discountCode: null }), tags)).toBe('classroom');
+  });
+  it('classroom + inperson tag → classroom-inperson', () => {
+    expect(classifyTicket(p({ accommodationKind: 'classroom', discountCode: 'INPERSON1' }), tags)).toBe(
+      'classroom-inperson',
+    );
+  });
+  it('classroom + sponsor tag → classroom-sponsor', () => {
+    expect(classifyTicket(p({ accommodationKind: 'classroom', discountCode: 'SPONSOR1' }), tags)).toBe(
+      'classroom-sponsor',
+    );
+  });
+  it('classroom + discount tag → classroom-discount', () => {
+    expect(classifyTicket(p({ accommodationKind: 'classroom', discountCode: 'DISC1' }), tags)).toBe(
+      'classroom-discount',
+    );
+  });
+  it('accommodationKind null → unknown', () => {
+    expect(classifyTicket(p({ accommodationKind: null }), tags)).toBe('unknown');
+  });
+  it('accommodationKind undefined → unknown', () => {
+    const person = p({});
+    delete (person as { accommodationKind?: unknown }).accommodationKind;
+    expect(classifyTicket(person, tags)).toBe('unknown');
+  });
+  it('an unrecognised tag value in the map falls back to the plain class, not a crash', () => {
+    const badTags = { FOO: 'bogus' as unknown as DiscountTagMap[string] };
+    expect(classifyTicket(p({ accommodationKind: 'tent', discountCode: 'FOO' }), badTags)).toBe('tent');
+  });
+});
+
+describe('personValue', () => {
+  it('tent-inperson with prices.tent set → the base price, even if amountPaid is 0', () => {
+    const person = p({ accommodationKind: 'tent', amountPaid: 0, registrationCost: 180 });
+    expect(personValue(person, 'tent-inperson', { tent: 180, classroom: null })).toBe(180);
   });
 
-  it('null cost → "Cost not recorded", counted but $0, never dropped; total stays honest', () => {
+  it('tent-inperson with prices.tent null → falls through to amountPaid/registrationCost instead of inventing a number', () => {
+    const person = p({ accommodationKind: 'tent', amountPaid: 150, registrationCost: 180 });
+    expect(personValue(person, 'tent-inperson', { tent: null, classroom: null })).toBe(150);
+  });
+
+  it('classroom-inperson with prices.classroom set → the base price', () => {
+    const person = p({ accommodationKind: 'classroom', amountPaid: 0 });
+    expect(personValue(person, 'classroom-inperson', { tent: null, classroom:90 })).toBe(90);
+  });
+
+  it('*-sponsor → 0 even when registrationCost is 180', () => {
+    const person = p({ registrationCost: 180 });
+    expect(personValue(person, 'tent-sponsor', NO_PRICES)).toBe(0);
+    expect(personValue(person, 'classroom-sponsor', NO_PRICES)).toBe(0);
+  });
+
+  // Deliberate 2026-07-29 owner decision: the grand total reads as MONEY RECEIVED, not value of
+  // all places, so amountPaid (what actually arrived) wins over registrationCost (the ticket
+  // total) whenever both are recorded.
+  it('otherwise amountPaid WINS over registrationCost (money received, not value of all places)', () => {
+    const person = p({ registrationCost: 180, amountPaid: 150 });
+    expect(personValue(person, 'tent', NO_PRICES)).toBe(150);
+  });
+
+  it('falls back to registrationCost when amountPaid is not recorded', () => {
+    const person = p({ registrationCost: 180, amountPaid: null });
+    expect(personValue(person, 'tent', NO_PRICES)).toBe(180);
+  });
+
+  it('both null → null', () => {
+    const person = p({ registrationCost: null, amountPaid: null });
+    expect(personValue(person, 'tent', NO_PRICES)).toBeNull();
+  });
+});
+
+describe('computeBudget — core invariant', () => {
+  it('grandTotal === Σ every category lineTotal, across churches/audiences, surviving sponsored/unknown/nothing-recorded people', () => {
+    const tags: DiscountTagMap = { SPON: 'sponsor', INP: 'inperson' };
+    const prices: BasePrices = { tent: 180, classroom: 150 };
     const people: BudgetPerson[] = [
-      p({ churchId: 'c1', kind: 'camper', registrationCost: 180 }),
-      p({ churchId: 'c1', kind: 'camper', registrationCost: null }),
-      p({ churchId: 'c1', kind: 'camper', registrationCost: null }),
+      p({ churchId: 'c2', kind: 'camper', accommodationKind: 'tent', registrationCost: 180 }),
+      p({ churchId: 'c2', kind: 'camper', accommodationKind: 'tent', registrationCost: 180 }),
+      p({ churchId: 'c2', kind: 'camper', accommodationKind: 'classroom', registrationCost: 150 }),
+      p({ churchId: 'c2', kind: 'camper', accommodationKind: 'tent', discountCode: 'SPON', registrationCost: 180 }),
+      p({ churchId: 'c2', kind: 'camper', accommodationKind: 'tent', discountCode: 'INP', amountPaid: 0 }),
+      p({ churchId: 'c2', kind: 'camper', accommodationKind: null, registrationCost: null, amountPaid: null }),
+      p({ churchId: 'c2', kind: 'leader', accommodationKind: 'tent', discountCode: 'SPON', registrationCost: 180 }),
+      p({ churchId: 'c2', kind: 'leader', accommodationKind: 'tent', registrationCost: 180 }),
+      ...Array.from({ length: 7 }, () =>
+        p({ churchId: 'c1', kind: 'camper', accommodationKind: 'classroom', registrationCost: 150 }),
+      ),
+      p({ churchId: 'c1', kind: 'camper', accommodationKind: null }),
+      p({ churchId: 'c1', kind: 'camper', registrationCost: null, amountPaid: null }),
     ];
-    const r = computeBudget(people);
-    expect(r.camperCount).toBe(3); // none dropped
-    const c1 = r.churches[0]!;
-    const unrec = c1.campers.find((row) => row.unrecorded)!;
-    expect(unrec.count).toBe(2);
-    expect(unrec.lineTotal).toBe(0);
-    expect(unrec.label).toBe('Cost not recorded');
-    expect(r.grandTotal).toBe(180); // only the recorded camper contributes
+    const r = computeBudget(people, { tags, prices });
     expect(r.grandTotal).toBe(sumOfAllLines(r));
+    // sanity: nobody silently dropped
+    expect(r.camperCount + r.leaderCount).toBe(people.length);
   });
+});
 
-  it('leaders-only church', () => {
-    const people = Array.from({ length: 3 }, () => p({ churchId: 'c1', kind: 'leader', registrationCost: 0 }));
-    const r = computeBudget(people);
-    expect(r.camperCount).toBe(0);
-    expect(r.leaderCount).toBe(3);
-    expect(r.churches[0]!.campers).toHaveLength(0);
-  });
-
-  it('empty dataset', () => {
-    const r = computeBudget([]);
-    expect(r).toMatchObject({ grandTotal: 0, camperCount: 0, leaderCount: 0, churchCount: 0 });
-    expect(r.fullAmount).toBeNull();
-  });
-
-  it('cost-not-recorded sorts last within a scope', () => {
+describe('computeBudget — row ordering', () => {
+  it('rows follow the fixed CLASS_ORDER within a scope', () => {
+    const tags: DiscountTagMap = { SPON: 'sponsor', INP: 'inperson', DISC: 'discount' };
     const people: BudgetPerson[] = [
-      p({ churchId: 'c1', kind: 'camper', registrationCost: null }),
-      p({ churchId: 'c1', kind: 'camper', registrationCost: 180 }),
-      p({ churchId: 'c1', kind: 'camper', registrationCost: 90 }),
+      p({ accommodationKind: 'classroom' }),
+      p({ accommodationKind: null }),
+      p({ accommodationKind: 'tent', discountCode: 'SPON' }),
+      p({ accommodationKind: 'tent' }),
+      p({ accommodationKind: 'tent', discountCode: 'DISC' }),
+      p({ accommodationKind: 'tent', discountCode: 'INP' }),
+    ];
+    const rows = computeBudget(people, { tags }).churches[0]!.campers;
+    const order: TicketClass[] = ['tent', 'tent-inperson', 'tent-discount', 'tent-sponsor', 'classroom', 'unknown'];
+    expect(rows.map((row) => row.key)).toEqual(order);
+  });
+});
+
+describe('computeBudget — amount vs lineTotal', () => {
+  it('a uniform-value row reports that value as amount', () => {
+    const people: BudgetPerson[] = [
+      p({ accommodationKind: 'tent', registrationCost: 180 }),
+      p({ accommodationKind: 'tent', registrationCost: 180 }),
+    ];
+    const row = computeBudget(people).churches[0]!.campers[0]!;
+    expect(row.amount).toBe(180);
+    expect(row.lineTotal).toBe(360);
+  });
+
+  it('a mixed-value row reports amount === null but a correct lineTotal', () => {
+    const people: BudgetPerson[] = [
+      p({ accommodationKind: 'tent', registrationCost: 180 }),
+      p({ accommodationKind: 'tent', registrationCost: 90 }),
+    ];
+    const row = computeBudget(people).churches[0]!.campers[0]!;
+    expect(row.amount).toBeNull();
+    expect(row.lineTotal).toBe(270);
+  });
+
+  it('valueMissingCount counts members who contributed $0 because nothing was recorded', () => {
+    const people: BudgetPerson[] = [
+      p({ accommodationKind: 'tent', registrationCost: 180 }),
+      p({ accommodationKind: 'tent', registrationCost: null, amountPaid: null }),
+      p({ accommodationKind: 'tent', registrationCost: null, amountPaid: null }),
+    ];
+    const row = computeBudget(people).churches[0]!.campers[0]!;
+    expect(row.valueMissingCount).toBe(2);
+    expect(row.lineTotal).toBe(180);
+    // mixed because two members are missing while one has 180 recorded
+    expect(row.amount).toBeNull();
+  });
+
+  it('unrecorded is true ONLY on the unknown row', () => {
+    const people: BudgetPerson[] = [
+      p({ accommodationKind: 'tent', registrationCost: 180 }),
+      p({ accommodationKind: null }),
     ];
     const rows = computeBudget(people).churches[0]!.campers;
-    expect(rows.map((r) => r.amount)).toEqual([180, 90, null]);
+    for (const row of rows) {
+      expect(row.unrecorded).toBe(row.key === 'unknown');
+    }
   });
 });
 
-describe('computeBudget — single-church filter', () => {
-  const people: BudgetPerson[] = [
-    p({ churchId: 'c1', kind: 'camper', registrationCost: 180 }),
-    p({ churchId: 'c2', kind: 'camper', registrationCost: 90 }),
-  ];
-  it('scopes to one church and its grand total', () => {
-    const r = computeBudget(people, 'c1');
+describe('computeBudget — leaders get the same nine classes as campers', () => {
+  it('a sponsored leader and a tent leader both classify and total correctly', () => {
+    const tags: DiscountTagMap = { SPON: 'sponsor' };
+    const people: BudgetPerson[] = [
+      p({ kind: 'leader', accommodationKind: 'tent', discountCode: 'SPON', registrationCost: 180 }),
+      p({ kind: 'leader', accommodationKind: 'tent', registrationCost: 180 }),
+    ];
+    const r = computeBudget(people, { tags });
+    const leaders = r.churches[0]!.leaders;
+    const sponsorRow = leaders.find((row) => row.key === 'tent-sponsor')!;
+    const tentRow = leaders.find((row) => row.key === 'tent')!;
+    expect(sponsorRow).toMatchObject({ count: 1, lineTotal: 0 });
+    expect(tentRow).toMatchObject({ count: 1, amount: 180, lineTotal: 180 });
+  });
+});
+
+describe('computeBudget — church filter', () => {
+  it('scopes to one church via filterChurchId', () => {
+    const people: BudgetPerson[] = [
+      p({ churchId: 'c1', registrationCost: 180 }),
+      p({ churchId: 'c2', registrationCost: 90 }),
+    ];
+    const r = computeBudget(people, { filterChurchId: 'c1' });
     expect(r.churchCount).toBe(1);
     expect(r.grandTotal).toBe(180);
     expect(r.grandTotal).toBe(sumOfAllLines(r));
   });
 });
 
+describe('computeBudget — edge cases', () => {
+  it('empty dataset', () => {
+    const r = computeBudget([]);
+    expect(r).toMatchObject({ grandTotal: 0, camperCount: 0, leaderCount: 0, churchCount: 0 });
+    expect(r.fullAmount).toBeNull();
+  });
+});
+
 describe('discount code hint', () => {
-  it('surfaces a code only when every person in the tier shares it', () => {
+  it('surfaces a code only when every person in the row shares it', () => {
     const people: BudgetPerson[] = [
-      p({ churchId: 'c1', kind: 'camper', registrationCost: 90, discountCode: 'EARLYBIRD' }),
-      p({ churchId: 'c1', kind: 'camper', registrationCost: 90, discountCode: 'EARLYBIRD' }),
+      p({ accommodationKind: 'tent', registrationCost: 90, discountCode: 'EARLYBIRD' }),
+      p({ accommodationKind: 'tent', registrationCost: 90, discountCode: 'EARLYBIRD' }),
     ];
     const row = computeBudget(people).churches[0]!.campers[0]!;
     expect(row.codeHint).toBe('EARLYBIRD');
   });
   it('no hint when codes differ', () => {
     const people: BudgetPerson[] = [
-      p({ churchId: 'c1', kind: 'camper', registrationCost: 90, discountCode: 'A' }),
-      p({ churchId: 'c1', kind: 'camper', registrationCost: 90, discountCode: 'B' }),
+      p({ accommodationKind: 'tent', registrationCost: 90, discountCode: 'A' }),
+      p({ accommodationKind: 'tent', registrationCost: 90, discountCode: 'B' }),
     ];
     expect(computeBudget(people).churches[0]!.campers[0]!.codeHint).toBeNull();
   });
@@ -190,16 +303,30 @@ describe('discount code hint', () => {
 describe('budgetToCsv', () => {
   it('emits header, per-church rows, church totals and a grand-total row; reconciles', () => {
     const people: BudgetPerson[] = [
-      p({ churchId: 'c1', kind: 'camper', registrationCost: 180 }),
-      p({ churchId: 'c1', kind: 'leader', registrationCost: 0 }),
+      p({ churchId: 'c1', kind: 'camper', accommodationKind: 'tent', registrationCost: 180 }),
+      p({ churchId: 'c1', kind: 'leader', accommodationKind: 'tent', registrationCost: 0, amountPaid: 0 }),
     ];
     const r = computeBudget(people);
     const csv = budgetToCsv(r);
     const rows = csv.split('\n');
     expect(rows[0]).toBe('Church,Audience,Category,Count,UnitPrice,LineTotal');
     expect(csv).toContain('Grand Total');
-    // grand total in the last row equals the report grand total
     expect(rows[rows.length - 1]!.endsWith(',' + r.grandTotal)).toBe(true);
+  });
+
+  it('writes an empty UnitPrice cell (not 0) for a mixed-value row', () => {
+    const people: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', accommodationKind: 'tent', registrationCost: 180 }),
+      p({ churchId: 'c1', kind: 'camper', accommodationKind: 'tent', registrationCost: 90 }),
+    ];
+    const r = computeBudget(people);
+    const csv = budgetToCsv(r);
+    const line = csv.split('\n').find((l) => l.includes('Victory,Camper,Tent,'))!;
+    expect(line).toBeDefined();
+    // Church,Audience,Category,Count,UnitPrice,LineTotal — UnitPrice cell must be blank
+    const cells = line.split(',');
+    expect(cells[4]).toBe('');
+    expect(Number(cells[5])).toBe(270);
   });
 });
 
@@ -216,15 +343,15 @@ describe('computeDiscountCodeSummary', () => {
     const summary = computeDiscountCodeSummary(people);
     expect(summary.totalInScope).toBe(5);
     expect(summary.rows).toEqual([
-      { code: 'EARLYBIRD', count: 2, purpose: null },
-      { code: 'ALIVE100', count: 1, purpose: null },
+      { code: 'EARLYBIRD', count: 2, purpose: null, tag: null },
+      { code: 'ALIVE100', count: 1, purpose: null, tag: null },
     ]);
   });
 
   it('scopes to a single church via filterChurchId', () => {
     const summary = computeDiscountCodeSummary(people, 'c1');
     expect(summary.totalInScope).toBe(3); // 2 EARLYBIRD + 1 blank-code camper, all c1
-    expect(summary.rows).toEqual([{ code: 'EARLYBIRD', count: 2, purpose: null }]);
+    expect(summary.rows).toEqual([{ code: 'EARLYBIRD', count: 2, purpose: null, tag: null }]);
   });
 
   it('no discount codes at all → empty rows, totalInScope still reflects the scope', () => {
@@ -232,23 +359,32 @@ describe('computeDiscountCodeSummary', () => {
     expect(computeDiscountCodeSummary(none)).toEqual({ totalInScope: 1, rows: [] });
   });
 
+  it('carries the admin-set tag for a row, or null when untagged', () => {
+    const tags: DiscountTagMap = { EARLYBIRD: 'discount' };
+    const summary = computeDiscountCodeSummary(people, undefined, tags);
+    expect(summary.rows).toEqual([
+      { code: 'EARLYBIRD', count: 2, purpose: null, tag: 'discount' },
+      { code: 'ALIVE100', count: 1, purpose: null, tag: null },
+    ]);
+  });
+
   it('derives a clean percentage label when the discount is nearly one of the standard tiers', () => {
     const half: BudgetPerson[] = [
       p({ churchId: 'c1', kind: 'camper', registrationCost: 180, discountAmount: 90, discountCode: 'HALF' }),
       p({ churchId: 'c1', kind: 'camper', registrationCost: 90, discountAmount: 46, discountCode: 'HALF' }), // ~51% — within tolerance
     ];
-    expect(computeDiscountCodeSummary(half).rows).toEqual([{ code: 'HALF', count: 2, purpose: '50% Off' }]);
+    expect(computeDiscountCodeSummary(half).rows).toEqual([
+      { code: 'HALF', count: 2, purpose: '50% Off', tag: null },
+    ]);
 
     // Item C (2026-07-28): a code that wipes out the WHOLE ticket price is the "bought the wrong
     // ticket, pay only the difference" correction, not a sponsored place — it is still counted,
     // but labelled for what it is so the budget can't be misread as free places given away.
-    // (This supersedes the earlier "100% Off" label; 100% is no longer reachable via the tier
-    // buckets, which now top out below the 97% threshold.)
     const full: BudgetPerson[] = [
       p({ churchId: 'c1', kind: 'camper', registrationCost: 150, discountAmount: 150, discountCode: 'ALIVE100' }),
     ];
     expect(computeDiscountCodeSummary(full).rows).toEqual([
-      { code: 'ALIVE100', count: 1, purpose: 'Ticket difference — already paid' },
+      { code: 'ALIVE100', count: 1, purpose: 'Ticket difference — already paid', tag: null },
     ]);
   });
 
@@ -257,7 +393,7 @@ describe('computeDiscountCodeSummary', () => {
       p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 133, discountCode: 'HARDSHIP' }),
     ];
     expect(computeDiscountCodeSummary(seventy).rows).toEqual([
-      { code: 'HARDSHIP', count: 1, purpose: '70% Off' },
+      { code: 'HARDSHIP', count: 1, purpose: '70% Off', tag: null },
     ]);
   });
 
@@ -266,98 +402,17 @@ describe('computeDiscountCodeSummary', () => {
       p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 20, discountCode: 'SIBLING20' }),
       p({ churchId: 'c1', kind: 'camper', registrationCost: 150, discountAmount: 20, discountCode: 'SIBLING20' }),
     ];
-    expect(computeDiscountCodeSummary(flat).rows).toEqual([{ code: 'SIBLING20', count: 2, purpose: '$20 Off' }]);
+    expect(computeDiscountCodeSummary(flat).rows).toEqual([
+      { code: 'SIBLING20', count: 2, purpose: '$20 Off', tag: null },
+    ]);
   });
 
   it('purpose is null when no one using the code has both a cost and a discount amount recorded', () => {
     const noFinancials: BudgetPerson[] = [
       p({ churchId: 'c1', kind: 'camper', registrationCost: null, discountAmount: null, discountCode: 'MYSTERY' }),
     ];
-    expect(computeDiscountCodeSummary(noFinancials).rows).toEqual([{ code: 'MYSTERY', count: 1, purpose: null }]);
-  });
-});
-
-describe('applyDiscountOverrides', () => {
-  it('fills a null cost for a person whose code has an override', () => {
-    const out = applyDiscountOverrides(
-      [p({ id: '1', registrationCost: null, discountCode: 'EFTPOS' })],
-      { EFTPOS: 180 },
-    );
-    expect(out[0]?.registrationCost).toBe(180);
-  });
-
-  it('fills a zero cost the same way', () => {
-    const out = applyDiscountOverrides(
-      [p({ id: '1', registrationCost: 0, discountCode: 'EFTPOS' })],
-      { EFTPOS: 180 },
-    );
-    expect(out[0]?.registrationCost).toBe(180);
-  });
-
-  it('NEVER overwrites a genuinely recorded nonzero cost', () => {
-    const out = applyDiscountOverrides(
-      [p({ id: '1', registrationCost: 90, discountCode: 'EFTPOS' })],
-      { EFTPOS: 180 },
-    );
-    expect(out[0]?.registrationCost).toBe(90);
-  });
-
-  it('leaves people whose code has no override untouched', () => {
-    const out = applyDiscountOverrides(
-      [p({ id: '1', registrationCost: 0, discountCode: 'SPONSOR' })],
-      { EFTPOS: 180 },
-    );
-    expect(out[0]?.registrationCost).toBe(0);
-  });
-
-  it('leaves people with no discount code untouched', () => {
-    const out = applyDiscountOverrides(
-      [p({ id: '1', registrationCost: 0, discountCode: null })],
-      { EFTPOS: 180 },
-    );
-    expect(out[0]?.registrationCost).toBe(0);
-  });
-
-  it('matches the code after trimming, consistent with computeDiscountCodeSummary', () => {
-    const out = applyDiscountOverrides(
-      [p({ id: '1', registrationCost: 0, discountCode: '  EFTPOS  ' })],
-      { EFTPOS: 180 },
-    );
-    expect(out[0]?.registrationCost).toBe(180);
-  });
-
-  it('does not mutate its input', () => {
-    const people = [p({ id: '1', registrationCost: 0, discountCode: 'EFTPOS' })];
-    applyDiscountOverrides(people, { EFTPOS: 180 });
-    expect(people[0]?.registrationCost).toBe(0);
-  });
-
-  it('feeds computeBudget so the overridden amount reaches the grand total', () => {
-    const people = [
-      p({ id: '1', registrationCost: 180, discountCode: null }),
-      p({ id: '2', registrationCost: 0, discountCode: 'EFTPOS' }),
-    ];
-    const before = computeBudget(people);
-    const after = computeBudget(applyDiscountOverrides(people, { EFTPOS: 180 }));
-    expect(before.grandTotal).toBe(180);
-    expect(after.grandTotal).toBe(360);
-  });
-
-  it('re-buckets the overridden person into the normal Full category', () => {
-    const people = [
-      p({ id: '1', registrationCost: 180, discountCode: null }),
-      p({ id: '2', registrationCost: 0, discountCode: 'EFTPOS' }),
-    ];
-    const after = computeBudget(applyDiscountOverrides(people, { EFTPOS: 180 }));
-    const labels = after.churches.flatMap((c) => c.campers.map((r) => r.label));
-    expect(labels.some((l) => l.startsWith('Full'))).toBe(true);
-    expect(labels.some((l) => l.startsWith('Sponsored'))).toBe(false);
-  });
-
-  it('is a no-op for an empty override map', () => {
-    const people = [p({ id: '1', registrationCost: 0, discountCode: 'EFTPOS' })];
-    expect(computeBudget(applyDiscountOverrides(people, {})).grandTotal).toBe(
-      computeBudget(people).grandTotal,
-    );
+    expect(computeDiscountCodeSummary(noFinancials).rows).toEqual([
+      { code: 'MYSTERY', count: 1, purpose: null, tag: null },
+    ]);
   });
 });

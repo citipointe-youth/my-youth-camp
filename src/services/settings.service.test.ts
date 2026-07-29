@@ -23,7 +23,7 @@ function settings(over: Partial<CampSettings> = {}): CampSettings {
   };
 }
 
-describe('SettingsService — updateDiscountCodeOverrides', () => {
+describe('SettingsService — updateDiscountCodeTags', () => {
   let repo: InMemorySettingsRepository;
   let svc: SettingsService;
 
@@ -33,29 +33,51 @@ describe('SettingsService — updateDiscountCodeOverrides', () => {
     svc = makeSettingsService(repo);
   });
 
-  it('lets director update discount overrides but not general settings', async () => {
+  it('lets director update discount tags but not general settings', async () => {
     const dir = actor('director');
-    await expect(svc.updateDiscountCodeOverrides(dir, { EFTPOS: 180 })).resolves.toBeTruthy();
+    await expect(svc.updateDiscountCodeTags(dir, { EFTPOS: 'inperson' })).resolves.toBeTruthy();
     await expect(svc.update(dir, { campName: 'X' })).rejects.toThrow();
   });
 
-  it('refuses discount overrides for church and zoneLeader', async () => {
-    for (const role of ['church', 'zoneLeader'] as const) {
-      await expect(svc.updateDiscountCodeOverrides(actor(role), { EFTPOS: 180 })).rejects.toThrow();
+  it('lets admin update discount tags', async () => {
+    await expect(
+      svc.updateDiscountCodeTags(actor('admin'), { EFTPOS: 'sponsor' }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('refuses discount tags for church, zoneLeader and firstAid', async () => {
+    for (const role of ['church', 'zoneLeader', 'firstAid'] as const) {
+      await expect(svc.updateDiscountCodeTags(actor(role), { EFTPOS: 'inperson' })).rejects.toThrow();
     }
   });
 
-  it('drops zero, negative and blank-code entries', async () => {
-    const saved = await svc.updateDiscountCodeOverrides(actor('admin'), {
-      EFTPOS: 180, ZERO: 0, NEG: -5, '   ': 90,
-    } as Record<string, number>);
-    expect(saved.discountCodeOverrides).toEqual({ EFTPOS: 180 });
+  it('a valid tag map round-trips onto settings.discountCodeTags', async () => {
+    const saved = await svc.updateDiscountCodeTags(actor('admin'), {
+      EFTPOS: 'inperson',
+      ALIVE100: 'sponsor',
+      SIBLING20: 'discount',
+    });
+    expect(saved.discountCodeTags).toEqual({
+      EFTPOS: 'inperson',
+      ALIVE100: 'sponsor',
+      SIBLING20: 'discount',
+    });
+    const reloaded = await repo.getSingleton();
+    expect(reloaded?.discountCodeTags).toEqual({
+      EFTPOS: 'inperson',
+      ALIVE100: 'sponsor',
+      SIBLING20: 'discount',
+    });
   });
 
-  it('round-trips through the settings repository', async () => {
-    await svc.updateDiscountCodeOverrides(actor('admin'), { EFTPOS: 180 });
-    const reloaded = await repo.getSingleton();
-    expect(reloaded?.discountCodeOverrides).toEqual({ EFTPOS: 180 });
+  it('silently drops an unrecognised tag value and a blank code key, rather than throwing', async () => {
+    const saved = await svc.updateDiscountCodeTags(actor('admin'), {
+      EFTPOS: 'inperson',
+      BOGUS: 'not-a-real-tag',
+      '   ': 'sponsor',
+      '': 'discount',
+    } as Record<string, string>);
+    expect(saved.discountCodeTags).toEqual({ EFTPOS: 'inperson' });
   });
 });
 

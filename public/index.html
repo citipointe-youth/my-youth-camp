@@ -423,12 +423,16 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
    --sch-bg (surface) once; the shared `.sch-item` rule consumes both, so adding a
    category = one CSS line + one SCHED_CATEGORIES entry. Row HEIGHT is inline
    (`min-height`, from `_schedHeight`) because it is data-derived, not a style choice. */
-.sch-list{display:flex;flex-direction:column;gap:7px;}
-.sch-item{display:grid;grid-template-columns:62px minmax(0,1fr);gap:10px;align-items:center;
+.sch-list{display:flex;flex-direction:column;gap:5px;}
+.sch-item{display:grid;grid-template-columns:92px minmax(0,1fr);gap:10px;align-items:center;
   background:var(--sch-bg);border:1px solid var(--line);border-left:5px solid var(--sch);
-  border-radius:var(--r);padding:10px 13px;box-shadow:var(--shadow-sm);}
-.sch-time{font-weight:800;color:var(--sch);font-size:var(--t-sm);line-height:1.25;}
-.sch-dur{display:block;font-weight:600;font-size:var(--t-2xs);color:var(--muted);letter-spacing:.01em;}
+  border-radius:var(--r);padding:7px 11px;box-shadow:var(--shadow-sm);}
+/* 2026-07-29: the duration moved ONTO the time line ("9:00 · 30m") instead of sitting on a
+   second line under it, and the column widened 62px -> 92px to fit. That, plus the recut
+   _schedHeight curve, is what makes the rows ~30% shorter. If you narrow this column again,
+   the duration wraps and the height saving is lost. */
+.sch-time{font-weight:800;color:var(--sch);font-size:var(--t-sm);line-height:1.25;white-space:nowrap;}
+.sch-dur{font-weight:600;font-size:var(--t-2xs);color:var(--muted);letter-spacing:.01em;}
 .sch-title{font-weight:700;font-size:var(--t-lg);color:var(--ink);line-height:1.3;}
 .sch-legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
 .sch-key{font-size:var(--t-2xs);font-weight:700;padding:3px 9px;border-radius:999px;
@@ -609,6 +613,11 @@ textarea{min-height:84px;resize:vertical;}
 #login h1,#mcpGate h1{color:var(--violet);font-size:1.85rem;text-align:center;margin-bottom:5px;letter-spacing:-.03em;font-weight:800;}
 #login p,#mcpGate p{color:var(--purple);text-align:center;font-size:var(--t-sm);margin-bottom:22px;font-weight:600;}
 #login .card,#mcpGate .card{background:#fff;border:1px solid var(--line);box-shadow:0 14px 40px rgba(124,58,237,.12);border-radius:20px;}
+/* Login help links (2026-07-29) — mirrors YS Connection: plain links under the card pointing at
+   STANDALONE static pages (public/install.html, public/save-password.html) rather than in-app
+   overlays, because the SPA shell isn't fully up on the login screen. Phones only (see _loginTips). */
+#login .login-tips{text-align:center;font-size:var(--t-2xs);color:var(--muted);margin-top:14px;margin-bottom:0;line-height:1.75;font-weight:600;}
+#login .login-tips a{color:var(--violet);text-decoration:underline;}
 .quick{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
 .quick button{flex:1;min-width:44%;border:1px solid var(--line);background:var(--chip);color:var(--violet-d,#6d28d9);border-radius:12px;padding:9px 8px;font-size:var(--t-xs);cursor:pointer;font-weight:700;font-family:inherit;transition:background .12s;}
 .quick button:active{background:var(--lav,#ede9fe);}
@@ -792,6 +801,8 @@ textarea{min-height:84px;resize:vertical;}
       <button class="btn" type="submit">Sign in</button>
       <div class="err" id="loginErr"></div>
     </form>
+    <!-- Login help links, filled in by _loginTips() at boot (phones only). -->
+    <p id="loginTips" class="login-tips" style="display:none"></p>
     <!-- Demo quick-login: only rendered for the in-memory demo build, injected by
          _initDemoLogin() when /settings reports a demo/seed backend. Never shipped
          with prefilled credentials in production. -->
@@ -802,14 +813,20 @@ textarea{min-height:84px;resize:vertical;}
   <div id="mcpGate" style="display:none">
     <h1>Set a New Password</h1>
     <p>This account's password must be changed before continuing</p>
-    <div class="card">
-      <label>Current Password</label><input class="fld" id="mcp-cur" type="password" autocomplete="current-password">
-      <label>New Password (min 6 chars)</label><input class="fld" id="mcp-new" type="password" autocomplete="new-password">
+    <!-- A real <form> with a submit button, not a bare <div> of onclick buttons: the submit
+         event is the main signal password managers watch for when deciding to offer to UPDATE
+         a saved credential, and the hidden username field gives them something to key that
+         update against. This gate is currently dormant (MUST_CHANGE_PASSWORD_ENFORCED is
+         false), so this is pre-emptive — don't "simplify" it back to a div when it's switched on. -->
+    <form class="card" id="mcpForm" onsubmit="event.preventDefault();submitChangePassword();return false;">
+      <input type="text" id="mcp-user" name="username" autocomplete="username" style="display:none" tabindex="-1" aria-hidden="true">
+      <label>Current Password</label><input class="fld" id="mcp-cur" name="current-password" type="password" autocomplete="current-password">
+      <label>New Password (min 6 chars)</label><input class="fld" id="mcp-new" name="new-password" type="password" autocomplete="new-password">
       <label>Confirm New Password</label><input class="fld" id="mcp-new2" type="password" autocomplete="new-password">
-      <button class="btn" onclick="submitChangePassword()">Set Password &amp; Continue</button>
-      <button class="btn ghost" style="margin-top:8px" onclick="logout()">Sign Out</button>
+      <button class="btn" type="submit">Set Password &amp; Continue</button>
+      <button class="btn ghost" type="button" style="margin-top:8px" onclick="logout()">Sign Out</button>
       <div class="err" id="mcpErr"></div>
-    </div>
+    </form>
   </div>
 </div>
 
@@ -1308,6 +1325,24 @@ function _initDemoLogin(){
     <div class="quick">${accts.map(([u,l])=>`<button onclick="quick('${u}')">${l}</button>`).join('')}</div>`;
 }
 function quick(u){document.getElementById('username').value=u;document.getElementById('password').value='demo1234';doLogin();}
+/* Login-screen help (2026-07-29). Two links to STANDALONE static pages — the SPA shell isn't up
+   yet on this screen, so an in-app overlay would be the wrong tool. Rendered on phones only
+   (same UA test YS Connection uses): both guides are about phone gestures and phone password
+   managers, and neither means anything on a desktop browser.
+   Also prefills the last username used on this device — see the note in doLogin. */
+function _loginTips(){
+  try{
+    const last=localStorage.getItem('ycp_lastuser');
+    const u=document.getElementById('username');
+    if(last&&u&&!u.value)u.value=last;
+  }catch(_){}
+  if(!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent))return;
+  const el=document.getElementById('loginTips');
+  if(!el)return;
+  el.innerHTML='Install as an app — <a href="/install.html">how to add to Home Screen</a>'
+    +'<br>Password not saving? — <a href="/save-password.html">how to save it manually</a>';
+  el.style.display='block';
+}
 async function doLogin(){
   const err=document.getElementById('loginErr');if(err)err.style.display='none';
   try{
@@ -1315,6 +1350,10 @@ async function doLogin(){
     const d=await api('/auth/login',{method:'POST',body:{username:document.getElementById('username').value.trim(),password:document.getElementById('password').value}});
     TOKEN=d.token;ACTOR={...d.user,displayName:((d.user.firstName||'')+' '+(d.user.lastName||'')).trim()};
     localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
+    // Remember the username (NEVER the password) so the field is prefilled on return. Beyond
+    // saving typing, it gives the phone's password manager a stable id to match its saved
+    // credential against, which is half of why autofill misses on a blank form.
+    try{localStorage.setItem('ycp_lastuser',document.getElementById('username').value.trim());}catch(_){}
     // Item 1: nudge the browser to SAVE this credential. Chrome/Edge/Android support the Credential
     // Management API; Safari/iOS does not (there the real <form id="loginForm"> submit + correct
     // autocomplete tokens are the only lever, already in place — an existing saved password will
@@ -1326,6 +1365,11 @@ async function doLogin(){
     if(MUST_CHANGE_PASSWORD_ENFORCED&&ACTOR.mustChangePassword){document.getElementById('login').style.display='none';_showChangePasswordGate();return;}
     SETTINGS=await api('/settings');
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
+    /* Give the browser a beat before the password field is torn down. Safari decides whether to
+       offer to SAVE a new credential shortly after the form submit resolves; hiding the form
+       synchronously in the same tick can make it drop the prompt entirely. 150ms is imperceptible
+       and is what YS Connection settled on. Don't remove it to "speed up" login. */
+    await new Promise(r=>setTimeout(r,150));
     document.getElementById('login').style.display='none';
     document.getElementById('bar').style.display='flex';
     document.getElementById('stage').style.display='block';
@@ -1354,6 +1398,9 @@ function _showChangePasswordGate(){
   document.getElementById('stage').style.display='none';
   document.getElementById('tabs').style.display='none';
   document.getElementById('login').style.display='none';
+  // Feed the hidden username into the gate's form so a password manager can key its
+  // "update saved password?" prompt to the right credential.
+  try{const mu=document.getElementById('mcp-user');if(mu&&ACTOR)mu.value=ACTOR.username||'';}catch(_){}
   document.getElementById('mcpGate').style.display='flex';
 }
 function _mcpErr(m){const e=document.getElementById('mcpErr');if(e){e.textContent=m;e.style.display='block';}}
@@ -1635,6 +1682,24 @@ function _stale(tok){return tok!==_navToken;}
 // Every save/restore of a screen's scroll routes through this so it targets the right element.
 function _isWide(){return window.innerWidth>=980;}
 function _scroller(el){return (_isWide()&&el)?el:(document.scrollingElement||document.documentElement);}
+/* iOS keyboard-dismiss scroll restore (2026-07-29, ported from YS Connection's _fixViewportGap).
+   On the phone body-scroll shell, opening the soft keyboard shrinks the visual viewport and
+   WebKit scrolls the document down to keep the focused field visible. Closing the keyboard
+   restores the viewport but NOT the scroll position, and leaves the sticky header / fixed
+   bottom nav laid out against the stale keyboard-open height — so the page stays scrolled down
+   with a strip of background showing. A same-position scrollTo on the next frame is enough to
+   make WebKit recompute fixed-element layout against the restored viewport and settle back.
+
+   Wired to BOTH visualViewport.resize (fires reliably on keyboard show/hide) and a delegated
+   focusout (fallback — the exact trigger is inconsistent across iOS Safari versions).
+
+   This is NOT the same fix as the 2026-07-26/28 html+body background and .tabs::after rules:
+   those PAINT OVER the exposed strip, they don't restore the scroll position. Both are needed. */
+function _fixViewportGap(){requestAnimationFrame(function(){window.scrollTo(0,window.scrollY);});}
+if(window.visualViewport)window.visualViewport.addEventListener('resize',_fixViewportGap);
+document.addEventListener('focusout',function(e){
+  if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))setTimeout(_fixViewportGap,60);
+});
 function _spinner(id,label){
   const el=document.getElementById(id);
   if(el){el.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">'+(label||'Loading…')+'</div></div>';const sc=_scroller(el);if(sc)sc.scrollTop=0;}
@@ -3099,44 +3164,112 @@ async function deleteNotice(id){if(!await confirmSheet({title:'Delete this notic
 /* ===== BUDGET (director/admin) =====
    Tent/classroom prices come from Camp settings; the backend has no fee-tier, so every
    camper is charged the full price for their accommodation kind. */
-/* ===== BUDGET & COSTINGS (rebuilt — brief §5) =====
-   Costs come from per-registrant `registrationCost` (the CSV `Cost`), NOT from settings.
-   A category = a distinct cost value within a (church, audience) scope; null cost =
-   "Cost not recorded" (counted, flagged, $0 to totals — never dropped). Grand total
-   reconciles exactly to the sum of every line total. This mirrors the pure helper
-   src/services/budget.ts (the canonical, unit-tested algorithm). */
+/* ===== BUDGET & COSTINGS =====
+   SPA mirror of src/services/budget.ts (the canonical, unit-tested algorithm). Keep the two in
+   step — the SPA computes the budget client-side and would otherwise disagree with the server.
+
+   2026-07-29 REWRITE: categories are TICKET CLASSIFICATIONS, not cost bands. A category used to
+   be a distinct `registrationCost` value labelled "Full — $180" / "Half" / "Part" / "Sponsored".
+   It is now the accommodation kind (tent | classroom) crossed with a payment tag the admin sets
+   on the DISCOUNT CODE, plus one "Accommodation not recorded" bucket. See budget.ts's header
+   comment for the full rationale; everything below mirrors it function for function.
+
+   ⚠ THE GRAND TOTAL IS "MONEY RECEIVED", NOT "VALUE OF ALL PLACES" — see `_personValue`. */
 function _money(n){return '$'+Number(n||0).toLocaleString('en-AU',{maximumFractionDigits:2});}
-function _budLabel(amount,full){
-  if(amount==null)return 'Cost not recorded';
-  if(amount===0)return 'Sponsored — '+_money(0);
-  if(full!=null&&amount===full)return 'Full — '+_money(amount);
-  if(full!=null&&full>0&&Math.abs(amount-full/2)<1)return 'Half — '+_money(amount);
-  return 'Part — '+_money(amount);
+/* Mirrors CLASS_ORDER + CLASS_LABEL in budget.ts. Row order in every scope, so the table reads
+   the same way every time. Adding a class = one entry here + one in budget.ts. */
+const _BUD_CLASSES=[
+  ['tent','Tent'],
+  ['tent-inperson','Tent — paid in person'],
+  ['tent-discount','Discounted tent'],
+  ['tent-sponsor','Tent full sponsor'],
+  ['classroom','Classroom'],
+  ['classroom-inperson','Classroom — paid in person'],
+  ['classroom-discount','Discounted classroom'],
+  ['classroom-sponsor','Classroom full sponsor'],
+  ['unknown','Accommodation not recorded'],
+];
+const _BUD_CLASS_LABEL=Object.fromEntries(_BUD_CLASSES);
+/** The three tags an admin can put on a discount code, and how they read in the dropdown. */
+const _BUD_TAGS=[['inperson','Paid in person'],['sponsor','Full sponsor'],['discount','Discounted']];
+function _budRowLabel(cls,amount){
+  const base=_BUD_CLASS_LABEL[cls]||cls;
+  return amount==null?base:(base+' — '+_money(amount));
 }
-function _budScopeRows(people,full){
+/** Mirrors budget.ts classifyTicket. An unrecognised tag falls back to the plain class. */
+function _classifyTicket(p,tags){
+  const kind=p.accommodationKind;
+  if(kind!=='tent'&&kind!=='classroom')return 'unknown';
+  const code=(p.discountCode||'').trim();
+  const tag=code?(tags||{})[code]:null;
+  if(tag==='inperson'||tag==='sponsor'||tag==='discount')return kind+'-'+tag;
+  return kind;
+}
+/* Mirrors budget.ts personValue — READ ITS DOC COMMENT before changing this. Order encodes a
+   deliberate owner decision: a 'inperson' code is valued at the admin's base price (the money
+   was collected by hand, so no invoice records it), a 'sponsor' code is $0 (no money received),
+   and otherwise `amountPaid` WINS over `registrationCost` because registrationCost is the ticket
+   TOTAL while amountPaid is what actually arrived. That is what makes the grand total read as
+   money received. To read it as "value of all places" instead, swap the last two lines here and
+   in budget.ts's personValue — nothing else needs to change. Returns null = nothing recorded. */
+function _personValue(p,cls,prices){
+  if(cls==='tent-inperson'&&prices.tent!=null)return prices.tent;
+  if(cls==='classroom-inperson'&&prices.classroom!=null)return prices.classroom;
+  if(cls==='tent-sponsor'||cls==='classroom-sponsor')return 0;
+  if(p.amountPaid!=null)return p.amountPaid;
+  if(p.registrationCost!=null)return p.registrationCost;
+  return null;
+}
+/** The admin-set reference prices (settings.tentPrice/classroomPrice), normalised to numbers. */
+function _budPrices(){
+  const n=v=>(v==null||v===''||!isFinite(Number(v)))?null:Number(v);
+  return {tent:n(SETTINGS&&SETTINGS.tentPrice),classroom:n(SETTINGS&&SETTINGS.classroomPrice)};
+}
+function _budTags(){return (SETTINGS&&SETTINGS.discountCodeTags)||{};}
+/* Mirrors budget.ts scopeToRows. `amount` is the UNIFORM per-person value when every member of
+   the row contributed the same one (else null — "mixed, read the line total"), which is NOT the
+   same thing as `unrecorded` (true only for the 'unknown' accommodation row). `lineTotal` is
+   always the exact sum of the members' individual values, whatever `amount` says — that is what
+   keeps the grand-total-equals-sum-of-rows invariant true. */
+function _budScopeRows(people,tags,prices){
   const by=new Map();
-  people.forEach(p=>{const k=p.registrationCost==null?'null':String(p.registrationCost);
-    let r=by.get(k);if(!r){r={amount:p.registrationCost==null?null:p.registrationCost,count:0,codes:new Map()};by.set(k,r);}
-    r.count++;const c=(p.discountCode||'').trim();if(c)r.codes.set(c,(r.codes.get(c)||0)+1);});
-  // Bug 4 (2026-07-28): `label` was never set here, but `drawBudget`'s `catRow` renders
-  // `esc(r.label)` — so every category line under a church's "Campers"/"Leaders" heading was
-  // BLANK, and a null-cost row showed only the bare warning triangle with no text beside it.
-  // `_budLabel` is the SPA mirror of `labelForAmount` in src/services/budget.ts; `full` (the
-  // highest recorded cost in scope) was already being threaded in for exactly this purpose and
-  // was simply unused.
-  const rows=[...by.values()].map(r=>{let hint=null;if(r.codes.size===1){const [code,n]=[...r.codes.entries()][0];if(n===r.count)hint=code;}
-    return {amount:r.amount,label:_budLabel(r.amount,full),count:r.count,lineTotal:(r.amount||0)*r.count,unrecorded:r.amount==null,codeHint:hint};});
-  rows.sort((a,b)=>a.amount==null?1:b.amount==null?-1:b.amount-a.amount);
+  people.forEach(p=>{
+    const cls=_classifyTicket(p,tags);
+    const val=_personValue(p,cls,prices);
+    let b=by.get(cls);
+    if(!b){b={count:0,total:0,values:new Set(),missing:0,codes:new Map()};by.set(cls,b);}
+    b.count++;
+    if(val==null)b.missing++;else{b.total+=val;b.values.add(val);}
+    const c=(p.discountCode||'').trim();if(c)b.codes.set(c,(b.codes.get(c)||0)+1);
+  });
+  const rows=[];
+  _BUD_CLASSES.forEach(([cls])=>{
+    const b=by.get(cls);if(!b)return;
+    const amount=(b.values.size===1&&b.missing===0)?[...b.values][0]:null;
+    let hint=null;if(b.codes.size===1){const [code,n]=[...b.codes.entries()][0];if(n===b.count)hint=code;}
+    rows.push({key:cls,label:_budRowLabel(cls,amount),amount,count:b.count,lineTotal:b.total,
+      unrecorded:cls==='unknown',valueMissingCount:b.missing,codeHint:hint});
+  });
   return rows;
 }
 function computeBudgetClient(regs,filterId){
+  const tags=_budTags(),prices=_budPrices();
+  const num=v=>v==null?null:Number(v);
   const people=(regs||[]).filter(r=>r.status!=='cancelled').filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
-    .map(r=>({churchId:r.churchId,churchName:r.churchName,kind:r.kind==='leader'?'leader':'camper',registrationCost:r.registrationCost==null?null:Number(r.registrationCost),discountCode:r.discountCode}));
-  let full=null;people.forEach(p=>{if(p.registrationCost!=null&&p.registrationCost>0)full=full==null?p.registrationCost:Math.max(full,p.registrationCost);});
+    .map(r=>({churchId:r.churchId,churchName:r.churchName,kind:r.kind==='leader'?'leader':'camper',
+      registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
+      accommodationKind:r.accommodationKind||null,discountCode:r.discountCode}));
+  let full=null;
   const byChurch=new Map();
-  people.forEach(p=>{let c=byChurch.get(p.churchId);if(!c){c={churchId:p.churchId,churchName:p.churchName,campers:[],leaders:[]};byChurch.set(p.churchId,c);}
-    (p.kind==='leader'?c.leaders:c.campers).push(p);});
-  const churches=[...byChurch.values()].map(c=>{const campers=_budScopeRows(c.campers,full),leaders=_budScopeRows(c.leaders,full);
+  people.forEach(p=>{
+    const v=_personValue(p,_classifyTicket(p,tags),prices);
+    if(v!=null&&v>0)full=full==null?v:Math.max(full,v);
+    let c=byChurch.get(p.churchId);
+    if(!c){c={churchId:p.churchId,churchName:p.churchName,campers:[],leaders:[]};byChurch.set(p.churchId,c);}
+    (p.kind==='leader'?c.leaders:c.campers).push(p);
+  });
+  const churches=[...byChurch.values()].map(c=>{
+    const campers=_budScopeRows(c.campers,tags,prices),leaders=_budScopeRows(c.leaders,tags,prices);
     const camperCount=campers.reduce((s,r)=>s+r.count,0),leaderCount=leaders.reduce((s,r)=>s+r.count,0);
     const total=campers.reduce((s,r)=>s+r.lineTotal,0)+leaders.reduce((s,r)=>s+r.lineTotal,0);
     return {churchId:c.churchId,churchName:c.churchName,camperCount,leaderCount,total,campers,leaders};});
@@ -3157,30 +3290,19 @@ function _deriveDiscountPurpose(pairs){
   const avgDollar=Math.round(valid.reduce((s,x)=>s+x.discount,0)/valid.length);
   return avgDollar>0?('$'+avgDollar+' Off'):null;
 }
-/** Mirrors src/services/budget.ts computeDiscountCodeSummary. */
+/** Mirrors src/services/budget.ts computeDiscountCodeSummary (incl. the per-code `tag`). */
 function computeDiscountSummaryClient(regs,filterId){
+  const tags=_budTags();
   const people=(regs||[]).filter(r=>r.status!=='cancelled').filter(r=>!filterId||filterId==='all'||r.churchId===filterId);
   const counts=new Map(),pairsByCode=new Map();
   people.forEach(r=>{const code=(r.discountCode||'').trim();if(!code)return;
     counts.set(code,(counts.get(code)||0)+1);
     const cost=r.registrationCost==null?null:Number(r.registrationCost),discount=r.discountAmount==null?null:Number(r.discountAmount);
     if(cost!=null&&discount!=null){const pairs=pairsByCode.get(code)||[];pairs.push({cost,discount});pairsByCode.set(code,pairs);}});
-  const rows=[...counts.entries()].map(([code,count])=>({code,count,purpose:_deriveDiscountPurpose(pairsByCode.get(code)||[])})).sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
+  const rows=[...counts.entries()].map(([code,count])=>({code,count,
+    purpose:_deriveDiscountPurpose(pairsByCode.get(code)||[]),tag:tags[code]||null}))
+    .sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
   return {totalInScope:people.length,rows};
-}
-// Mirror of applyDiscountOverrides in src/services/budget.ts. Keep the two in step —
-// the SPA computes the budget client-side and would otherwise disagree with the server.
-function _applyDiscountOverrides(people,overrides){
-  const keys=Object.keys(overrides||{});
-  if(!keys.length)return people.slice();
-  return people.map(p=>{
-    const code=(p.discountCode||'').trim();
-    if(!code)return p;
-    const amt=overrides[code];
-    if(amt==null)return p;
-    if(p.registrationCost!=null&&p.registrationCost!==0)return p;
-    return Object.assign({},p,{registrationCost:amt});
-  });
 }
 RENDER.budget=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('budget','<p class="note-hint" style="margin-top:24px;text-align:center">Budget is available to directors only.</p>','Budget & Costings','');return;}
@@ -3195,19 +3317,21 @@ RENDER.budget=async function(){
   const selHtml=`<div class="rowsb" style="gap:8px;margin-bottom:12px">
     <select id="budChurch" onchange="drawBudget()" style="flex:1"><option value="all">All ministries</option>${churches.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>
     <button class="btn alt sm" style="flex:none" onclick="exportBudget()">${icSm('download')} Export CSV</button></div>`;
-  paint('budget',`${selHtml}<div id="budgetBody"></div>`,'Budget & Costings','Registration fees by church');
+  paint('budget',`${selHtml}<div id="budgetBody"></div>`,'Budget & Costings','Registration fees by ticket type');
   drawBudget();
 };
 function drawBudget(){
   const scope=sel('budChurch')||'all';
-  const _budRegsOvr=_applyDiscountOverrides(window._budgetRegs,SETTINGS.discountCodeOverrides||{});
-  const rep=computeBudgetClient(_budRegsOvr,scope);
-  const head=`<div class="hero" style="margin-bottom:14px"><div class="k">Total registration fees</div>
+  const rep=computeBudgetClient(window._budgetRegs,scope);
+  const prices=_budPrices();
+  const head=`<div class="hero" style="margin-bottom:14px"><div class="k">Total registration fees received</div>
     <div class="big" style="font-size:var(--t-xl);margin-top:6px">${_money(rep.grandTotal)}</div>
     <div class="cd" style="margin-top:8px"><div class="meta">${rep.camperCount} campers · ${rep.leaderCount} leaders · ${rep.churchCount} ${rep.churchCount===1?'church':'churches'}</div></div></div>`;
+  // A row's unit price reads "—" rather than "$0" when its members paid different amounts:
+  // writing $0 there would say "free" while the line total says otherwise.
   const catRow=(r)=>`<div class="rowsb budcat${r.unrecorded?' budcat-warn':''}" style="padding:5px 0">
-    <div style="flex:1;min-width:0"><span class="budcat-l">${esc(r.label)}</span>${r.codeHint?`<span class="gradepill">${esc(r.codeHint)}</span>`:''}${r.unrecorded?` ${icSm('alert')}`:''}</div>
-    <div class="sub" style="white-space:nowrap">${r.count} × ${_money(r.amount||0)}</div>
+    <div style="flex:1;min-width:0"><span class="budcat-l">${esc(r.label)}</span>${r.codeHint?`<span class="gradepill">${esc(r.codeHint)}</span>`:''}${r.unrecorded?` ${icSm('alert')}`:''}${r.valueMissingCount&&!r.unrecorded?`<span class="gradepill">${r.valueMissingCount} no cost</span>`:''}</div>
+    <div class="sub" style="white-space:nowrap">${r.count} × ${r.amount==null?'—':_money(r.amount)}</div>
     <b style="min-width:70px;text-align:right">${_money(r.lineTotal)}</b></div>`;
   const grp=(title,rows)=>rows.length?`<div class="lbl" style="margin:10px 0 4px">${title}</div>${rows.map(catRow).join('')}`:'';
   const single=scope!=='all';
@@ -3228,48 +3352,54 @@ function drawBudget(){
   const body=rep.churches.length?`<div class="wide-cards">${rep.churches.map(churchCard).join('')}</div>`:emptyState('star','No registrations yet — import students to see the budget.');
   const disc=computeDiscountSummaryClient(window._budgetRegs,scope);
   const _canBudget=ACTOR&&(ACTOR.role==='admin'||ACTOR.role==='director');
+  /* The classification dropdown (2026-07-29) REPLACED the old per-code dollar field
+     ("Mark paid in full"). A tag now implies the value, so there is nothing to type: see
+     `_personValue`. Blank = a plain full-price ticket. */
   const discRow=(r)=>`<div class="rowsb" style="padding:5px 0;flex-wrap:wrap;gap:6px">
     <div style="min-width:0"><span class="budcat-l">${esc(r.code)}</span>${r.purpose?`<span class="gradepill">${esc(r.purpose)}</span>`:''}</div>
     <b style="white-space:nowrap">${r.count} used of ${disc.totalInScope}</b>
-    ${_canBudget?`<div class="dc-ovr" style="flex:0 0 100%;display:flex;gap:8px;align-items:center">
-      <input type="number" inputmode="decimal" min="0" step="0.01" placeholder="Paid-in-full amount"
-             value="${(SETTINGS.discountCodeOverrides||{})[r.code]??''}"
-             style="flex:1;min-width:0"
-             onchange="_saveDiscountOverride('${esc(jsq(r.code))}',this.value)">
-      ${rep.fullAmount!=null?`<button class="btn ghost sm" style="flex:none" onclick="_prefillDiscountOverride('${esc(jsq(r.code))}',${rep.fullAmount})">Mark paid in full</button>`:''}
-    </div>`:''}</div>`;
+    ${_canBudget?`<div class="dc-ovr" style="flex:0 0 100%">
+      <select style="width:100%" onchange="_saveDiscountTag('${esc(jsq(r.code))}',this.value)">
+        <option value=""${r.tag?'':' selected'}>Plain ticket (no adjustment)</option>
+        ${_BUD_TAGS.map(([v,l])=>`<option value="${v}"${r.tag===v?' selected':''}>${esc(l)}</option>`).join('')}
+      </select></div>`:''}</div>`;
   const discBody=disc.rows.length?disc.rows.map(discRow).join(''):'<p class="sub" style="padding:6px 0">No discount codes recorded.</p>';
+  // A "paid in person" code can only be valued once the admin has set the reference prices in
+  // Camp settings, so say so here rather than letting the total quietly under-read.
+  const priceWarn=(_canBudget&&disc.rows.some(r=>r.tag==='inperson')&&(prices.tent==null||prices.classroom==null))
+    ?`<div class="warnbox">${icSm('alert')} Set the tent and classroom ticket prices in Camp settings — without them, a code tagged “paid in person” falls back to whatever the invoice recorded (often $0).</div>`:'';
   const discSection=`<div class="card budchurch" data-cid="disc" style="margin-top:14px">
     <div class="rowsb budchurch-hd" onclick="_budToggle('disc')" style="cursor:pointer">
       <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="budchev">${icSm('chevron')}</span>
         <div style="font-weight:700">Discount codes</div></div>
       <span class="sub">${disc.rows.length} code${disc.rows.length===1?'':'s'}</span></div>
-    <div class="budchurch-body">${discBody}</div></div>`;
+    <div class="budchurch-body">
+      <p class="sub" style="padding:2px 0 8px">Classify each code so its tickets land in the right budget category. Tent/classroom comes from the student's ticket type.</p>
+      ${priceWarn}${discBody}</div></div>`;
   const box=document.getElementById('budgetBody');
   if(box)box.innerHTML=`<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${discSection}</div></div>`;
 }
 function _budToggle(cid){const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.toggle('open');}
-// Clearing the field removes the override (the code reverts to normal behaviour).
-async function _saveDiscountOverride(code,value){
-  const o=Object.assign({},SETTINGS.discountCodeOverrides||{});
-  const n=parseFloat(value);
-  if(!value||!isFinite(n)||n<=0)delete o[code];else o[code]=n;
+// Selecting the blank option clears the tag (the code reverts to a plain full-price ticket).
+async function _saveDiscountTag(code,tag){
+  const t=Object.assign({},_budTags());
+  if(!tag)delete t[code];else t[code]=tag;
   try{
-    const s=await api('/settings/discount-overrides',{method:'PATCH',body:{overrides:o}});
-    SETTINGS.discountCodeOverrides=s.discountCodeOverrides||{};
+    const s=await api('/settings/discount-tags',{method:'PATCH',body:{tags:t}});
+    SETTINGS.discountCodeTags=s.discountCodeTags||{};
     _invalidate('/settings');
     toast('Saved');
     RENDER.budget();
   }catch(e){toast(e.message||'Could not save');}
 }
-function _prefillDiscountOverride(code,amount){_saveDiscountOverride(code,String(amount));}
 function exportBudget(){
   const scope=sel('budChurch')||'all';
-  const _budRegsOvr=_applyDiscountOverrides(window._budgetRegs,SETTINGS.discountCodeOverrides||{});
-  const rep=computeBudgetClient(_budRegsOvr,scope);
+  const rep=computeBudgetClient(window._budgetRegs,scope);
   const esc2=s=>{const str=String(s);return /[",\n]/.test(str)?'"'+str.replace(/"/g,'""')+'"':str;};
   const lines=[['Church','Audience','Category','Count','UnitPrice','LineTotal'].join(',')];
-  const emit=(church,aud,rows)=>rows.forEach(r=>lines.push([esc2(church),aud,esc2(r.label),r.count,r.amount||0,r.lineTotal].join(',')));
+  // UnitPrice is left BLANK (not 0) for a mixed-value row — mirrors budgetToCsv in budget.ts;
+  // a 0 there reads as "free" in a spreadsheet while the LineTotal says otherwise.
+  const emit=(church,aud,rows)=>rows.forEach(r=>lines.push([esc2(church),aud,esc2(r.label),r.count,r.amount==null?'':r.amount,r.lineTotal].join(',')));
   rep.churches.forEach(c=>{emit(c.churchName,'Camper',c.campers);emit(c.churchName,'Leader',c.leaders);
     lines.push([esc2(c.churchName),'Total','',c.camperCount+c.leaderCount,'',c.total].join(','));});
   lines.push(['ALL CHURCHES','Grand Total','',rep.camperCount+rep.leaderCount,'',rep.grandTotal].join(','));
@@ -3871,7 +4001,11 @@ function _schedMinutes(a,b){
 }
 // Proportional height. Deliberately compressed (not linear) so a 30-minute item stays tappable
 // and an 8-hour overnight block doesn't push everything else off the screen.
-function _schedHeight(mins){return Math.round(Math.min(190,Math.max(54,40+mins*0.38)));}
+/* Recut 2026-07-29: every point on the curve is ~30% lower than the original
+   `min(190,max(54,40+mins*0.38))` — a 30m slot 54->38px, an hour 63->44px, the overnight
+   cap 190->133px. The compression (rather than a linear scale) is still deliberate: a
+   30-minute item has to stay tappable and an 8-hour block must not push the day off screen. */
+function _schedHeight(mins){return Math.round(Math.min(133,Math.max(38,28+mins*0.27)));}
 function _schedDur(mins){const h=Math.floor(mins/60),m=mins%60;return h&&m?h+'h '+m+'m':h?h+'h':m+'m';}
 let SCHED_DAY=null;
 RENDER.schedule=async function(){
@@ -3885,7 +4019,7 @@ RENDER.schedule=async function(){
     const mins=_schedMinutes(i.startTime,ix+1<items.length?items[ix+1].startTime:null);
     const cat=schedCategory(i.title);
     return `<div class="sch-item sch-${cat}" style="min-height:${_schedHeight(mins)}px">
-      <div class="sch-time">${esc(i.startTime||'')}<span class="sch-dur">${_schedDur(mins)}</span></div>
+      <div class="sch-time">${esc(i.startTime||'')} <span class="sch-dur">&middot; ${_schedDur(mins)}</span></div>
       <div class="sch-body"><div class="sch-title">${esc(i.title)}</div></div></div>`;
   }).join('');
   const legend=items.length?`<div class="sch-legend">${SCHED_CATEGORIES.map(c=>`<span class="sch-key sch-${c[0]}">${esc(c[1])}</span>`).join('')}</div>`:'';
@@ -4679,6 +4813,15 @@ RENDER.adminSettings=async function(){
         </div>
       </div>
     </details>
+    <details class="setg"><summary>${icSm('dollar')} Ticket prices ${tick(s.tentPrice!=null&&s.classroomPrice!=null)}</summary>
+      <div class="card">
+        <p class="note-hint" style="text-align:left">What a full-price ticket costs — the no-code invoice amount every discount code is defined against. Used on <b>Budget &amp; Costings</b> to value a ticket whose code is tagged “paid in person”, and to show what “discounted” is measured against. It does <b>not</b> change any student's recorded cost.</p>
+        <div class="two-col">
+          <div><label>Tent ticket ($)</label><input class="fld" id="stTentPrice" type="number" inputmode="decimal" min="0" step="0.01" value="${s.tentPrice==null?'':esc(String(s.tentPrice))}"></div>
+          <div><label>Classroom ticket ($)</label><input class="fld" id="stClassroomPrice" type="number" inputmode="decimal" min="0" step="0.01" value="${s.classroomPrice==null?'':esc(String(s.classroomPrice))}"></div>
+        </div>
+      </div>
+    </details>
     <button class="btn" style="margin-top:6px" onclick="saveSettings()">Save camp settings</button>`,'Camp settings','Grouped setup');
   renderCheckinDaysPreview();
 };
@@ -4860,8 +5003,10 @@ function _mapToggleZoom(){const el=document.getElementById('siteMapImg');if(el)e
 async function saveSettings(){
   try{
     const days=_datesBetween(val('stStart'),val('stEnd'));
-    // PC-4: tentPrice/classroomPrice no longer sent from the UI (fields removed). The
-    // CampSettings columns remain in the DB (deprecated) but are not surfaced or updated here.
+    // tentPrice/classroomPrice came BACK 2026-07-29 (migration 0017) for the budget's ticket
+    // classification, after being dropped by PC-4/migration 0004. Their job is narrower now:
+    // a REFERENCE price used to value a "paid in person" ticket, not the source of anyone's
+    // recorded cost. Blank = not set (null), which is meaningful — don't coerce it to 0.
     // Timezone is intentionally fixed at Australia/Brisbane (owner decision, Phase 6): the camp
     // is always Brisbane-time, so this re-asserts it on every save (self-healing). There is no
     // timezone field in the UI by design — if the camp ever moves timezones, this is the one line
@@ -4875,7 +5020,11 @@ async function saveSettings(){
     const amEnd=document.getElementById('stAmEnd')?.value||'12:00';
     const pmStart=document.getElementById('stPmStart')?.value||'12:00';
     const pmEnd=document.getElementById('stPmEnd')?.value||'22:00';
-    await api('/settings',{method:'PATCH',body:{campName:val('stName'),year:Number(val('stYear'))||new Date().getFullYear(),startDate:val('stStart'),endDate:val('stEnd'),timezone:'Australia/Brisbane',checkInDays:days,churchLoginLocked:churchLock,zoneLeaderLoginLocked:zoneLock,churchCheckinTimeRestricted:churchCheckinRestrict,checkinSwitchoverTime:switchover,checkinPhaseOverride:phaseOverride,checkinWindowAmStart:amStart,checkinWindowAmEnd:amEnd,checkinWindowPmStart:pmStart,checkinWindowPmEnd:pmEnd}});
+    const _price=id=>{const v=document.getElementById(id)?.value;
+      if(v==null||String(v).trim()==='')return null;
+      const n=Number(v);return isFinite(n)&&n>=0?n:null;};
+    const tentPrice=_price('stTentPrice'),classroomPrice=_price('stClassroomPrice');
+    await api('/settings',{method:'PATCH',body:{campName:val('stName'),year:Number(val('stYear'))||new Date().getFullYear(),startDate:val('stStart'),endDate:val('stEnd'),timezone:'Australia/Brisbane',checkInDays:days,churchLoginLocked:churchLock,zoneLeaderLoginLocked:zoneLock,churchCheckinTimeRestricted:churchCheckinRestrict,checkinSwitchoverTime:switchover,checkinPhaseOverride:phaseOverride,checkinWindowAmStart:amStart,checkinWindowAmEnd:amEnd,checkinWindowPmStart:pmStart,checkinWindowPmEnd:pmEnd,tentPrice:tentPrice,classroomPrice:classroomPrice}});
     SETTINGS=await api('/settings',{noCache:true});SESSIONS=[];SEL_SESSION=null;SCHED_DAY=null;DEVO_DAY=null;
     // The phase override / switchover time just changed under us — re-label the Check-in tab
     // for THIS session immediately (other sessions pick it up on their next home visit).
@@ -5045,9 +5194,10 @@ RENDER.adminData=async function(){
   // Admin-only: newYear/clearNotifications both assert admin:manage server-side (director lacks
   // it), so hide these two cards for a director reaching this screen via the Data tab's
   // Records & Export button — same isAdmin gate already used below for Save Defaults/Factory Reset.
-  // Item 9 (2026-07-28): "Clear all notifications" moved OUT of its own section into the renamed
-  // "Data reset" block at the bottom (see `dataResetCard`), where the other clearing tools live.
-  // It is also no longer at-camp-only — clearing test notices before camp is a normal thing to do.
+  // "Clear all notifications" was REMOVED from this screen 2026-07-29 (owner request). The
+  // backend route `DELETE /admin/notifications` is left in place but nothing calls it — same
+  // precedent as the retired sign-in/out CSV export below. Notices are deleted individually
+  // on the Notices screen. Don't re-add a bulk button here without asking.
   // R9: surface temp passwords still waiting from a new-year rollover so the admin knows to
   // download the workbook (which includes them once, then clears them) rather than lose them.
   const tempBanner=pendingTemps?`<div class="warnbox">${icSm('alert')} ${pendingTemps} restored account${pendingTemps===1?'':'s have'} a temporary password from the last rollover. Download the audit workbook below — its "Temp Passwords" tab lists them (included once, then cleared). Share each securely with its leader.</div>`:'';
@@ -5071,12 +5221,10 @@ RENDER.adminData=async function(){
       <div class="kv"><span class="k">Last saved</span><span class="v">${esc(defaultsSaved)}</span></div>
       <button class="btn" style="margin-top:8px" onclick="adminSaveDefaults()">Save Defaults</button>
       <p class="note-hint" style="text-align:left">Snapshots the current churches, accounts, accommodation, FAQ, schedule &amp; devotionals as the reusable baseline. Run this once camp is fully configured. The end-of-camp purge &amp; restore is the separate <b>Close-Out Camp</b> step below.</p></div>`:'';
-  // Item 9 (2026-07-28): "Factory reset" is now "Data reset" and holds all three clearing tools,
-  // ordered least → most destructive: clear notifications, reset logs, full reset.
+  // "Factory reset" is now "Data reset". Two clearing tools, least → most destructive:
+  // reset logs, then full reset. (The third, "clear all notifications", was removed 2026-07-29.)
   const dataResetCard=isAdmin?`<div class="card"><div class="h3" style="margin-top:0">Data reset</div>
-      <button class="btn ghost" onclick="adminClear()">Clear all notifications</button>
-      <p class="note-hint" style="text-align:left">Deletes every notice (sent and scheduled). Nothing else is affected.</p>
-      <button class="btn red" style="margin-top:12px" onclick="adminResetLogs()">Reset logs</button>
+      <button class="btn red" onclick="adminResetLogs()">Reset logs</button>
       <p class="note-hint" style="text-align:left">Clears everything the compliance workbook exports — check-ins, sign-in/out history, notes &amp; testimonies, first-aid records and incidents — and returns everyone to “not signed in”. Registrations, churches, accounts and setup are kept.</p>
       <button class="btn red" style="margin-top:12px" onclick="adminReset()">Full reset (wipe to bare)</button>
       <p class="note-hint" style="text-align:left">Deletes ALL data and every non-admin account, keeping only this admin account &amp; the camp settings. No restore. Signs you out.</p></div>`:'';
@@ -5584,8 +5732,6 @@ async function _adminResetLogsConfirmed(){
     else toast(e.message);
   }
 }
-async function adminClear(){if(!await confirmSheet({title:'Clear all notifications?',confirmLabel:'Clear',danger:true}))return;
-  try{const r=await api('/admin/notifications',{method:'DELETE'});toast('Cleared '+(r.deleted||r.cleared||0)+' notices');}catch(e){toast(e.message);}}
 let _importBatch=null;        // [{type,name,csvData}] ordered Form→Ticket→Invoice, awaiting confirm
 let _importPendingParsed=null; // parsed files awaiting manual type resolution (unknowns)
 async function adminUpload(){
@@ -5969,7 +6115,7 @@ document.addEventListener('keydown',e=>{
     }
   }
 });
-_initDemoLogin();_tryRestoreSession();
+_initDemoLogin();_loginTips();_tryRestoreSession();
 
 /* B-3: cross-tab + on-focus mode sync. A second tab (or a tab not on Home) used to keep stale
    pre-camp/at-camp nav after an admin switched mode until the user navigated Home. */

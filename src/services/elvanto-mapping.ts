@@ -102,6 +102,33 @@ export function field(row: Record<string, string>, ...aliases: string[]): string
 }
 
 /**
+ * ALL-CAPS or all-lower-case first/last names (a common artefact of how some registration forms
+ * or spreadsheets export data) → Title Case. A name that already MIXES upper- and lower-case is
+ * left completely untouched and returned as-is — that mix is exactly what a real name like
+ * "McDonald", "O'Brien", "de Silva" or "van Wyk" looks like, and there is no reliable rule that
+ * title-cases those correctly. Only a name with NO existing case information (all one case) is
+ * safe to reshape. Do not "simplify" this into an unconditional title-case — that would mangle
+ * every mixed-case name above.
+ */
+export function titleCaseName(raw: string): string {
+  const v = raw ?? '';
+  if (v.trim() === '') return v;
+  const hasLower = /\p{Ll}/u.test(v);
+  const hasUpper = /\p{Lu}/u.test(v);
+  if (hasLower && hasUpper) return v;
+  // Split on whitespace/hyphen/apostrophe (straight or curly), keeping the separators themselves
+  // via a capturing group so spacing/punctuation is reproduced exactly.
+  return v
+    .split(/([\s\-'’]+)/)
+    .map((part) => {
+      if (part === '' || /^[\s\-'’]+$/.test(part)) return part;
+      const lower = part.toLowerCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join('');
+}
+
+/**
  * True when every cell in the row is blank. Item 12 (2026-07-28): a trailing empty line — which
  * spreadsheets and Elvanto exports both routinely produce — was reported as
  * "Missing firstName or lastName", so an import that fully succeeded still surfaced errors in

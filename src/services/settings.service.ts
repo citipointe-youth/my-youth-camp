@@ -16,7 +16,7 @@ export interface SettingsService {
   update(actor: Actor, patch: unknown): Promise<CampSettings>;
   getMode(): Promise<CampMode>;
   setMode(actor: Actor, mode: CampMode): Promise<CampSettings>;
-  updateDiscountCodeOverrides(actor: Actor, overrides: Record<string, number>): Promise<CampSettings>;
+  updateDiscountCodeTags(actor: Actor, tags: Record<string, string>): Promise<CampSettings>;
 }
 
 /**
@@ -126,22 +126,23 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
     },
 
     /**
-     * Discount-code overrides are editable by director as well as admin, so they get their own
-     * narrowly-scoped capability rather than widening general settings editing (which is
-     * admin:manage and must stay that way).
+     * Discount-code CLASSIFICATION (2026-07-29, replaces the old amount overrides). Editable by
+     * director as well as admin, so it keeps its own narrowly-scoped `budget:manage` capability
+     * rather than widening general settings editing (which is admin:manage and must stay that way).
+     *
+     * Unknown tag values are dropped rather than rejected: the dropdown's "plain" option submits
+     * an empty string, and clearing a tag is a normal, expected edit — not an error worth a 400.
      */
-    async updateDiscountCodeOverrides(actor, overrides) {
+    async updateDiscountCodeTags(actor, tags) {
       assertCan(actor, 'budget:manage');
-      const clean: Record<string, number> = {};
-      for (const [code, amount] of Object.entries(overrides ?? {})) {
+      const clean: NonNullable<CampSettings['discountCodeTags']> = {};
+      for (const [code, tag] of Object.entries(tags ?? {})) {
         const key = code.trim();
-        const n = Number(amount);
-        // Clearing the field removes the override; reject anything not a positive finite number.
-        if (!key || !Number.isFinite(n) || n <= 0) continue;
-        clean[key] = Math.round(n * 100) / 100;
+        if (!key) continue;
+        if (tag === 'inperson' || tag === 'sponsor' || tag === 'discount') clean[key] = tag;
       }
       const current = await get();
-      const saved = await repo.saveSingleton({ ...current, discountCodeOverrides: clean, updatedAt: nowISO() });
+      const saved = await repo.saveSingleton({ ...current, discountCodeTags: clean, updatedAt: nowISO() });
       invalidateDashboardCache();
       return saved;
     },

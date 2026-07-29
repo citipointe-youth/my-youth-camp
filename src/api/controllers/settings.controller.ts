@@ -24,10 +24,10 @@ export function makeSettingsController(services: SettingsControllerServices) {
       return services.settings.update(req.ctx.actor, req.body);
     },
 
-    async updateDiscountOverrides(req: HttpRequest) {
+    async updateDiscountTags(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
-      const body = req.body as { overrides?: Record<string, number> };
-      return services.settings.updateDiscountCodeOverrides(req.ctx.actor, body?.overrides ?? {});
+      const body = req.body as { tags?: Record<string, string> };
+      return services.settings.updateDiscountCodeTags(req.ctx.actor, body?.tags ?? {});
     },
   };
 }

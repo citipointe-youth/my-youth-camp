@@ -7,7 +7,21 @@ without going through clarifying questions first.
 
 ---
 
-## 2026-07-20 — Discount codes: classify as "paid in full" (APPROVED DESIGN)
+## 2026-07-20 — Discount codes: classify as "paid in full" (BUILT, THEN SUPERSEDED — CLOSED)
+
+> **Status correction, 2026-07-29.** This design was BUILT (migration `0015`, `applyDiscountOverrides`,
+> the `budget:manage` capability, `PATCH /settings/discount-overrides`) and shipped to prod on
+> 2026-07-27 — the "not yet planned/implemented" line at the bottom of this section was stale from
+> the moment it shipped. It has since been **superseded** by the 2026-07-29 ticket-classification
+> rework: a per-code dollar amount became a per-code TAG (`inperson` / `sponsor` / `discount`), and
+> migration `0017` carried every existing override key across as `'inperson'`. `settings.discount_code_overrides`
+> still exists in the DB and still round-trips, but nothing reads it. Design:
+> `docs/superpowers/specs/2026-07-29-seven-item-batch-design.md`. Kept below for history only —
+> **do not build from it.**
+
+### Original design (historical)
+
+
 
 **Problem:** Some registrants show `registrationCost: 0` on their ticket because a discount code
 was used to represent a manual EFTPOS/cash payment made at registration time (not a real

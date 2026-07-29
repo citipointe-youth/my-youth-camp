@@ -80,6 +80,15 @@ describe('ImportService.importCsv — create / counts', () => {
     expect(all).toHaveLength(1);
     expect(all[0]!.grade).toBe(11); // last row wins
   });
+
+  it('title-cases an ALL-CAPS name on import (JOHN SMITH -> John/Smith)', async () => {
+    const csv = 'First Name,Last Name,Church,Grade\nJOHN,SMITH,Victory,9';
+    const res = await h.svc.importCsv(actor('admin'), { csvData: csv });
+    expect(res.created).toBe(1);
+    const all = await h.personRepo.findAll();
+    expect(all[0]!.firstName).toBe('John');
+    expect(all[0]!.lastName).toBe('Smith');
+  });
 });
 
 describe('ImportService.importCsv — same-name disambiguation by phone', () => {
