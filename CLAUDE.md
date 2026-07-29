@@ -224,6 +224,31 @@ Fixes — all switched `position:absolute`→`position:fixed` so they track the 
 GOTCHA for future overlays: any full-viewport overlay/toast MUST be `position:fixed`, never
 `position:absolute` — the phone `.app` is not viewport-height, it grows with the scrolling content.
 
+## Schedule editor: copy / paste day — deployed 2026-07-30
+
+Owner request. **SPA-only** (`public/index.html`) — no backend, schema or migration change.
+`sw.js` `camp-v53`→`camp-v54`. Most camp days share a near-identical shape, so the admin was
+retyping the same 10–15 rows for every day.
+
+Each day's card in the At-Camp Info → Schedule editor now has **Copy day** and **Paste day**
+beside "+ Add row" (Save moved to its own full-width row beneath, so the four actions don't
+crowd on a phone). New symbols: **`_schedClip`** (module-level clipboard), **`_schedReadRows(d)`**,
+**`copySchedDay(d)`**, **`pasteSchedDay(d)`**.
+
+Two deliberate choices, both easy to "helpfully" break:
+- **The clipboard holds the LIVE EDITOR rows, not what's saved on the server**, so a day can be
+  copied mid-edit before it has ever been saved. `_schedReadRows` is now the single
+  filled-rows-only reader, shared with `saveSchedDay` — so what you copy is exactly what that
+  day would have saved.
+- **Paste fills the target day's EDITOR only.** Nothing is written until the admin presses that
+  day's Save, which keeps `PUT /schedule/day` as the one write path and makes a mis-paste
+  recoverable by leaving the screen and coming back. **Do not auto-save on paste.**
+
+Paste REPLACES the day and confirms first (`confirmSheet`) whenever the target already has rows;
+pasting onto the day you copied from, or with an empty clipboard, just toasts. The clipboard is
+module-level, so it survives `_rSched()`'s re-render and sub-tab navigation but not a page
+reload — it's a scratch buffer, intentionally not persisted.
+
 ## Seven-item owner batch — deployed 2026-07-29
 
 Owner-requested batch. SPA + backend + **migration `0017`** (`settings.discount_code_tags`,

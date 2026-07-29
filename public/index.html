@@ -5978,7 +5978,9 @@ async function _acScheduleBody(){
       <div id="schedRows_${d}">${rows}</div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button class="btn ghost sm" style="flex:1" onclick="addSchedRow('${d}')">+ Add row</button>
-        <button class="btn sm" style="flex:1" onclick="saveSchedDay('${d}')">Save ${dayLong(d)}</button></div></div>`;
+        <button class="btn ghost sm" style="flex:1" onclick="copySchedDay('${d}')">Copy day</button>
+        <button class="btn ghost sm" style="flex:1" onclick="pasteSchedDay('${d}')">Paste day</button></div>
+      <button class="btn sm" style="width:100%;margin-top:6px" onclick="saveSchedDay('${d}')">Save ${dayLong(d)}</button></div>`;
   }));
   return blocks.join('');
 }
@@ -5992,12 +5994,61 @@ function addSchedRow(d){const wrap=document.getElementById('schedRows_'+d);if(!w
     return;}
   wrap.insertAdjacentHTML('beforeend',html);
   _schedLastRow=wrap.lastElementChild;}
+/* Copy / paste a whole day (2026-07-30). Most camp days share a near-identical shape, so the
+   admin was retyping the same 10-15 rows per day.
+
+   Two deliberate choices:
+   - The clipboard holds the LIVE EDITOR rows, not what is saved on the server, so a day can be
+     copied mid-edit before it has ever been saved. It reads through the same filled-rows-only
+     rule as `saveSchedDay` (`_schedReadRows`), so what you copy is exactly what you'd have saved.
+   - Pasting fills the target day's EDITOR ONLY. Nothing is written until the admin presses that
+     day's Save button, which keeps ONE write path (`PUT /schedule/day`) and means a mis-paste is
+     undone by leaving the screen and coming back. Do not "helpfully" auto-save on paste.
+
+   The clipboard is module-level, so it survives `_rSched()`'s re-render and navigating between
+   the At-Camp Info sub-tabs, but not a page reload. That's intended — it's a scratch buffer. */
+let _schedClip=null;
+/** The filled rows currently in day `d`'s editor, in the same shape `saveSchedDay` would send. */
+function _schedReadRows(d){
+  const wrap=document.getElementById('schedRows_'+d);if(!wrap)return null;
+  const out=[];
+  for(const row of Array.from(wrap.children)){
+    const t=(row.querySelector('.sr-t')||{}).value||'',n=(row.querySelector('.sr-n')||{}).value||'';
+    if(t&&n)out.push({startTime:t,title:n});
+  }
+  return out;
+}
+function copySchedDay(d){
+  const items=_schedReadRows(d);
+  if(items==null)return;
+  if(!items.length){toast('Nothing to copy — this day has no rows with both a time and an activity');return;}
+  _schedClip={day:d,items:items};
+  toast('Copied '+items.length+' item'+(items.length===1?'':'s')+' from '+dayLong(d));
+}
+async function pasteSchedDay(d){
+  if(!_schedClip||!_schedClip.items.length){toast('Copy a day first');return;}
+  if(_schedClip.day===d){toast('That is the day you copied from');return;}
+  const wrap=document.getElementById('schedRows_'+d);if(!wrap)return;
+  const existing=(_schedReadRows(d)||[]).length;
+  // Paste REPLACES the day. Confirm only when there is something to lose.
+  if(existing){
+    const ok=await confirmSheet({
+      title:'Replace '+dayLong(d)+"'s "+existing+' item'+(existing===1?'':'s')+' with the '+_schedClip.items.length+' copied from '+dayLong(_schedClip.day)+'?',
+      confirmLabel:'Replace',danger:true});
+    if(!ok)return;
+  }
+  const n=Math.max(SCHED_MIN_ROWS,_schedClip.items.length);
+  let rows='';for(let r=0;r<n;r++){const it=_schedClip.items[r]||{};rows+=_schedRow(d,r,it.startTime,it.title);}
+  wrap.innerHTML=rows;
+  // The "+ Add row" insert-after-me anchor may have pointed into the markup just replaced.
+  if(_schedLastRow&&!_schedLastRow.isConnected)_schedLastRow=null;
+  toast('Pasted — press “Save '+dayLong(d)+'” to keep it');
+}
 // Table is the source of truth: saving replaces the whole day's schedule with the
 // filled rows (time + title both present). Cleared rows are dropped.
 async function saveSchedDay(d){
-  const wrap=document.getElementById('schedRows_'+d);if(!wrap)return;
-  const entries=[];
-  for(const row of Array.from(wrap.children)){const t=(row.querySelector('.sr-t')||{}).value||'',n=(row.querySelector('.sr-n')||{}).value||'';if(t&&n)entries.push({startTime:t,title:n});}
+  const entries=_schedReadRows(d);
+  if(entries==null)return;
   // Item 6: PUT /schedule/day replaces the whole day in one call (backend does the
   // delete+insert as one transaction) — was N deletes then N creates sequentially.
   try{

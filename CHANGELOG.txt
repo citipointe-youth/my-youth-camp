@@ -1,6 +1,26 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-30 - SCHEDULE EDITOR: COPY DAY / PASTE DAY
+-----------------------------------------------------------------------------------
+SPA-only (public/index.html). No backend, schema or migration change. sw.js
+camp-v53 -> camp-v54. Verified: npm run typecheck clean, npm run test = 688 pass,
+SPA node --check OK.
+
+  * Each day's card in At-Camp Info -> Schedule now has "Copy day" and "Paste day"
+    beside "+ Add row"; Save moved to its own full-width row so four buttons don't
+    crowd on a phone. New: _schedClip, _schedReadRows(d), copySchedDay(d),
+    pasteSchedDay(d).
+  * The clipboard holds the LIVE EDITOR rows, not the saved ones, so a day can be
+    copied mid-edit. _schedReadRows is now the single filled-rows-only reader,
+    shared with saveSchedDay.
+  * Paste fills the target day's EDITOR ONLY - nothing is written until that day's
+    Save is pressed (PUT /schedule/day stays the one write path). Paste replaces the
+    day and confirms first when the target already has rows.
+  * The clipboard is module-level: survives _rSched() and sub-tab navigation, not a
+    page reload. Intentional - it is a scratch buffer.
+
+
 2026-07-29 - SEVEN-ITEM OWNER BATCH (schedule, budget classification, imports, login UX)
 -----------------------------------------------------------------------------------
 SPA + backend + migration 0017 (settings.discount_code_tags / tent_price / classroom_price,
