@@ -9,6 +9,14 @@ import { nowISO } from '../utils/date';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
 import { invalidateDashboardCache } from './dashboard-cache';
 
+/**
+ * How long a high-severity incident's `leadersOnly` alert stays in the feed (2026-07-30).
+ * It used to be created with `expiresAt: null` and nothing ever cleaned it up, so prod
+ * accumulated permanent urgent rows (2 were sitting there). `notifRepo.findActive()` already
+ * filters on `expiresAt`, so setting the field is the whole fix — no extra filtering.
+ */
+export const INCIDENT_ALERT_TTL_HOURS = 12;
+
 export interface IncidentService {
   /** Log an incident (zoneLeader/director/admin). A 'high' severity also raises a camp-wide notice. */
   log(actor: Actor, input: unknown): Promise<Incident>;
@@ -36,6 +44,8 @@ export function makeIncidentService(
         createdByRole: actor.role,
         zone,
         createdAt: nowISO(),
+        // Optional: absent/explicit-null both mean "not recorded" and are perfectly valid.
+        occurredAt: data.occurredAt ?? null,
       };
       const saved = await incidentRepo.save(incident);
 
@@ -44,6 +54,7 @@ export function makeIncidentService(
       // because a zoneLeader logging an incident does NOT hold notification:send:camp — this is a
       // SYSTEM-generated alert, not a user broadcast. The summary is included per spec.
       if (incident.severity === 'high') {
+        const createdAt = nowISO();
         const notif: Notification = {
           id: newId('notif'),
           scope: 'camp',
@@ -58,8 +69,11 @@ export function makeIncidentService(
           // Incident summaries can describe a minor — keep them off church/firstAid feeds.
           leadersOnly: true,
           audienceEstimate: 0,
-          expiresAt: null,
-          createdAt: nowISO(),
+          // Self-destructs INCIDENT_ALERT_TTL_HOURS after it is raised — see the constant.
+          expiresAt: new Date(
+            new Date(createdAt).getTime() + INCIDENT_ALERT_TTL_HOURS * 60 * 60 * 1000,
+          ).toISOString(),
+          createdAt,
         };
         await notifRepo.save(notif);
       }

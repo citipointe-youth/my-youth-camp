@@ -307,7 +307,7 @@ export function makePersonService(repo: IPersonRepository): PersonService {
       }
       const full: CheckInEntry = { ...entry, id: newId('ci') };
       const saved = await repo.save(withCheckIn(person, full, nowISO()));
-      invalidateDashboardCache();
+      // NOT invalidated deliberately — see signEvent below.
       return saved;
     },
 
@@ -316,7 +316,21 @@ export function makePersonService(repo: IPersonRepository): PersonService {
       const person = await getOwned(actor, personId);
       const full: SignOutEvent = { ...event, id: newId('so') };
       const saved = await repo.save(withSignEvent(person, full, nowISO()));
-      invalidateDashboardCache();
+      // ⚠ `invalidateDashboardCache()` is DELIBERATELY NOT called here or in `checkIn`.
+      //
+      // These two are the ONLY writes that fire in a burst: at a check-in window every
+      // leader on every device taps through a roster at once. The cache is keyed on
+      // (role, churchId, zone, genderScope) — NOT per device — so ~100 devices collapse to
+      // ~30 distinct keys, roughly 4:1, which absorbs most of that burst. But
+      // `invalidateDashboardCache()` wipes EVERY entry globally, so a single tap flushed
+      // the cache for all 30 keys precisely while every device was loading `/home`,
+      // driving the hit rate to ~0 at the worst possible moment.
+      //
+      // The cost of not invalidating is bounded by the 30s TTL: a "still to check in"
+      // count can lag by up to 30 seconds. That is harmless — a leader mid-rush is on the
+      // roster screen (which reads people directly and is always live), not the dashboard.
+      // Every other writer still invalidates, so lifecycle/registration/settings edits —
+      // which are not bursty — stay immediate.
       return saved;
     },
 

@@ -1,14 +1,13 @@
-import type { INotificationRepository, IPersonRepository, IChurchRepository } from '../repositories/interfaces/entity-repositories';
+import type { INotificationRepository } from '../repositories/interfaces/entity-repositories';
 import type { Notification } from '../core/entities/notification';
 import type { Actor } from '../core/entities/user';
 import { assertCanSendNotification } from './access-control';
-import { isCamper } from '../core/entities/person';
 import { CreateNotificationSchema, UpdateNotificationSchema } from '../core/validation/notification.schema';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
 import { invalidateDashboardCache } from './dashboard-cache';
-import { canSeeNotification } from './notification-visibility';
+import { canSeeNotification, byPublishedDesc } from './notification-visibility';
 
 export interface NotificationService {
   send(actor: Actor, input: unknown): Promise<Notification>;
@@ -20,45 +19,44 @@ export interface NotificationService {
   clearAll(actor: Actor): Promise<{ deleted: number }>;
 }
 
+/**
+ * ⚠ `estimateAudience` was DELETED here on 2026-07-30, along with the `personRepo` and
+ * `churchRepo` constructor params it was the only user of.
+ *
+ * It ran a full people scan on every send and every audience-changing edit — on Supabase
+ * that is the whole `people` table plus ~10 AES field decrypts per person (~700 people at
+ * camp) — purely to populate `Notification.audienceEstimate`. **Nothing read that field.**
+ * It is exposed by no DTO and referenced zero times in `public/index.html`; the only other
+ * writer, `incident.service`, had already been writing a hard-coded `0` to it.
+ *
+ * The FIELD and its `audience_estimate` column are deliberately kept, not dropped:
+ * `cron.service` writes a genuinely meaningful number into it (the count of students still
+ * to check in), so it is live data for scheduler-raised notices. Leaving the column also
+ * avoids a migration and matches the precedent set by `discount_code_overrides` — retained,
+ * unused, so a rollback stays possible.
+ *
+ * If a real "who will see this?" figure is ever wanted on the compose screen, compute it
+ * from `resolvePushAudience`/`canSeeNotification` over the USERS table (tens of rows), not
+ * by scanning and decrypting every person.
+ */
 export function makeNotificationService(
   notifRepo: INotificationRepository,
-  personRepo: IPersonRepository,
-  churchRepo: IChurchRepository,
 ): NotificationService {
-  // D4 FIX: estimate the audience as a count of non-cancelled CAMPERS for every
-  // scope, on a consistent basis. The church branch previously returned the church's
-  // manually-set `expectedCount` (a planning number, default 0), so a church-scoped
-  // notice reported a different kind of figure than camp/zone — and often 0 even with
-  // campers present.
-  async function estimateAudience(scope: string, zone?: string | null, churchId?: string | null): Promise<number> {
-    if (scope === 'camp') {
-      const all = await personRepo.findCampers();
-      return all.length; // findCampers() already excludes cancelled (lifecycle ∈ {arrived,checked_out,departed})
-    }
-    if (scope === 'zone' && zone) {
-      const zoned = await personRepo.findByZone(zone);
-      return zoned.filter((p) => isCamper(p)).length;
-    }
-    if (scope === 'church' && churchId) {
-      const churchPersons = await personRepo.findByChurch(churchId);
-      return churchPersons.filter((p) => isCamper(p)).length;
-    }
-    return 0;
-  }
-
   async function getActorFeed(actor: Actor): Promise<Notification[]> {
     const active = await notifRepo.findActive();
     const now = nowISO();
     // Audience rules live in notification-visibility.ts so the push audience resolver
     // and this feed can never disagree. Do not inline them back here.
-    return active.filter((n) => canSeeNotification(actor, n, now));
+    //
+    // The re-sort is load-bearing, not cosmetic: the repo orders by `created_at`, which for a
+    // SCHEDULED notice is when it was composed, not when it publishes. See `publishedAt`.
+    return active.filter((n) => canSeeNotification(actor, n, now)).sort(byPublishedDesc);
   }
 
   return {
     async send(actor, input) {
       const data = CreateNotificationSchema.parse(input);
       assertCanSendNotification(actor, data.scope, data.zone);
-      const audience = await estimateAudience(data.scope, data.zone, data.churchId);
       const notif: Notification = {
         id: newId('notif'),
         scope: data.scope,
@@ -71,7 +69,9 @@ export function makeNotificationService(
         senderName: actor.displayName,
         senderRole: actor.role,
         leadersOnly: false,
-        audienceEstimate: audience,
+        // Not computed — see the estimateAudience note above. Nothing reads this for a
+        // human-authored notice; only cron-raised warnings carry a meaningful number.
+        audienceEstimate: 0,
         expiresAt: data.expiresAt ?? null,
         scheduledFor: data.scheduledFor ?? null,
         createdAt: nowISO(),
@@ -118,11 +118,6 @@ export function makeNotificationService(
         assertCanSendNotification(actor, scope, zone);
       }
       const churchId = data.churchId !== undefined ? data.churchId : existing.churchId;
-      const audienceChanged =
-        data.scope !== undefined || data.zone !== undefined || data.churchId !== undefined;
-      const audience = audienceChanged
-        ? await estimateAudience(scope, zone, churchId)
-        : existing.audienceEstimate;
       const updated: Notification = {
         ...existing,
         scope,
@@ -133,7 +128,9 @@ export function makeNotificationService(
         body: data.body ?? existing.body,
         expiresAt: data.expiresAt !== undefined ? data.expiresAt : existing.expiresAt,
         scheduledFor: data.scheduledFor !== undefined ? data.scheduledFor : existing.scheduledFor,
-        audienceEstimate: audience,
+        // Preserved as-is. An edit no longer recomputes it (nothing reads it), and a
+        // cron-raised notice's real count must survive an admin editing the wording.
+        audienceEstimate: existing.audienceEstimate,
       };
       const saved = await notifRepo.save(updated);
       invalidateDashboardCache();
@@ -162,7 +159,9 @@ export function makeNotificationService(
 
     async clearAll(actor) {
       if (actor.role !== 'admin') {
-        throw new Error('Only admin can clear all notifications');
+        // ForbiddenError, not a bare Error — the latter maps to a 500 and reads to the caller
+        // as "the app is broken" rather than "you are not allowed to do that".
+        throw new ForbiddenError('Only admin can clear all notifications');
       }
       const all = await notifRepo.findAll();
       for (const n of all) {

@@ -1,0 +1,11 @@
+-- 0019: incidents.occurred_at — when the incident ACTUALLY happened (2026-07-30).
+--
+-- `created_at` only records when the incident was LOGGED, so "when did this actually happen"
+-- was recoverable only from the free-text summary. This column is OPTIONAL: an incident
+-- logged without it is completely valid, and every row written before this migration has none.
+--
+-- Additive and nullable, so it is safe to apply before or after the code push. Note the
+-- application writes `occurred_at` in incidentColumns() AND in the `on conflict do update set`
+-- list of supabase.incidents.save() — a column missing from that second list silently never
+-- persists on an update (this repo's documented recurring bug class).
+alter table incidents add column if not exists occurred_at timestamptz;

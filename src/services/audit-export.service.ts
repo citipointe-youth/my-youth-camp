@@ -267,10 +267,12 @@ export function makeAuditExportService(
       const incidentsRaw = await incidentRepo.findRecent();
       const incidents = [...incidentsRaw].sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // item 24: newest first
       const incidentsSheet = wb.addWorksheet('Incidents');
-      incidentsSheet.addRow(['Summary', 'Severity', 'Logged by', 'Logged at', 'Zone']);
+      // 'Occurred at' sits beside 'Logged at' — it is OPTIONAL (added 2026-07-30), so it is
+      // blank for every incident logged before then and for any logged without it.
+      incidentsSheet.addRow(['Summary', 'Severity', 'Logged by', 'Logged at', 'Occurred at', 'Zone']);
       incidentsSheet.getRow(1).font = { bold: true };
       incidentsSheet.columns = [
-        { width: 50 }, { width: 12 }, { width: 24 }, { width: 20 }, { width: 12 },
+        { width: 50 }, { width: 12 }, { width: 24 }, { width: 20 }, { width: 20 }, { width: 12 },
       ];
       for (const inc of incidents) {
         incidentsSheet.addRow([
@@ -278,6 +280,7 @@ export function makeAuditExportService(
           inc.severity === 'high' ? 'High' : 'Low',
           `${inc.createdByName} (${inc.createdByRole})`,
           toLocalTs(inc.createdAt, tz),
+          inc.occurredAt ? toLocalTs(inc.occurredAt, tz) : '',
           inc.zone ?? '',
         ]);
       }

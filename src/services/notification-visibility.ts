@@ -15,12 +15,24 @@ import type { Actor } from '../core/entities/user';
  * Pure: no I/O, no clock. `nowIso` is passed in.
  */
 export function canSeeNotification(
-  actor: Pick<Actor, 'role' | 'zone' | 'churchId'>,
+  actor: Pick<Actor, 'id' | 'role' | 'zone' | 'churchId'>,
   n: Notification,
   nowIso: string,
 ): boolean {
   // Scheduled notices are withheld from EVERY audience until their publish time passes.
   if (n.scheduledFor && n.scheduledFor > nowIso) return false;
+
+  // A TARGETED notice goes to exactly one login and nobody else — deliberately including
+  // admin and director, who are otherwise exempt from every scope check below.
+  //
+  // This exists because the scheduler's check-in warnings are counted PER LOGIN, not per
+  // church: church accounts are gender-scoped (`b-`/`g-`), so `b-victory` and `g-victory`
+  // hold two different counts for the same session. Without this clause both notices match
+  // on `churchId` alone and each login sees BOTH — two contradictory numbers, with no way to
+  // tell which one is theirs. Oversight roles are NOT exempted on purpose: an admin has no
+  // use for 40 per-church operational warnings a day, and letting them through buries every
+  // real notice under them (Home renders only the newest three).
+  if (n.targetUserId != null && n.targetUserId !== actor.id) return false;
 
   // Leaders-only notices (e.g. incident alerts) never reach church/firstAid, whatever
   // the scope — their bodies can describe a minor.
@@ -41,4 +53,22 @@ export function canSeeNotification(
   }
 
   return false;
+}
+
+/**
+ * When a notice actually became (or becomes) visible to its audience.
+ *
+ * For an ordinary notice that is `createdAt`. For a SCHEDULED notice it is `scheduledFor` —
+ * which is the whole point: a notice composed on Monday for delivery on Thursday has a
+ * Monday `createdAt`, so ordering a feed by `createdAt` drops it BELOW everything sent
+ * Tuesday and Wednesday. It then publishes already buried, and because Home renders only
+ * `feed.slice(0,3)` it can publish without appearing on Home at all.
+ */
+export function publishedAt(n: Notification): string {
+  return n.scheduledFor ?? n.createdAt;
+}
+
+/** Newest-published first. The one ordering every notification feed must use. */
+export function byPublishedDesc(a: Notification, b: Notification): number {
+  return publishedAt(b).localeCompare(publishedAt(a));
 }

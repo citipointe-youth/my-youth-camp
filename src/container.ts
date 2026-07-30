@@ -101,6 +101,7 @@ import { makeInvoiceImportService, type InvoiceImportService } from './services/
 import { makeAuditExportService, type AuditExportService } from './services/audit-export.service';
 import { makeOfflineSignInService, type OfflineSignInService } from './services/offline-signin.service';
 import { makeCronService, type CronService } from './services/cron.service';
+import { makePushService, type PushService } from './services/push.service';
 
 export interface Repositories {
   users: IUserRepository;
@@ -148,7 +149,10 @@ export interface Services {
   // Expose raw user repo for auth/me lookup and audit controller
   users: IUserRepository;
   settingsRepo: ISettingsRepository;
+  /** Exposed on Services so the router can build the push controller (same precedent as settingsRepo). */
+  pushSubscriptionRepo: IPushSubscriptionRepository;
   cron: CronService;
+  push: PushService;
 }
 
 export interface Container {
@@ -204,7 +208,7 @@ export async function buildContainer(): Promise<Container> {
     const personSvc = makePersonService(people);
     const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
     const checkIn = makeCheckInService(people, settingsRepo);
-    const notification = makeNotificationService(notifications, people, churches);
+    const notification = makeNotificationService(notifications);
     const incident = makeIncidentService(incidents, notifications);
     const search = makeSearchService(people, churches);
     const note = makeNoteService(notes, people);
@@ -225,7 +229,8 @@ export async function buildContainer(): Promise<Container> {
       notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
       incidents, pushSubscriptions,
     );
-    const cron = makeCronService({ notifications, people, users, settings: settingsRepo });
+    const push = makePushService({ subscriptions: pushSubscriptions, notifications });
+  const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
 
     const services: Services = {
       auth, settings, person: personSvc, accommodation: accommodationSvc,
@@ -233,7 +238,8 @@ export async function buildContainer(): Promise<Container> {
       importService: importSvc, exportService: exportSvc, allocation, churchImport: churchImportSvc,
       ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
       auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
-      account, dashboard, admin, users, settingsRepo, cron,
+      account, dashboard, admin, users, settingsRepo, cron, push,
+      pushSubscriptionRepo: pushSubscriptions,
     };
 
     return { repos, services };
@@ -342,7 +348,7 @@ export async function buildContainer(): Promise<Container> {
   const personSvc = makePersonService(people);
   const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
   const checkIn = makeCheckInService(people, settingsRepo);
-  const notification = makeNotificationService(notifications, people, churches);
+  const notification = makeNotificationService(notifications);
   const incident = makeIncidentService(incidents, notifications);
   const search = makeSearchService(people, churches);
   const note = makeNoteService(notes, people);
@@ -379,7 +385,8 @@ export async function buildContainer(): Promise<Container> {
     incidents,
     pushSubscriptions,
   );
-  const cron = makeCronService({ notifications, people, users, settings: settingsRepo });
+  const push = makePushService({ subscriptions: pushSubscriptions, notifications });
+  const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
 
   const services: Services = {
     auth,
@@ -407,6 +414,8 @@ export async function buildContainer(): Promise<Container> {
     users,
     settingsRepo,
     cron,
+    push,
+    pushSubscriptionRepo: pushSubscriptions,
   };
 
   return { repos, services };

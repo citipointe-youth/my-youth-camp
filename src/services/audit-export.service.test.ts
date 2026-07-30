@@ -338,3 +338,34 @@ describe('audit-export.service — compliance-export RBAC (review Finding A)', (
     }
   });
 });
+
+describe('audit-export: Incidents sheet carries Occurred at (2026-07-30)', () => {
+  it('has an Occurred at column beside Logged at, blank when it was never recorded', async () => {
+    await incidents.save({
+      id: 'inc1', summary: 'with a time', severity: 'high',
+      createdById: 'u', createdByName: 'Admin', createdByRole: 'admin', zone: 'Yellow',
+      createdAt: '2026-07-30T02:00:00.000Z', occurredAt: '2026-07-29T22:15:00.000Z',
+    });
+    await incidents.save({
+      id: 'inc2', summary: 'without a time', severity: 'low',
+      createdById: 'u', createdByName: 'Admin', createdByRole: 'admin', zone: 'Blue',
+      createdAt: '2026-07-29T02:00:00.000Z', occurredAt: null,
+    });
+
+    const wb = await load();
+    const sheet = wb.getWorksheet('Incidents')!;
+    const header = (sheet.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    expect(header).toContain('Occurred at');
+    // It sits immediately after 'Logged at'.
+    expect(header.indexOf('Occurred at')).toBe(header.indexOf('Logged at') + 1);
+
+    const rows: string[][] = [];
+    sheet.eachRow((r, i) => { if (i > 1) rows.push((r.values as unknown[]).map((v) => String(v ?? ''))); });
+    const withTime = rows.find((r) => r.includes('with a time'))!;
+    const withoutTime = rows.find((r) => r.includes('without a time'))!;
+    const col = header.indexOf('Occurred at');
+    expect(withTime[col]).toBeTruthy();
+    expect(withTime[col]).not.toBe(withTime[header.indexOf('Logged at')]); // a distinct time
+    expect(withoutTime[col] ?? '').toBe(''); // optional — blank, never a placeholder
+  });
+});

@@ -88,6 +88,40 @@ describe('AccountService.updateChurch — rename propagation', () => {
     svc = makeAccountService(users, churches, people);
   });
 
+  // ── listChurches delegates to canAccessChurch (fixed 2026-07-30) ───────────────────
+  //
+  // It used to hand-roll the rule: special-case admin/director/zoneLeader, then fall
+  // through to `c.id === actor.churchId` for everyone else. firstAid landed in that
+  // fall-through and has NO churchId, so the comparison was always false and first aid got
+  // an EMPTY list — while the canonical canAccessChurch grants firstAid every church, as it
+  // does for people, notifications and accommodation. Nothing covered it, which is how it
+  // survived; these are the tests that were missing.
+
+  it('firstAid sees every church (was empty — the drifted hand-rolled copy)', async () => {
+    const firstAid: Actor = { id: 'fa', role: 'firstAid', churchId: null, churchName: null, zone: null, displayName: 'First Aid' };
+    const out = await svc.listChurches(firstAid);
+    expect(out.map((c) => c.id).sort()).toEqual(['c1', 'c2']);
+  });
+
+  it('a church login still sees only its own church', async () => {
+    const chActor: Actor = { id: 'u1', role: 'church', churchId: 'c1', churchName: 'Victory Church', zone: 'Yellow', displayName: 'Victory' };
+    const out = await svc.listChurches(chActor);
+    expect(out.map((c) => c.id)).toEqual(['c1']);
+  });
+
+  it('a zoneLeader still sees only its own zone', async () => {
+    await churches.save(church({ id: 'c3', name: 'Blue Church', zone: 'Blue' }));
+    const zl: Actor = { id: 'z', role: 'zoneLeader', churchId: null, churchName: null, zone: 'Blue', displayName: 'ZL' };
+    const out = await svc.listChurches(zl);
+    expect(out.map((c) => c.id)).toEqual(['c3']);
+  });
+
+  it('admin and director still see every church', async () => {
+    const director: Actor = { id: 'd', role: 'director', churchId: null, churchName: null, zone: null, displayName: 'Director' };
+    expect((await svc.listChurches(admin())).length).toBe(2);
+    expect((await svc.listChurches(director)).length).toBe(2);
+  });
+
   it('re-stamps churchName on every person attached to the renamed church', async () => {
     await svc.updateChurch(admin(), 'c1', { name: 'Victory Community Church' });
 

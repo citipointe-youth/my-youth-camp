@@ -7,6 +7,60 @@ without going through clarifying questions first.
 
 ---
 
+## 2026-07-30 — Owner decisions on the notification/incident review (ANSWERED — record of record)
+
+Seven questions were put to the owner before any dependent code was written. These are their
+answers **and the reasoning**, so a future session doesn't re-litigate them or quietly build
+something that was declined.
+
+| # | Question | Owner's answer |
+|---|---|---|
+| 1 | Incidents workflow: review state, server-side acknowledgement, `occurredAt`, alert expiry? | **`occurredAt` (optional) and 12-hour alert expiry ONLY.** Review state and server-side acknowledgement **declined**. |
+| 2 | Should a zone leader see other zones' incidents? | **Keep camp-wide.** Confirmed intended, not an oversight. |
+| 3 | Soft-delete incidents? | **No — hard delete stays.** |
+| 4 | Should a zone leader be able to file against another zone? | **Keep allowed.** The existing test pinning this (`incident.service.test.ts:51`) stands. Zone was still constrained to the four `ZONE_NAMES` so a typo can't mis-file a record. |
+| 5 | Is web push actually shipping, or is the in-app notice the whole feature? | **Web push IS shipping for this camp.** Phases 4–6 built and deployed 2026-07-30, inert until the VAPID keys are set. |
+| 6 | The four organisational questions in the web-push design §12 | **Still unanswered.** See below — these gate ROLLOUT to real leaders, not the code. |
+| 7 | Turn the tick on this session? | **No** — the owner is doing the Supabase/Vercel configuration themselves. See `docs/DEPLOY-NEXT-STEPS-2026-07-30.md`. |
+
+### ⚠ Declined — do NOT build these without asking again
+
+Each was designed and costed during the review and each was consciously turned down. They are
+recorded here because "nobody thought of it" and "the owner said no" look identical six months later.
+
+- **Incident review state** (`reviewedAt`/`reviewedBy`/outcome note). The gap is real and was
+  explained: low-severity incidents are meant for an end-of-day review, but an incident carries no
+  state, so a director re-reads the same undifferentiated list every evening with no record of what
+  has been actioned. Declined anyway.
+- **Server-side acknowledgement of high-severity alerts.** "Got it" still writes only to
+  `localStorage['cp_dismissed_notices']` on one device: there is **no server record that the
+  director ever saw a safeguarding alert**, the same person on a second device sees it again, and
+  the audit workbook has no acknowledgement column. Declined.
+- **Zone-scoping `incident.list()`.** Every `zoneLeader` reads every zone's incident summaries,
+  including ones naming minors they have no relationship to. This remains the one place the app
+  departs from the `canAccessPerson`/`canAccessChurch` discipline it applies everywhere else, on its
+  most sensitive record type — **by explicit decision**, not by accident.
+- **Soft-delete incidents.** An append-only safeguarding record can be hard-deleted by admin or
+  director with nothing recording that it existed, and the workbook export silently loses it.
+
+### Still open
+
+- **Web-push design §12's four organisational questions are UNANSWERED** and gate rollout to real
+  leaders: the org's posture on transferring even metadata to US-based processors (Apple/Google/
+  Mozilla see endpoint, timing and message size on every send, though never a minor's data); whether
+  any account holder is under 18; who owns and publishes the privacy notice; and who delivers the
+  iOS "Add to Home Screen" comms. **iOS gives no notification permission prompt at all until the app
+  is installed to the Home Screen** — the design names this as the single biggest adoption risk, and
+  it is a comms problem, not a code problem.
+- **Incidents are still unreachable pre-camp** (item 4.7 from the review, never put to the owner).
+  `RENDER.incidents` was deliberately made mode-independent on 2026-07-18, but the only route to it
+  is the at-camp home tile, so that revert's intent still isn't delivered (`public/index.html`
+  admits this in a comment). Not built; worth one question next session.
+- **Migration history drift now covers `0009`–`0012` AND `0016`–`0017`.** Six rows recorded under
+  generated timestamps. Schema is correct; a `supabase db push` would try to re-run all six.
+
+---
+
 ## 2026-07-20 — Discount codes: classify as "paid in full" (BUILT, THEN SUPERSEDED — CLOSED)
 
 > **Status correction, 2026-07-29.** This design was BUILT (migration `0015`, `applyDiscountOverrides`,

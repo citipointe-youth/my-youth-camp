@@ -246,6 +246,12 @@ export function makeAdminService(
         notifRepo.deleteAll(),
         allocationRepo.deleteAll(),
         overrideRepo.deleteAll(),
+        // Last year's leaders must not carry alerts into a new camp with a partly different
+        // team. `reset()` already did this (bug 16); newYear did not, and was relying by
+        // accident on the users FK cascade below — which does clean up on Supabase but not
+        // in-memory, and would stop working the moment an account survived the rollover.
+        // Same standing rule as reset(): a new repository must be added here in the same commit.
+        pushSubRepo.deleteAll(),
       ]);
 
       // Restore the scaffold from the baseline. Accounts: replace all EXCEPT the

@@ -6,7 +6,7 @@ import type {
 import type { User, SafeUser, GenderScope } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
-import { assertCan } from './access-control';
+import { assertCan, canAccessChurch } from './access-control';
 import { NotFoundError, BadRequestError, ForbiddenError, UnauthorizedError } from '../core/errors/app-error';
 import {
   CreateUserSchema,
@@ -346,11 +346,16 @@ export function makeAccountService(
 
     async listChurches(actor) {
       const churches = await churchRepo.findAll();
-      if (actor.role === 'admin' || actor.role === 'director') return churches;
-      if (actor.role === 'zoneLeader') {
-        return churches.filter((c) => actor.zone && c.zone === actor.zone);
-      }
-      return churches.filter((c) => c.id === actor.churchId);
+      // Delegates to the canonical rule instead of re-deriving it. This WAS a hand-rolled
+      // copy of `canAccessChurch`, and it had already drifted: it special-cased admin,
+      // director and zoneLeader, then fell through to `c.id === actor.churchId` for
+      // "everyone else". `firstAid` is in that fall-through and has no `churchId`, so the
+      // comparison was always false and first aid received an EMPTY church list — while the
+      // canonical rule grants firstAid every church, as it does for person data, notifications
+      // and accommodation. Latent today (no first-aid screen calls this endpoint yet), which
+      // is exactly why it survived: no test covered it and nothing visibly broke.
+      // Do not re-inline these rules.
+      return churches.filter((c) => canAccessChurch(actor, c.id, c.zone));
     },
 
     async updateChurch(actor, id, input) {

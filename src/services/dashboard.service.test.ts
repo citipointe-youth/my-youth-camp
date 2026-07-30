@@ -12,6 +12,7 @@ import type { CheckInEntry } from '../core/entities/person';
 import type { CampSettings } from '../core/entities/settings';
 import { SETTINGS_ID } from '../core/entities/settings';
 import type { Actor } from '../core/entities/user';
+import type { Notification } from '../core/entities/notification';
 
 // The dashboard service keeps a module-level response cache keyed by actor
 // scope (see dashboard-cache.ts). Each test below builds fresh repositories,
@@ -80,7 +81,7 @@ async function build() {
   const churchRepo = new InMemoryChurchRepository();
   for (const r of [personRepo, notifRepo, churchRepo]) await r.init();
   const svc = makeDashboardService(personRepo, notifRepo, churchRepo);
-  return { svc, personRepo };
+  return { svc, personRepo, notifRepo };
 }
 
 describe('at-camp dashboard — D1 current session = latest started', () => {
@@ -304,6 +305,64 @@ describe('dashboard response cache', () => {
     expect(resBlue.totalExpected).toBe(2);
   });
 
+  // ── §3.2 — church logins read via findByChurch, not an unbounded findAll ──────────
+  //
+  // The point of these is that narrowing the QUERY changed no NUMBER. canAccessPerson is
+  // still the access gate; findByChurch only reduces how many rows are fetched and
+  // decrypted (at camp, ~700 people plus ~3,500 history rows per uncached request, to then
+  // discard all but the ~30 the church may see).
+
+  it('a church login sees the same at-camp numbers via the scoped query', async () => {
+    pinClock('2026-07-01T15:00:00Z');
+    const h = await build();
+    await h.personRepo.save(camper({ id: 'own1', churchId: 'c1', atCamp: true }));
+    await h.personRepo.save(camper({ id: 'own2', churchId: 'c1', atCamp: true }));
+    // Another church's people must not reach the figures — and are no longer even fetched.
+    await h.personRepo.save(camper({ id: 'other', churchId: 'c2', churchName: 'Other', atCamp: true }));
+
+    const res = await h.svc.home(actor('church', { churchId: 'c1', churchName: 'Victory' }), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.totalExpected).toBe(2);
+    expect(res.totalAtCamp).toBe(2);
+  });
+
+  it('gender scoping still applies on top of the scoped query — findByChurch does not know about it', async () => {
+    // The regression this guards: findByChurch returns BOTH genders for c1, so dropping the
+    // canAccessPerson filter as "already scoped" would show b-victory the girls' numbers.
+    pinClock('2026-07-01T15:00:00Z');
+    const h = await build();
+    await h.personRepo.save(camper({ id: 'b1', churchId: 'c1', gender: 'male', atCamp: true }));
+    await h.personRepo.save(camper({ id: 'g1', churchId: 'c1', gender: 'female', atCamp: true }));
+    await h.personRepo.save(camper({ id: 'g2', churchId: 'c1', gender: 'female', atCamp: true }));
+
+    const boys = await h.svc.home(actor('church', { churchId: 'c1', genderScope: 'male' }), settings());
+    if (boys.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(boys.totalExpected).toBe(1);
+  });
+
+  it('a church login sees the same pre-camp numbers via the scoped query', async () => {
+    const h = await build();
+    const pre: CampSettings = { ...settings(), campMode: 'pre-camp' };
+    await h.personRepo.save(camper({ id: 'r1', churchId: 'c1', lifecycle: 'registered', atCamp: false }));
+    await h.personRepo.save(camper({ id: 'r2', churchId: 'c1', lifecycle: 'registered', atCamp: false }));
+    await h.personRepo.save(camper({ id: 'x1', churchId: 'c2', churchName: 'Other', lifecycle: 'registered', atCamp: false }));
+
+    const res = await h.svc.home(actor('church', { churchId: 'c1' }), pre);
+    if (res.mode !== 'pre-camp') throw new Error('expected pre-camp');
+    expect(res.totalRegistrants).toBe(2);
+  });
+
+  it('non-church roles are unaffected and still see every church', async () => {
+    pinClock('2026-07-01T15:00:00Z');
+    const h = await build();
+    await h.personRepo.save(camper({ id: 'a', churchId: 'c1', atCamp: true }));
+    await h.personRepo.save(camper({ id: 'b', churchId: 'c2', churchName: 'Other', atCamp: true }));
+
+    const res = await h.svc.home(actor('admin'), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.totalExpected).toBe(2);
+  });
+
   it('invalidateDashboardCache() forces the next call to re-read fresh data', async () => {
     pinClock('2026-07-01T15:00:00Z');
     const h = await build();
@@ -317,7 +376,18 @@ describe('dashboard response cache', () => {
     expect(second.totalExpected).toBe(first.totalExpected + 1);
   });
 
-  it('a daily check-in (person.service.checkIn) invalidates the cache automatically', async () => {
+  // ── §3.1 — checkIn/signEvent deliberately do NOT invalidate the cache ──────────────
+  //
+  // These two tests previously asserted the OPPOSITE (that person.service flushed the cache
+  // on every check-in). That was changed on 2026-07-30 for load reasons: these are the only
+  // two BURSTY writes in the app — at a check-in window ~100 devices tap through rosters at
+  // once — and `invalidateDashboardCache()` wipes EVERY key globally, so one tap destroyed
+  // the cache for all ~30 distinct keys exactly while every device was loading /home.
+  //
+  // The tests are inverted rather than deleted so the trade-off is pinned in both
+  // directions: stale within the TTL, correct after it.
+
+  it('a daily check-in does NOT flush the cache — the count is stale within the 30s TTL', async () => {
     pinClock('2026-07-01T15:00:00Z'); // PM current
     const h = await build();
     const personSvc = makePersonService(h.personRepo);
@@ -327,17 +397,40 @@ describe('dashboard response cache', () => {
     if (before.mode !== 'at-camp') throw new Error('expected at-camp');
     expect(before.checkInsDue).toBe(1);
 
-    // No manual invalidateDashboardCache() call here — person.service must do it.
     await personSvc.checkIn(a, 'x', {
       sessionId: PM, sessionLabel: 'PM', type: 'in', leaderId: 'u', timestamp: '2026-07-01T15:05:00.000Z',
     });
+
+    // Still 1: the write landed, but the cached dashboard is served until the TTL lapses.
+    const during = await h.svc.home(a, settings());
+    if (during.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(during.checkInsDue).toBe(1);
+  });
+
+  it('the check-in count refreshes once the 30s cache TTL lapses', async () => {
+    pinClock('2026-07-01T15:00:00Z');
+    const h = await build();
+    const personSvc = makePersonService(h.personRepo);
+    const a = actor('admin');
+    await h.personRepo.save(camper({ id: 'x', atCamp: true }));
+    const before = await h.svc.home(a, settings());
+    if (before.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(before.checkInsDue).toBe(1);
+
+    await personSvc.checkIn(a, 'x', {
+      sessionId: PM, sessionLabel: 'PM', type: 'in', leaderId: 'u', timestamp: '2026-07-01T15:05:00.000Z',
+    });
+
+    // Advance past the 30s ResponseCache TTL. This is the bound on the staleness the
+    // §3.1 change accepts — if the TTL is ever raised, this test says how far.
+    pinClock('2026-07-01T15:00:31Z');
 
     const after = await h.svc.home(a, settings());
     if (after.mode !== 'at-camp') throw new Error('expected at-camp');
     expect(after.checkInsDue).toBe(0);
   });
 
-  it('an attendance sign-out (person.service.signEvent) invalidates the cache automatically', async () => {
+  it('an attendance sign-out does NOT flush the cache, but refreshes after the TTL', async () => {
     pinClock('2026-07-01T15:00:00Z');
     const h = await build();
     const personSvc = makePersonService(h.personRepo);
@@ -351,6 +444,11 @@ describe('dashboard response cache', () => {
       type: 'out', leaderName: 'Leader', authorId: 'u', timestamp: '2026-07-01T15:05:00.000Z',
     });
 
+    const during = await h.svc.home(a, settings());
+    if (during.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(during.totalAtCamp).toBe(1);
+
+    pinClock('2026-07-01T15:00:31Z');
     const after = await h.svc.home(a, settings());
     if (after.mode !== 'at-camp') throw new Error('expected at-camp');
     expect(after.totalAtCamp).toBe(0);
@@ -372,5 +470,72 @@ describe('dashboard response cache', () => {
     const after = await h.svc.home(a, preCampSettings);
     if (after.mode !== 'pre-camp') throw new Error('expected pre-camp');
     expect(after.totalRegistrants).toBe(1);
+  });
+});
+
+// latestNotification used to apply a hand-rolled COPY of the audience rules that had drifted
+// from notification.service's. It now calls canSeeNotification, the same predicate the
+// /notifications feed uses. These pin the two ways it had diverged.
+describe('at-camp dashboard — latestNotification uses the shared audience rule', () => {
+  function notice(over: Partial<Notification> = {}): Notification {
+    return {
+      id: 'n1', scope: 'camp', zone: null, churchId: null, priority: 'normal',
+      title: 'T', body: 'B', senderId: 'a1', senderName: 'Admin', senderRole: 'admin',
+      leadersOnly: false, audienceEstimate: 0, expiresAt: null, scheduledFor: null,
+      createdAt: '2026-07-01T09:00:00.000Z', ...over,
+    };
+  }
+
+  it('withholds a future-scheduled notice — it used to return the title AND body early', async () => {
+    pinClock('2026-07-01T10:00:00Z');
+    const h = await build();
+    await h.notifRepo.save(notice({
+      title: 'Wake up call',
+      body: 'SECRET-UNTIL-TOMORROW',
+      scheduledFor: '2026-07-03T20:00:00.000Z',
+    }));
+    const res = await h.svc.home(actor('church', { churchId: 'c1' }), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.latestNotification).toBeNull();
+  });
+
+  it('releases it once the scheduled time passes', async () => {
+    pinClock('2026-07-03T20:01:00Z');
+    const h = await build();
+    await h.notifRepo.save(notice({ title: 'Due now', scheduledFor: '2026-07-03T20:00:00.000Z' }));
+    const res = await h.svc.home(actor('church', { churchId: 'c1' }), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.latestNotification?.title).toBe('Due now');
+  });
+
+  it('gives admin the see-every-scope rule it has in the feed', async () => {
+    pinClock('2026-07-01T10:00:00Z');
+    const h = await build();
+    await h.notifRepo.save(notice({ scope: 'zone', zone: 'Yellow', title: 'Yellow only' }));
+    // An admin has no zone, so the old copy dropped this; the feed always showed it.
+    const res = await h.svc.home(actor('admin'), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.latestNotification?.title).toBe('Yellow only');
+  });
+
+  it('still hides a leadersOnly incident alert from a church login', async () => {
+    pinClock('2026-07-01T10:00:00Z');
+    const h = await build();
+    await h.notifRepo.save(notice({ leadersOnly: true, title: 'Incident logged', body: 'about a minor' }));
+    const res = await h.svc.home(actor('church', { churchId: 'c1' }), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.latestNotification).toBeNull();
+  });
+
+  it('does not surface another login\'s targeted check-in warning', async () => {
+    pinClock('2026-07-01T10:00:00Z');
+    const h = await build();
+    await h.notifRepo.save(notice({
+      scope: 'church', churchId: 'c1', priority: 'urgent',
+      title: 'Check-in closing soon', targetUserId: 'usr_girls',
+    }));
+    const res = await h.svc.home(actor('church', { id: 'usr_boys', churchId: 'c1' }), settings());
+    if (res.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(res.latestNotification).toBeNull();
   });
 });

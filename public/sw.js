@@ -1,4 +1,4 @@
-const CACHE = 'camp-v54';
+const CACHE = 'camp-v56';
 const APP_SHELL = ['/'];
 
 // API paths that must NEVER be served from cache. GOTCHA (from connection-made-simple):
@@ -9,7 +9,10 @@ const APP_SHELL = ['/'];
 // (export ADDED — the SPA downloads /export/audit, /export/registrants, /export/signin-out;
 //  without it these fell through to cache-first and could serve stale HTML — the documented
 //  API_RE gotcha. Verified against src/api/http/router.ts route prefixes.)
-const API_RE = /^\/(auth|home|settings|admin|registrants|accommodation|campers|checkin|attendance|notes|search|notifications|schedule|faq|devotional|import|export|accounts|health|setup|incidents)(\/|$|\?)/;
+// `push` ADDED 2026-07-30 — the SPA now calls GET /push/config and POST/DELETE
+// /push/subscribe. `internal` is still deliberately absent: /internal/cron/tick is
+// server-to-server (Supabase pg_cron → pg_net) and never passes through a service worker.
+const API_RE = /^\/(auth|home|settings|admin|registrants|accommodation|campers|checkin|attendance|notes|search|notifications|schedule|faq|devotional|import|export|accounts|health|setup|incidents|push)(\/|$|\?)/;
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
@@ -59,6 +62,45 @@ self.addEventListener('fetch', (e) => {
         }
         return res;
       });
+    })
+  );
+});
+
+// ─── Web push ────────────────────────────────────────────────────────────────────────
+//
+// `userVisibleOnly: true` is mandatory on every browser that matters, which means this
+// handler MUST call showNotification() for every push it receives. A push that shows
+// nothing gets the origin penalised or the subscription revoked — there is no "silent
+// push, decide later" option. That is exactly why the payload is deliberately vague:
+// whatever arrives here is rendered on a possibly-locked screen, so the server never puts
+// a notice body, an incident summary or any person field in it. See push.service.ts.
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) { d = {}; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Youth Camp', {
+    body: d.body || 'Open the app for details.',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    // Collapses repeats of the same kind of alert rather than stacking them. Generic
+    // strings only — never a person or session id.
+    tag: d.tag || 'camp',
+    data: { screen: d.screen || 'home' },
+  }));
+});
+
+// Deep-link gotcha: this SPA has NO URL router — navigation is go(screenId) against a
+// fixed set of <section class="screen"> elements. So we cannot navigate by URL. Instead
+// we postMessage the target screen to an already-open client, and fall back to
+// openWindow('/?nav=…') for a cold start, which index.html reads once at boot.
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const screen = (e.notification.data && e.notification.data.screen) || 'home';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => {
+      for (const c of cs) {
+        if ('focus' in c) { c.postMessage({ type: 'push-nav', screen: screen }); return c.focus(); }
+      }
+      return self.clients.openWindow('/?nav=' + encodeURIComponent(screen));
     })
   );
 });

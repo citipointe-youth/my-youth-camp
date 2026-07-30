@@ -1980,9 +1980,13 @@ RENDER.home=async function renderHome(skipModeSync){
   {const notices=_noticeFeed(feed).slice(0,3);
     body+=_alertBannerHtml(feed)
     +`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
-    <div id="homeNotices" style="margin-top:10px">${notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>'}</div>`;
+    <div id="homeNotices" style="margin-top:10px">${notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>'}</div>`
+    // Pre-camp too, not just at-camp: incidents are role-gated rather than mode-gated,
+    // and a leader should be able to opt in before camp starts rather than on day 1.
+    +_pushCardHtml();
   }
   paint('home',body,'My Church Hub',isWide?'All churches':(ACTOR.churchName?esc(ACTOR.churchName):esc(ACTOR.displayName)));
+  _renderPushCard();
 };
 
 function accLabelOf(tent,cls){const p=tent&&cls?'mixed':tent?'tent':cls?'classroom':'none';
@@ -2115,9 +2119,11 @@ async function renderHomeAtCamp(){
   <div id="homePulse"></div>
   ${_alertBannerHtml(feed)}
   <div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
-  <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>`;
+  <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>
+  ${_pushCardHtml()}`;
   paint('home','','Home',d.greetingName||ACTOR.displayName);
   document.getElementById('home').innerHTML=html;
+  _renderPushCard();
   // (No urgent-notice modal here any more — urgent notices render in the banner that
   // `_alertBannerHtml(feed)` already injected above the "Notices" heading in `html` above.)
   if(['director','admin'].includes(ACTOR.role))_renderDirectorDigest();
@@ -3588,7 +3594,7 @@ RENDER.compose=function(){
       :`<button class="on" data-aud="myzone" onclick="setAud(this)">${esc(ACTOR.zone)} Zone</button>`}
     </div>
     ${isDir?`<div id="zoneWrap" style="display:${isZoneEd?'block':'none'}"><label>Zone</label><select id="zoneSel">${ZONES.map(z=>`<option ${ed&&ed.zone===z?'selected':''}>${z}</option>`).join('')}</select></div>`:''}
-    <label style="display:flex;align-items:center;gap:6px">Priority ${helpTip('Normal: appears in the recipient’s Notices list and on their home screen. Urgent: also pops up a full-screen alert they must tap to dismiss, next time they open the app. Use Urgent only for something that changes what people do right now.')}</label><div class="seg" id="priSeg"><button class="${(!ed||ed.priority!=='urgent')?'on':''}" data-pri="normal" onclick="setPri(this)">${icSm('check')} Normal</button><button class="${ed&&ed.priority==='urgent'?'on':''}" data-pri="urgent" onclick="setPri(this)">${icSm('urgent')} Urgent</button></div>
+    <label style="display:flex;align-items:center;gap:6px">Priority ${helpTip('Both appear in the recipient’s Notices list and on their home screen; Urgent is styled red and shows its full message there. Neither interrupts them — nobody is alerted until they next open the app, so don’t rely on a notice for something happening in the next few minutes. Radio or find the person for that.')}</label><div class="seg" id="priSeg"><button class="${(!ed||ed.priority!=='urgent')?'on':''}" data-pri="normal" onclick="setPri(this)">${icSm('check')} Normal</button><button class="${ed&&ed.priority==='urgent'?'on':''}" data-pri="urgent" onclick="setPri(this)">${icSm('urgent')} Urgent</button></div>
     <label>Title</label><input class="fld" id="ntitle" value="${ed?esc(ed.title):''}">
     <label>Message</label><textarea id="nbody">${ed?esc(ed.body):''}</textarea>
     <label>When</label><div class="seg" id="whenSeg"><button class="${when==='now'?'on':''}" data-when="now" onclick="setWhen(this)">Send now</button><button class="${when==='schedule'?'on':''}" data-when="schedule" onclick="setWhen(this)">${icSm('clock')} Schedule</button></div>
@@ -4192,12 +4198,15 @@ RENDER.incidents=async function(){
     const del=canDelete?`<button class="btn ghost sm" onclick="deleteIncident('${i.id}')">${icSm('trash')}</button>`:'';
     return `<div class="card"><div class="rowsb" style="align-items:center"><div class="nm">${sev}${i.zone?' <span class="sub">'+esc(i.zone)+' Zone</span>':''}</div>${del}</div>
       <div style="font-size:var(--t-body);margin:6px 0;white-space:pre-wrap">${esc(i.summary)}</div>
-      <div class="sub">${esc(i.createdByName||'—')} · ${dtFmt(i.createdAt)}</div></div>`;
+      <div class="sub">${esc(i.createdByName||'—')} · ${dtFmt(i.createdAt)}${i.occurredAt?' · <b>occurred</b> '+dtFmt(i.occurredAt):''}</div></div>`;
   }).join(''):emptyState('alert','No incidents logged yet.');
   paint('incidents',`<div class="infobox" style="font-size:.82rem">Log a safeguarding or operational incident. <b>Low</b> is just recorded. <b>High</b> also sends an urgent alert to zone leaders, directors and admins.</div>
     <div class="card">
       <label>What happened?</label>
       <textarea class="fld" id="incSummary" placeholder="Describe the incident — who, what, when, action taken" style="min-height:120px"></textarea>
+      <label style="margin-top:8px">When did it happen? <span class="sub">(optional)</span></label>
+      <input class="fld" type="datetime-local" id="incOccurred">
+      <p class="note-hint" style="margin:4px 0 0">Leave blank if it's happening now — the logging time is always recorded either way.</p>
       <label style="margin-top:8px">Severity</label>
       <div class="seg" style="margin-top:4px">
         <button type="button" class="on" id="incSev-low" onclick="setIncSeverity('low')">Low · record</button>
@@ -4208,11 +4217,23 @@ RENDER.incidents=async function(){
     <h3 class="sec" style="margin-top:18px">Incidents</h3>
     <div id="incList">${rows}</div>`,'Incidents','Newest first');
 };
+/* `<input type="datetime-local">` yields a BARE WALL-CLOCK string ("2026-09-29T21:15") with
+   no zone. Posting that raw is the UTC-vs-Brisbane bug that has hit this repo twice (it
+   lands 10 hours out), and the server's schema rejects it outright for exactly that reason.
+   `new Date(v)` parses a bare datetime-local as LOCAL time — which is the device's zone, and
+   the device is at camp — so toISOString() gives the correct instant. Returns null for an
+   empty or unparseable field: occurredAt is optional and must never block logging. */
+function _incOccurredISO(){
+  const v=val('incOccurred');
+  if(!v)return null;
+  const d=new Date(v);
+  return isNaN(d.getTime())?null:d.toISOString();
+}
 async function submitIncident(){
   const summary=val('incSummary');
   if(!summary){toast('Describe the incident');return;}
   try{
-    await api('/incidents',{method:'POST',body:{summary,severity:_incSeverity}});
+    await api('/incidents',{method:'POST',body:{summary,severity:_incSeverity,occurredAt:_incOccurredISO()}});
     toast(_incSeverity==='high'?'Incident logged · everyone notified':'Incident logged');
     await RENDER.incidents();
   }catch(e){toast(e.message);}
@@ -6144,6 +6165,10 @@ async function _tryRestoreSession(){
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
     _loadLeaderInitials(); // restore the badge/prefill
     enforceInitials();     // item 7: a restored church session with no initials is still gated
+    // Cold start from a tapped notification (sw.js openWindow('/?nav=…')). Done AFTER
+    // gotoTab('home') so 'home' stays on the stack and Back behaves normally; a bad or
+    // unknown screen name is ignored by go().
+    {const nav=_consumePushNav();if(nav){try{go(nav);}catch(_){}}}
   }catch(e){
     if(e&&e.code==='MUST_CHANGE_PASSWORD'){_showChangePasswordGate();return;}
     TOKEN=null;ACTOR=null;
@@ -6178,6 +6203,172 @@ document.addEventListener('visibilitychange',()=>{
   // A backgrounded tab may have missed the storage event — re-check the authoritative mode.
   api('/settings').then(s=>{if(s&&s.campMode)_applyModeChange(s.campMode);}).catch(()=>{});
 });
+
+/* ===== WEB PUSH — "Alerts on this device" (2026-07-30, phases 4-6) =====
+
+   SAFETY CONTRACT, read before editing:
+   `_pushCardHtml()` returns a STATIC EMPTY CONTAINER and nothing else. Every piece of
+   real work happens in `_renderPushCard()`, which is async, wrapped head-to-toe in
+   try/catch, and only ever writes into that one container. Nothing here can throw during
+   a Home render. That matters more than usual: this card sits on the Home screen of every
+   role, so a render-time exception would blank the app's landing screen for everyone —
+   and `Notification`, `PushManager` and `serviceWorker` are all absent or throwing on
+   some of the browsers in use (older iOS especially). Keep this shape. */
+
+let _pushCfg=null;      // cached GET /push/config result
+let _pushBusy=false;
+
+function _pushCardHtml(){return '<div id="pushCard"></div>';}
+
+/* iOS gives no permission prompt at all until the app is installed to the Home Screen —
+   see the adoption note in the design. Detect standalone the two ways iOS reports it. */
+function _isStandalone(){
+  try{return window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;}
+  catch(_){return false;}
+}
+function _isIOS(){
+  try{return /iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);}
+  catch(_){return false;}
+}
+
+function _urlB64ToUint8(base64){
+  const pad='='.repeat((4-base64.length%4)%4);
+  const b64=(base64+pad).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(b64);
+  const out=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);
+  return out;
+}
+
+async function _renderPushCard(){
+  const el=document.getElementById('pushCard');
+  if(!el)return;
+  try{
+    /* Preview modes short-circuit every non-GET in api(), so subscribing is impossible —
+       and SHOULD be: an admin previewing a church account must not register their own
+       phone against that account. Hide the card rather than let it surface the generic
+       "not available in preview" toast on a tap. */
+    if(PREVIEW_MODE||ACCOUNT_PREVIEW){el.innerHTML='';return;}
+    if(!('serviceWorker'in navigator)||!('PushManager'in window)||!('Notification'in window)){el.innerHTML='';return;}
+
+    if(_pushCfg===null){
+      try{_pushCfg=await api('/push/config');}catch(_){el.innerHTML='';return;}
+    }
+    /* VAPID keys not set on the server. This is the deployed state until they are added,
+       and the whole feature must be invisible — not broken-looking — until then. */
+    if(!_pushCfg||!_pushCfg.configured){el.innerHTML='';return;}
+
+    const perm=Notification.permission;
+    let body;
+
+    if(_isIOS()&&!_isStandalone()){
+      // No prompt is even possible here. Give the actual remedy, not a dead button.
+      body=`<p class="note-hint" style="margin:0">Install this app to your Home Screen to get camp alerts on this device — tap Share, then <b>Add to Home Screen</b>, and open it from there.</p>
+        <a class="btn ghost" style="margin-top:8px;display:inline-block" href="/install.html">How to install</a>`;
+    }else if(perm==='denied'){
+      // The app cannot re-prompt once denied; only OS/browser settings can undo it.
+      body=`<p class="note-hint" style="margin:0">Alerts are blocked for this site. To turn them on, allow notifications for this app in your ${_isIOS()?'iPhone Settings → Notifications':'browser site settings'}, then come back.</p>`;
+    }else{
+      const reg=await navigator.serviceWorker.ready;
+      const sub=await reg.pushManager.getSubscription();
+      if(sub&&perm==='granted'){
+        body=`<div class="rowsb"><span class="sub" style="margin:0">${icSm('check')} Alerts are on for this device</span>
+          <button class="btn ghost sm" onclick="_pushOff()">Turn off</button></div>`;
+      }else{
+        body=`<p class="note-hint" style="margin:0 0 8px">Get a notification on this device when an urgent incident is logged, a camp notice goes out, or your check-in window is about to close.</p>
+          <button class="btn" onclick="_pushOn()">Turn on alerts</button>`;
+      }
+    }
+    el.innerHTML=`<div class="card" style="margin-top:18px"><h3 class="sec" style="margin:0 0 8px">Alerts on this device</h3>${body}</div>`;
+  }catch(_){
+    // Never leave a half-rendered card, and never let this break Home.
+    try{el.innerHTML='';}catch(__){}
+  }
+}
+
+/* The consent step. The browser's own prompt says only "<site> wants to send you
+   notifications" — nothing about what, how often, or that a safeguarding-adjacent alert
+   can render on a lock screen. Tapping "Allow" is not meaningful consent to that, so we
+   say it plainly first. Never call requestPermission() on load — only from this tap. */
+async function _pushOn(){
+  if(_pushBusy)return;
+  // bodyRaw (not body) so the three paragraphs render as paragraphs — `body` runs esc()
+  // over the string and newlines would collapse into one wall of text. Every fragment
+  // below is a hardcoded literal, so there is no untrusted input to escape here.
+  const ok=await confirmSheet({
+    title:'Alerts on this device',
+    bodyRaw:"We&rsquo;ll notify this device when an urgent incident is logged (leadership accounts only), when a camp notice goes out, and about an hour before your check-in window closes if students are still unchecked."
+      +"<br><br>Alerts <b>never contain a student&rsquo;s name</b> or any medical or incident detail &mdash; just a prompt to open the app. They may appear on your lock screen, so keep this device locked and don&rsquo;t leave it with students."
+      +"<br><br>We store a device registration for this account until you turn alerts off here.",
+    confirmLabel:'Turn on alerts',
+  });
+  if(!ok)return;
+  _pushBusy=true;
+  try{
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted'){toast(perm==='denied'?'Alerts blocked — allow notifications for this app in your device settings':'Alerts not enabled');return;}
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub){
+      sub=await reg.pushManager.subscribe({
+        // Mandatory on every browser that matters — see the sw.js push handler.
+        userVisibleOnly:true,
+        applicationServerKey:_urlB64ToUint8(_pushCfg.publicKey),
+      });
+    }
+    const j=sub.toJSON();
+    await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg.keyId}});
+    toast('Alerts are on for this device');
+  }catch(e){
+    toast('Could not turn on alerts on this device');
+  }finally{
+    _pushBusy=false;
+    _renderPushCard();
+  }
+}
+
+async function _pushOff(){
+  if(_pushBusy)return;
+  _pushBusy=true;
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.getSubscription();
+    if(sub){
+      const endpoint=sub.endpoint;
+      // Unsubscribe locally FIRST so the device stops receiving even if the server call
+      // fails; the row is then pruned server-side on the next 404/410 regardless.
+      try{await sub.unsubscribe();}catch(_){}
+      try{await api('/push/subscribe',{method:'DELETE',body:{endpoint:endpoint}});}catch(_){}
+    }
+    toast('Alerts turned off for this device');
+  }catch(_){
+    toast('Could not turn off alerts');
+  }finally{
+    _pushBusy=false;
+    _renderPushCard();
+  }
+}
+
+/* Deep-link from a tapped notification. The SPA has no URL router, so sw.js postMessages
+   the target screen to the focused client (warm path) and falls back to /?nav=<screen>
+   for a cold start, which we read ONCE at boot and then strip from the address bar. */
+if('serviceWorker'in navigator){
+  navigator.serviceWorker.addEventListener('message',(ev)=>{
+    try{
+      const m=ev.data||{};
+      if(m.type==='push-nav'&&m.screen)go(m.screen);
+    }catch(_){}
+  });
+}
+function _consumePushNav(){
+  try{
+    const p=new URLSearchParams(location.search);
+    const nav=p.get('nav');
+    if(!nav)return null;
+    history.replaceState(null,'',location.pathname);
+    return nav;
+  }catch(_){return null;}
+}
 
 /* PWA: register the service worker (network-first HTML shell, network-only API,
    cache-first assets). On a new SW taking control after a deploy, reload once so

@@ -24,6 +24,7 @@ export function toNotif(r: Record<string, unknown>): Notification {
     scheduledFor: r['scheduled_for'] ? (r['scheduled_for'] as Date).toISOString() : null,
     pushSentAt: r['push_sent_at'] ? new Date(r['push_sent_at'] as string | Date).toISOString() : null,
     dedupeKey: (r['dedupe_key'] as string | null) ?? null,
+    targetUserId: (r['target_user_id'] as string | null) ?? null,
     createdAt: (r['created_at'] as Date).toISOString(),
   };
 }
@@ -48,6 +49,7 @@ export function notifColumns(n: Notification): Record<string, unknown> {
     scheduled_for: n.scheduledFor ?? null,
     push_sent_at: n.pushSentAt ?? null,
     dedupe_key: n.dedupeKey ?? null,
+    target_user_id: n.targetUserId ?? null,
     created_at: n.createdAt,
   };
 }
@@ -100,7 +102,8 @@ export class SupabaseNotificationRepository implements INotificationRepository {
         scheduled_for = excluded.scheduled_for,
         audience_estimate = excluded.audience_estimate,
         push_sent_at = excluded.push_sent_at,
-        dedupe_key = excluded.dedupe_key
+        dedupe_key = excluded.dedupe_key,
+        target_user_id = excluded.target_user_id
     `;
     return n;
   }

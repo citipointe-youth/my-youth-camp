@@ -224,6 +224,224 @@ Fixes — all switched `position:absolute`→`position:fixed` so they track the 
 GOTCHA for future overlays: any full-viewport overlay/toast MUST be `position:fixed`, never
 `position:absolute` — the phone `.app` is not viewport-height, it grows with the scrolling content.
 
+## Notification hardening before the check-in warning is switched on — 2026-07-30
+
+Deep review of the notification/web-push work ahead of enabling it for camp. Backend + SPA +
+**migration `0018`** (`notifications.target_user_id`). `npm run typecheck` clean,
+`npm run test` = **704 pass** (was 688; 16 new), SPA + `sw.js` `node --check` OK.
+`sw.js` `camp-v54`→`camp-v55`.
+
+> **Read this first if you are about to enable the tick.** Phases 1–3 of the web-push design are
+> merged, but **nothing fires**: migration `0014` is unapplied and `CRON_SECRET` is unset, so
+> `cron.service` has never run in prod. Everything below is the set of defects that would have
+> landed the moment it did. **Migration `0018` must be applied to prod BEFORE this code pushes** —
+> `supabase.notifications.save()` writes `target_user_id` on every save, so any notice write
+> (including `incident.service.log`) fails until the column exists.
+
+### 1 — Notices are addressed PER LOGIN, not just per scope (`targetUserId`)
+The scheduler counts outstanding check-ins **per login** (gender-scoped `b-`/`g-` accounts hold
+different numbers) but wrote a **church-scoped** notice, and `canSeeNotification` matched church
+scope on `churchId` alone. So `b-victory` and `g-victory` each saw **both** notices — two
+contradictory counts with no way to tell which was theirs — and admin/director saw *every*
+church's, because oversight roles bypass scope checks. Proven by test before fixing.
+
+`Notification.targetUserId` + one clause in `canSeeNotification`: a targeted notice goes to that
+one login and **nobody else, deliberately including admin and director**. Null on every
+human-authored notice, which stays scope-addressed exactly as before. `target_user_id` is in
+`notifColumns`, `toNotif` **and the on-conflict `do update set` list** — miss that last one and
+the value silently never persists (the repo's documented recurring bug class).
+
+### 2 — Check-in warnings now EXPIRE at the window they warn about
+They were created `expiresAt: null` + `priority:'urgent'` and nothing ever cleaned them up: a
+camp would accumulate hundreds of permanent urgent rows, the Notices screen deletes one at a
+time, and the bulk "Clear all notifications" button was removed on 2026-07-29. `expiresAt` is now
+the window close (`ChurchBehind.windowEndAt`), which `findActive()` already filters on — so each
+warning self-destructs when it stops being actionable. The `dedupe_key` row outlives the expiry,
+so an expired notice is never re-created.
+New **`zonedToInstant(tz, date, time)`** in `src/utils/date.ts` is the inverse of `zonedNow` —
+the check-in code keeps wall-clock strings, and `new Date(date+'T'+time+'Z')` is the
+UTC-vs-Brisbane bug that has hit this repo twice (it lands 10 hours early). Computed inside
+`warnWindow`, where the camp zone is already in hand; a caller must not re-derive it.
+
+### 3 — Feeds order by PUBLISH time, not `createdAt` (`publishedAt`/`byPublishedDesc`)
+A scheduled notice's `createdAt` is when it was *composed*. Composed Monday for Thursday, with
+three notices sent in between, it published in **4th place** — and Home renders only
+`feed.slice(0,3)`, so it could publish without appearing on Home at all. Ordering is now
+`scheduledFor ?? createdAt`, in `getActorFeed` and in the dashboard.
+
+### 4 — `dashboard.service.latestNotification` uses `canSeeNotification`
+It carried a hand-rolled **copy** of the audience rules (the duplicate this file already warned
+about) and had drifted two ways: it never implemented the `scheduledFor` withhold — so a notice
+scheduled days ahead was returned, **title and body**, the moment it was composed — and it denied
+admin/director the see-every-scope rule they have everywhere else. Nothing in the SPA reads
+`latestNotification` today, so there was no visible symptom; it was still going over the wire.
+**There is now one copy of these rules. Do not re-inline them.**
+
+### 5 — The urgent-priority tooltip was lying
+It promised "pops up a full-screen alert they must tap to dismiss". The modal was deleted
+2026-07-26 and item 18 (2026-07-28) limited the banner to `leadersOnly` incident alerts, so an
+urgent human notice gets **no banner and no modal** — just a red card. Reworded to say plainly
+that nothing interrupts anyone until they next open the app.
+
+### 6 — `newYear` deletes push subscriptions
+`reset()` did (bug 16); `newYear` did not, and was relying by accident on the `users` FK cascade —
+which works on Supabase but not in-memory, and stops working the moment an account survives a
+rollover. Same standing rule as `reset()`: **a new repository must be added to both in the same
+commit.**
+
+### 7 — The in-memory notification repo enforces the `dedupe_key` unique index
+It didn't, so the scheduler's dedupe existed **only** on Supabase: in dev and in tests every tick
+in the lead window created another duplicate, and `cron.service`'s `23505` branch was unreachable
+except by a hand-faked error. `InMemoryNotificationRepository.save` now raises the same SQLSTATE.
+A new test runs twelve real ticks through the real repo and asserts exactly one notice survives.
+
+**Also:** `clearAll` threw a bare `Error` (→ 500 "the app is broken") instead of `ForbiddenError`.
+
+**Known and deliberately NOT changed:** `estimateAudience` still runs a full people scan on every
+send (≈10 AES field decrypts per person) to compute `audienceEstimate`, which **nothing reads**;
+`churchRepo` is injected into `makeNotificationService` and unused. Left alone as a separate
+cleanup — see the load note in `docs/PLANNED-IMPROVEMENTS.md`.
+**↑ SUPERSEDED the same day — this was done in the second half of the session, see item 14 below.**
+
+## Notification hardening, part 2 — load fixes, incidents, and web push SHIPPED — 2026-07-30
+
+Same day, second half. The owner answered the seven open questions (recorded in
+`docs/PLANNED-IMPROVEMENTS.md`) and **web push is shipping for this camp**. Everything in the
+section above plus everything here went to prod in one push. `npm run typecheck` clean,
+`npm run test` = **749 pass / 49 files** (was 704/48; **45 new**). SPA + `sw.js` `node --check` OK.
+`sw.js` `camp-v55`→**`camp-v56`**. **Migrations `0018` AND `0019` were applied to prod BEFORE the
+push**, both reconciled to clean version labels and verified present by query.
+
+> ⚠️ **The `node --check` extract range has MOVED.** `public/index.html` grew: the script body is
+> now lines **834–6393** (was 834–6202). Don't cache that range — derive it, e.g.
+> `S=$(grep -n '^<script>$' public/index.html|head -1|cut -d: -f1)`. The naive
+> `<script>…</script>` regex still fails because the file contains the literal `</script>`.
+
+### 8 — `checkIn`/`signEvent` no longer flush the dashboard cache
+`invalidateDashboardCache()` wipes **every** entry globally, and the cache is keyed on
+`(role, churchId, zone, genderScope)` — **not per device** — so ~100 devices collapse to ~30 keys
+(~4:1). These two are the only **bursty** writes in the app: at a check-in window every leader taps
+through a roster at once, and each tap was destroying the cache for all 30 keys precisely while
+every device was loading `/home`. Cost of not invalidating is bounded by the 30s TTL, and a leader
+mid-rush is on the roster screen (always live), not the dashboard. Every other writer still
+invalidates. **The two tests were INVERTED, not deleted** — they now pin stale-within-TTL and
+correct-after-TTL, so the trade-off can't be silently undone.
+
+**An audit of all ~31 `invalidateDashboardCache()` call sites says do NOT generalise this.** Only
+three others cannot affect a dashboard DTO (`splitChurchAccounts`, `randomizeChurchPasswords`,
+`updateDiscountCodeTags`) and all three are rare admin operations where the flush costs nothing.
+Burst frequency, not correctness, is the whole reason these two changed.
+
+### 9 — `/home` uses `findByChurch` for church logins
+New `personsInScope(actor)` in `dashboard.service`. `findAll()` on Supabase means the whole `people`
+table **plus every row of `check_in_history` and `sign_out_history`** — at camp ~700 people and
+~3,500 history rows, fetched and decrypted on every uncached request, to then discard all but the
+~30 a church may see. Applied to BOTH the pre-camp and at-camp branches.
+⚠ **`canAccessPerson` is still the real gate and must stay.** `findByChurch` knows nothing about
+`genderScope`, so dropping that filter as "already scoped" would show `b-victory` the girls'
+numbers — there is a test for exactly that. Narrowing a query cannot widen access.
+Deliberately NOT extended to `zoneLeader` via `findByZone`: `canAccessPerson` also admits people
+whose *church* sits in the zone, and the two can disagree after a re-zone. Field decryption was
+left alone on purpose (34ms for 700×10 — row volume is the cost, not AES).
+
+### 10 — Push fan-out is capped per tick, and jittered
+`MAX_PUSH_SENDS_PER_TICK = 40` (`push.service.ts`). All 26 church logins hit their window boundary
+together, so one tick can generate 26 notices → ~104 sends at 4 devices/church, ~156 at 6. With
+`maxDuration: 30` and ~325ms/send that is ~8.5–13s, and the failure is **not graceful**: the
+`push_sent_at` claim is taken BEFORE sending, so a timeout loses those pushes **permanently**.
+Capping keeps the worst tick to ~3.5s; the remainder is simply not claimed, so the next tick takes
+it (60-min lead ÷ 5-min tick = 12 ticks ≈ 480 capacity). **The cap is applied at NOTICE granularity,
+not device** — a notice's claim is all-or-nothing, so splitting its devices across ticks would drop
+the second half rather than defer it. `PUSH_JITTER_MS = 4000` spreads sends so 100+ devices don't
+all open the app in the same second.
+
+### 11 — Web push phases 4–6 (VAPID, subscribe API, service worker, opt-in UI, sender, pruning)
+Owner's decision: push ships for this camp. New `web-push` dependency, `src/services/push.service.ts`,
+`src/api/controllers/push.controller.ts`, three routes (`GET /push/config`,
+`POST`/`DELETE /push/subscribe`, all `auth:true`), sw.js `push` + `notificationclick` handlers, and
+an "Alerts on this device" card on both home screens.
+
+- **⚠ INERT WITHOUT VAPID KEYS, BY DESIGN.** This shipped to prod *before* the keys exist. With any
+  of the three env vars unset, `/push/config` returns `configured:false`, the SPA card renders
+  nothing, and **the sender returns before claiming anything**. That last part is load-bearing:
+  claiming would set `push_sent_at` on notices that were never sent, and the claim is permanent, so
+  every notice created before the keys are set would be silently swallowed forever.
+- **⚠ A SERVER-STORED `body` IS NEVER PUT IN A PUSH PAYLOAD.** `buildPushPayload` keys off the
+  trigger and does not read `notification.body`, `incident.summary` or any person field. The reason
+  is NOT the transport (payloads are genuinely E2E-encrypted; Apple/Google/Mozilla can't read them)
+  — it is the **lock screen**: the SW decrypts and hands it to the OS, which renders it on a locked
+  phone with "Show Previews: Always" (the iOS default), legible to whoever is holding it. That would
+  print a field this codebase encrypts at rest and hides from church/firstAid accounts onto the most
+  public surface the device has, and it inverts `leadersOnly` — the *account* is a leader, the
+  *person reading the screen* is whoever picked the phone up. There are tests asserting the payload
+  never contains a body. The check-in warning is the one exception and carries only an aggregate
+  count, a session label and a time.
+- **Audience is resolved by `canSeeNotification`**, the same predicate the feed uses, run in reverse
+  over the users table. Do not write a second copy — the failure mode is pushing a `leadersOnly`
+  incident to a church login whose feed correctly hides it.
+- **`isPushSuppressed` (D8)** — `churchLoginLocked`/`zoneLeaderLoginLocked` are read in exactly one
+  other place (`auth.service.login`) and block LOGIN only. A subscription is session-independent, so
+  without this a locked-out leader's phone buzzes forever and the owner's post-camp lock would be a
+  false sense of closure. Suppressed at send time, not deleted, so unlocking restores alerts with no
+  re-subscribe. `mustChangePassword` is deliberately NOT suppressed.
+- **Pruning**: 404/410 deletes the row immediately (the standard self-cleaning contract);
+  429/5xx increments `failure_count` and deletes at 10; `pruneStale()` reclaims anything with no
+  success in 90 days.
+- **SPA safety contract** — `_pushCardHtml()` returns a STATIC EMPTY `<div>` and nothing else; all
+  work happens in `_renderPushCard()`, which is async, fully try/caught, and writes only into that
+  div. **Keep this shape.** The card is on the Home screen of every role, so a render-time throw
+  would blank the app's landing screen for everyone — and `Notification`/`PushManager` are absent or
+  throwing on some older iOS. The card also hides itself in `PREVIEW_MODE`/`ACCOUNT_PREVIEW` (an
+  admin previewing a church account must not register their own phone against it).
+- **Deep link**: the SPA has no URL router, so `notificationclick` `postMessage`s the target screen
+  to a focused client and falls back to `openWindow('/?nav=…')`, consumed once at boot by
+  `_consumePushNav()` (which strips the query so a refresh doesn't re-navigate).
+- `push` was added to `API_RE` in `sw.js`; `internal` is still deliberately absent (the cron tick is
+  server-to-server and never passes through a service worker).
+
+### 12 — Incidents: optional `occurredAt` + 12-hour alert expiry (migration `0019`)
+Owner approved 4.5 and 4.6 only. `occurredAt` is **optional** — logged without it is valid and must
+never warn. The high-severity `leadersOnly` alert now expires `INCIDENT_ALERT_TTL_HOURS = 12` after
+creation (prod had 2 sitting permanently); `findActive()` already filters on `expiresAt`, so that is
+the whole of the cleanup. Low-severity raises no notice at all — unchanged.
+⚠ **The SPA must send a full ISO instant.** `<input type="datetime-local">` yields a bare wall-clock
+string with no zone; the schema **rejects** it on purpose, because parsing that server-side is the
+UTC-vs-Brisbane bug that has hit this repo twice. `_incOccurredISO()` converts via `new Date(v)`
+(which reads it as device-local — and the device is at camp) and returns `null` when empty.
+`occurred_at` is in `toIncident`, `incidentColumns` **and** the on-conflict `do update set` list.
+
+**Owner DECLINED**, do not build without asking again: incident **review state** (4.1), **server-side
+acknowledgement** of high-severity alerts (4.2), **zone-scoping** `incident.list()` (4.3 — zone
+leaders keep camp-wide visibility, confirmed intended), and **soft delete** (4.4 — hard delete
+stays). Cross-zone incident *filing* also stays allowed; §3.4 only constrained `zone` to the four
+`ZONE_NAMES` so a typo can't silently mis-file a record.
+
+### 13 — `account.service.listChurches` was a drifted copy of `canAccessChurch`
+Found by a duplicate-rule audit. It special-cased admin/director/zoneLeader then fell through to
+`c.id === actor.churchId` for "everyone else" — and `firstAid` is in that fall-through with **no
+`churchId`**, so `GET /accounts/churches` returned first aid an **empty list**, while the canonical
+rule grants firstAid every church as it does everywhere else. Latent (no first-aid screen calls it
+yet) and uncovered by any test, which is how it survived. Now `churches.filter((c) =>
+canAccessChurch(actor, c.id, c.zone))`, with tests for all four roles. **This is the second
+hand-rolled copy of an audience rule found in one day — do not inline these.**
+
+### 14 — `estimateAudience` deleted (supersedes the "deliberately NOT changed" note above)
+It scanned the whole `people` table (~10 AES decrypts/person) on every send and every
+audience-changing edit, to populate `audienceEstimate` — which **nothing reads**: no DTO exposes it,
+`public/index.html` references it zero times, and `incident.service` was already writing a hard-coded
+`0`. Deleted along with the `personRepo`/`churchRepo` params it was the only user of.
+**The field and its column are KEPT**, not dropped: `cron.service` writes a genuinely meaningful
+number into it (students still to check in), and retaining the column avoids a migration and matches
+the `discount_code_overrides` precedent. An edit now preserves the existing value rather than
+recomputing it. If a real "who will see this?" figure is ever wanted, compute it from
+`canSeeNotification` over the USERS table (tens of rows), never by scanning people.
+
+### Still gated on the owner (as of this push)
+`CRON_SECRET`, the three `VAPID_*` env vars, and migration **`0014`** — see
+`docs/DEPLOY-NEXT-STEPS-2026-07-30.md`, written for the owner to work through. **`0014` is still
+deliberately unapplied** and must stay that way until both secrets are set, or every tick fires
+silently into a 404/401 (`pg_net` is fire-and-forget and surfaces nothing).
+
 ## Schedule editor: copy / paste day — deployed 2026-07-30
 
 Owner request. **SPA-only** (`public/index.html`) — no backend, schema or migration change.
@@ -563,8 +781,20 @@ prod BEFORE the code push**, as `supabase.settings` writes every column on every
 Since then: **`0017`** (2026-07-29 — `settings.discount_code_tags` plus the returning
 `tent_price`/`classroom_price`, for the budget ticket classification; **must be applied to prod
 BEFORE the code push**, and it also back-fills the tags from the retired `discount_code_overrides`).
-Next migration = `0018`. See the 2026-07-26 web-push section at the bottom of this file for the
-gating conditions on `0014`.
+Since then: **`0018`** (2026-07-30 — `notifications.target_user_id`, per-login notice addressing;
+**must be applied to prod BEFORE the code push**, as `supabase.notifications.save()` writes the
+column on every notice save) and **`0019`** (2026-07-30 — `incidents.occurred_at`, optional).
+**Both were APPLIED to prod on 2026-07-30 immediately before the push, and both history rows were
+reconciled** from their generated timestamps (`20260730122502`/`20260730122518`) to `'0018'`/`'0019'`
+and verified present by query. Next migration = **`0020`**. See the 2026-07-26 web-push section at
+the bottom of this file for the gating conditions on `0014`.
+
+⚠️ **Newly-observed history drift — `0016` and `0017` are ALSO recorded under generated timestamps**
+(`20260728114005`, `20260729125651`), not just the known `0009`–`0012`. Spotted 2026-07-30 while
+reconciling `0018`/`0019`. The schema is correct; only the version labels drifted, because the
+reconciliation step was skipped again. Left alone deliberately (consistent with the standing
+decision on `0009`–`0012`) but it widens the same consequence: **a `supabase db push` would consider
+six migrations unapplied and try to re-run them.** Fix all six together as its own task.
 
 **Prod reconciled 2026-07-16 (code) + 2026-07-17 (DB).** The code-ref removal (dropping
 `tentPrice`/`classroomPrice` from the settings entity/schema/seed/mapper + fixtures)

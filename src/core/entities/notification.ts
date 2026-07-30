@@ -41,5 +41,15 @@ export interface Notification {
    * human-authored notice.
    */
   dedupeKey?: string | null;
+  /**
+   * When set, this notice is for that ONE login and nobody else — including admin and
+   * director, who bypass every other scope rule. Enforced in `canSeeNotification`.
+   *
+   * Needed because the check-in warning is counted per LOGIN, not per church: gender-scoped
+   * `b-`/`g-` accounts share a `churchId` but hold different counts, so a church-scoped
+   * notice would show each login both numbers. Null for every human-authored notice, which
+   * is addressed by scope (camp/zone/church) as before.
+   */
+  targetUserId?: ID | null;
   createdAt: ISODateString;
 }

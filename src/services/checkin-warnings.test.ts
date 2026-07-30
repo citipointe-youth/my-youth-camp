@@ -184,4 +184,24 @@ describe('churchesBehind', () => {
     const out = churchesBehind(settings(), [person()], [user()], new Date('2026-10-05T01:05:00.000Z'));
     expect(out).toEqual([]);
   });
+
+  // windowEndAt is what the notice's expiresAt is set from, so an offset error here would
+  // either expire every warning instantly or leave it live 10 hours past the window.
+  it('windowEndAt is the window close as a UTC instant, in the CAMP zone', () => {
+    const am = churchesBehind(settings(), [person()], [user()], IN_AM_LEAD);
+    // amEnd 12:00 Brisbane (UTC+10) on the 29th == 02:00 UTC on the 29th.
+    expect(am[0]?.windowEndAt).toBe('2026-09-29T02:00:00.000Z');
+
+    const pm = churchesBehind(settings(), [person()], [user()], new Date('2026-09-29T11:05:00.000Z'));
+    // pmEnd 22:00 Brisbane == 12:00 UTC the same day.
+    expect(pm[0]?.windowEndAt).toBe('2026-09-29T12:00:00.000Z');
+  });
+
+  it('windowEndAt is always in the FUTURE at the moment the warning fires', () => {
+    // The invariant that actually matters: a notice must never be born already expired.
+    for (const at of [IN_AM_LEAD, new Date('2026-09-29T11:05:00.000Z')]) {
+      const out = churchesBehind(settings(), [person()], [user()], at);
+      expect(new Date(out[0]!.windowEndAt).getTime()).toBeGreaterThan(at.getTime());
+    }
+  });
 });

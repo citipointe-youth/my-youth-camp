@@ -5,8 +5,10 @@ import type {
 } from '../repositories/interfaces/entity-repositories';
 import type { CampSettings } from '../core/entities/settings';
 import type { Actor } from '../core/entities/user';
-import { daysUntil, zonedNow } from '../utils/date';
+import { daysUntil, zonedNow, nowISO } from '../utils/date';
+import { canSeeNotification, byPublishedDesc } from './notification-visibility';
 import { buildSessions, currentSession as pickCurrentSession } from './checkin-sessions';
+import type { Person } from '../core/entities/person';
 import { isRegistrant, isCamper } from '../core/entities/person';
 import { canAccessPerson } from './person.service';
 import { getCachedDashboard, setCachedDashboard } from './dashboard-cache';
@@ -70,6 +72,33 @@ export function makeDashboardService(
   notifRepo: INotificationRepository,
   churchRepo: IChurchRepository,
 ): DashboardService {
+  /**
+   * The narrowest repo query the actor's scope allows.
+   *
+   * A church login can only ever see its own church's people (`canAccessPerson` enforces
+   * that, and narrows further by `genderScope`), but this used to call `findAll()` — which
+   * on Supabase means `people` PLUS every row of `check_in_history` and `sign_out_history`,
+   * unbounded. At camp that is ~700 people and ~3,500 history rows fetched and decrypted on
+   * every uncached request, to then throw away all but the ~30 the church may see.
+   *
+   * ⚠ This is a FETCH-VOLUME optimisation only. `canAccessPerson` below remains the actual
+   * access gate and MUST stay — `findByChurch` does not know about `genderScope`, so
+   * removing that filter would show `b-victory` the girls' numbers. Narrowing the query
+   * cannot widen access; it can only reduce what is read.
+   *
+   * Deliberately NOT extended to `zoneLeader` via `findByZone`: a zone leader's scope is
+   * the zone, but `canAccessPerson` also admits people whose church sits in that zone, and
+   * the two are not guaranteed to agree on a person whose church has been re-zoned. The
+   * church case is exact, so only it is narrowed. Mirrors the `_scoped`/`scopedAll` →
+   * `findByChurch` fast path already used by `/registrants` and `/campers`.
+   */
+  async function personsInScope(actor: Actor): Promise<Person[]> {
+    if (actor.role === 'church' && actor.churchId) {
+      return personRepo.findByChurch(actor.churchId);
+    }
+    return personRepo.findAll();
+  }
+
   return {
     async home(actor, settings) {
       const cached = getCachedDashboard(actor);
@@ -77,7 +106,7 @@ export function makeDashboardService(
 
       if (settings.campMode === 'pre-camp') {
         // Pre-camp dashboard
-        const allPersons = await personRepo.findAll();
+        const allPersons = await personsInScope(actor);
         // Scope through canAccessPerson (the single RBAC chokepoint) so gender-scoped church
         // logins (Feature 2) see only their gender's registrants here too.
         const scoped = allPersons.filter((p) => isRegistrant(p) && canAccessPerson(actor, p));
@@ -129,7 +158,7 @@ export function makeDashboardService(
         // zoneLeader → own zone, director/admin → all). Previously totalExpected /
         // checkInsDue counted the WHOLE camp for every role, so a church login saw
         // camp-wide figures presented as its own.
-        const allPersons = await personRepo.findAll();
+        const allPersons = await personsInScope(actor);
         const allCampers = allPersons.filter((p) => isCamper(p) && canAccessPerson(actor, p));
         const totalAtCamp = allCampers.filter((p) => p.atCamp).length;
         const totalExpected = allCampers.length; // isCamper already excludes cancelled
@@ -152,18 +181,17 @@ export function makeDashboardService(
         const curIdx = currentSession ? todaySessions.findIndex((s) => s.id === currentSession.id) : -1;
         const nextSession = curIdx >= 0 ? todaySessions[curIdx + 1] ?? null : (todaySessions[0] ?? null);
 
+        // Audience rules come from canSeeNotification — the SAME predicate the /notifications
+        // feed uses. This used to be a hand-rolled copy of them, and it had drifted: it never
+        // implemented the `scheduledFor` withhold, so a notice scheduled days ahead was returned
+        // here (title AND body) the moment it was composed, while the feed correctly hid it. It
+        // also denied admin/director the see-every-scope rule they have everywhere else.
+        // Do not re-inline these rules; there is one copy for a reason.
         const notifications = await notifRepo.findActive();
-        const isLeadershipRole =
-          actor.role === 'zoneLeader' || actor.role === 'director' || actor.role === 'admin';
-        const relevantNotifs = notifications.filter((n) => {
-          // Leaders-only (incident) alerts never surface to church/firstAid, even at camp scope —
-          // mirrors notification.service.getActorFeed so latestNotification can't leak the summary.
-          if (n.leadersOnly && !isLeadershipRole) return false;
-          if (n.scope === 'camp') return true;
-          if (n.scope === 'zone') return actor.zone != null && n.zone === actor.zone;
-          if (n.scope === 'church') return actor.churchId != null && n.churchId === actor.churchId;
-          return false;
-        });
+        const nowIso = nowISO();
+        const relevantNotifs = notifications
+          .filter((n) => canSeeNotification(actor, n, nowIso))
+          .sort(byPublishedDesc);
         const latestNotif = relevantNotifs[0] ?? null;
 
         // D3 FIX: "due" is measured against the CURRENT session specifically, and

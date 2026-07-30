@@ -1,5 +1,5 @@
 import type { ID, ISODateString } from '../types/common';
-import type { IncidentSeverity, UserRole } from '../types/enums';
+import type { IncidentSeverity, UserRole, ZoneName } from '../types/enums';
 
 /**
  * A safeguarding / operational incident logged during camp (Feature 3, 2026-07-17).
@@ -17,8 +17,17 @@ export interface Incident {
   createdById: ID;
   createdByName: string;
   createdByRole: UserRole;
-  /** Optional zone the incident relates to (defaults to the logging leader's zone). */
-  zone?: string | null;
-  /** Server timestamp. */
+  /**
+   * Optional zone the incident relates to (defaults to the logging leader's zone). Constrained
+   * to the four real zone names since 2026-07-30 — a free-text typo mis-filed the record.
+   */
+  zone?: ZoneName | null;
+  /** Server timestamp — when the incident was LOGGED. */
   createdAt: ISODateString;
+  /**
+   * OPTIONAL: when the incident actually happened, if the logger recorded it. Null/absent is a
+   * completely valid incident — the field was added 2026-07-30 (migration 0019) and every row
+   * written before then has none.
+   */
+  occurredAt?: ISODateString | null;
 }

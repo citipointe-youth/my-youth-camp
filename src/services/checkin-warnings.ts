@@ -5,7 +5,7 @@ import type { CheckInSession } from './checkin-sessions';
 import { allowedWindowSession } from './checkin-sessions';
 import { canAccessPerson } from './person.service';
 import { toActor } from './auth.service';
-import { zonedNow } from '../utils/date';
+import { zonedNow, zonedToInstant } from '../utils/date';
 
 /** Mirrors checkin.service.ts — must stay byte-identical or reminder and enforcement disagree. */
 const DEFAULT_TZ = 'Australia/Brisbane';
@@ -20,6 +20,8 @@ export interface ChurchBehind {
   remaining: number;
   /** 'HH:MM' — the closing time, for the notice copy. */
   windowEnd: string;
+  /** The same closing time as a UTC instant, so the notice can expire when it goes stale. */
+  windowEndAt: string;
 }
 
 function toMinutes(hhmm: string): number {
@@ -41,6 +43,12 @@ function isCheckedIn(p: Person, sessionId: string): boolean {
 export interface WarnWindow {
   session: CheckInSession;
   windowEnd: string;
+  /**
+   * `windowEnd` as a UTC instant. Computed here, where the camp timezone is already in hand —
+   * a caller that rebuilt it from `windowEnd` alone would have to re-derive the zone and is
+   * exactly where the UTC-vs-Brisbane offset bug would creep back in.
+   */
+  windowEndAt: string;
 }
 
 /**
@@ -75,7 +83,11 @@ export function warnWindow(settings: CampSettings, now: Date): WarnWindow | null
   const minutesLeft = toMinutes(windowEnd) - toMinutes(time);
   if (minutesLeft <= 0 || minutesLeft > WARN_LEAD_MINUTES) return null;
 
-  return { session, windowEnd };
+  // `session.day`, not `date`: identical in practice (the session was resolved from `date`),
+  // but it ties the instant to the session the notice is actually about.
+  const windowEndAt = zonedToInstant(tz, session.day, windowEnd) ?? new Date(now).toISOString();
+
+  return { session, windowEnd, windowEndAt };
 }
 
 /**
@@ -96,7 +108,7 @@ export function churchesBehind(
 ): ChurchBehind[] {
   const gate = warnWindow(settings, now);
   if (!gate) return [];
-  const { session, windowEnd } = gate;
+  const { session, windowEnd, windowEndAt } = gate;
 
   // Same roster population as checkin.service.getSessionStatus: present, non-leader.
   const roster = people.filter((p) => p.atCamp && p.kind !== 'leader');
@@ -122,6 +134,7 @@ export function churchesBehind(
       sessionLabel: session.label,
       remaining,
       windowEnd,
+      windowEndAt,
     });
   }
   return out;

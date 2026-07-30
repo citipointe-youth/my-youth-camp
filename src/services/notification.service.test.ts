@@ -22,7 +22,7 @@ beforeEach(async () => {
   await notifs.init();
   await persons.init();
   await churches.init();
-  svc = makeNotificationService(notifs, persons, churches);
+  svc = makeNotificationService(notifs);
 });
 
 function leadersOnlyCampNotice(): Notification {
@@ -119,5 +119,42 @@ describe('notification.service — scheduled notices (item 9)', () => {
     const n = await schedule({ title: 'DirOwned' }); // sender d1
     const other = actor('zoneLeader', { id: 'zX', zone: 'Blue' });
     await expect(svc.update(other, n.id, { title: 'hijack' })).rejects.toThrow();
+  });
+
+  it('publishes AT THE TOP of the feed, not buried under notices composed later', async () => {
+    // Regression: the feed was ordered by createdAt, which for a scheduled notice is when it
+    // was COMPOSED. A notice scheduled two days out, with three ad-hoc notices sent in between,
+    // published in 4th place — and Home renders only `feed.slice(0,3)`, so it published without
+    // appearing on Home at all.
+    const dir = actor('director', { id: 'd1' });
+    await svc.send(dir, { scope: 'camp', title: 'Bus leaves 6am', body: 'b', scheduledFor: past() });
+    // Composed after the scheduled one, but its publish time is EARLIER (it is already live).
+    const older = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    await notifs.save({ ...leadersOnlyCampNotice(), id: 'x1', leadersOnly: false, title: 'Earlier notice', createdAt: older });
+
+    const feed = await svc.feed(actor('church', { churchId: 'c1' }));
+    expect(feed[0]?.title).toBe('Bus leaves 6am');
+  });
+});
+
+describe('notification.service — targeted notices', () => {
+  it('a targeted notice reaches only its own login, not the church pair or oversight', async () => {
+    await notifs.save({
+      ...leadersOnlyCampNotice(),
+      id: 'warn-1',
+      leadersOnly: false,
+      scope: 'church',
+      churchId: 'ch_victory',
+      title: 'Check-in closing soon',
+      targetUserId: 'usr_boys',
+    });
+
+    const boys = await svc.feed(actor('church', { id: 'usr_boys', churchId: 'ch_victory' }));
+    const girls = await svc.feed(actor('church', { id: 'usr_girls', churchId: 'ch_victory' }));
+    const admin = await svc.feed(actor('admin', { id: 'usr_admin' }));
+
+    expect(boys.map((n) => n.id)).toEqual(['warn-1']);
+    expect(girls).toHaveLength(0);
+    expect(admin).toHaveLength(0);
   });
 });

@@ -13,9 +13,17 @@ export function toIncident(r: Record<string, unknown>): Incident {
     createdById: r['created_by_id'] as string,
     createdByName: r['created_by_name'] as string,
     createdByRole: r['created_by_role'] as Incident['createdByRole'],
-    zone: (r['zone'] as string | null) ?? undefined,
+    zone: (r['zone'] as Incident['zone']) ?? undefined,
     createdAt: (r['created_at'] as Date).toISOString(),
+    // Nullable since migration 0019 — every row written before then has none. `pg` hands back a
+    // Date; tolerate a string too so a hand-built row (and the mapper round-trip test) works.
+    occurredAt: toISO(r['occurred_at']),
   };
+}
+
+function toISO(v: unknown): string | null {
+  if (v == null) return null;
+  return v instanceof Date ? v.toISOString() : String(v);
 }
 
 export function incidentColumns(inc: Incident): Record<string, unknown> {
@@ -29,6 +37,7 @@ export function incidentColumns(inc: Incident): Record<string, unknown> {
     created_by_role: inc.createdByRole,
     zone: inc.zone ?? null,
     created_at: inc.createdAt,
+    occurred_at: inc.occurredAt ?? null,
   };
 }
 
@@ -56,7 +65,12 @@ export class SupabaseIncidentRepository implements IIncidentRepository {
   async save(inc: Incident): Promise<Incident> {
     await this.sql`
       insert into incidents ${this.sql(incidentColumns(inc))}
-      on conflict (id) do update set summary = excluded.summary, severity = excluded.severity
+      on conflict (id) do update set
+        summary = excluded.summary,
+        severity = excluded.severity,
+        -- A new column MUST be listed here as well as in incidentColumns/toIncident, or the
+        -- value silently never persists on an update (the repo's recurring bug class).
+        occurred_at = excluded.occurred_at
     `;
     return inc;
   }

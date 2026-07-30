@@ -1,6 +1,79 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-30 - NOTIFICATION HARDENING + WEB PUSH SHIPPED (migrations 0018 + 0019)
+-----------------------------------------------------------------------------------
+Backend + SPA + migrations 0018 (notifications.target_user_id) and 0019
+(incidents.occurred_at). BOTH APPLIED TO PROD BEFORE THIS PUSH, both history rows
+reconciled to clean version labels and verified by query. sw.js camp-v55 ->
+camp-v56. Verified: npm run typecheck clean, npm run test = 749 pass / 49 files
+(was 704/48, 45 new), SPA + sw.js node --check OK.
+
+  NOTE: the SPA node --check extract range MOVED to lines 834-6393 (was 834-6202).
+  Derive it rather than hardcoding it.
+
+  Notification correctness (six review findings, each with regression tests):
+  * Notices are addressed PER LOGIN via new Notification.targetUserId - gender-scoped
+    b-/g- church accounts no longer each see both of the other's contradictory
+    check-in counts, and admin/director no longer see all 26 churches' warnings.
+  * Check-in warnings now EXPIRE at the window they warn about (new zonedToInstant()
+    + ChurchBehind.windowEndAt), instead of accumulating as permanent urgent rows.
+  * Feeds order by PUBLISH time (scheduledFor ?? createdAt) - a notice scheduled days
+    ahead used to publish already buried below anything sent in the meantime.
+  * dashboard.service now calls canSeeNotification instead of a drifted hand-rolled
+    copy that leaked a future notice's title AND body.
+  * Urgent-priority tooltip no longer promises a full-screen alert deleted 2026-07-26.
+  * newYear now deletes push subscriptions (reset() already did).
+
+  Load fixes:
+  * checkIn/signEvent no longer flush the dashboard cache. These are the only bursty
+    writes in the app and the flush is GLOBAL, so one tap wiped all ~30 cache keys
+    exactly while every device was loading /home. Staleness is bounded by the 30s TTL.
+    The two tests were INVERTED, not deleted. An audit of all ~31 call sites says do
+    NOT generalise this - the other candidates are rare admin operations.
+  * /home uses findByChurch for church logins instead of an unbounded findAll (which
+    on Supabase drags in ALL of check_in_history and sign_out_history - ~700 people
+    and ~3,500 rows at camp to serve ~30). canAccessPerson remains the actual gate;
+    gender scoping still applies and is tested.
+  * estimateAudience DELETED - it scanned the whole people table (~10 AES decrypts
+    per person) on every send to populate audienceEstimate, which nothing reads. The
+    field and column are kept (cron writes a real count into it).
+
+  Web push - phases 4-6, SHIPPED BUT INERT:
+  * New web-push dependency, push.service.ts, push.controller.ts, GET /push/config,
+    POST/DELETE /push/subscribe, sw.js push + notificationclick handlers, and an
+    "Alerts on this device" card on both home screens.
+  * INERT UNTIL THE VAPID KEYS ARE SET. With them unset the config route reports
+    configured:false, the SPA card renders nothing, and the sender returns BEFORE
+    claiming - claiming would permanently burn notices that were never sent.
+  * A server-stored body is NEVER placed in a push payload (lock screens render
+    previews by default). Tested.
+  * Fan-out capped at 40 sends/tick with 4s jitter - 26 church logins hit their
+    window boundary together (~104-156 sends) and the push_sent_at claim is taken
+    BEFORE sending, so a maxDuration:30 timeout would lose those pushes forever.
+  * Locked church/zoneLeader logins are suppressed at send time (D8), so the owner's
+    post-camp lock actually stops alerts.
+
+  Incidents:
+  * New optional occurredAt (migration 0019) + SPA field. Must be a full ISO instant;
+    a bare datetime-local value is rejected on purpose (UTC-vs-Brisbane bug).
+  * High-severity alerts now expire after 12 hours (prod had 2 sitting permanently).
+  * zone is validated against ZONE_NAMES so a typo can't silently mis-file a
+    safeguarding record. Cross-zone FILING stays allowed (owner's decision).
+
+  Also:
+  * account.service.listChurches was a drifted hand-rolled copy of canAccessChurch
+    that returned firstAid an EMPTY church list. Now delegates; tested for all roles.
+
+  STILL GATED ON THE OWNER: CRON_SECRET, the three VAPID_* env vars, and migration
+  0014 (pg_cron tick), which remains deliberately UNAPPLIED. See
+  docs/DEPLOY-NEXT-STEPS-2026-07-30.md.
+
+  OWNER DECLINED (do not build without asking): incident review state, server-side
+  acknowledgement of high-severity alerts, zone-scoping incident.list(), and
+  soft-delete of incidents. Recorded in docs/PLANNED-IMPROVEMENTS.md.
+
+
 2026-07-30 - SCHEDULE EDITOR: COPY DAY / PASTE DAY
 -----------------------------------------------------------------------------------
 SPA-only (public/index.html). No backend, schema or migration change. sw.js

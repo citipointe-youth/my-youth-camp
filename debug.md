@@ -359,6 +359,25 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-07-30 — notification hardening, incidents, web push
+
+| Symptom | Go to |
+|---|---|
+| **No push notification ever arrives** | FIRST check whether push is even configured: `GET /push/config` returns `{configured:false}` when any of `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` is unset in Vercel — that is the deployed state until they're added, and everything is intentionally inert. THEN check migration `0014` is applied (the tick doesn't run at all without it) and `CRON_SECRET` is set in Vercel **and** in Supabase Vault as `cron_secret`. `pg_net` is fire-and-forget: a 404/401 tick surfaces **nowhere** — query `net._http_response` to see it. |
+| **"Alerts on this device" card doesn't appear on Home** | `_renderPushCard()` (`public/index.html`) hides itself, deliberately, in five cases: preview modes; no `serviceWorker`/`PushManager`/`Notification`; `/push/config` fails; `configured:false`; or any throw (it's fully try/caught so it can never break Home). On **iOS it shows install instructions instead of a button** — no permission prompt is possible until the app is added to the Home Screen. |
+| **Push arrives but tapping it doesn't open the right screen** | `notificationclick` in `public/sw.js` → `postMessage({type:'push-nav'})` → the `navigator.serviceWorker` message listener in `index.html`. Cold start goes via `openWindow('/?nav=…')` → `_consumePushNav()` at the end of `_tryRestoreSession`. The SPA has **no URL router**, so it can't navigate by URL. |
+| **Some leaders get the push, others don't** | Audience is `resolvePushAudience` → `canSeeNotification` (the same predicate as the feed) minus `isPushSuppressed`. Suppression is the usual cause: `status!=='active'`, or `churchLoginLocked`/`zoneLeaderLoginLocked` — those block login AND now suppress push, by design (D8). A **targeted** notice (`targetUserId`) goes to exactly one login and nobody else, deliberately including admin/director. |
+| **Only some of the expected pushes went out this tick** | Expected. `MAX_PUSH_SENDS_PER_TICK = 40` (`push.service.ts`); the rest are **deferred, not lost** — they stay unclaimed and the next tick takes them. Check `pushDeferred` in the tick result. Do NOT raise the cap without redoing the arithmetic in that constant's comment: the claim is taken before sending, so a `maxDuration:30` timeout loses pushes permanently. |
+| **A push contained a student name / incident detail** | Should be impossible — `buildPushPayload` never reads `notification.body`, `incident.summary` or any person field, and there are tests asserting it. If it happens, someone "improved" that function. The check-in warning is the ONE case that uses a stored body, and only because it's an aggregate count. |
+| **"Validation failed" logging an incident with a time** | `occurredAt` must be a **full ISO instant**. `<input type="datetime-local">` gives a bare wall-clock string with no zone and the schema rejects it on purpose. `_incOccurredISO()` (`index.html`) does the conversion; it returns `null` for an empty field, which is valid. |
+| **A high-severity incident alert vanished after a while** | Correct as of 2026-07-30: it expires `INCIDENT_ALERT_TTL_HOURS = 12` after creation (`incident.service.ts`), filtered out by `findActive()`. The incident row itself is untouched. |
+| **A gender-scoped `b-`/`g-` login sees the wrong check-in count** | `Notification.targetUserId` + the targeted clause in `notification-visibility.ts`. If the value isn't persisting, check `target_user_id` is in `notifColumns`, `toNotif` **AND** the on-conflict `do update set` list in `supabase.notifications.ts` — missing it from the third is this repo's documented recurring bug class. |
+| **Dashboard count looks ~30s out of date during a check-in rush** | Expected as of 2026-07-30. `checkIn`/`signEvent` no longer flush the dashboard cache (it's a GLOBAL flush and these are the only bursty writes). The 30s TTL bounds it; the roster screen is always live. Don't "fix" it by re-adding `invalidateDashboardCache()`. |
+| **A church login's `/home` numbers look wrong** | `personsInScope(actor)` in `dashboard.service.ts` now uses `findByChurch` for `role==='church'`. `canAccessPerson` is still the gate — `findByChurch` does NOT know about `genderScope`, so if boys/girls figures cross over, that filter has been dropped. |
+| **First aid sees no churches / an empty church picker** | `account.service.listChurches` — fixed 2026-07-30. It used to hand-roll `canAccessChurch` and dropped firstAid (who has no `churchId`) into an always-false branch. It now delegates. |
+
+### Earlier
+
 | Symptom | Go to |
 |---|---|
 | **White screen after login (header visible, content blank)** | SPA `ACC_LABEL` TDZ crash at boot — `ACC_LABEL` must appear after `const ICONS` in the script (fixed 2026-06-30). If it reappears, check script init order. |

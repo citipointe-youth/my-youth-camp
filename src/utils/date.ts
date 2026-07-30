@@ -44,6 +44,30 @@ export function zonedNow(timezone: string, at: Date = new Date()): { date: strin
   }
 }
 
+/**
+ * The inverse of `zonedNow`: a wall-clock date + time in a zone → the UTC instant.
+ *
+ * The check-in code keeps everything as `YYYY-MM-DD` + `HH:MM` strings in the camp's zone
+ * (deliberately — see checkin-sessions.ts). Anything that has to become a real timestamptz,
+ * such as a notice's `expiresAt`, needs this conversion, and hand-rolling it as
+ * `new Date(date+'T'+time+'Z')` is the UTC-vs-Brisbane bug that has already hit this repo
+ * twice: it lands 10 hours early on every camp day.
+ *
+ * Works by measuring the zone's actual offset at that instant rather than assuming one, so a
+ * zone with DST is handled correctly outside the one ambiguous hour a year (Brisbane has no
+ * DST, so for this app it is exact). Returns null on an unparseable date/time.
+ */
+export function zonedToInstant(timezone: string, date: string, time: string): string | null {
+  const asIfUtc = new Date(`${date}T${time}:00Z`);
+  if (isNaN(asIfUtc.getTime())) return null;
+  // What does that instant read as on the zone's wall clock? The difference IS the offset.
+  const seen = zonedNow(timezone, asIfUtc);
+  const seenAsIfUtc = new Date(`${seen.date}T${seen.time}:00Z`);
+  if (isNaN(seenAsIfUtc.getTime())) return null;
+  const offsetMs = seenAsIfUtc.getTime() - asIfUtc.getTime();
+  return new Date(asIfUtc.getTime() - offsetMs).toISOString();
+}
+
 /** Today's date (YYYY-MM-DD) in the given timezone. */
 export function zonedToday(timezone: string, at: Date = new Date()): string {
   return zonedNow(timezone, at).date;

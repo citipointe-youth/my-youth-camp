@@ -339,6 +339,30 @@ export class InMemoryNotificationRepository
       .map((n) => this.clone(n));
   }
 
+  /**
+   * Mirrors the partial unique index on `dedupe_key` from migration 0013 (`unique … where
+   * dedupe_key is not null`), including the SQLSTATE the caller checks for.
+   *
+   * Without this the scheduler's dedupe existed ONLY on Supabase: in dev and in tests every
+   * tick inside the 60-minute lead window happily created another duplicate notice, and
+   * cron.service's 23505 branch was unreachable except by a hand-faked error. Same behaviour
+   * in both backends is the point.
+   */
+  override async save(n: Notification): Promise<Notification> {
+    if (n.dedupeKey != null) {
+      for (const existing of this.store.values()) {
+        if (existing.dedupeKey === n.dedupeKey && existing.id !== n.id) {
+          const err = new Error(
+            `duplicate key value violates unique constraint "notifications_dedupe_key_idx"`,
+          ) as Error & { code: string };
+          err.code = '23505';
+          throw err;
+        }
+      }
+    }
+    return super.save(n);
+  }
+
   async claimForPush(ids: string[]): Promise<string[]> {
     const claimed: string[] = [];
     const now = new Date().toISOString();
