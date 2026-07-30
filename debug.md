@@ -359,6 +359,15 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-07-31 — church check-in refused ("N check-ins didn't save")
+
+| Symptom | Go to |
+|---|---|
+| **A church login's daily check-in fails but admin's works** | `checkin.service.assertSessionAllowed` — it returns immediately for every role except `church`, so a role split like this points at it before anything else. It refuses when `settings.churchCheckinTimeRestricted` is on AND `allowedWindowSession()` returns null, i.e. **today is not in `check_in_days`**, or the clock is outside the AM/PM windows. Before camp that is EVERY check-in. To test outside camp dates, turn off the toggle in Admin → Camp settings → *Check-in & timing*. |
+| **The check-in banner shows a reason now** | Intended (2026-07-31). `drainQueue` keeps the first server message in `_checkinFailReason` and the banner prints it. If the banner says only "tap to retry", the failure carried no message (network/timeout), not a refusal. |
+| **The roster is tappable when check-in is actually closed** | The lock is `sessionLocked = churchRestricted && SEL_SESSION !== ALLOWED_ID`, where `ALLOWED_ID` comes from **`GET /checkin/sessions/allowed`**. ⚠ Do **not** re-derive it from `/checkin/sessions/current` — that is a NAVIGATION helper that never returns null once camp dates exist (it falls back to the nearest past/upcoming session). That substitution is exactly what caused this bug. The fetch **fails closed**: no answer ⇒ locked. |
+| **Adding a new rule about when a check-in is permitted** | Put it in `allowedSession()` inside `checkin.service.ts` — the one function `assertSessionAllowed` (the gate) and `GET /checkin/sessions/allowed` (what the UI greys on) both call. A second copy is how the button and the write end up disagreeing. |
+
 ### 2026-07-30 — notification hardening, incidents, web push
 
 | Symptom | Go to |

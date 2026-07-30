@@ -19,6 +19,13 @@ export function makeCheckInController(services: CheckInControllerServices) {
       return services.checkIn.getCurrentSession();
     },
 
+    // Lets the SPA grey out a roster it isn't allowed to write to, instead of discovering the
+    // rule one 403 at a time. Actor-scoped: the answer differs per role.
+    async allowedSession(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.checkIn.getAllowedSession(req.ctx.actor);
+    },
+
     async status(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       const sessionId = req.params['sessionId'];

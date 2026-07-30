@@ -191,6 +191,101 @@ describe('assertSessionAllowed — item 11 hard AM/PM windows (church only)', ()
   });
 });
 
+// The SPA needs to know, BEFORE a leader taps a row, which session it may write to — otherwise
+// it unlocks the roster and every tap 403s. It used to derive that from getCurrentSession(),
+// which is a different rule (see the regression test at the bottom of this block).
+describe('getAllowedSession — the write rule, exposed for the UI', () => {
+  let personRepo: InMemoryPersonRepository;
+  let settingsRepo: InMemorySettingsRepository;
+
+  beforeEach(() => {
+    personRepo = new InMemoryPersonRepository();
+    settingsRepo = new InMemorySettingsRepository();
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  function pinClock(iso: string): void {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(iso));
+  }
+
+  it('church, restricted, inside the AM window: returns that session and no reason', async () => {
+    pinClock('2026-07-01T08:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    const res = await svc.getAllowedSession(actor('church'));
+    expect(res.restricted).toBe(true);
+    expect(res.session?.id).toBe('2026-07-01~am');
+    expect(res.reason).toBeNull();
+  });
+
+  it('church, restricted, on a NON-camp day: no session, and a reason the UI can show', async () => {
+    pinClock('2026-08-01T08:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    const res = await svc.getAllowedSession(actor('church'));
+    expect(res.restricted).toBe(true);
+    expect(res.session).toBeNull();
+    expect(res.reason).toMatch(/closed right now/);
+  });
+
+  it('church, restricted, between the windows: no session, with a reason', async () => {
+    pinClock('2026-07-01T23:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    const res = await svc.getAllowedSession(actor('church'));
+    expect(res.session).toBeNull();
+    expect(res.reason).toMatch(/closed right now/);
+  });
+
+  it('church with the restriction OFF reports restricted:false — the UI must not lock anything', async () => {
+    pinClock('2026-08-01T23:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: false }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    const res = await svc.getAllowedSession(actor('church'));
+    expect(res.restricted).toBe(false);
+    expect(res.reason).toBeNull();
+  });
+
+  it('non-church roles report restricted:false even when the setting is on', async () => {
+    pinClock('2026-08-01T23:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    for (const role of ['director', 'admin', 'zoneLeader', 'firstAid'] as const) {
+      expect((await svc.getAllowedSession(actor(role))).restricted).toBe(false);
+    }
+  });
+
+  it('agrees with assertSessionAllowed in every case — one rule, not two copies', async () => {
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    // an in-window instant, an out-of-window instant, and a non-camp day
+    for (const iso of ['2026-07-01T08:00:00Z', '2026-07-01T23:00:00Z', '2026-08-01T08:00:00Z']) {
+      pinClock(iso);
+      const { session } = await svc.getAllowedSession(actor('church'));
+      for (const id of ['2026-07-01~am', '2026-07-01~pm']) {
+        const assertion = svc.assertSessionAllowed(actor('church'), id);
+        if (session && session.id === id) await expect(assertion).resolves.toBeUndefined();
+        else await expect(assertion).rejects.toThrow();
+      }
+      vi.useRealTimers();
+    }
+  });
+
+  // THE BUG (reported 2026-07-31): a church login's daily check-in failed with the SPA's generic
+  // "1 check-in didn't save" banner while admin worked fine. The SPA locked its roster on
+  // getCurrentSession(), but that helper NEVER returns null once camp dates exist — it falls back
+  // to the nearest past/upcoming session — so before camp the roster unlocked and every tap 403'd.
+  it('is null on a non-camp day even though getCurrentSession() still returns a session', async () => {
+    pinClock('2026-08-01T08:00:00Z');
+    await settingsRepo.saveSingleton(settings({ churchCheckinTimeRestricted: true }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    expect(await svc.getCurrentSession()).not.toBeNull();
+    expect((await svc.getAllowedSession(actor('church'))).session).toBeNull();
+  });
+});
+
 describe('getSessionStatus — RosterEntry enriched fields', () => {
   it('RosterEntry includes gender, grade, and medicalFlag', async () => {
     const personRepo = new InMemoryPersonRepository();

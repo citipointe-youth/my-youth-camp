@@ -124,6 +124,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     // ----- Check-in -----
     { method: 'GET', path: '/checkin/sessions', auth: true, handler: (r) => checkIn.sessions(r) },
     { method: 'GET', path: '/checkin/sessions/current', auth: true, handler: (r) => checkIn.currentSession(r) },
+    { method: 'GET', path: '/checkin/sessions/allowed', auth: true, handler: (r) => checkIn.allowedSession(r) },
     { method: 'GET', path: '/checkin/sessions/:sessionId/status', auth: true, handler: (r) => checkIn.status(r) },
     { method: 'POST', path: '/checkin', auth: true, handler: (r) => checkIn.checkIn(r) },
 

@@ -1,6 +1,47 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-31 - FIX: church daily check-in refused ("N check-ins didn't save")
+-----------------------------------------------------------------------------------
+Backend + SPA, no schema/migration change. sw.js camp-v56 -> camp-v57. Verified:
+npm run typecheck clean, npm run test = 756 pass / 49 files (was 749/49, 7 new),
+SPA + sw.js node --check OK. SPA node --check extract range is now 834-6410.
+
+  Reported: daily check-in worked for admin but a church account got
+  "1 check-in didn't save - tap to retry" on every tap.
+
+  ROOT CAUSE - the SPA locked its roster on the wrong rule. currentSession() is a
+  NAVIGATION helper ("which session should the screen open on") and never returns
+  null once camp dates exist - with no session today it falls back to the nearest
+  past/upcoming one. allowedWindowSession() is the WRITE rule and returns null
+  outside camp days and outside the AM/PM windows. The SPA computed
+  sessionLocked from the first while the backend gated writes on the second. On a
+  camp day they roughly agree (why this survived since item 11, 2026-07-23);
+  before camp they diverge completely, so every row was tappable and every tap
+  403'd. Admin was unaffected: assertSessionAllowed returns immediately for every
+  role except church.
+
+  * NEW allowedSession() in checkin.service.ts returns {session, restricted,
+    reason}. assertSessionAllowed now CALLS it instead of repeating the window
+    arithmetic, and new route GET /checkin/sessions/allowed serves the same answer
+    to the SPA. A test asserts the two agree in-window, out-of-window and on a
+    non-camp day. getCurrentSession's doc comment now says NAVIGATION ONLY.
+  * SPA locks on ALLOWED_ID from that route - fetched only for restricted church
+    logins, and FAILING CLOSED (no answer => locked). When nothing is allowed the
+    info box prints the server's own explanation instead of pointing at a
+    highlighted session that is equally refused.
+  * drainQueue no longer discards the server's message: the first e.message is
+    kept in _checkinFailReason and shown in the banner. A permanent 403 used to
+    render as "tap to retry", which can never succeed.
+
+  NOT a regression from the 2026-07-30 push, and the camp-window POLICY is
+  unchanged - a church still cannot check in outside a window. To test check-in
+  before camp, turn OFF Admin -> Camp settings -> Check-in & timing -> the church
+  restriction toggle, or add today to the camp dates.
+
+  This is the third hand-rolled copy of a backend rule found in two days (after
+  dashboard.latestNotification and account.listChurches).
+
 2026-07-30 - NOTIFICATION HARDENING + WEB PUSH SHIPPED (migrations 0018 + 0019)
 -----------------------------------------------------------------------------------
 Backend + SPA + migrations 0018 (notifications.target_user_id) and 0019

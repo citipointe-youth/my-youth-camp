@@ -313,7 +313,8 @@ section above plus everything here went to prod in one push. `npm run typecheck`
 push**, both reconciled to clean version labels and verified present by query.
 
 > ⚠️ **The `node --check` extract range has MOVED.** `public/index.html` grew: the script body is
-> now lines **834–6393** (was 834–6202). Don't cache that range — derive it, e.g.
+> now lines **834–6410** (was 834–6202; 6393 as of this section's own push). Don't cache that
+> range — derive it, e.g.
 > `S=$(grep -n '^<script>$' public/index.html|head -1|cut -d: -f1)`. The naive
 > `<script>…</script>` regex still fails because the file contains the literal `</script>`.
 
@@ -441,6 +442,52 @@ recomputing it. If a real "who will see this?" figure is ever wanted, compute it
 `docs/DEPLOY-NEXT-STEPS-2026-07-30.md`, written for the owner to work through. **`0014` is still
 deliberately unapplied** and must stay that way until both secrets are set, or every tick fires
 silently into a 404/401 (`pg_net` is fire-and-forget and surfaces nothing).
+
+## Church check-in refused — the UI locked on the wrong rule — 2026-07-31
+
+Reported: *"Daily check-ins for the admin account work but on a church account it gives '1 check-in
+didn't save — tap to retry'."* Backend + SPA, **no schema/migration change**. `npm run typecheck`
+clean, `npm run test` = **756 pass / 49 files** (was 749; 7 new). SPA + `sw.js` `node --check` OK.
+`sw.js` `camp-v56`→**`camp-v57`**.
+
+**Root cause — two rules that look alike and are not.** `currentSession()` answers *"which session
+should the screen open on"* and, once camp dates exist, **never returns null**: with no session
+today it falls back to the most recent past one, or the first upcoming one. `allowedWindowSession()`
+answers *"which session may a restricted church WRITE to right now"* and returns **null** outside
+camp days and outside the AM/PM windows. The SPA locked its roster on the first
+(`sessionLocked = churchRestricted && SEL_SESSION !== CUR_ID`) while the backend gated writes on the
+second. On a camp day they roughly coincide, which is why it survived since 2026-07-23; the camp
+dates are 2026-09-28–10-01, so **before camp they diverge completely** — `CUR_ID` came back as
+`2026-09-28~pm`, `SEL_SESSION` defaulted to it, the lock evaluated false, every row was tappable,
+and every tap 403'd. Admin was unaffected because `assertSessionAllowed` returns immediately for
+every role except `church`. Prod confirmed the preconditions: at-camp mode,
+`church_checkin_time_restricted = true`, today not in `check_in_days`.
+
+**This is the third hand-rolled copy of a backend rule found in two days** (after
+`dashboard.latestNotification` and `account.listChurches`). The pattern is identical: the UI
+re-derives a decision the server already owns, the copy drifts, and the disagreement only shows up
+in a state nobody tested.
+
+- **One rule, exposed as data.** New `allowedSession()` in `checkin.service.ts` returns
+  `{session, restricted, reason}`. **`assertSessionAllowed` now calls it** rather than repeating the
+  window arithmetic, and a new `GET /checkin/sessions/allowed` (actor-scoped, `auth:true`) serves the
+  same answer to the SPA. A test asserts the two agree across in-window, out-of-window and
+  non-camp-day instants. `getCurrentSession`'s interface doc now says NAVIGATION ONLY in as many
+  words.
+- **The SPA locks on `ALLOWED_ID`**, fetched only when `churchRestricted` (no extra round-trip for
+  anyone else) and **failing closed** — an error means locked, since a restricted church could not
+  have written anyway. When nothing is allowed the info box prints the server's own sentence
+  ("…the morning window is 06:00–12:00 … on camp days only") instead of the misleading "tap the
+  highlighted session (•)", which pointed at a session that was equally refused.
+- **The server's explanation is no longer thrown away.** `drainQueue`'s catch kept only a counter,
+  so a permanent 403 rendered as *"tap to retry"* — advice that can never work. It now keeps the
+  first `e.message` in `_checkinFailReason` and the banner shows it. Cleared by `_retryFailedCheckins`.
+
+⚠ **Not a regression from the 2026-07-30 push** — latent since item 11 (2026-07-23) and only
+reachable outside camp dates. **Nothing about the camp-window policy changed**; a church still
+cannot check in outside a window, which is the intended safeguard. **To test check-in before camp,
+turn off Admin → Camp settings → Check-in & timing → the church restriction toggle** (or add today
+to the camp dates). That toggle is the supported escape hatch and no code change should replace it.
 
 ## Schedule editor: copy / paste day — deployed 2026-07-30
 

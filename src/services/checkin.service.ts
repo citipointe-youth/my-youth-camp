@@ -25,13 +25,29 @@ export interface SessionStatus {
   totalCount: number;
 }
 
+/** What `assertSessionAllowed` would decide right now, without throwing — so the UI can grey
+ * out controls a write would reject instead of letting a leader tap into a 403. */
+export interface AllowedSession {
+  /** The one session this actor may write to right now, or null if none. */
+  session: CheckInSession | null;
+  /** False = the window rule doesn't apply to this actor at all (any session is writable). */
+  restricted: boolean;
+  /** Why `session` is null, phrased for a leader. Null whenever a session is allowed. */
+  reason: string | null;
+}
+
 export interface CheckInService {
   getSessions(): Promise<CheckInSession[]>;
+  /** ⚠ NAVIGATION ONLY — "which session should the screen open on". Once camp dates exist this
+   * NEVER returns null (it falls back to the nearest past/upcoming session), so it must NOT be
+   * used to decide whether a check-in is permitted. Use `getAllowedSession` for that. */
   getCurrentSession(): Promise<CheckInSession | null>;
   getSessionStatus(actor: Actor, sessionId: string): Promise<SessionStatus>;
-  /** Throws if a church account is submitting a check-in for a non-current session while
-   * the "restrict church check-in to current session" setting is on. No-op for every other
-   * role, and a no-op when the setting is off. */
+  /** The write rule, as data. Same code path as `assertSessionAllowed` — never a second copy. */
+  getAllowedSession(actor: Actor): Promise<AllowedSession>;
+  /** Throws if a church account is submitting a check-in outside its permitted window while
+   * the "restrict church check-in" setting is on. No-op for every other role, and a no-op
+   * when the setting is off. */
   assertSessionAllowed(actor: Actor, sessionId: string): Promise<void>;
 }
 
@@ -46,7 +62,36 @@ export function makeCheckInService(
     return { days: settings?.checkInDays ?? [], tz: settings?.timezone || DEFAULT_TZ };
   }
 
+  const UNRESTRICTED: AllowedSession = { session: null, restricted: false, reason: null };
+
+  // The single implementation of the item-11 window rule. `assertSessionAllowed` (the server-side
+  // gate) and `GET /checkin/sessions/allowed` (what the SPA greys its roster on) both come through
+  // here, so the button a leader sees can never disagree with the write that follows it.
+  async function allowedSession(actor: Actor): Promise<AllowedSession> {
+    if (actor.role !== 'church') return UNRESTRICTED;
+    const settings = await settingsRepo.getSingleton();
+    if (!settings?.churchCheckinTimeRestricted) return UNRESTRICTED;
+    const { days, tz } = await ctx();
+    const { date, time } = zonedNow(tz);
+    const windows = {
+      amStart: settings.checkinWindowAmStart ?? '06:00',
+      amEnd: settings.checkinWindowAmEnd ?? '12:00',
+      pmStart: settings.checkinWindowPmStart ?? '12:00',
+      pmEnd: settings.checkinWindowPmEnd ?? '22:00',
+    };
+    const session = allowedWindowSession(days, date, time, windows);
+    return {
+      session,
+      restricted: true,
+      reason: session
+        ? null
+        : `Check-in is closed right now — the morning window is ${windows.amStart}–${windows.amEnd} and the afternoon window is ${windows.pmStart}–${windows.pmEnd}, on camp days only.`,
+    };
+  }
+
   return {
+    getAllowedSession: allowedSession,
+
     async getSessions() {
       const { days } = await ctx();
       return buildSessions(days);
@@ -77,27 +122,11 @@ export function makeCheckInService(
     },
 
     async assertSessionAllowed(actor, sessionId) {
-      if (actor.role !== 'church') return;
-      const settings = await settingsRepo.getSingleton();
-      if (!settings?.churchCheckinTimeRestricted) return;
-      const { days, tz } = await ctx();
-      const { date, time } = zonedNow(tz);
-      const windows = {
-        amStart: settings.checkinWindowAmStart ?? '06:00',
-        amEnd: settings.checkinWindowAmEnd ?? '12:00',
-        pmStart: settings.checkinWindowPmStart ?? '12:00',
-        pmEnd: settings.checkinWindowPmEnd ?? '22:00',
-      };
-      const allowed = allowedWindowSession(days, date, time, windows);
-      if (!allowed) {
-        throw new ForbiddenError(
-          `Check-in is closed right now — the morning window is ${windows.amStart}–${windows.amEnd} and the afternoon window is ${windows.pmStart}–${windows.pmEnd}, on camp days only.`,
-        );
-      }
-      if (sessionId !== allowed.id) {
-        throw new ForbiddenError(
-          `Check-in is currently limited to the ${allowed.label} session.`,
-        );
+      const { session, restricted, reason } = await allowedSession(actor);
+      if (!restricted) return;
+      if (!session) throw new ForbiddenError(reason as string);
+      if (sessionId !== session.id) {
+        throw new ForbiddenError(`Check-in is currently limited to the ${session.label} session.`);
       }
     },
   };

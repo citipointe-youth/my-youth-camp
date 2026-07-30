@@ -2436,6 +2436,11 @@ let _lastRoster=null;
 // drop-on-error + no-persistence behaviour (owner chose "banner only") — this makes the loss
 // VISIBLE and prompts a re-tap, it does not silently reconstruct lost taps.
 let _checkinFailed=0;
+// The server explains WHY a check-in was refused (e.g. "Check-in is closed right now — the
+// morning window is 06:00–12:00 …"). That message used to be swallowed by drainQueue's catch and
+// replaced with a bare "tap to retry", which is actively misleading on a 4xx — retrying a refusal
+// can never succeed. Keep the FIRST reason and show it in the banner. Cleared by the retry.
+let _checkinFailReason='';
 
 function _queueEntry(camperId,type){
   // initials captured NOW, not at drain time — a rehydrated entry must keep its original author.
@@ -2456,6 +2461,7 @@ async function drainQueue(){
     }catch(e){
       if(!navigator.onLine)break; // wait for online event; queue stays persisted
       // Deliberate: an ONLINE failure is a hard drop + banner (owner chose banner only).
+      if(!_checkinFailReason)_checkinFailReason=(e&&e.message)||'';
       CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId,'error');_checkinFailed++; // B-1: surface in the banner
     }
   }
@@ -2474,7 +2480,7 @@ function _optimisticState(camperId,roster,queue){
 // B-1: clear the failed badge and re-attempt any entries still queued. We do NOT reconstruct
 // dropped taps (no persistence by design) — the toast tells the user to re-tap red rows.
 function _retryFailedCheckins(){
-  _checkinFailed=0;
+  _checkinFailed=0;_checkinFailReason='';
   if(CHECKIN_QUEUE.length)drainQueue();else _rCheckin();
   toast('Re-tap any row still marked red to check them in');
 }
@@ -2581,14 +2587,23 @@ async function _renderDailyCheckin(){
   // is always pinned to whatever session is current right now — it can't linger on an
   // earlier/later one it picked before the restriction kicked in.
   const churchRestricted=ACTOR.role==='church'&&!!(SETTINGS&&SETTINGS.churchCheckinTimeRestricted);
-  // Item 4: a church login can now BROWSE every session but only EDIT the current one. Fetch the
-  // current session so we default to it and lock check-in on any OTHER session the church selects
-  // (grey it out). When there is no current session at all (outside a window / camp day), every
-  // session is locked, which matches the backend refusing writes outside the window.
+  // Item 4: a church login can now BROWSE every session but only EDIT the one it's allowed to.
+  // CUR_ID drives the "•" marker and the default selection for EVERY role.
   const _curSess=await api('/checkin/sessions/current').catch(()=>null);
   const CUR_ID=(_curSess&&_curSess.id)||null;
-  if(!SEL_SESSION)SEL_SESSION=CUR_ID||(SESSIONS[0]&&SESSIONS[0].id);
-  const sessionLocked=churchRestricted&&SEL_SESSION!==CUR_ID;
+  // ⚠ THE LOCK MUST NOT COME FROM CUR_ID. `/checkin/sessions/current` is a NAVIGATION helper —
+  // once camp dates exist it never returns null, because it falls back to the nearest past or
+  // upcoming session. The backend's WRITE rule (allowedWindowSession) returns null outside camp
+  // days and outside the AM/PM windows. On a camp day the two roughly agree, which is why this
+  // survived; before camp they diverge completely, so the roster unlocked and every tap 403'd
+  // into the generic "N check-ins didn't save" banner (reported 2026-07-31, church logins only —
+  // admin bypasses the rule entirely). `/checkin/sessions/allowed` is that write rule, as data.
+  // Fetched only when it can bite, and FAIL-CLOSED on error: no answer means no writing.
+  const _allowed=churchRestricted?await api('/checkin/sessions/allowed').catch(()=>null):null;
+  const ALLOWED_ID=(_allowed&&_allowed.session&&_allowed.session.id)||null;
+  const closedReason=(_allowed&&_allowed.reason)||null;
+  if(!SEL_SESSION)SEL_SESSION=(churchRestricted?ALLOWED_ID:null)||CUR_ID||(SESSIONS[0]&&SESSIONS[0].id);
+  const sessionLocked=churchRestricted&&SEL_SESSION!==ALLOWED_ID;
   if(!SEL_SESSION){paint('checkin','<p class="note-hint">No check-in sessions configured. Set camp dates in admin settings.</p>','Daily Check-in','');return;}
   if(!window._ciqRestored){window._ciqRestored=true;_restoreQueue();}
   // Enriched RosterEntry now includes gender, grade, medicalFlag — no second /campers fetch needed.
@@ -2666,13 +2681,15 @@ async function _renderDailyCheckin(){
   const syncingN=CHECKIN_QUEUE.length;
   const syncBanner=(syncingN>0||_checkinFailed>0)?
     (_checkinFailed>0
-      ?`<div class="ci-sync ci-sync-fail" onclick="_retryFailedCheckins()">${icSm('alert')} ${_checkinFailed} check-in${_checkinFailed===1?'':'s'} didn’t save — tap to retry</div>`
+      ?`<div class="ci-sync ci-sync-fail" onclick="_retryFailedCheckins()">${icSm('alert')} ${_checkinFailed} check-in${_checkinFailed===1?'':'s'} didn’t save — ${_checkinFailReason?esc(_checkinFailReason):'tap to retry'}</div>`
       :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${syncingN} syncing…</div>`):'';
   const doneSection=doneList.length>0?`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · ${doneList.length}</summary>
     ${doneList.map(c=>rowHtml(c)).join('')}</details>`:'';
   // ("Not signed in" moved to the bottom of the My-students screen — see filterMyYouth.)
   const html=`<div class="seg" id="dayseg">${dayBtns}</div>
-    ${sessionLocked?`<div class="infobox" style="font-size:.8rem;margin-bottom:8px">${icSm('clock')} Viewing ${esc(label)} — only the current session can be checked in. Tap the highlighted session (•) to check people in.</div>`:''}
+    ${sessionLocked?`<div class="infobox" style="font-size:.8rem;margin-bottom:8px">${icSm('clock')} ${ALLOWED_ID
+      ?`Viewing ${esc(label)} — only the current session can be checked in. Tap the highlighted session (•) to check people in.`
+      :esc(closedReason||'Check-in is closed right now. You can look through the roster, but nobody can be checked in until a check-in window opens on a camp day.')}</div>`:''}
     ${(showZone||showChurch)?`<div class="filters">${showZone?`<select onchange="setFilter('zone',this.value)">${zoneSelOpts}</select>`:''}${showChurch?`<select onchange="setFilter('church',this.value)">${churchSelOpts}</select>`:''}</div>`:''}
     <div class="filters">
       <select onchange="setFilter('gender',this.value)"><option value="all" ${FILTER.gender==='all'?'selected':''}>All genders</option><option value="female" ${FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${FILTER.gender==='male'?'selected':''}>Guys</option></select>
