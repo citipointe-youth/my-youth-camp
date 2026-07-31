@@ -13,6 +13,7 @@ import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
 import type { Notification } from '../../core/entities/notification';
 import type { Incident } from '../../core/entities/incident';
+import type { RevealAudit } from '../../core/entities/reveal-audit';
 import type { PushSubscription } from '../../core/entities/push-subscription';
 import type { ScheduleItem } from '../../core/entities/schedule';
 import type { Devotional } from '../../core/entities/devotional';
@@ -32,6 +33,7 @@ import type {
   INoteRepository,
   INotificationRepository,
   IIncidentRepository,
+  IRevealAuditRepository,
   IPushSubscriptionRepository,
   IScheduleRepository,
   IDevotionalRepository,
@@ -392,6 +394,25 @@ export class InMemoryIncidentRepository
     const sorted = Array.from(this.store.values())
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map((i) => this.clone(i));
+    return limit != null ? sorted.slice(0, limit) : sorted;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reveal audit
+// ---------------------------------------------------------------------------
+export class InMemoryRevealAuditRepository
+  extends InMemoryBaseRepository<RevealAudit>
+  implements IRevealAuditRepository
+{
+  constructor(persistence?: IPersistenceAdapter<RevealAudit>) {
+    super(persistence);
+  }
+
+  async findRecent(limit?: number): Promise<RevealAudit[]> {
+    const sorted = Array.from(this.store.values())
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((r) => this.clone(r));
     return limit != null ? sorted.slice(0, limit) : sorted;
   }
 }

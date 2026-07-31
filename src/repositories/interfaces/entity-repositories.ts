@@ -9,6 +9,7 @@ import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
 import type { Notification } from '../../core/entities/notification';
 import type { Incident } from '../../core/entities/incident';
+import type { RevealAudit } from '../../core/entities/reveal-audit';
 import type { PushSubscription } from '../../core/entities/push-subscription';
 import type { ScheduleItem } from '../../core/entities/schedule';
 import type { Devotional } from '../../core/entities/devotional';
@@ -88,6 +89,11 @@ export interface INotificationRepository extends IRepository<Notification> {
 export interface IIncidentRepository extends IRepository<Incident> {
   /** Incidents newest-first, optionally capped. */
   findRecent(limit?: number): Promise<Incident[]>;
+}
+
+export interface IRevealAuditRepository extends IRepository<RevealAudit> {
+  /** Reveals newest-first, optionally capped. */
+  findRecent(limit?: number): Promise<RevealAudit[]>;
 }
 
 export interface IPushSubscriptionRepository extends IRepository<PushSubscription> {

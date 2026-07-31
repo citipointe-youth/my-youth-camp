@@ -39,6 +39,33 @@ export interface NotificationService {
  * from `resolvePushAudience`/`canSeeNotification` over the USERS table (tens of rows), not
  * by scanning and decrypting every person.
  */
+/**
+ * How long a human-authored notice stays visible (2026-07-31, owner request).
+ *
+ * A camp notice is almost always about the next few hours — "dinner has moved to 6", "bring a
+ * jacket to the oval". Before this they lived forever, so the Notices screen silted up with
+ * instructions that had already happened and leaders stopped reading it, which makes the one
+ * notice that matters less likely to be seen.
+ */
+export const NOTICE_TTL_HOURS = 6;
+
+/**
+ * Expiry measured from PUBLISH, not composition. A notice written on Monday to publish on
+ * Thursday must live for six hours after it appears, not expire two days before anyone can
+ * see it — the same `scheduledFor ?? createdAt` rule the feeds already order by.
+ *
+ * An explicitly supplied `expiresAt` wins, so a caller can still shorten or lengthen a
+ * particular notice; only the DEFAULT changed. System notices (the check-in warning and the
+ * incident alert) set their own `expiresAt` and never come through here.
+ */
+export function defaultNoticeExpiry(
+  publishAt: string,
+  explicit?: string | null | undefined,
+): string {
+  if (explicit) return explicit;
+  return new Date(new Date(publishAt).getTime() + NOTICE_TTL_HOURS * 60 * 60 * 1000).toISOString();
+}
+
 export function makeNotificationService(
   notifRepo: INotificationRepository,
 ): NotificationService {
@@ -57,6 +84,7 @@ export function makeNotificationService(
     async send(actor, input) {
       const data = CreateNotificationSchema.parse(input);
       assertCanSendNotification(actor, data.scope, data.zone);
+      const createdAt = nowISO();
       const notif: Notification = {
         id: newId('notif'),
         scope: data.scope,
@@ -72,9 +100,11 @@ export function makeNotificationService(
         // Not computed — see the estimateAudience note above. Nothing reads this for a
         // human-authored notice; only cron-raised warnings carry a meaningful number.
         audienceEstimate: 0,
-        expiresAt: data.expiresAt ?? null,
+        // Six hours from when it PUBLISHES (see defaultNoticeExpiry). `findActive()` already
+        // filters on expiresAt, so this alone drops the notice off Home and Notices together.
+        expiresAt: defaultNoticeExpiry(data.scheduledFor ?? createdAt, data.expiresAt),
         scheduledFor: data.scheduledFor ?? null,
-        createdAt: nowISO(),
+        createdAt,
       };
       const saved = await notifRepo.save(notif);
       invalidateDashboardCache(); // affects AtCampDashboard.latestNotification
@@ -126,7 +156,15 @@ export function makeNotificationService(
         priority: data.priority ?? existing.priority,
         title: data.title ?? existing.title,
         body: data.body ?? existing.body,
-        expiresAt: data.expiresAt !== undefined ? data.expiresAt : existing.expiresAt,
+        // Rescheduling a pending notice moves its expiry with it — otherwise pushing a notice
+        // two days later would leave it expiring six hours after the ORIGINAL time, i.e. dead
+        // on arrival. An explicit expiresAt on the edit still wins.
+        expiresAt:
+          data.expiresAt !== undefined
+            ? data.expiresAt
+            : data.scheduledFor !== undefined && data.scheduledFor !== null
+              ? defaultNoticeExpiry(data.scheduledFor)
+              : existing.expiresAt,
         scheduledFor: data.scheduledFor !== undefined ? data.scheduledFor : existing.scheduledFor,
         // Preserved as-is. An edit no longer recomputes it (nothing reads it), and a
         // cron-raised notice's real count must survive an admin editing the wording.

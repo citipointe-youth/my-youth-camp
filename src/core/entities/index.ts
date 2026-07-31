@@ -10,3 +10,4 @@ export * from './note';
 export * from './devotional';
 export * from './content';
 export * from './settings';
+export * from './reveal-audit';

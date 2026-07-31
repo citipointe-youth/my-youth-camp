@@ -63,8 +63,39 @@ export function makeImportService(
     async importCsv(actor, input) {
       assertCan(actor, 'import:run');
       const opts = ImportOptionsSchema.parse(input);
-      const rows = parseCsv(opts.csvData);
-      if (rows.length === 0) throw new BadRequestError('CSV has no data rows');
+      const rawRows = parseCsv(opts.csvData);
+      if (rawRows.length === 0) throw new BadRequestError('CSV has no data rows');
+
+      /* Item 7 (2026-07-31) — THE SAME STUDENT REGISTERED TWICE.
+         Real case: a family registers, then registers again to upgrade tent -> classroom and
+         pays the difference with a code. Both submissions are in the Form export.
+
+         The merge below is already "latest wins, but a BLANK cell never clobbers a known value"
+         (see the blank-cell guard on the matched branch). That is exactly the behaviour the
+         owner asked for — but it only produces the right answer if the LATEST submission is
+         processed LAST, and Elvanto does not guarantee the export is in chronological order.
+         So order the rows by `Date Submitted` before the loop.
+
+         Two details that are load-bearing:
+         - The sort is STABLE and rows with no/unparseable date sort as if they came first, so
+           a file with no Date Submitted column keeps its original row order exactly (which was
+           the behaviour before this change — nothing regresses on a file that never had the
+           duplicate problem).
+         - `rowNum` is captured from the ORIGINAL position. Reporting a sorted index would point
+           the admin at the wrong line of their spreadsheet, which is worse than not reporting. */
+      const ordered = rawRows
+        .map((row, idx) => ({
+          row,
+          rowNum: idx + 2,
+          submittedAt: normalizeDate(field(row, 'Date Submitted')) ?? '',
+        }))
+        .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt) || a.rowNum - b.rowNum);
+      const rows = ordered.map((o) => o.row);
+
+      /* Names seen in THIS file, so a second submission for the same person can be reported.
+         Silent merging is correct behaviour but invisible: the admin has no way to know the
+         cost they are looking at came from two registrations unless we say so. */
+      const seenInFile = new Map<string, number>();
 
       let created = 0;
       let updated = 0;
@@ -171,9 +202,11 @@ export function makeImportService(
       // (updateExisting=false path) are not deleted.
       const seenIds = new Set<string>();
 
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i]!;
-        const rowNum = i + 2;
+      for (let i = 0; i < ordered.length; i++) {
+        const entry = ordered[i]!;
+        const row = entry.row;
+        // Original spreadsheet line, NOT the sorted index — see the ordering note above.
+        const rowNum = entry.rowNum;
         // Item 12 (2026-07-28): an entirely-blank row (trailing newline / spreadsheet padding) is
         // padding, not a defect — skip it silently instead of reporting a missing-name error on a
         // file that otherwise imports perfectly.
@@ -297,6 +330,20 @@ export function makeImportService(
           );
 
           const nck = nameChurchKey(resolvedChurchId, firstName, lastName);
+
+          // Item 7: report a repeat submission for the same person in this same file.
+          const timesSeen = (seenInFile.get(nck) ?? 0) + 1;
+          seenInFile.set(nck, timesSeen);
+          if (timesSeen > 1) {
+            warnings.push({
+              row: rowNum,
+              message:
+                `${firstName} ${lastName} appears ${timesSeen} times in this file — ` +
+                `the most recent submission wins field by field, and a blank cell in it keeps ` +
+                `the earlier value. Check the ticket type and cost.`,
+            });
+          }
+
           const rowPhone = phoneKey(mobile);
           const pool = poolByNameChurch.get(nck);
           const match = pickMatch(pool, rowPhone);

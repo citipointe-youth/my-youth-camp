@@ -78,6 +78,13 @@ export function makeAccountController(services: AccountControllerServices) {
       return services.account.updateChurch(req.ctx.actor, id, req.body);
     },
 
+    async updateChurchContacts(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      const id = req.params['id'];
+      if (!id) throw new BadRequestError('Missing id');
+      return services.account.updateChurchContacts(req.ctx.actor, id, req.body);
+    },
+
     async deleteUser(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       const id = req.params['id'];

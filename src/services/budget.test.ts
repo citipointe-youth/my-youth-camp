@@ -416,3 +416,51 @@ describe('computeDiscountCodeSummary', () => {
     ]);
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * Item 1 (2026-07-31) — per-church discount code counts.
+ * The whole point is that the per-church numbers are derived from the SAME
+ * function as the camp-wide card, so the two can never drift apart.
+ * ------------------------------------------------------------------------- */
+describe('ChurchBudget.discountCodes', () => {
+  const people: BudgetPerson[] = [
+    { churchId: 'c1', churchName: 'Victory', kind: 'youth', accommodationKind: 'tent', registrationCost: 200, amountPaid: 150, discountCode: 'EARLY', discountAmount: 50 },
+    { churchId: 'c1', churchName: 'Victory', kind: 'youth', accommodationKind: 'tent', registrationCost: 200, amountPaid: 150, discountCode: 'EARLY', discountAmount: 50 },
+    { churchId: 'c1', churchName: 'Victory', kind: 'leader', accommodationKind: 'tent', registrationCost: 200, amountPaid: 200, discountCode: null, discountAmount: null },
+    { churchId: 'c2', churchName: 'Noosa', kind: 'youth', accommodationKind: 'tent', registrationCost: 200, amountPaid: 150, discountCode: 'EARLY', discountAmount: 50 },
+    { churchId: 'c2', churchName: 'Noosa', kind: 'youth', accommodationKind: 'tent', registrationCost: 200, amountPaid: 100, discountCode: 'SPONSOR', discountAmount: 100 },
+  ] as BudgetPerson[];
+
+  it('counts each code per church, not camp-wide', () => {
+    const report = computeBudget(people);
+    const victory = report.churches.find((c) => c.churchId === 'c1')!;
+    const noosa = report.churches.find((c) => c.churchId === 'c2')!;
+    expect(victory.discountCodes).toEqual([
+      expect.objectContaining({ code: 'EARLY', count: 2 }),
+    ]);
+    expect(noosa.discountCodes.map((r) => [r.code, r.count]).sort()).toEqual([
+      ['EARLY', 1], ['SPONSOR', 1],
+    ]);
+  });
+
+  it('agrees with the camp-wide summary when the per-church counts are added up', () => {
+    const report = computeBudget(people);
+    const perChurchEarly = report.churches
+      .flatMap((c) => c.discountCodes)
+      .filter((r) => r.code === 'EARLY')
+      .reduce((s, r) => s + r.count, 0);
+    const campWide = computeDiscountCodeSummary(people).rows.find((r) => r.code === 'EARLY')!;
+    expect(perChurchEarly).toBe(campWide.count);
+  });
+
+  it('a church that used no codes gets an empty list, not a missing field', () => {
+    const report = computeBudget([people[2]!]);
+    expect(report.churches[0]!.discountCodes).toEqual([]);
+  });
+
+  it('carries the admin classification tag through to the per-church rows', () => {
+    const report = computeBudget(people, { tags: { SPONSOR: 'sponsor' } });
+    const noosa = report.churches.find((c) => c.churchId === 'c2')!;
+    expect(noosa.discountCodes.find((r) => r.code === 'SPONSOR')!.tag).toBe('sponsor');
+  });
+});

@@ -15,6 +15,7 @@ import {
   ChangeOwnPasswordSchema,
   CreateChurchWithAccountSchema,
   UpdateChurchSchema,
+  UpdateChurchContactsSchema,
 } from '../core/validation/account.schema';
 import { hashPassword, verifyPassword } from '../utils/crypto';
 import { newId } from '../utils/id';
@@ -78,10 +79,38 @@ export interface AccountService {
   randomizeChurchPasswords(actor: Actor): Promise<ChurchCredential[]>;
   listChurches(actor: Actor): Promise<Church[]>;
   updateChurch(actor: Actor, id: string, input: unknown): Promise<Church>;
+  /**
+   * Set a church's four ministry leader contacts. Reachable by the CHURCH ITSELF (2026-07-31)
+   * as well as director/admin — see `church:contacts:write`. A church may only edit its own.
+   */
+  updateChurchContacts(actor: Actor, id: string, input: unknown): Promise<Church>;
   deleteUser(actor: Actor, id: string): Promise<{ deleted: string }>;
   deleteChurch(actor: Actor, id: string): Promise<{ deleted: string }>;
   /** Admin-only: validate a target account for read-only preview; returns its SafeUser. */
   previewAccount(actor: Actor, id: string): Promise<SafeUser>;
+}
+
+/**
+ * The ORIGINAL admin — the account the platform was bootstrapped with (2026-07-31).
+ *
+ * Since additional admins can now be created, "is this the admin?" is no longer the same
+ * question as "is this role === 'admin'?". The original is defined as the **earliest-created**
+ * admin, with the id as a deterministic tiebreak for the (practically impossible) case of two
+ * admins sharing a `createdAt` to the millisecond. Deliberately NOT hard-coded to the seed id
+ * `user_seed_admin`: a new-year rollover and a fresh deployment both produce a working camp
+ * whose first admin may have a different id, and a hard-coded constant would leave those
+ * installations with no protected account at all.
+ *
+ * The original cannot be deleted, deactivated, or demoted — by anyone, INCLUDING ITSELF. That
+ * last part is the point: it is the recovery account, and an admin who demotes themselves by
+ * mistake would leave the camp with no way back in.
+ */
+export function findOriginalAdmin(users: User[]): User | null {
+  const admins = users.filter((u) => u.role === 'admin');
+  if (admins.length === 0) return null;
+  return admins.sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  )[0]!;
 }
 
 export function makeAccountService(
@@ -154,10 +183,10 @@ export function makeAccountService(
     async createUser(actor, input) {
       assertCan(actor, 'admin:manage');
       const data = CreateUserSchema.parse(input);
-      // Never allow creating another admin through this method (only seeding)
-      if (data.role === 'admin') {
-        throw new ForbiddenError('Cannot create admin accounts via API');
-      }
+      // 2026-07-31: creating additional admins IS allowed now (owner request). A secondary
+      // admin is a full peer — it can do everything, including creating further admins. The
+      // only thing it can never do is remove, deactivate or demote the ORIGINAL admin, which
+      // is enforced in updateUser/toggleStatus/deleteUser below rather than here.
       const existing = await userRepo.findByUsername(data.username);
       if (existing) throw new BadRequestError('Username already in use');
       const passwordHash = await hashPassword(data.password);
@@ -187,8 +216,13 @@ export function makeAccountService(
       const existing = await userRepo.findById(id);
       if (!existing) throw new NotFoundError('User not found');
       const data = UpdateUserSchema.parse(input);
-      if (data.role === 'admin') {
-        throw new ForbiddenError('Cannot promote to admin via API');
+      // Promotion to admin is allowed (2026-07-31). Demotion of the ORIGINAL admin is not:
+      // it is the recovery account, and losing it locks everyone out of the back office.
+      if (existing.role === 'admin' && data.role && data.role !== 'admin') {
+        const original = findOriginalAdmin(await userRepo.findAll());
+        if (original?.id === existing.id) {
+          throw new ForbiddenError('The original admin account cannot be changed to another role');
+        }
       }
       // Enforce username uniqueness when it changes.
       if (data.username && data.username.toLowerCase() !== existing.username.toLowerCase()) {
@@ -232,7 +266,12 @@ export function makeAccountService(
       assertCan(actor, 'admin:manage');
       const user = await userRepo.findById(id);
       if (!user) throw new NotFoundError('User not found');
-      if (user.role === 'admin') throw new ForbiddenError('Cannot deactivate the admin account');
+      if (user.role === 'admin') {
+        const original = findOriginalAdmin(await userRepo.findAll());
+        if (original?.id === user.id) {
+          throw new ForbiddenError('The original admin account cannot be deactivated');
+        }
+      }
       const next = user.status === 'active' ? 'inactive' : 'active';
       const saved = await userRepo.save({ ...user, status: next, updatedAt: nowISO() });
       return toSafeUser(saved);
@@ -382,11 +421,39 @@ export function makeAccountService(
       return saved;
     },
 
+    async updateChurchContacts(actor, id, input) {
+      assertCan(actor, 'church:contacts:write');
+      const existing = await churchRepo.findById(id);
+      if (!existing) throw new NotFoundError('Church not found');
+      // The capability alone is not the gate. A church login holds it for its OWN church only;
+      // without this check any church could rewrite every other church's emergency contacts,
+      // which are exactly the numbers first aid calls at 2am. Oversight roles are camp-wide.
+      const isOversight = actor.role === 'admin' || actor.role === 'director';
+      if (!isOversight && actor.churchId !== id) {
+        throw new ForbiddenError('You can only edit your own church’s contacts');
+      }
+      const data = UpdateChurchContactsSchema.parse(input);
+      // Only `contacts` is written. Spreading `data` wholesale is how a narrow endpoint quietly
+      // becomes a wide one later; keep this explicit.
+      const saved = await churchRepo.save({
+        ...existing,
+        contacts: data.contacts,
+        updatedAt: nowISO(),
+      });
+      invalidateDashboardCache();
+      return saved;
+    },
+
     async deleteUser(actor, id) {
       assertCan(actor, 'admin:manage');
       const user = await userRepo.findById(id);
       if (!user) throw new NotFoundError('Account not found');
-      if (user.role === 'admin') throw new ForbiddenError('Cannot delete the admin account');
+      if (user.role === 'admin') {
+        const original = findOriginalAdmin(await userRepo.findAll());
+        if (original?.id === user.id) {
+          throw new ForbiddenError('The original admin account cannot be deleted');
+        }
+      }
       await userRepo.delete(id);
       return { deleted: id };
     },

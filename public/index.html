@@ -495,6 +495,29 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .fd-confirm{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom));z-index:105;width:min(420px,calc(100% - 32px));margin:0;}
 .fd-confirm .btn{box-shadow:0 6px 20px rgba(22,163,74,.45);}
 @media(min-width:980px){.fd-confirm{bottom:24px;}}
+/* Item 9 (2026-07-31): the admin Settings save button floats above the bottom nav instead of
+   sitting at the end of the page. Camp settings is three long collapsible sections; the admin
+   was scrolling back to the bottom after every edit and — because a collapsed section still
+   holds its inputs — it was easy to change something and navigate away without saving.
+   Anchoring copies .fd-confirm exactly: position:fixed above the nav's full safe-area
+   reservation. ⚠️ It MUST be fixed, never absolute — the phone `.app` grows with content and is
+   not viewport height (the standing overlay rule in CLAUDE.md). z-index 105 sits above the nav
+   (100) and below modals (120), so a confirm sheet still covers it. */
+.setg-save{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom));z-index:105;width:min(420px,calc(100% - 32px));margin:0;}
+.setg-save .btn{margin-top:0;box-shadow:0 6px 20px rgba(79,70,229,.45);}
+/* Spacer so the last section can scroll clear of the floating pill. */
+.setg-savepad{height:96px;}
+/* Item 13: multi-select record chips on Testimonies & Notes. Sized as real tap targets
+   (min-height 34px) because this is used one-handed on a phone at camp. */
+.ntcats{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;}
+.ntchip{min-height:34px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--ink-2);font:inherit;font-size:var(--t-xs);font-weight:600;cursor:pointer;}
+.ntchip.on{background:#ede9fe;border-color:var(--blue);color:var(--blue);}
+.ntcats-wrap{flex:1 1 100%;}
+/* Item 8: four-row internal scroll on the Data Import people lists. The height is derived from
+   ALLOC_VISIBLE_ROWS in the JS — keep the two in step if either changes. A card row is ~78px
+   with its padding; 4 rows plus a peek of the fifth signals "there is more here". */
+.alloc-scroll{max-height:320px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;border:1px solid var(--line);border-radius:10px;padding:6px;background:var(--paper);}
+@media(min-width:980px){.setg-save{bottom:24px;}}
 /* Top loading bar (#nprog): a thin accent bar that animates whenever a real network request
    is in flight (cache hits skip it). Gives instant "it's working" feedback on button/tab taps
    that otherwise sat still during the 1–1.5s serverless round-trip. Anchored to the BOTTOM edge
@@ -812,6 +835,7 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="adminContacts"></section>
     <!-- Item 8 (2026-07-28): site map. A RENDER.<x> with no matching container here paints
          NOTHING and fails silently (see debug.md "Incidents screen is completely blank"). -->
+    <section class="screen" id="mycontacts"></section>
     <section class="screen" id="sitemap"></section>
   </div>
   <nav class="tabs" id="tabs" style="display:none"></nav>
@@ -1746,7 +1770,9 @@ const TAB_OF={home:'home',people:'people',student:'people',help:'help',
   camper:'students',myyouth:'students',firstday:'checkin',schedule:'schedule',devotional:'home',faq:'home',notes:'home',testimonies:'home',budget:'home',accom:'home',import:'import',
   // Item 8: reached from the Home hero, so Home stays the highlighted tab (firstAid has no home
   // tab — `gotoTab` maps home→search for them, and the sidebar falls back to the id itself).
-  sitemap:'home'};
+  sitemap:'home',
+  // Item 11: reached from the church Home screen, so Home stays highlighted.
+  mycontacts:'home'};
 
 function _showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -2273,6 +2299,7 @@ RENDER.home=async function renderHome(skipModeSync){
       <div class="s"><b>${h.totalCampers||0}</b><span>Students</span></div>
       <div class="s"><b>${h.totalLeaders||0}</b><span>Leaders</span></div>
     </div>`;
+    body+=_contactsCardHtml();
   }else{
     body+=`<div class="rowsb" style="margin-bottom:6px"><span class="lbl" style="margin:0">Registrations by accommodation</span>${helpTip('Your registered people, split by type (Student or Leader) and sleeping kind (Tent or Classroom), as set in the import.',{left:true})}</div>
     <div class="statband statband-4">
@@ -2468,6 +2495,7 @@ async function renderHomeAtCamp(){
   <div class="tiles">${tiles.join('')}</div>
   ${notesLinkHtml}
   <div id="homePulse"></div>
+  ${_contactsCardHtml()}
   ${_alertBannerHtml(feed)}
   <div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
   <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>`;
@@ -2497,6 +2525,18 @@ async function renderHomeAtCamp(){
      `_DISMISS_KEY` store the notice dismissals already use).
    Deliberately NOT changed: a genuine human-sent urgent notice still pops the modal — that is a
    director choosing to interrupt everyone, which is the point. Only incident auto-alerts moved. */
+/* Item 11 (2026-07-31): a church login's route to setting its own four ministry leader
+   contacts. Rendered on BOTH home variants — the numbers matter most at camp but they need to
+   be entered BEFORE camp, so a pre-camp-only entry point would be useless and an at-camp-only
+   one would be too late. Church logins only; every other role reaches the same data through
+   Admin -> Ministry contacts, which is unchanged. */
+function _contactsCardHtml(){
+  if(!ACTOR||ACTOR.role!=='church'||!ACTOR.churchId)return '';
+  return `<div class="card tap" onclick="go('mycontacts')"><div class="rowsb">
+    <div><div style="font-weight:600">Leader contacts</div>
+    <div class="sub">Set your primary &amp; secondary leaders for guys and girls</div></div>
+    <span class="pill info">Set ›</span></div></div>`;
+}
 const _isIncidentNotice=n=>!!(n&&n.leadersOnly);
 /* Every notice LIST renders through this — keeps the "incidents never appear in a notice feed"
    rule in one place instead of at each call site. */
@@ -2564,6 +2604,14 @@ function dismissNotice(btn){
 function renderMyDay(d){
   const DUE=d.checkInsDue||0;
   const sess=d.currentSession;
+  /* Item 10 (2026-07-31): nothing about the daily check-in belongs on Home while the app is
+     still in the SIGN-IN phase. On day 1 before the switchover time nobody has arrived yet, so
+     "N still to check in" counts a session that has not opened and reads as a backlog the
+     leader has somehow already fallen behind on. `campPhase()` is the same rule the Check-in
+     screen and the nav tab label branch on, so the card appears exactly when the check-in
+     surface does — do NOT re-derive it from the day number here (SETTINGS.campDay is the
+     preview-only toggle and `_realCampDayNumber` says nothing about the switchover time). */
+  if(campPhase()==='signin')return '';
   return sess&&DUE>0?`<div class="card" style="border:1px solid #fbbf24;background:var(--alert-bg)">
     <div class="lbl" style="margin-top:0;color:#92400e">Your day · ${esc(sess.label)}</div>
     <div style="font-weight:800;font-size:var(--t-h1);color:var(--warn)">${DUE} still to check in</div>
@@ -3173,7 +3221,12 @@ function _faSetSignedIn(el,redraw){_faSignedInOnly=!!el.checked;redraw();}
 function renderSearchFirstAid(){
   paint('search',`<div class="search"><span>${ic('search')}</span><input id="q" placeholder="Search any student by name…" oninput="runFaSearch(this.value)" aria-label="Search students"></div>
     ${_faSignedInToggleHtml("_faSetSignedIn(this,()=>runFaSearch((document.getElementById('q')||{}).value||''))")}
-    ${SETTINGS&&SETTINGS.siteMapImage?`<button class="btn ghost sm" style="margin-top:8px" onclick="go('sitemap')">${icSm('map')} Site map</button>`:''}
+    <!-- Item 4 (2026-07-31): the Site map button is deliberately GONE from the first-aid
+         landing. NOTE this comment sits inside a JS template literal, so it must never contain
+         a backtick. firstAid has no Home screen (RENDER.home redirects it straight here), so
+         this was the role's only map entry point and removing it removes the map for first aid
+         entirely -- which is what the owner asked for. Every other role keeps the Map button on
+         its Home hero, and RENDER.sitemap itself is untouched. -->
     <div id="results"><p class="note-hint">Type a name to find any student across the camp.</p></div>`,'Find a student','First Aid');
   const q=document.getElementById('q');if(q)q.focus();
 }
@@ -3291,14 +3344,14 @@ async function openStudentInfo(id){
     : `<div class="fa-alert"><div class="ah">${icSm('phone')} No leader contact on file</div><div class="fa-calm" style="color:var(--alert-ink)">Ask admin to add one before relying on this contact.</div></div>`;
   const medicare=c.hasMedicare?`<div class="card"><div class="lbl" style="margin-top:0">Medicare</div>
     <div class="kv"><span class="k">Number</span><span class="v" id="mcn" style="cursor:pointer;color:var(--blue)" onclick="revealMedicare('${c.id}')">[tap to show]</span></div>
-    <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2)">Revealing is recorded in the server audit log (who, when, which student). It is not part of the compliance workbook.</div></div>`:'';
+    <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2)">Revealing is recorded: your account, the student's name and the time go into the <b>Sensitive Reveals</b> sheet of the compliance workbook. The number itself is never recorded.</div></div>`:'';
   const dietCard=otherDiet.length?`<div class="card"><div class="lbl" style="margin-top:0">Dietary (non-allergy)</div>
     ${otherDiet.map(d=>`<span class="fa-diet">${esc(d)}</span>`).join('')}</div>`:'';
   const parent=(c.parentGuardianName||parentContact)?`<div class="fa-last">
     <div class="lbl">Parent / guardian</div>
     ${c.parentGuardianName?`<div class="kv"><span class="k">${esc(c.parentGuardianName)}${c.parentRelation?' ('+esc(c.parentRelation)+')':''}</span><span class="v"></span></div>`:''}
     ${parentContact?`<button class="btn fa-parent" onclick="faRevealLeader('${c.id}','${esc(jsq(parentContact.role))}',this)">${icSm('phone')} ${esc(fmtPhone(parentContact.phone))}</button>
-    <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:4px">Revealing is logged for the audit trail.</div>`:''}</div>`:'';
+    <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:4px">Revealing is recorded in the <b>Sensitive Reveals</b> sheet of the compliance workbook — your account, the student's name and the time. The number itself is never recorded.</div>`:''}</div>`:'';
   paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${_faBackExpr(scr)}">${icSm('arrowl')} Back</button></div>
     <div class="fa-id">${_faBubble(c)}<div><h2>${esc(c.firstName+' '+c.lastName)}</h2>
       <div class="meta">${c.kind==='leader'?'Leader':'Student'+(c.grade?' · Grade '+c.grade:'')} · ${esc(c.churchName)} · ${esc(c.zone)} Zone</div>
@@ -3314,7 +3367,20 @@ async function openStudentInfo(id){
 // contacts are shown plainly since the Bug 1 mask/audit swap (2026-07-17).
 async function faRevealLeader(id,role,btn){
   try{const ct=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));
-    if(btn)btn.innerHTML=`${icSm('phone')} ${esc(fmtPhone(ct.phone))}`;
+    /* Item 6 (2026-07-31): the revealed number is now DIALLABLE, not just readable. This is the
+       exact case the owner reported — first aid taps to reveal a parent's number while standing
+       over an injured student, and then has to retype ten digits into the phone app by hand.
+       The reveal control is a <button> (it has to be, the reveal is a POST-like audited action),
+       so it is REPLACED with an <a href="tel:"> once the number is known rather than trying to
+       make one element be both. iOS still shows its own confirm sheet before dialling. */
+    if(btn){
+      const link=document.createElement('a');
+      link.className=btn.className.replace(/fa-parent/,'fa-parent').trim();
+      link.href='tel:'+ct.phone;
+      link.innerHTML=`${icSm('phone')} ${esc(fmtPhone(ct.phone))}`;
+      link.setAttribute('aria-label','Call '+ct.name);
+      btn.replaceWith(link);
+    }
     toast(ct.name+': '+fmtPhone(ct.phone));
   }catch(e){toast(e.message);}
 }
@@ -3460,6 +3526,7 @@ async function _renderStudentsBody(){
   const previewSim=_previewSimActive();
   const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api(_scoped('/campers?pageSize=300')));
   window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
+  window._myLeaders=await _loadMyLeaders(items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
   const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
@@ -3494,7 +3561,18 @@ async function runSearch(v){const box=document.getElementById('results');if(!box
         ${back?`<button class="btn alt sm" style="flex:1" onclick="reveal('${c.id}','${esc(jsq(back.role))}')">Secondary</button>`:''}
       </div></div>`;}).join(''):'<p class="note-hint">No matches.</p>';
   }catch(e){toast(e.message);}}
-async function reveal(id,role){try{const c=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));toast(c.name+': '+fmtPhone(c.phone));}catch(e){toast(e.message);}}
+/* Item 6: a revealed contact used to land in a toast that vanishes after a few seconds, with
+   no way to act on it — the leader had to reveal it again and memorise it. It now opens a small
+   sheet with a Call button. The reveal itself is unchanged (still the audited GET). */
+async function reveal(id,role){
+  try{
+    const c=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));
+    modal(`<div class="sheet"><h3>${esc(c.name)}</h3>
+      <p class="sub">${esc(c.role||role)}</p>
+      <a class="btn" href="tel:${esc(c.phone)}">${icSm('phone')} Call ${esc(fmtPhone(c.phone))}</a>
+      <button class="btn ghost" onclick="closeModal()">Close</button></div>`);
+  }catch(e){toast(e.message);}
+}
 
 /* ===== NOTICES ===== */
 /* Item 10 (2026-07-28): "Notices" and "Scheduled notices" are ONE screen with two sub-tabs
@@ -3647,7 +3725,11 @@ function computeBudgetClient(regs,filterId){
     const campers=_budScopeRows(c.campers,tags,prices),leaders=_budScopeRows(c.leaders,tags,prices);
     const camperCount=campers.reduce((s,r)=>s+r.count,0),leaderCount=leaders.reduce((s,r)=>s+r.count,0);
     const total=campers.reduce((s,r)=>s+r.lineTotal,0)+leaders.reduce((s,r)=>s+r.lineTotal,0);
-    return {churchId:c.churchId,churchName:c.churchName,camperCount,leaderCount,total,campers,leaders};});
+    /* Item 1 (2026-07-31): per-church discount code counts, mirroring ChurchBudget.discountCodes
+       in src/services/budget.ts. Scoped from the RAW `regs` rather than the reduced `people`
+       above, because the reduced shape drops `discountAmount` and the purpose pill needs it. */
+    const discountCodes=computeDiscountSummaryClient(regs,c.churchId).rows;
+    return {churchId:c.churchId,churchName:c.churchName,camperCount,leaderCount,total,campers,leaders,discountCodes};});
   churches.sort((a,b)=>a.churchName.localeCompare(b.churchName));
   return {grandTotal:churches.reduce((s,c)=>s+c.total,0),camperCount:churches.reduce((s,c)=>s+c.camperCount,0),
     leaderCount:churches.reduce((s,c)=>s+c.leaderCount,0),churchCount:churches.length,churches,fullAmount:full};
@@ -3695,6 +3777,26 @@ RENDER.budget=async function(){
   paint('budget',`${selHtml}<div id="budgetBody"></div>`,'Budget & Costings','Registration fees by ticket type');
   drawBudget();
 };
+/* Item 1 (2026-07-31) — which discount codes THIS church used, and how many of its people used
+   each. Rendered inside the church's expandable row, below Campers/Leaders.
+
+   Derived by scoping `computeDiscountSummaryClient` to the one church rather than counting
+   again, so the per-church numbers can never disagree with the camp-wide "Discount codes" card
+   — exactly the same reason the backend's ChurchBudget.discountCodes reuses
+   computeDiscountCodeSummary. The denominator is this church's own headcount.
+
+   Read-only on purpose: the classification dropdown stays in the camp-wide card, because a tag
+   applies to the CODE across the whole camp. Two editable copies of one setting, one per
+   church, would read as a per-church setting and it isn't. */
+function _budChurchCodes(c){
+  const rows=c.discountCodes||[];
+  if(!rows.length)return '';
+  const total=(c.camperCount||0)+(c.leaderCount||0);
+  return `<div class="lbl" style="margin:10px 0 4px">Discount codes</div>`
+    +rows.map(r=>`<div class="rowsb budcat" style="padding:5px 0">
+      <div style="flex:1;min-width:0"><span class="budcat-l">${esc(r.code)}</span>${r.purpose?`<span class="gradepill">${esc(r.purpose)}</span>`:''}</div>
+      <b style="white-space:nowrap;min-width:70px;text-align:right">${r.count} of ${total}</b></div>`).join('');
+}
 function drawBudget(){
   const scope=sel('budChurch')||'all';
   const rep=computeBudgetClient(window._budgetRegs,scope);
@@ -3721,6 +3823,7 @@ function drawBudget(){
       <div class="budchurch-body">
         ${grp('Campers',c.campers)}
         ${grp('Leaders',c.leaders)}
+        ${_budChurchCodes(c)}
         <div class="rowsb" style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px"><b>Church total</b><b>${_money(c.total)}</b></div>
       </div></div>`;
   };
@@ -4156,6 +4259,7 @@ async function _renderMyGroup(screenId){
   const previewSim=_previewSimActive();
   const items=previewSim?await _previewSimCampers():(page=>Array.isArray(page)?page:page.items||[])(await api(_scoped('/campers?pageSize=300')));
   window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
+  window._myLeaders=await _loadMyLeaders(items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
   const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
@@ -4175,6 +4279,35 @@ async function _loadMyNotSignedIn(previewSim,campers){
   const nsCampers=(campers||[]).filter(c=>c.kind==='student'&&!c.atCamp&&!(c.signOutHistory&&c.signOutHistory.length));
   return [...nsRegs,...nsCampers];
 }
+/* Item 14 (2026-07-31) — the Leaders sub-menu on My group.
+   Leaders get signed in and out across camp exactly like students, but they are excluded from
+   the twice-daily check-in roster (deliberately — that is a different screen and must stay that
+   way) AND from the "Not signed in" list above, so there was no screen anywhere that answered
+   "which of my leaders are actually here right now".
+
+   ⚠️ SCOPE IS NOT COMPUTED HERE. Both feeds are already narrowed by `canAccessPerson` on the
+   server — church → own church AND own gender, zoneLeader → own zone, director/admin →
+   camp-wide. Re-deriving the rule client-side is how a `b-` login ends up seeing the girls'
+   leaders. Do not add a gender/church filter here "to be safe"; it would either be redundant or
+   wrong, and narrowing a display can never widen access anyway.
+
+   Merges /campers (arrived leaders, present or signed out) with /registrants (leaders who have
+   never signed in), deduped by id — the same pattern as _loadMyNotSignedIn. */
+async function _loadMyLeaders(campers){
+  const fromCampers=(campers||[]).filter(c=>c.kind==='leader');
+  const seen=new Set(fromCampers.map(c=>c.id));
+  const regList=await api(_scoped('/registrants')).catch(()=>[]);
+  const fromRegs=(Array.isArray(regList)?regList:[]).filter(c=>c.kind==='leader'&&!seen.has(c.id));
+  return [...fromCampers,...fromRegs];
+}
+/* Signed-in leaders first, then everyone else; alphabetical by FIRST name within each half
+   (the owner's ordering — leaders are known to each other by first name, not surname). */
+function _sortLeaders(rows){
+  return [...rows].sort((a,b)=>
+    (b.atCamp?1:0)-(a.atCamp?1:0)
+    || String(a.firstName||'').localeCompare(String(b.firstName||''))
+    || String(a.lastName||'').localeCompare(String(b.lastName||'')));
+}
 function filterMyYouth(){
   const zone=sel('myZoneF')||'all',gen=sel('myGenderF')||'all',gr=sel('myGradeF')||'all';
   const matchF=c=>(zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)&&(gr==='all'||(gr==='leaders'?c.kind==='leader':String(c.grade)===gr));
@@ -4183,6 +4316,11 @@ function filterMyYouth(){
   const atCamp=all.filter(c=>c.atCamp);
   // "Not signed in" moved here from the daily check-in screen (with the same one-tap sign-in button).
   const notSignedIn=(window._myNotSignedIn||[]).filter(matchF);
+  /* Item 14: leaders are filtered by zone/gender but NOT by the grade filter — a leader has no
+     grade, so any specific year level would empty the list, and the "Leaders" option already
+     shows them in the main sections above. */
+  const leaders=_sortLeaders((window._myLeaders||[]).filter(c=>
+    (zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)));
   const el=document.getElementById('myYouthList');if(!el)return;
   // Item 9/11: align My-group rows with the daily check-in rows — a grade/gender badge (or LDR) to
   // the LEFT of the name instead of an initials bubble. Church logins don't repeat their own church
@@ -4195,6 +4333,20 @@ function filterMyYouth(){
     return `<div class="row" role="button" tabindex="0" onclick="openCamper('${c.id}')">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
       <div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}</div>
       ${sub?`<div class="sub">${sub}</div>`:''}</div><span class="chev">›</span></div>`;
+  }
+  // Item 14: a leader row carries its own presence pill, because this list deliberately mixes
+  // signed-in and signed-out leaders in one place (that is the question it answers). Tapping
+  // opens the normal profile, which already has the sign-in / sign-out button — one code path
+  // for changing a leader's presence, not a second one here.
+  function leaderRow(c){
+    const nm=(c.firstName+' '+c.lastName).trim();
+    const pill=c.atCamp
+      ?'<span class="pill ok" style="flex:none">At camp</span>'
+      :'<span class="pill warn" style="flex:none">Not on site</span>';
+    return `<div class="row" role="button" tabindex="0" onclick="openCamper('${c.id}')">${gbadge({kind:'leader',gender:c.gender})}
+      <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div>
+      ${showChurchOnTile&&c.churchName?`<div class="sub">${esc(c.churchName)}</div>`:''}</div>
+      ${pill}<span class="chev">›</span></div>`;
   }
   function nsRow(c){
     const nm=(c.firstName+' '+c.lastName).trim();
@@ -4222,6 +4374,13 @@ function filterMyYouth(){
   html+=section('At camp',atCamp);
   html+=dropdown('Signed out of camp',signedOut,myRow);
   html+=dropdown('Not signed in',notSignedIn,nsRow);
+  // Item 14: sits BELOW "Not signed in", collapsed by default. `dropdown` groups by church for a
+  // zoneLeader, which is what they want here too — but the sort inside each group would be lost,
+  // so leaders get their own un-grouped block with the signed-in-first ordering intact.
+  if(leaders.length){
+    const label=ACTOR.role==='church'?'Leaders in your group':'Leaders you can see';
+    html+=`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${label} · ${leaders.length}</summary>${leaders.map(leaderRow).join('')}</details>`;
+  }
   if(!html)html='<p class="note-hint" style="margin-top:24px;text-align:center">No one matches these filters.</p>';
   el.innerHTML=html;
 }
@@ -4473,6 +4632,23 @@ async function submitTestimony(){const camperId=sel('tmCamper'),body=val('tmBody
   const full=leader&&leader!==ACTOR.displayName?`${body}\n— logged by ${leader}`:body;
   const payload={body:full,category:'testimony',sensitive};if(camperId)payload.camperId=camperId;
   try{await api('/notes',{method:'POST',body:payload});toast('Testimony submitted');const t=document.getElementById('tmBody');if(t)t.value='';const s=document.getElementById('tmSensitive');if(s)s.checked=false;}catch(e){toast(e.message);}}
+/* Item 13: which record types the Testimonies & Notes screen is showing. A Set, and an EMPTY
+   set deliberately means "all" (see RENDER.notes). Module-level so drawNotes can read it
+   without touching the DOM — the chips are the view, this is the state. */
+const NOTE_CAT_OPTIONS=[
+  {v:'testimony',label:'Testimony'},
+  {v:'note',label:'Student note'},
+  {v:'firstaid',label:'First-aid'},
+  {v:'signedout',label:'Signed out'},
+  {v:'incident',label:'Incidents'},
+];
+let NOTE_CATS=new Set();
+function _toggleNoteCat(v){
+  if(NOTE_CATS.has(v))NOTE_CATS.delete(v);else NOTE_CATS.add(v);
+  const b=document.querySelector('#ntCats .ntchip[data-cat="'+v+'"]');
+  if(b)b.classList.toggle('on',NOTE_CATS.has(v));
+  drawNotes();
+}
 RENDER.notes=async function(presetFilter){
   // /notes/recent returns bare notes (no camper details) — join /campers for name/church/zone/gender/grade.
   const [notes,page,incidents,churchRows]=await Promise.all([api('/notes/recent'),api(_scoped('/campers?pageSize=300')).catch(()=>[]),api('/incidents').catch(()=>[]),api('/accounts/churches').catch(()=>[])]);
@@ -4499,9 +4675,20 @@ RENDER.notes=async function(presetFilter){
   // AC-8: record filter gains "Signed out".
   // New Feature 2: a preset filter (e.g. from the director/admin digest card's first-aid
   // figure) pre-selects a record type instead of always defaulting to "All records".
+  /* Item 13 (2026-07-31): the single-choice Record dropdown is now a MULTI-select set of
+     tappable chips. The screen mixes five genuinely different record types and the old control
+     forced "one type, or everything" — a director wanting testimonies AND student notes but not
+     the sign-out noise had no way to say so.
+     Chips rather than a native <select multiple>: that control needs ctrl/cmd-click on desktop
+     and renders as a cramped scrolling box on iOS, and this app is phone-first.
+     NONE selected means ALL — the empty set is a normal state you reach by deselecting the last
+     chip, and showing nothing there would look broken. `presetFilter` (from the director/admin
+     digest card's first-aid figure) still works: it seeds the set with that one type. */
   const pf=presetFilter||'all';
-  const opt=(v,label)=>`<option value="${v}"${pf===v?' selected':''}>${label}</option>`;
-  const recSel=`<div><label>Record</label><select id="ntCat" onchange="drawNotes()">${opt('all','All records')}${opt('testimony','Testimony')}${opt('note','Student note')}${opt('firstaid','First-aid')}${opt('signedout','Signed out')}${opt('incident','Incidents')}</select></div>`;
+  NOTE_CATS=pf==='all'?new Set():new Set([pf]);
+  const recSel=`<div class="ntcats-wrap"><label>Records ${helpTip('Tap to include a record type. With none selected you see everything.')}</label>
+    <div class="ntcats" id="ntCats">${NOTE_CAT_OPTIONS.map(o=>
+      `<button type="button" class="ntchip${NOTE_CATS.has(o.v)?' on':''}" data-cat="${o.v}" onclick="_toggleNoteCat('${o.v}')">${esc(o.label)}</button>`).join('')}</div></div>`;
   const minSel=`<div><label>Ministry</label><select id="ntChurch" onchange="drawNotes()"><option value="all">All ministries</option>${churches.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></div>`;
   const zoneSel=`<div><label>Zone</label><select id="ntZone" onchange="drawNotes()"><option value="all">All zones</option>${zonesPresent.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select></div>`;
   // AC-7: swap Zone and Ministry positions — Zone first, then Ministry.
@@ -4516,8 +4703,9 @@ RENDER.notes=async function(presetFilter){
 };
 function drawNotes(){
   let list=window._notesAll||[];
-  const cat=sel('ntCat')||'all',ch=sel('ntChurch')||'all',z=sel('ntZone')||'all';
-  if(cat!=='all')list=list.filter(n=>(n.cat||'note')===cat);
+  const ch=sel('ntChurch')||'all',z=sel('ntZone')||'all';
+  // Empty set = no filter (see the chip note in RENDER.notes) — NOT "show nothing".
+  if(NOTE_CATS.size)list=list.filter(n=>NOTE_CATS.has(n.cat||'note'));
   if(ch!=='all')list=list.filter(n=>n.church===ch);
   if(z!=='all')list=list.filter(n=>n.zone===z);
   const box=document.getElementById('notesList');if(!box)return;
@@ -4703,9 +4891,17 @@ const zoneSel=(id,s)=>`<select id="${id}">${ZONE_OPTS.map(z=>`<option${z===s?' s
 RENDER.adminAccounts=async function(){
   const [users,churches]=await Promise.all([api('/accounts/users'),api('/accounts/churches')]);
   window._allUsers=users;window._allChurches=churches; // referenced by row action handlers
-  const leaderRoles=['zoneLeader','director','firstAid'];
+  /* Item 2 (2026-07-31): admin accounts are now creatable, so they appear in this list too —
+     previously `admin` was excluded and the seed account was invisible on the Accounts screen.
+     The ORIGINAL admin is the earliest-created one (the same rule the backend enforces in
+     `findOriginalAdmin`); it renders without delete/preview actions because the server refuses
+     both, and offering a button that can only 403 is worse than not offering it. */
+  const leaderRoles=['zoneLeader','director','firstAid','admin'];
   const leaders=users.filter(u=>leaderRoles.includes(u.role));
-  const roleLabel=r=>r==='zoneLeader'?'Zone leader':r==='firstAid'?'First aid':r==='director'?'Director':r;
+  const _admins=users.filter(u=>u.role==='admin')
+    .sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||String(a.id).localeCompare(String(b.id)));
+  const originalAdminId=_admins.length?_admins[0].id:null;
+  const roleLabel=r=>r==='zoneLeader'?'Zone leader':r==='firstAid'?'First aid':r==='director'?'Director':r==='admin'?'Admin':r;
   const acctTile=o=>`<div class="tile" style="align-items:stretch;text-align:left;padding:12px;min-height:unset;cursor:default;gap:0">
       <div style="font-weight:700;font-size:var(--t-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px">${o.title}</div>
       <div style="font-size:var(--t-micro);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px">${o.sub}</div>
@@ -4716,12 +4912,18 @@ RENDER.adminAccounts=async function(){
         <button class="iconbtn danger" style="flex:1 1 0;min-width:0" title="Delete" aria-label="Delete" onclick="${o.onDel}">${ic('trash')}</button>
       </div></div>`;
   const tileGrid=items=>items.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-top:4px">${items.join('')}</div>`:'<p class="note-hint">None yet.</p>';
-  const lr=tileGrid(leaders.map(u=>acctTile({
-    title:esc(u.firstName+' '+u.lastName),
-    sub:roleLabel(u.role)+(u.username?' · @'+esc(u.username):'')+(u.zone?' · '+esc(u.zone):'')+(u.status==='inactive'?' · inactive':''),
-    onName:`editLeaderName('${u.id}')`,onPass:`changePassword('${u.id}')`,onDel:`delAcct('${u.id}')`,
-    onPreview:u.status!=='inactive'?`confirmEnterAccountPreview('${u.id}')`:''
-  })));
+  const lr=tileGrid(leaders.map(u=>{
+    const isOriginal=u.id===originalAdminId;
+    return acctTile({
+      title:esc(u.firstName+' '+u.lastName)+(isOriginal?' <span class="pill ok" style="font-size:var(--t-micro)">Original</span>':''),
+      sub:roleLabel(u.role)+(u.username?' · @'+esc(u.username):'')+(u.zone?' · '+esc(u.zone):'')+(u.status==='inactive'?' · inactive':''),
+      onName:`editLeaderName('${u.id}')`,onPass:`changePassword('${u.id}')`,
+      // The original admin is the recovery account: the server refuses to delete, deactivate or
+      // demote it, so no delete button is drawn. Admin accounts are also never previewable.
+      onDel:isOriginal?'':`delAcct('${u.id}')`,
+      onPreview:(u.status!=='inactive'&&u.role!=='admin')?`confirmEnterAccountPreview('${u.id}')`:''
+    });
+  }));
   // Feature 2: each church has TWO gender-scoped logins (b-/g-).
   // Bug 13 (2026-07-28): they used to render as two INDEPENDENT tiles, both of whose "Account
   // Info" buttons opened the same modal that only ever found the FIRST account — so editing the
@@ -4753,7 +4955,10 @@ RENDER.adminAccounts=async function(){
     return `<div class="ch-pair">${head}<div class="ch-halves">${accts.map(half).join('')}</div></div>`;
   });
   const cr=churches.length?`<div class="ch-grid">${churchCards.join('')}</div>`:'<p class="note-hint">None yet.</p>';
-  const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option>`;
+  // Item 2: Admin is selectable. A secondary admin is a full peer of the original — it can do
+  // everything including creating further admins; the only thing it can never do is remove,
+  // deactivate or demote the original.
+  const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option><option value="admin">Admin</option>`;
   paint('adminAccounts',`
     <div class="card"><div class="lbl" style="margin-top:0">Leadership accounts</div>${lr}</div>
     <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('Churches named in a registration upload are auto-created, with the zone defaulting to Yellow — set the zone and login via Account Info. Accommodation overrides live in Admin → Accommodation setup.')}</div>
@@ -4765,6 +4970,7 @@ RENDER.adminAccounts=async function(){
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Password</label><input class="fld" id="aP" placeholder="min 6 chars" style="flex:1"></div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Role</label><select id="aR" onchange="aRoleChange()" style="flex:1">${roleOpts}</select></div>
       <div id="aZoneWrap" style="display:none"><div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Zone</label><div style="flex:1">${zoneSel('aZ')}</div></div></div>
+      <div id="aAdminWarn" class="warnbox" style="display:none;margin-top:8px">${icSm('alert')} An admin can see and change everything, including creating and deleting other accounts. Only the original admin account is protected from deletion.</div>
       <button class="btn" onclick="addAcct()" style="margin-top:10px;width:100%">Create account</button></div>
     <div class="card"><div class="lbl" style="margin-top:0">Add a church (with its login)</div>
       <div class="warnbox">${icSm('alert')} Church name must match the registration export exactly — registrations are matched by name.</div>
@@ -4777,6 +4983,7 @@ RENDER.adminAccounts=async function(){
 function aRoleChange(){
   const r=document.getElementById('aR').value;
   const zw=document.getElementById('aZoneWrap');if(zw)zw.style.display=r==='zoneLeader'?'block':'none';
+  const aw=document.getElementById('aAdminWarn');if(aw)aw.style.display=r==='admin'?'block':'none';
 }
 async function addAcct(){const role=sel('aR');const nm=val('aName').trim();const sp=nm.indexOf(' ');
   // Bug-8: a one-word account name (e.g. a first-aid post) keeps an EMPTY last name rather than
@@ -5232,7 +5439,8 @@ RENDER.adminSettings=async function(){
         </div>
       </div>
     </details>
-    <button class="btn" style="margin-top:6px" onclick="saveSettings()">Save camp settings</button>`,'Camp settings','Grouped setup');
+    <div class="setg-savepad"></div>
+    <div class="setg-save"><button class="btn" onclick="saveSettings()">Save camp settings</button></div>`,'Camp settings','Grouped setup');
   renderCheckinDaysPreview();
 };
 window._phaseOverride=null;
@@ -6051,6 +6259,9 @@ function _churchOpts(sel){
     .map(c=>`<option value="${esc(c.id)}"${c.id===sel?' selected':''}>${esc(c.name)}</option>`).join('');
 }
 
+/* Item 8: how many rows the Data Import people lists show before they scroll internally.
+   Mirrored by the .alloc-scroll max-height in CSS — change both together. */
+const ALLOC_VISIBLE_ROWS=4;
 function _renderAllocCards(){
   const wrap=document.getElementById('allocWrap'); if(!wrap) return;
   const un=_allocState.unallocated;
@@ -6058,18 +6269,35 @@ function _renderAllocCards(){
   const unRows=un.length?un.map(p=>`
     <div class="card" style="padding:10px">
       <div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div>
-      <div class="sub">${esc(p.registrationType||'—')} · ${esc(p.gender||'—')} · ${gradeLabel(p)} · ${p.mobile?esc(fmtPhone(p.mobile)):'no phone'}</div>
+      <div class="sub">${esc(p.registrationType||'—')} · ${esc(p.gender||'—')} · ${gradeLabel(p)} · ${p.mobile?telLink(p.mobile):'no phone'}</div>
       ${p.churchUnlistedNote?`<div class="note-hint" style="text-align:left;margin:4px 0"><b>They wrote:</b> ${esc(p.churchUnlistedNote)}</div>`:''}
       <div class="rowsb" style="gap:6px;margin-top:6px">
         <select class="fld" id="alloc_${esc(p.id)}" style="flex:1">${_churchOpts('')}</select>
         <button class="btn" style="width:auto;flex:0 0 auto;margin-top:0" onclick="allocatePerson('${esc(p.id)}')">Confirm</button>
       </div>
     </div>`).join(''):'<p class="note-hint">No unallocated registrants.</p>';
+  /* Item 8 (2026-07-31): both people lists on this screen scroll INTERNALLY at four rows.
+     Before this, 40 unallocated registrants pushed the overrides card and the rest of the Data
+     Import screen entirely below the fold — the admin had to scroll past the whole list to get
+     back to anything else. `_allocScroll` is applied only when there is something to scroll;
+     wrapping a short list would leave a fixed-height box with dead space in it. */
+  const scroller=(html,rows)=>rows>ALLOC_VISIBLE_ROWS?`<div class="alloc-scroll">${html}</div>`:html;
   const cardA=`<div class="card"><div class="h3" style="margin-top:0">Unallocated registrants (${un.length})</div>
-    <p class="note-hint" style="text-align:left">These people chose “OTHER – please specify below” and have no church yet. Allocate each to a church.</p>${unRows}</div>`;
+    <p class="note-hint" style="text-align:left">These people chose “OTHER – please specify below” and have no church yet. Allocate each to a church.</p>${scroller(unRows,un.length)}</div>`;
 
+  /* Item 8: the single "Church overrides / forced allocations" card is SPLIT IN TWO, because it
+     was conflating two things the admin treats differently:
+       - `kind === 'unallocated'` — someone who picked OTHER and has since been DESIGNATED a
+         church. That is finished work. It is the bulk of the list and it is why the card grew
+         so long, and it is what the owner asked to collapse out of the way.
+       - everything else — a MANUAL override of a church the form did name. That is a deliberate
+         correction someone made and is worth keeping visible.
+     Both keep Undo, and both are still fed by the same `_allocState.overrides` array, so an
+     Undo from either section behaves identically. */
   const ov=_allocState.overrides;
-  const ovRows=ov.length?ov.map(o=>`
+  const designated=ov.filter(o=>o.kind==='unallocated');
+  const manual=ov.filter(o=>o.kind!=='unallocated');
+  const ovRow=o=>`
     <div class="card" style="padding:10px">
       <div class="rowsb">
         <div>
@@ -6079,17 +6307,26 @@ function _renderAllocCards(){
         </div>
         <button class="btn ghost" onclick="undoOverride('${esc(o.id)}')">Undo</button>
       </div>
-    </div>`).join(''):'<p class="note-hint">No forced allocations yet.</p>';
-  const cardB=`<div class="card"><div class="h3" style="margin-top:0">Church overrides / forced allocations (${ov.length})</div>
-    <p class="note-hint" style="text-align:left">Everyone whose church differs from their form. These persist across re-imports.</p>
+    </div>`;
+  const manualRows=manual.length?scroller(manual.map(ovRow).join(''),manual.length):'<p class="note-hint">No manual overrides yet.</p>';
+  const cardB=`<div class="card"><div class="h3" style="margin-top:0">Church overrides (${manual.length})</div>
+    <p class="note-hint" style="text-align:left">People you moved to a different church than their form said. These persist across re-imports.</p>
     <div class="card" style="padding:10px;background:var(--paper)">
       <div class="lbl" style="margin-top:0">Override a church allocation</div>
       <input class="fld" id="ovSearch" placeholder="Search a registrant by name…" oninput="_renderOvSearch()">
       <div id="ovSearchResults"></div>
     </div>
-    ${ovRows}</div>`;
+    ${manualRows}</div>`;
 
-  wrap.innerHTML=cardA+cardB;
+  // Collapsed by default (no `open` attribute) — this is a record of completed work, not a
+  // to-do list, so it should not compete for space with the two cards above it.
+  const cardC=designated.length?`<div class="card"><details>
+    <summary style="cursor:pointer;font-weight:700">Designated from “OTHER” (${designated.length})</summary>
+    <p class="note-hint" style="text-align:left">People who chose “OTHER – please specify below” and have since been given a church. Undo returns them to the unallocated list above.</p>
+    ${scroller(designated.map(ovRow).join(''),designated.length)}
+  </details></div>`:'';
+
+  wrap.innerHTML=cardA+cardB+cardC;
 }
 
 function _renderOvSearch(){
@@ -6240,7 +6477,7 @@ function dataApply(){
   const body=rows.map(r=>{
     const grade=r.kind==='leader'?'Leader':(r.grade??'—');
     const cost=r.registrationCost!=null?'$'+r.registrationCost.toLocaleString():'—';
-    return `<tr>${td(r.lastName+', '+r.firstName)}${td(r.churchName)}${td(r.gender)}${td(grade)}${td(r.registrationType)}${td(cost)}${td(r.discountCode)}${td(fmtPhone(r.mobile))}${td((r.medicalConditions||[]).join(', '))}${td((r.dietaryRequirements||[]).join(', '))}${td(r.otherMedications)}${td(r.blueCardNumber)}${tdRaw(accomCell(r))}${tdRaw(reviewCell(r))}</tr>`;
+    return `<tr>${td(r.lastName+', '+r.firstName)}${td(r.churchName)}${td(r.gender)}${td(grade)}${td(r.registrationType)}${td(cost)}${td(r.discountCode)}${tdRaw(r.mobile?telLink(r.mobile):'')}${td((r.medicalConditions||[]).join(', '))}${td((r.dietaryRequirements||[]).join(', '))}${td(r.otherMedications)}${td(r.blueCardNumber)}${tdRaw(accomCell(r))}${tdRaw(reviewCell(r))}</tr>`;
   }).join('');
   const t=document.getElementById('dataTbl');
   const thead=DATA_COLS.map(([label,key])=>{
@@ -6859,6 +7096,37 @@ RENDER.adminContacts=async function(){
     :'<p class="note-hint">No churches yet.</p>';
   paint('adminContacts',grid,'Ministry contacts','Tap a church to edit');
 };
+/* Item 11 (2026-07-31) — a church login sets its OWN four ministry leader contacts.
+   These are the numbers first aid rings when a student is hurt, and until now only an admin
+   could enter them, so they went stale the moment a church changed who was leading.
+
+   Field ids are IDENTICAL to RENDER.adminContacts' (`mp_n_<id>` etc), so `saveContacts` is
+   shared verbatim rather than forked — one save path, one payload shape. The owner chose all
+   four contacts (not just the login's own gender), so there is no gender filtering here; the
+   backend does not gender-scope this endpoint either. */
+RENDER.mycontacts=async function(){
+  const churchId=ACTOR&&ACTOR.churchId;
+  if(!churchId){paint('mycontacts','<p class="note-hint">This login is not attached to a church.</p>','Leader contacts','');return;}
+  paint('mycontacts','<p class="note-hint" style="margin-top:40px;text-align:center">Loading…</p>','Leader contacts','');
+  let c=null;
+  try{
+    const churches=await api('/accounts/churches');
+    c=(churches||[]).find(x=>x.id===churchId)||null;
+  }catch(e){}
+  if(!c){paint('mycontacts','<p class="err" style="display:block">Could not load your church.</p>','Leader contacts','');return;}
+  const ct=c.contacts||{};
+  const mp=ct.male?.primary||{},mb=ct.male?.backup||{},fp=ct.female?.primary||{},fb=ct.female?.backup||{};
+  const pair=(lbl,n,p,nv,pv)=>`<label>${lbl}</label><div style="display:flex;gap:6px"><input class="fld" id="${n}" placeholder="Name" value="${esc(nv||'')}"><input class="fld" id="${p}" placeholder="Phone" value="${esc(pv||'')}" inputmode="tel"></div>`;
+  paint('mycontacts',`<div class="infobox" style="font-size:.82rem">These are the leaders first aid and the camp office call about one of your students. Keep them current — a wrong number here is only discovered in an emergency.</div>
+    <div class="card">
+      ${pair('Guys — primary leader','mp_n_'+c.id,'mp_p_'+c.id,mp.name,mp.phone)}
+      ${pair('Guys — secondary leader','mb_n_'+c.id,'mb_p_'+c.id,mb.name,mb.phone)}
+      ${pair('Girls — primary leader','fp_n_'+c.id,'fp_p_'+c.id,fp.name,fp.phone)}
+      ${pair('Girls — secondary leader','fb_n_'+c.id,'fb_p_'+c.id,fb.name,fb.phone)}
+      <button class="btn" style="margin-top:12px" onclick="saveContacts('${c.id}')">Save contacts</button>
+      <p class="note-hint" style="text-align:left">Leave a row blank to clear it. Your students' leaders see these plainly; first aid reveals them through an audited tap.</p>
+    </div>`,'Leader contacts',esc(c.name));
+};
 function toggleContactCard(id){const b=document.getElementById('contactBody_'+id),ch=document.getElementById('contactChev_'+id);if(!b)return;const open=b.style.display!=='none';b.style.display=open?'none':'block';if(ch)ch.style.transform=open?'':'rotate(90deg)';}
 // Updates just this card's "N/4 Contacts" pill in place instead of a full RENDER.adminContacts()
 // re-render — a full re-render re-fetches every church and rebuilds the whole grid, which
@@ -6872,7 +7140,11 @@ function _updateContactPill(id,people){
 async function saveContacts(id){const C=(n,p)=>({name:val(n),phone:val(p)});
   const mp=C('mp_n_'+id,'mp_p_'+id),mb=C('mb_n_'+id,'mb_p_'+id),fp=C('fp_n_'+id,'fp_p_'+id),fb=C('fb_n_'+id,'fb_p_'+id);
   try{
-    await api('/accounts/churches/'+id,{method:'PATCH',body:{contacts:{male:{primary:mp,backup:mb},female:{primary:fp,backup:fb}}}});
+    /* Item 11 (2026-07-31): the contacts-only endpoint, not the general church PATCH. Both work
+       for an admin, but a CHURCH login only holds `church:contacts:write` — and this same
+       function backs the church-facing screen below, so it must use the route a church can
+       actually call. The general PATCH stays admin-only. */
+    await api('/accounts/churches/'+id+'/contacts',{method:'PATCH',body:{contacts:{male:{primary:mp,backup:mb},female:{primary:fp,backup:fb}}}});
     toast('Contacts saved');
     _updateContactPill(id,[mp,mb,fp,fb]);
   }catch(e){toast(e.message);}

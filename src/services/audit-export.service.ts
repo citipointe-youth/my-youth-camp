@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import type { IPersonRepository, INoteRepository, IIncidentRepository, ISettingsRepository } from '../repositories/interfaces/entity-repositories';
+import type { IPersonRepository, INoteRepository, IIncidentRepository, ISettingsRepository, IRevealAuditRepository } from '../repositories/interfaces/entity-repositories';
 import type { Person } from '../core/entities/person';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
@@ -18,6 +18,17 @@ function accommodationDisplay(kind: Person['accommodationKind'] | null | undefin
   if (kind === 'classroom') return 'Classroom';
   if (kind === 'tent') return 'Tent';
   return '';
+}
+
+/**
+ * Human label for a reveal row. `contactRole` is the raw slot key (e.g. `male-primary`) and is
+ * appended so two reveals on the same student are distinguishable in the export.
+ */
+function revealLabel(kind: string, contactRole: string | null): string {
+  if (kind === 'medicare') return 'Medicare number';
+  const which = contactRole ? ` (${contactRole})` : '';
+  if (kind === 'parent-contact') return `Parent/guardian phone${which}`;
+  return `Leader phone${which}`;
 }
 
 /** Parse a first-aid note's 4-line body into columns (mirrors the SPA's _faParse). */
@@ -111,6 +122,12 @@ export function makeAuditExportService(
   noteRepo: INoteRepository,
   incidentRepo: IIncidentRepository,
   settingsRepo: ISettingsRepository,
+  /**
+   * Optional so the existing tests can keep constructing this with four repos. When absent the
+   * "Sensitive Reveals" sheet is simply omitted rather than rendered empty — an empty sheet
+   * would read as "nobody revealed anything", which is a different and misleading claim.
+   */
+  revealAuditRepo?: IRevealAuditRepository,
 ): AuditExportService {
   async function getAllData() {
     const settings = await settingsRepo.getSingleton();
@@ -283,6 +300,36 @@ export function makeAuditExportService(
           inc.occurredAt ? toLocalTs(inc.occurredAt, tz) : '',
           inc.zone ?? '',
         ]);
+      }
+
+      // ----- Sensitive Reveals (2026-07-31) -----
+      // Who looked at a masked Medicare number or contact number, and when. ⚠️ THE REVEALED
+      // VALUE IS NOT HERE AND MUST NEVER BE ADDED — this workbook is emailed and stored on
+      // laptops, and the whole reason those fields are masked in the app and encrypted in the
+      // database is that they should not travel. This sheet answers "who looked", not "what
+      // did they see".
+      if (revealAuditRepo) {
+        const reveals = await revealAuditRepo.findRecent();
+        const revealSheet = wb.addWorksheet('Sensitive Reveals');
+        revealSheet.addRow([
+          'When', 'What was revealed', 'Student', 'Church', 'Account', 'Role', 'Leader initials',
+        ]);
+        revealSheet.getRow(1).font = { bold: true };
+        revealSheet.columns = [
+          { width: 20 }, { width: 26 }, { width: 24 }, { width: 24 },
+          { width: 22 }, { width: 12 }, { width: 14 },
+        ];
+        for (const r of reveals) {
+          revealSheet.addRow([
+            toLocalTs(r.createdAt, tz),
+            revealLabel(r.kind, r.contactRole),
+            r.personName,
+            r.churchName,
+            r.actorUsername,
+            r.actorRole,
+            r.actorInitials,
+          ]);
+        }
       }
 
       // ----- Passwords tab (if lastTempPasswords is set) -----

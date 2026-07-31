@@ -13,6 +13,7 @@ import type {
   ISnapshotRepository,
   IAllocationOverrideRepository,
   IIncidentRepository,
+  IRevealAuditRepository,
   IPushSubscriptionRepository,
 } from '../repositories/interfaces/entity-repositories';
 import type { CampSettings } from '../core/entities/settings';
@@ -85,6 +86,9 @@ export function makeAdminService(
   // reset() clears them; also backs the new resetLogs().
   incidentRepo: IIncidentRepository,
   pushSubRepo: IPushSubscriptionRepository,
+  // 2026-07-31: the reveal audit is a log of THIS year's people, so it is purged by all three
+  // destructive paths (reset, resetLogs, newYear) — same standing rule as the two above.
+  revealAuditRepo: IRevealAuditRepository,
 ): AdminService {
   const settingsService = makeSettingsService(settingsRepo);
 
@@ -134,9 +138,13 @@ export function makeAdminService(
         // orphaned push subscriptions would have kept pushing to deleted accounts' devices.
         incidentRepo.deleteAll(),
         pushSubRepo.deleteAll(),
+        revealAuditRepo.deleteAll(),
       ]);
 
-      // Delete every non-admin account (keep the single admin).
+      // Delete every non-admin account. ALL admins survive, not just the original
+      // (2026-07-31, when secondary admins became creatable): reset() requires an admin
+      // actor, so deleting secondary admins would let a secondary admin destroy their own
+      // account mid-operation and lock themselves out of the wipe they just started.
       const users = await userRepo.findAll();
       await Promise.all(users.filter((u) => u.role !== 'admin').map((u) => userRepo.delete(u.id)));
 
@@ -183,7 +191,9 @@ export function makeAdminService(
       }
 
       const [notes, incidents] = await Promise.all([noteRepo.findAll(), incidentRepo.findAll()]);
-      await Promise.all([noteRepo.deleteAll(), incidentRepo.deleteAll()]);
+      // The reveal audit is exactly the class of thing resetLogs() exists to clear — it is a
+      // sheet in the same compliance workbook as the notes and incidents beside it.
+      await Promise.all([noteRepo.deleteAll(), incidentRepo.deleteAll(), revealAuditRepo.deleteAll()]);
 
       invalidateDashboardCache();
       return { people: touched.length, notes: notes.length, incidents: incidents.length };
@@ -252,6 +262,9 @@ export function makeAdminService(
         // in-memory, and would stop working the moment an account survived the rollover.
         // Same standing rule as reset(): a new repository must be added here in the same commit.
         pushSubRepo.deleteAll(),
+        // The audit's rows name people who are about to be deleted; carrying them into a new
+        // camp would leave an export full of names that no longer resolve to anyone.
+        revealAuditRepo.deleteAll(),
       ]);
 
       // Restore the scaffold from the baseline. Accounts: replace all EXCEPT the

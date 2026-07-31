@@ -1,4 +1,5 @@
 import type { IPersonRepository, IChurchRepository } from '../repositories/interfaces/entity-repositories';
+import type { RevealAuditService } from './reveal-audit.service';
 import type { Person } from '../core/entities/person';
 import type { Church, ChurchContact } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
@@ -29,7 +30,17 @@ export interface RevealedContact extends MaskedContact {
 export interface SearchService {
   search(actor: Actor, q: string): Promise<SearchResult[]>;
   resolveContacts(actor: Actor, camperId: string): Promise<MaskedContact[]>;
-  revealContact(actor: Actor, camperId: string, contactRole: string): Promise<RevealedContact>;
+  /**
+   * Reveal one masked contact. `opts.initials` is the acting leader's initials (church sessions
+   * prefill these) and is recorded on the reveal audit row — it is NOT used for access control,
+   * which is `camper:read:sensitive` + `canAccessPerson`, both below.
+   */
+  revealContact(
+    actor: Actor,
+    camperId: string,
+    contactRole: string,
+    opts?: { initials?: string },
+  ): Promise<RevealedContact>;
 }
 
 function makeContacts(church: Church, gender: 'male' | 'female', opts?: { mask?: boolean }): MaskedContact[] {
@@ -136,6 +147,12 @@ function redactSensitive(person: Person): Person {
 export function makeSearchService(
   personRepo: IPersonRepository,
   churchRepo: IChurchRepository,
+  /**
+   * Optional so every existing test can keep calling `makeSearchService(people, churches)`.
+   * When absent the reveal simply is not recorded — the audit must never be the reason a
+   * first-aider cannot get a phone number (see reveal-audit.service.ts).
+   */
+  revealAudit?: RevealAuditService,
 ): SearchService {
   async function getContactsForPerson(person: Person): Promise<{ masked: MaskedContact[]; raw: Map<string, ChurchContact & { gender: 'male' | 'female'; type: 'primary' | 'backup' }> }> {
     const church = await churchRepo.findById(person.churchId);
@@ -213,7 +230,7 @@ export function makeSearchService(
       return [...leaderContacts, ...(parentContact ? [parentContact] : [])];
     },
 
-    async revealContact(actor, camperId, contactRole) {
+    async revealContact(actor, camperId, contactRole, opts) {
       assertCan(actor, 'camper:read:sensitive');
       const person = await personRepo.findById(camperId);
       // Bug 21 (2026-07-28): this used to also require `isCamper(person)` (lifecycle >= arrived),
@@ -225,9 +242,16 @@ export function makeSearchService(
       if (!canAccessPerson(actor, person)) {
         throw new NotFoundError('Camper not found');
       }
+      // Record AFTER every access check and AFTER the contact is known to exist, so a
+      // NotFound never writes an audit row for a reveal that did not happen. A parent reveal
+      // and a leader reveal are logged as different kinds — the parent number is the sensitive
+      // one (masked at the DTO boundary for first aid); a leader number is a work contact.
+      const kind = contactRole === PARENT_ROLE ? 'parent-contact' : 'leader-contact';
+
       if (contactRole === PARENT_ROLE) {
         const parentContact = makeParentContact(person, { mask: false });
         if (!parentContact) throw new NotFoundError('Contact not available');
+        await revealAudit?.record(actor, { kind, person, initials: opts?.initials, contactRole });
         return parentContact;
       }
       const { masked, raw } = await getContactsForPerson(person);
@@ -236,6 +260,7 @@ export function makeSearchService(
       const maskedEntry = masked.find((m) => m.role === contactRole);
       if (!maskedEntry) throw new NotFoundError('Contact not available');
 
+      await revealAudit?.record(actor, { kind, person, initials: opts?.initials, contactRole });
       return {
         ...maskedEntry,
         phone: rawContact.phone,

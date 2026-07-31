@@ -16,6 +16,7 @@ import {
   InMemoryAllocationOverrideRepository,
   InMemoryIncidentRepository,
   InMemoryPushSubscriptionRepository,
+  InMemoryRevealAuditRepository,
 } from '../repositories/in-memory';
 import type { User, Actor } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
@@ -192,6 +193,7 @@ interface Repos {
   overrideRepo: InMemoryAllocationOverrideRepository;
   incidentRepo: InMemoryIncidentRepository;
   pushSubRepo: InMemoryPushSubscriptionRepository;
+  revealAuditRepo: InMemoryRevealAuditRepository;
 }
 
 async function makeRepos(): Promise<Repos> {
@@ -211,6 +213,7 @@ async function makeRepos(): Promise<Repos> {
     overrideRepo: new InMemoryAllocationOverrideRepository(),
     incidentRepo: new InMemoryIncidentRepository(),
     pushSubRepo: new InMemoryPushSubscriptionRepository(),
+    revealAuditRepo: new InMemoryRevealAuditRepository(),
   };
   await Promise.all([
     repos.userRepo.init(),
@@ -228,6 +231,7 @@ async function makeRepos(): Promise<Repos> {
     repos.overrideRepo.init(),
     repos.incidentRepo.init(),
     repos.pushSubRepo.init(),
+    repos.revealAuditRepo.init(),
   ]);
   return repos;
 }
@@ -249,6 +253,7 @@ function build(r: Repos) {
     r.overrideRepo,
     r.incidentRepo,
     r.pushSubRepo,
+    r.revealAuditRepo,
   );
 }
 

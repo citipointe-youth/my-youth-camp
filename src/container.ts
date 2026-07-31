@@ -14,6 +14,7 @@ import {
   InMemoryNoteRepository,
   InMemoryNotificationRepository,
   InMemoryIncidentRepository,
+  InMemoryRevealAuditRepository,
   InMemoryScheduleRepository,
   InMemoryDevotionalRepository,
   InMemoryFaqRepository,
@@ -34,6 +35,7 @@ import {
   SupabaseNoteRepository,
   SupabaseNotificationRepository,
   SupabaseIncidentRepository,
+  SupabaseRevealAuditRepository,
   SupabaseScheduleRepository,
   SupabaseDevotionalRepository,
   SupabaseFaqRepository,
@@ -54,6 +56,7 @@ import type {
   INoteRepository,
   INotificationRepository,
   IIncidentRepository,
+  IRevealAuditRepository,
   IScheduleRepository,
   IDevotionalRepository,
   IFaqRepository,
@@ -71,6 +74,7 @@ import type { Group } from './core/entities/group';
 import type { StudentNote } from './core/entities/note';
 import type { Notification } from './core/entities/notification';
 import type { Incident } from './core/entities/incident';
+import type { RevealAudit } from './core/entities/reveal-audit';
 import type { ScheduleItem } from './core/entities/schedule';
 import type { Devotional } from './core/entities/devotional';
 import type { FaqItem } from './core/entities/content';
@@ -84,6 +88,7 @@ import { makeAccommodationService, type AccommodationService } from './services/
 import { makeCheckInService, type CheckInService } from './services/checkin.service';
 import { makeNotificationService, type NotificationService } from './services/notification.service';
 import { makeIncidentService, type IncidentService } from './services/incident.service';
+import { makeRevealAuditService, type RevealAuditService } from './services/reveal-audit.service';
 import { makeSearchService, type SearchService } from './services/search.service';
 import { makeNoteService, type NoteService } from './services/note.service';
 import { makeScheduleService, type ScheduleService } from './services/schedule.service';
@@ -115,6 +120,7 @@ export interface Repositories {
   notes: INoteRepository;
   notifications: INotificationRepository;
   incidents: IIncidentRepository;
+  revealAudit: IRevealAuditRepository;
   schedule: IScheduleRepository;
   devotionals: IDevotionalRepository;
   faqs: IFaqRepository;
@@ -131,6 +137,7 @@ export interface Services {
   checkIn: CheckInService;
   notification: NotificationService;
   incident: IncidentService;
+  revealAudit: RevealAuditService;
   search: SearchService;
   note: NoteService;
   schedule: ScheduleService;
@@ -181,6 +188,7 @@ export async function buildContainer(): Promise<Container> {
     const notes: INoteRepository = new SupabaseNoteRepository(sql);
     const notifications: INotificationRepository = new SupabaseNotificationRepository(sql);
     const incidents: IIncidentRepository = new SupabaseIncidentRepository(sql);
+    const revealAudit: IRevealAuditRepository = new SupabaseRevealAuditRepository(sql);
     const scheduleRepo: IScheduleRepository = new SupabaseScheduleRepository(sql);
     const devotionals: IDevotionalRepository = new SupabaseDevotionalRepository(sql);
     const faqs: IFaqRepository = new SupabaseFaqRepository(sql);
@@ -190,13 +198,13 @@ export async function buildContainer(): Promise<Container> {
 
     const repos: Repositories = {
       users, churches, allocationOverrides, people, classrooms, allocations,
-      zones, groups, notes, notifications, incidents, schedule: scheduleRepo,
+      zones, groups, notes, notifications, incidents, revealAudit, schedule: scheduleRepo,
       devotionals, faqs, settings: settingsRepo, snapshots, pushSubscriptions,
     };
 
     await Promise.all([
       users.init(), churches.init(), allocationOverrides.init(), people.init(), classrooms.init(), allocations.init(),
-      zones.init(), groups.init(), notes.init(), notifications.init(), incidents.init(),
+      zones.init(), groups.init(), notes.init(), notifications.init(), incidents.init(), revealAudit.init(),
       scheduleRepo.init(), devotionals.init(), faqs.init(), settingsRepo.init(), snapshots.init(),
       pushSubscriptions.init(),
     ]);
@@ -210,7 +218,8 @@ export async function buildContainer(): Promise<Container> {
     const checkIn = makeCheckInService(people, settingsRepo);
     const notification = makeNotificationService(notifications);
     const incident = makeIncidentService(incidents, notifications);
-    const search = makeSearchService(people, churches);
+    const revealAuditSvc = makeRevealAuditService(revealAudit, users);
+    const search = makeSearchService(people, churches, revealAuditSvc);
     const note = makeNoteService(notes, people);
     const schedule = makeScheduleService(scheduleRepo);
     const content = makeContentService(faqs, devotionals);
@@ -220,21 +229,21 @@ export async function buildContainer(): Promise<Container> {
     const churchImportSvc = makeChurchImportService(users, churches);
     const ticketImportSvc = makeTicketImportService(people, churches);
     const invoiceImportSvc = makeInvoiceImportService(people);
-    const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo);
+    const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
     const offlineSignInSvc = makeOfflineSignInService(people);
     const account = makeAccountService(users, churches, people);
     const dashboard = makeDashboardService(people, notifications, churches);
     const admin = makeAdminService(
       users, churches, people, classrooms, allocations, faqs, scheduleRepo,
       notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
-      incidents, pushSubscriptions,
+      incidents, pushSubscriptions, revealAudit,
     );
     const push = makePushService({ subscriptions: pushSubscriptions, notifications });
   const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
 
     const services: Services = {
       auth, settings, person: personSvc, accommodation: accommodationSvc,
-      checkIn, notification, incident, search, note, schedule, content,
+      checkIn, notification, incident, revealAudit: revealAuditSvc, search, note, schedule, content,
       importService: importSvc, exportService: exportSvc, allocation, churchImport: churchImportSvc,
       ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
       auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
@@ -280,6 +289,9 @@ export async function buildContainer(): Promise<Container> {
   const incidents: IIncidentRepository = new InMemoryIncidentRepository(
     useJson ? makeJsonPersistence<Incident>('incidents.json') : undefined,
   );
+  const revealAudit: IRevealAuditRepository = new InMemoryRevealAuditRepository(
+    useJson ? makeJsonPersistence<RevealAudit>('reveal-audit.json') : undefined,
+  );
   const scheduleRepo: IScheduleRepository = new InMemoryScheduleRepository(
     useJson ? makeJsonPersistence<ScheduleItem>('schedule.json') : undefined,
   );
@@ -311,6 +323,7 @@ export async function buildContainer(): Promise<Container> {
     notes,
     notifications,
     incidents,
+    revealAudit,
     schedule: scheduleRepo,
     devotionals,
     faqs,
@@ -332,6 +345,7 @@ export async function buildContainer(): Promise<Container> {
     notes.init(),
     notifications.init(),
     incidents.init(),
+    revealAudit.init(),
     scheduleRepo.init(),
     devotionals.init(),
     faqs.init(),
@@ -350,7 +364,8 @@ export async function buildContainer(): Promise<Container> {
   const checkIn = makeCheckInService(people, settingsRepo);
   const notification = makeNotificationService(notifications);
   const incident = makeIncidentService(incidents, notifications);
-  const search = makeSearchService(people, churches);
+  const revealAuditSvc = makeRevealAuditService(revealAudit, users);
+  const search = makeSearchService(people, churches, revealAuditSvc);
   const note = makeNoteService(notes, people);
   const schedule = makeScheduleService(scheduleRepo);
   const content = makeContentService(faqs, devotionals);
@@ -360,7 +375,7 @@ export async function buildContainer(): Promise<Container> {
   const churchImportSvc = makeChurchImportService(users, churches);
   const ticketImportSvc = makeTicketImportService(people, churches);
   const invoiceImportSvc = makeInvoiceImportService(people);
-  const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo);
+  const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
   const offlineSignInSvc = makeOfflineSignInService(people);
   const account = makeAccountService(users, churches, people);
   const dashboard = makeDashboardService(
@@ -384,6 +399,7 @@ export async function buildContainer(): Promise<Container> {
     allocationOverrides,
     incidents,
     pushSubscriptions,
+    revealAudit,
   );
   const push = makePushService({ subscriptions: pushSubscriptions, notifications });
   const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
@@ -396,6 +412,7 @@ export async function buildContainer(): Promise<Container> {
     checkIn,
     notification,
     incident,
+    revealAudit: revealAuditSvc,
     search,
     note,
     schedule,

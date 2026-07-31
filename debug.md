@@ -371,6 +371,33 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-07-31 — 14-item owner batch (reveal audit, admin accounts, church contacts, imports)
+
+| Symptom | Go to |
+|---|---|
+| "Who looked at this Medicare number?" / reveal audit empty or missing from the workbook | `src/services/reveal-audit.service.ts` (`record` — **it never throws**, so a failure is a `[ERROR] [audit] FAILED to persist` log line, not a user-visible error), then the `Sensitive Reveals` sheet in `audit-export.service.ts`. Migration `0020` = `reveal_audit`. |
+| The audit shows a church NAME where an account should be | `record()` resolves the username via `userRepo.findById`; it falls back to `actor.displayName` when the repo is absent or the lookup throws. Both `b-`/`g-` logins share a displayName — that fallback is the ambiguous case. |
+| A reveal is logged but the number is not in the export | **Correct and deliberate.** The revealed value is never stored. See the entity docs + the key-set test in `reveal-audit.service.test.ts`. |
+| Can't create an admin / "Cannot create admin accounts via API" | Stale build — that guard was removed 2026-07-31. `account.service.createUser`. |
+| Can't delete/deactivate/demote an admin | Expected IF it is the ORIGINAL (earliest-created) admin — `findOriginalAdmin` in `account.service.ts`. Any other admin is deletable. The SPA hides the delete button for the original. |
+| Notices vanish "too early" / a scheduled notice never appears | `defaultNoticeExpiry` in `notification.service.ts` — 6h from `scheduledFor ?? createdAt`. Rescheduling moves the expiry. `findActive()` does the filtering. |
+| A church can't save its leader contacts (403) | `updateChurchContacts` — capability `church:contacts:write` AND `actor.churchId === id`. Route is `PATCH /accounts/churches/:id/contacts`, NOT the admin-only `PATCH /accounts/churches/:id`. |
+| A church renamed itself / changed zone via the contacts screen | Shouldn't be possible — `UpdateChurchContactsSchema` accepts `contacts` only and the save writes only that field. There is a test. |
+| "Leader contacts" card missing on a church home | `_contactsCardHtml()` — church role + `ACTOR.churchId` only. Blank screen when tapped → check `<section class="screen" id="mycontacts">` exists in the shell and the RENDER key is lowercase `RENDER.mycontacts` (the router dispatches `RENDER[id]`). |
+| A re-registered student shows the WRONG ticket type or lost a medical condition | `import.service.ts` — rows are sorted by `Date Submitted` before the merge loop. Undated rows sort first (original order preserved). Blank cells never clobber on the matched branch. |
+| An import warning points at the wrong spreadsheet line | `rowNum` comes from `ordered[i].rowNum` (original position), never the sorted index. |
+| A two-invoice person's paid amount looks wrong | `invoice-import.service.ts` `moneyByPerson` — sums within ONE run, `registrationCost` from the latest row, `needsReview` set. Never reads the stored value, so re-import is idempotent. |
+| Budget per-church code counts disagree with the camp-wide card | They can't — both come from `computeDiscountCodeSummary` / `computeDiscountSummaryClient`. If they do, someone added a second count. `ChurchBudget.discountCodes`, SPA `_budChurchCodes`. |
+| First aid has no Site map button | Removed 2026-07-31 (item 4). Deliberate — that was firstAid's only map route. |
+| A revealed number isn't tappable | `faRevealLeader` replaces the button with an `<a href="tel:">`; `reveal()` opens a sheet with a Call button. |
+| Data Import: designated-from-OTHER people missing | They moved to their own default-collapsed "Designated from OTHER" section (`_renderAllocCards`, `kind === 'unallocated'`). |
+| Data Import list won't scroll / shows all rows | `.alloc-scroll` is applied only above `ALLOC_VISIBLE_ROWS` (4). CSS max-height and that constant must stay in step. |
+| Settings Save button off-screen or overlapping | `.setg-save` (`position:fixed`, z-index 105) + the `.setg-savepad` spacer. Must be fixed, not absolute. |
+| "Your day · N still to check in" missing on day 1 | Expected — `renderMyDay` returns '' while `campPhase()==='signin'`. |
+| Notes screen shows nothing / shows everything | `NOTE_CATS` is a Set and **empty means ALL**. `_toggleNoteCat`, `drawNotes`. |
+| Leaders sub-menu on My group empty or showing the wrong gender | `_loadMyLeaders` merges `/campers` + `/registrants`; scope comes from the server's `canAccessPerson`, NOT from any client filter. Sort is `_sortLeaders` (signed-in first, then first name). |
+
+
 ### 2026-07-31 — ⚠️ ANY bottom bar / floating nav / "wrong until I scroll" symptom — READ THIS FIRST
 
 **Turn on the viewport readout before touching CSS: tap the header title five times, read

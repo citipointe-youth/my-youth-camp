@@ -132,6 +132,16 @@ export interface ChurchBudget {
   total: number;
   campers: CategoryRow[];
   leaders: CategoryRow[];
+  /**
+   * Which discount codes THIS church used, and how many of its people used each (item 1,
+   * 2026-07-31). Most-used first, same shape and derivation as the camp-wide "Discount codes"
+   * card — `computeDiscountCodeSummary` is reused rather than re-counted, so the per-church
+   * numbers can never disagree with the camp-wide ones. Empty when the church used none.
+   *
+   * Counted per PERSON, not per code: a church with 12 people on `EARLYBIRD` reads 12. The
+   * denominator for "of N" is the church's own headcount (`camperCount + leaderCount`).
+   */
+  discountCodes: DiscountCodeRow[];
 }
 
 export interface BudgetReport {
@@ -304,7 +314,13 @@ export function computeBudget(
     const leaderCount = leaders.reduce((s, r) => s + r.count, 0);
     const total =
       campers.reduce((s, r) => s + r.lineTotal, 0) + leaders.reduce((s, r) => s + r.lineTotal, 0);
-    churches.push({ churchId: c.churchId, churchName: c.churchName, camperCount, leaderCount, total, campers, leaders });
+    // Reuse the camp-wide summariser scoped to this church — see the field docs on
+    // ChurchBudget.discountCodes for why this must not become a second implementation.
+    const discountCodes = computeDiscountCodeSummary(scoped, c.churchId, tags).rows;
+    churches.push({
+      churchId: c.churchId, churchName: c.churchName, camperCount, leaderCount, total,
+      campers, leaders, discountCodes,
+    });
   }
   churches.sort((a, b) => a.churchName.localeCompare(b.churchName));
 

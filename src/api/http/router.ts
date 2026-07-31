@@ -34,7 +34,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const dashboard = makeDashboardController({ dashboard: services.dashboard, settings: services.settings });
   const registrant = makeRegistrantController({ person: services.person });
   const accommodation = makeAccommodationController({ accommodation: services.accommodation });
-  const camper = makeCamperController({ person: services.person });
+  const camper = makeCamperController({ person: services.person, revealAudit: services.revealAudit });
   const checkIn = makeCheckInController({ checkIn: services.checkIn, person: services.person });
   const search = makeSearchController({ search: services.search });
   const notification = makeNotificationController({ notification: services.notification });
@@ -224,6 +224,10 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/accounts/churches', auth: true, handler: (r) => account.createChurch(r) },
     { method: 'POST', path: '/accounts/churches/split', auth: true, handler: (r) => account.splitChurches(r) },
     { method: 'POST', path: '/accounts/churches/randomize-passwords', auth: true, handler: (r) => account.randomizeChurchPasswords(r) },
+    // Contacts-only edit. Reachable by a CHURCH login for its own church (2026-07-31), so it
+    // must stay a separate route from the admin-only PATCH above — routing both through one
+    // handler is how a church ends up able to rename itself.
+    { method: 'PATCH', path: '/accounts/churches/:id/contacts', auth: true, handler: (r) => account.updateChurchContacts(r) },
     { method: 'PATCH', path: '/accounts/churches/:id', auth: true, handler: (r) => account.updateChurch(r) },
     { method: 'DELETE', path: '/accounts/churches/:id', auth: true, handler: (r) => account.deleteChurch(r) },
 

@@ -1,5 +1,149 @@
 # CLAUDE.md — Youth Camp Platform
 
+## 14-item owner batch — reveal audit, admin accounts, church contacts — 2026-07-31
+
+Owner bug/improvement list (14 numbered items). Backend + SPA + **migration `0020`**
+(`reveal_audit`, **applied to prod and history-reconciled to `'0020'` BEFORE the code push**).
+`npm run typecheck` clean, `npx vitest run` = **832 pass / 54 files** (was 794/49; **38 new**).
+SPA + `sw.js` `node --check` OK. `sw.js` `camp-v73`→**`camp-v74`**.
+
+### 5 — Sensitive reveals are now a real, exportable audit (migration `0020`)
+Before this, the ONLY trail for a Medicare or contact reveal was a `logger.info('[audit] …')`
+line in the Vercel runtime logs — which the owner cannot read, cannot export, and which rolls
+off. New `reveal_audit` table + entity + repo trio + `reveal-audit.service.ts`, surfacing as the
+**"Sensitive Reveals"** sheet in the compliance workbook (When / What / Student / Church /
+Account / Role / Leader initials).
+
+- ⚠️ **THE REVEALED VALUE IS NEVER STORED.** No number, no fragment. `people.medicare_number`
+  and `parent_phone` are encrypted at rest precisely so a database reader cannot see them; an
+  audit table holding a plaintext copy of everything anyone looked at hands back exactly what
+  that encryption removes. There is a test asserting the row's key set, so adding such a field
+  fails the suite.
+- **`record()` NEVER THROWS.** A first-aider standing over an injured child needs the number
+  more than the camp needs a perfect log. On failure it logs and returns null; the log line is
+  the fallback trail, i.e. exactly what existed before the table.
+- **Covers medicare AND contact reveals** (owner's choice), as three `kind`s —
+  `medicare` / `parent-contact` / `leader-contact`, constrained by a CHECK so a typo can't
+  create a silent fourth category.
+- **It resolves the ACCOUNT USERNAME, not `actor.displayName`** — a church displayName is the
+  church name and is IDENTICAL for the `b-` and `g-` logins, so recording it alone could not
+  answer "which login revealed this". One indexed `userRepo.findById` per reveal; a reveal is a
+  deliberate human tap, not a per-request cost.
+- `person_name`/`church_name` are denormalised and there is deliberately **no FK to `people`** —
+  the audit must stay readable after a rollover deletes the person, and a cascade would erase
+  the record of the reveal along with its subject.
+- Purged by **`reset()`, `resetLogs()` AND `newYear()`** (the standing "a new repository must be
+  added to all of them in the same commit" rule).
+- The two first-aid page notes were reworded to describe what is actually recorded.
+
+### 2 — Secondary admin accounts; the ORIGINAL admin is protected
+`createUser`/`updateUser` no longer refuse `role: 'admin'`. A secondary admin is a **full peer**
+— it can do everything including creating further admins.
+
+> **`findOriginalAdmin(users)` = the EARLIEST-CREATED admin** (id as a deterministic tiebreak).
+> Deliberately NOT hard-coded to the seed id `user_seed_admin`: a new-year rollover or a fresh
+> deployment can produce a working camp whose first admin has a different id, and a constant
+> would leave those installations with no protected account at all.
+
+The original cannot be **deleted, deactivated or demoted** — by anyone, **including itself**. It
+is the recovery account. `reset()` keeps ALL admins (not just the original): reset requires an
+admin actor, so deleting secondary admins would let one destroy its own account mid-wipe.
+SPA: `admin` is in the role picker (with a warning box), admins appear on the Accounts screen
+with an "Original" pill, and the original renders **without** a delete button — offering a
+button that can only 403 is worse than not offering it. Admin accounts stay non-previewable.
+
+### 12 — Notices auto-expire 6 hours after PUBLISH
+`NOTICE_TTL_HOURS = 6` + `defaultNoticeExpiry(publishAt, explicit?)`. Measured from
+`scheduledFor ?? createdAt`, **not composition** — a notice written Monday to publish Thursday
+must live six hours after it appears, not expire two days before anyone can see it.
+`findActive()` already filters on `expiresAt`, so this alone drops it off Home and Notices
+together. **Rescheduling moves the expiry with it.** An explicit `expiresAt` still wins — this
+changed the DEFAULT, not the capability. System notices (check-in warning, incident alert) set
+their own expiry and never come through here.
+
+### 11 — Church logins set their own four leader contacts
+New capability **`church:contacts:write`** (church + director + admin) and a NARROW route
+`PATCH /accounts/churches/:id/contacts` with its own `UpdateChurchContactsSchema`.
+
+> ⚠️ **The capability is not the gate.** `updateChurchContacts` also checks
+> `actor.churchId === id` for non-oversight roles — without it any church could rewrite every
+> other church's emergency numbers. And the schema is separate from `UpdateChurchSchema` on
+> purpose: a shared schema is one `.optional()` away from letting a church rename itself or move
+> its own zone. There is a test asserting a name/zone/override sent to this endpoint is ignored.
+
+SPA: new `RENDER.mycontacts` screen (**and its `<section class="screen" id="mycontacts">` in the
+shell** — a missing one of those is the 2026-07-17 blank-screen bug) reachable from a
+**"Leader contacts"** card on BOTH church home variants. Field ids are identical to
+`RENDER.adminContacts`' so `saveContacts` is shared verbatim; that function now posts to the new
+narrow route for every role. Owner chose all four contacts, not just the login's own gender.
+
+### 7 — Duplicate registrations (the "delta cost to upgrade" case)
+- **Form import now processes rows in `Date Submitted` order** before merging. The merge was
+  already "latest wins, but a blank cell never clobbers a known value" — which is exactly the
+  behaviour wanted — but it only gives the right answer if the latest submission is processed
+  LAST, and the Elvanto export does not guarantee chronological order. The sort is **stable**
+  and undated rows sort first, so a file with no `Date Submitted` column keeps its original
+  order exactly (nothing regresses). ⚠️ **`rowNum` is captured from the ORIGINAL position** —
+  reporting a sorted index would point the admin at the wrong line of their spreadsheet.
+- A repeat name in one file now raises a **warning** naming the person; silent merging is
+  correct but invisible.
+- **Invoice accumulation was VERIFIED, not rewritten** — `moneyByPerson` already sums
+  `amountPaid`/`discountAmount`/`feesAmount`/`taxAmount` across rows in a run, takes
+  `registrationCost` from the latest row, sets `needsReview`, and is idempotent on re-import.
+  New tests pin all of it (a $150 ticket + a $40 delta reads as $190 paid, not $40).
+
+### 1 — Per-church discount code counts on Budget
+`ChurchBudget.discountCodes` (+ the SPA mirror in `computeBudgetClient`) — rendered inside each
+church's expandable row via `_budChurchCodes(c)`. **Derived by scoping
+`computeDiscountCodeSummary` to the one church, never counted again**, so the per-church numbers
+cannot disagree with the camp-wide card. Read-only there on purpose: the classification dropdown
+stays camp-wide, because a tag applies to the CODE across the whole camp — two editable copies
+would read as a per-church setting and it isn't.
+
+### The rest
+- **4 — the Site map button is gone from the first-aid Search landing.** firstAid has no Home
+  screen (`RENDER.home` redirects it here), so that was the role's only map route; every other
+  role keeps its Home hero Map button and `RENDER.sitemap` is untouched. ⚠️ The explanatory
+  comment sits INSIDE a JS template literal — it must never contain a backtick (it did, once,
+  and took the whole script out).
+- **6 — revealed numbers are diallable.** The reported case: first aid reveals a parent's number
+  and then has to retype ten digits. The reveal control is a `<button>` (it has to be — the
+  reveal is an audited action), so on success it is **replaced with an `<a href="tel:">`**
+  rather than trying to make one element be both. The students-search `reveal()`, which only
+  toasted the number into a message that vanishes, now opens a sheet with a Call button. The
+  Data tab's Mobile column runs through `telLink`.
+- **8 — the Data Import overrides card is SPLIT.** It was conflating finished work
+  (`kind === 'unallocated'` — designated from OTHER) with deliberate manual corrections.
+  Designated-from-OTHER is now its own **default-collapsed** section below; both people lists
+  scroll internally at `ALLOC_VISIBLE_ROWS = 4` (mirrored by `.alloc-scroll`'s max-height —
+  change both together). Undo behaves identically from either section.
+- **9 — the admin Settings save button floats** (`.setg-save`, `position:fixed` above the nav,
+  z-index 105). ⚠️ Fixed, never absolute — the phone `.app` grows with content and is not
+  viewport height. A `.setg-savepad` spacer keeps the last section clear.
+- **10 — the "Your day · N still to check in" card is hidden during the sign-in phase**
+  (`campPhase()==='signin'`), so day 1 doesn't show a backlog for a session that hasn't opened.
+  Do NOT re-derive this from the day number — `SETTINGS.campDay` is the preview-only toggle.
+- **13 — the Testimonies & Notes "Record" dropdown is now multi-select chips** (`NOTE_CATS`,
+  `NOTE_CAT_OPTIONS`, `_toggleNoteCat`). ⚠️ **An EMPTY set means ALL** — it is a normal state you
+  reach by deselecting the last chip, and showing nothing there would look broken. Chips rather
+  than `<select multiple>`, which needs ctrl/cmd-click on desktop and is a cramped scrolling box
+  on iOS.
+- **14 — a collapsed "Leaders" sub-menu on Students → My group** (`_loadMyLeaders`,
+  `_sortLeaders`, `leaderRow`), below "Not signed in". Signed-in first, then alphabetical by
+  FIRST name. Leaders are excluded from the check-in roster and from the "Not signed in" list,
+  so no screen answered "which of my leaders are actually here". ⚠️ **Scope is NOT computed
+  client-side** — both feeds are already narrowed by `canAccessPerson`; re-deriving the gender
+  rule here is how a `b-` login ends up seeing the girls' leaders. Filtered by zone/gender but
+  NOT by grade (a leader has no grade; any year level would empty the list).
+
+### 3 — Churches (data operation, not code)
+The owner's master list holds 28 real churches; prod had 15. The 15 missing were created (zone
+Yellow, with `b-`/`g-` logins) and **`Citipointe North` was merged into
+`Citipointe North (Caboolture)`**. ⚠️ Names must match the Elvanto export string EXACTLY or the
+Form import auto-creates a duplicate on the next run. `Connect Church Caboolture` is in prod but
+not on the master list and was left alone — it has a real person attached.
+
+
 > **Scope:** the real **camp** app — TS/Express backend (`src/`) + `public/` SPA. The offline demos live in `../youth app demo/CLAUDE.md` (that folder is the Vercel deploy source for the **demo** at `yc-camp-demo`). **This repo auto-deploys the real app to https://my-youth-camp.vercel.app on push to `master`.** Project map: `../CLAUDE.md`. Sibling app: `../youth-allocation-platform/CLAUDE.md`. Change workflow: `../CHANGE-PROMPTS.md`.
 
 Guidance for Claude Code when working in this package. Read this before editing.
@@ -1489,7 +1633,8 @@ Since then: **`0018`** (2026-07-30 — `notifications.target_user_id`, per-login
 column on every notice save) and **`0019`** (2026-07-30 — `incidents.occurred_at`, optional).
 **Both were APPLIED to prod on 2026-07-30 immediately before the push, and both history rows were
 reconciled** from their generated timestamps (`20260730122502`/`20260730122518`) to `'0018'`/`'0019'`
-and verified present by query. Next migration = **`0020`**. See the 2026-07-26 web-push section at
+and verified present by query. Since then: **`0020`** (2026-07-31 — the `reveal_audit` table; **applied to prod and
+reconciled to version `'0020'` BEFORE the code push**). Next migration = **`0021`**. See the 2026-07-26 web-push section at
 the bottom of this file for the gating conditions on `0014`.
 
 ✅ **~~Newly-observed history drift~~ — ALL SIX ROWS RECONCILED 2026-07-31.** `0009`–`0012` and
@@ -2898,7 +3043,9 @@ api (Express) → controllers → services → repositories (interfaces) → cor
 | `admin` | All + back office | Everything + admin:manage (settings, accounts, accommodation, FAQ, schedule, devotionals, mode switch) |
 | `firstAid` | All | `camper:read`, `camper:read:sensitive`, `attendance:write` (attendance only, NOT `checkin:write`), **`note:write:firstaid`** + **`note:read:firstaid`** (Phase 4 — first-aid records only, never general notes/testimonies). No admin, no pre-camp data. |
 
-There is always exactly one `admin` account. It cannot be deleted or deactivated.
+Additional `admin` accounts can be created (2026-07-31). The **original** admin — the
+earliest-created one, see `findOriginalAdmin` — cannot be deleted, deactivated or demoted by
+anyone, including itself; secondary admins are full peers in every other respect.
 
 ## Camp mode
 

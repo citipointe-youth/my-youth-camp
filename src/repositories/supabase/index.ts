@@ -9,6 +9,7 @@ export { SupabaseGroupRepository } from './supabase.groups';
 export { SupabaseNoteRepository } from './supabase.notes';
 export { SupabaseNotificationRepository } from './supabase.notifications';
 export { SupabaseIncidentRepository } from './supabase.incidents';
+export { SupabaseRevealAuditRepository } from './supabase.reveal-audit';
 export { SupabasePushSubscriptionRepository } from './supabase.push-subscriptions';
 export { SupabaseScheduleRepository } from './supabase.schedule';
 export { SupabaseDevotionalRepository } from './supabase.devotionals';

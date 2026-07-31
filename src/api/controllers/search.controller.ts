@@ -36,12 +36,13 @@ export function makeSearchController(services: SearchControllerServices) {
       const role = req.params['role'];
       if (!camperId) throw new BadRequestError('Missing camperId');
       if (!role) throw new BadRequestError('Missing role');
-      const contact = await services.search.revealContact(req.ctx.actor, camperId, role);
       // Feature 4: attribute this masked-contact reveal to the acting leader's initials
-      // (church-account session prefill, passed as a query param). No reveal-audit table
-      // exists — emit a real log line so the reveal is recorded (returning revealedBy alone
-      // recorded nothing), alongside the medicare-reveal and export audit lines.
+      // (church-account session prefill, passed as a query param). Since 2026-07-31 the reveal
+      // is ALSO persisted to `reveal_audit` inside the service (which has the person in hand)
+      // and surfaces as the "Sensitive Reveals" sheet in the compliance workbook. The log line
+      // below is kept as the fallback trail for when that write fails.
       const initials = typeof req.query['initials'] === 'string' ? req.query['initials'].trim() : '';
+      const contact = await services.search.revealContact(req.ctx.actor, camperId, role, { initials });
       const revealedBy = initials || req.ctx.actor.displayName;
       logger.info(
         `[audit] contact '${role}' revealed for person ${camperId} by ${req.ctx.actor.role} ${req.ctx.actor.id}` +

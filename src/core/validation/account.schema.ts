@@ -91,3 +91,15 @@ export const UpdateChurchSchema = z.object({
 });
 
 export type UpdateChurchInput = z.infer<typeof UpdateChurchSchema>;
+
+/**
+ * Body for `PATCH /accounts/churches/:id/contacts` (2026-07-31). Deliberately a schema of its
+ * OWN rather than reusing UpdateChurchSchema: this endpoint is reachable by a church login, and
+ * a shared schema would be one `.optional()` away from letting a church rename itself or move
+ * its own zone. `contacts` is the only field it will ever accept.
+ */
+export const UpdateChurchContactsSchema = z.object({
+  contacts: ChurchContactsSchema,
+});
+
+export type UpdateChurchContactsInput = z.infer<typeof UpdateChurchContactsSchema>;

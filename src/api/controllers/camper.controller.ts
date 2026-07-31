@@ -1,5 +1,6 @@
 import type { HttpRequest } from '../http/types';
 import type { PersonService } from '../../services/person.service';
+import type { RevealAuditService } from '../../services/reveal-audit.service';
 import type { Person } from '../../core/entities/person';
 import type { Actor } from '../../core/entities/user';
 import { toCamperDto, toCamperDetailDto } from '../dto/person.dto';
@@ -21,6 +22,8 @@ function maskParentForFirstAid<T extends { parentPhone: string | null }>(dto: T,
 
 export interface CamperControllerServices {
   person: PersonService;
+  /** Optional so existing controller tests can construct this with `{ person }` alone. */
+  revealAudit?: RevealAuditService;
 }
 
 export function makeCamperController(services: CamperControllerServices) {
@@ -89,14 +92,16 @@ export function makeCamperController(services: CamperControllerServices) {
       // caller can never reveal someone outside their church/zone/gender scope — an
       // inaccessible person throws NotFound before anything is logged or returned.
       const p = await person.get(req.ctx.actor, id);
-      // This app persists no reveal-audit table; the audit trail is this authenticated
-      // endpoint being hit. Feature 4 attributes the reveal to the acting leader's initials
-      // (church-account session prefill), falling back to the actor's display name. Emit a
-      // real log line so the reveal is actually recorded (returning revealedBy alone recorded
-      // nothing) — captured in the server logs alongside sign-in/out and export events.
+      // Since 2026-07-31 the reveal is persisted to `reveal_audit` and surfaces as the
+      // "Sensitive Reveals" sheet in the compliance workbook. Feature 4 attributes it to the
+      // acting leader's initials (church-account session prefill), falling back to the actor's
+      // display name. The log line below is kept as the fallback trail for when that write
+      // fails — `record()` never throws, so a database problem cannot block the reveal itself.
+      // ⚠️ The NUMBER is never written to the audit, only the fact that it was revealed.
       const b = (req.body ?? {}) as { initials?: unknown };
       const initials = typeof b.initials === 'string' ? b.initials.trim() : '';
       const revealedBy = initials || req.ctx.actor.displayName;
+      await services.revealAudit?.record(req.ctx.actor, { kind: 'medicare', person: p, initials });
       logger.info(
         `[audit] medicare revealed for person ${id} by ${req.ctx.actor.role} ${req.ctx.actor.id}` +
           ` (initials: ${initials || '—'}) from ${req.ip ?? 'unknown'}`,

@@ -31,7 +31,12 @@ export type Action =
   | 'admin:manage'
   // Discount-code "paid in full" override amounts (budget). Narrowly scoped — director should be
   // able to manage these without gaining general settings editing (admin:manage).
-  | 'budget:manage';
+  | 'budget:manage'
+  // A church setting its OWN ministry leader contacts (2026-07-31, owner request). Deliberately
+  // its own capability rather than widening admin:manage: it grants ONLY the `contacts` field of
+  // ONE church, and account.service.updateChurchContacts re-checks that the church is the
+  // actor's own. Holding it must never imply any other church-record editing.
+  | 'church:contacts:write';
 
 const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
   // church is the shared per-church login — handles both pre-camp registrations and at-camp check-in
@@ -47,6 +52,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     // Phase 4: church can READ first-aid records for its OWN church's campers (scoped by
     // canAccessPerson). It gets no first-aid WRITE and no general note:read.
     'note:read:firstaid',
+    'church:contacts:write',
   ]),
   zoneLeader: new Set<Action>([
     'registrant:read',
@@ -78,6 +84,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'import:run',
     'allocation:manage',
     'incident:manage',
+    'church:contacts:write',
     'export:compliance',
     'budget:manage',
   ]),
@@ -102,6 +109,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'export:compliance',
     'admin:manage',
     'budget:manage',
+    'church:contacts:write',
   ]),
   // firstAid: read-only at-camp access PLUS first-aid record logging (Phase 4).
   // No registrant:read (pre-camp hub is not accessible). attendance:write allows attendance
