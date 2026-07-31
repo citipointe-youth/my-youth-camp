@@ -1,6 +1,64 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-31 - SECURITY + FIX: VAPID_PUBLIC_KEY held pasted table text (secrets leaked via
+             /push/config); full rotation + env-var shape validation
+-----------------------------------------------------------------------------------
+Backend + SPA + production secret rotation. sw.js camp-v63 -> camp-v64. Verified:
+npm run typecheck clean, npx vitest run = 771 pass / 49 files (was 765/49, 6 new),
+SPA + sw.js node --check OK. SPA node --check extract range is now 847-6881.
+
+  Reported: after the iOS activation fix, the iPhone DID prompt and permission was
+  granted, but subscribing then failed with "InvalidCharacterError".
+
+  ROOT CAUSE - VAPID_PUBLIC_KEY in production was not a key. It held 180 characters
+  of pasted TABLE TEXT: rows for VAPID_PRIVATE_KEY, VAPID_SUBJECT and CRON_SECRET,
+  complete with pipes, "mailto:" and literal \n. The four secrets had been added
+  about two hours earlier and a multi-line paste went into one variable. atob() in
+  _urlB64ToUint8 hit the first pipe and threw. Read directly from `vercel env pull`,
+  not inferred.
+
+  SECURITY IMPACT - GET /push/config returns publicKey verbatim to the client and is
+  auth:true, so every logged-in device that rendered Home in that window was served
+  the VAPID private key AND CRON_SECRET in a JSON response, readable in devtools by
+  any leader account. CRON_SECRET was live (the tick was returning 200). Because
+  claimForPush takes the push_sent_at claim BEFORE sending, a third party holding it
+  could have permanently swallowed real check-in warnings by triggering the tick.
+
+  ROTATION (owner authorised) - a fresh VAPID keypair and a fresh 32-byte CRON_SECRET
+  were generated and set for Production AND Preview, and the Supabase Vault
+  cron_secret was updated to match. The exposed values are dead. VAPID_PUBLIC_KEY was
+  verified byte-exact after the write: 65 bytes, leading 0x04, and the exact browser
+  atob() path succeeds on it.
+
+  TWO VERCEL CLI TRAPS, both hit during the rotation and both worth remembering:
+    - `vercel env add` IGNORES stdin when it detects an agent. Both `< file` and
+      `cat file |` reported SUCCESS and wrote EMPTY strings - three times - before it
+      was caught. Use --value. Never trust the exit code; verify the write.
+    - A `sensitive` env var is never readable back: `vercel env pull` returns "" and
+      so does the REST API with decrypt=true. `vercel env ls` shows "Encrypted" for
+      both types and cannot distinguish them, and plenty of working vars
+      (PERSISTENCE, DATABASE_URL, SESSION_SECRET) also pull empty. An empty pull is
+      NOT evidence of an empty value. VAPID_PUBLIC_KEY and VAPID_SUBJECT are now
+      stored --no-sensitive on purpose - the public key is served to every client by
+      design, so nothing is lost and the value becomes verifiable.
+
+  HARDENING - readPushConfig now trims all three values and validates their shape:
+  public key must decode as base64url to 65 bytes with a leading 0x04 (uncompressed
+  P-256 point), private key to 32 bytes, subject must start with mailto: or https://.
+  Anything else returns null, so the feature is cleanly inert (configured:false,
+  nothing served to any client) plus a console.error naming the variable and its
+  LENGTH, never its value. Client side, _isValidVapidKey() re-checks before render so
+  a bad key hides the card instead of offering a button that can only fail after the
+  user has already granted OS permission.
+
+  TEST FIXTURE WAS THE REASON THIS WAS INVISIBLE - VAPID_ENV used 'pub'/'priv',
+  placeholders of exactly the class that broke production, so the suite could not
+  represent the bug and every test passed while prod served table text. It is now a
+  real throwaway keypair. Six regression tests cover the malformed cases, including
+  the literal table-paste string.
+
+
 2026-07-31 - FIX: "Could not turn on alerts" on an installed iPhone; opt-in moved to Notices
 -----------------------------------------------------------------------------------
 SPA only (public/index.html), no backend/schema change. sw.js camp-v62 -> camp-v63.

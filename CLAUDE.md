@@ -439,6 +439,62 @@ recomputing it. If a real "who will see this?" figure is ever wanted, compute it
 
 ### ~~Still gated on the owner~~ — ALL TURNED ON 2026-07-31, see the section below
 
+## 🔐 SECRET INCIDENT + `VAPID_PUBLIC_KEY` was never a key — 2026-07-31
+
+Found while chasing the follow-up to the iOS fix below: after the activation fix landed, the
+iPhone prompted correctly, permission was granted, and subscribe then failed with
+**`InvalidCharacterError`** — `atob()` in `_urlB64ToUint8`.
+
+**`VAPID_PUBLIC_KEY` in production contained 180 characters of pasted TABLE TEXT**, not a key:
+rows for `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` and `CRON_SECRET`, complete with pipes,
+`mailto:`, and literal `\n`. The four secrets were added ~2h earlier (the section below on the
+tick going live) and a multi-line paste landed in one variable. Read directly from
+`vercel env pull`, not inferred.
+
+### ⚠️ This was a secret exposure, not just a broken feature
+`GET /push/config` returns `publicKey` **verbatim to the client** and is `auth:true`. So every
+logged-in device that rendered Home in that window was served the VAPID **private** key and
+**`CRON_SECRET`** in a JSON response, readable in devtools by any leader account. `CRON_SECRET`
+was live and working (the tick was returning 200), and because `claimForPush` takes the
+`push_sent_at` claim BEFORE sending, anyone holding it could have permanently swallowed real
+check-in warnings by triggering the tick.
+
+**Full rotation performed** (owner authorised): a fresh VAPID keypair and a fresh 32-byte
+`CRON_SECRET` were generated and set for **Production and Preview**, and the Supabase Vault
+`cron_secret` was updated to match. The exposed values are dead.
+
+### Gotchas learned doing the rotation — read before touching env vars again
+- **`vercel env add` IGNORES stdin when it detects an agent** (`--non-interactive` is the
+  default then). Both `< file` and `cat file |` reported *success* and wrote **empty strings**.
+  Use **`--value`**. Three separate "successful" writes were silently empty before this was
+  caught — always verify a write, never trust the exit code.
+- **This project stores new env vars as `type=sensitive` by default**, and a sensitive value is
+  **never readable back** — not by `vercel env pull` (returns `""`) and not by the REST API even
+  with `decrypt=true`. `vercel env ls` shows "Encrypted" for both types, so it does not tell
+  them apart. Use `--no-sensitive` for genuinely public values.
+- **`VAPID_PUBLIC_KEY` and `VAPID_SUBJECT` are now stored NON-sensitive, deliberately.** The
+  public key is served to every client by design, so nothing is lost — and it makes the value
+  verifiable, which is the only reason this bug was findable at all. **Keep them non-sensitive.**
+  The private key and `CRON_SECRET` stay sensitive.
+- `vercel env pull` returns `""` for many working vars (`PERSISTENCE`, `DATABASE_URL`,
+  `SESSION_SECRET`…). **An empty pull does NOT mean an empty value** — it usually means
+  sensitive. Do not "fix" a var on that basis.
+
+### Hardening so this cannot recur (this is the actual code change)
+`readPushConfig` now `trim()`s all three values and **validates their shape**: the public key
+must decode as base64url to **65 bytes with a leading `0x04`** (uncompressed P-256 point), the
+private key to **32 bytes**, and the subject must start with `mailto:` or `https://`. Anything
+else → `null`, i.e. `configured:false`, so the feature is **cleanly inert and nothing is served
+to a client**, plus a `console.error` naming the variable and its length — **never its value**.
+Client side, `_isValidVapidKey()` re-checks before rendering, so a bad key hides the card rather
+than offering a button that can only fail after the user has already granted OS permission.
+
+> ⚠️ **The `VAPID_ENV` test fixture was `'pub'`/`'priv'`** — placeholders of exactly the class
+> that broke production, so the suite was structurally incapable of catching this and every
+> test passed while prod served table text. It is now a real throwaway keypair. **Do not
+> shorten it back.** Six regression tests cover the malformed cases, including the literal
+> table-paste string.
+
 ## "Alerts on this device" — iOS opt-in fixed + moved to Notices — deployed 2026-07-31
 
 Owner bug report: the Home card's "Turn on alerts" button worked on a laptop but an **installed

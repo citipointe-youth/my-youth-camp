@@ -6667,6 +6667,20 @@ function _urlB64ToUint8(base64){
   return out;
 }
 
+/* Is this a usable VAPID public key? An uncompressed P-256 point: 65 bytes, 0x04 first.
+   ⚠ 2026-07-31: production briefly held pasted TABLE TEXT here, and the ONLY symptom a
+   leader ever saw was `InvalidCharacterError` from the atob() above, on their phone, after
+   granting the OS permission. The server now refuses to serve a malformed key at all
+   (`readPushConfig`), so this is the second line of defence — with both, a bad key hides the
+   card instead of producing a button that fails at the last possible step. */
+function _isValidVapidKey(k){
+  try{
+    if(typeof k!=='string'||!/^[A-Za-z0-9\-_]+=*$/.test(k))return false;
+    const b=_urlB64ToUint8(k);
+    return b.length===65&&b[0]===4;
+  }catch(_){return false;}
+}
+
 async function _renderPushCard(){
   const el=document.getElementById('pushCard');
   if(!el)return;
@@ -6684,6 +6698,9 @@ async function _renderPushCard(){
     /* VAPID keys not set on the server. This is the deployed state until they are added,
        and the whole feature must be invisible — not broken-looking — until then. */
     if(!_pushCfg||!_pushCfg.configured){el.innerHTML='';return;}
+    /* Configured but the key is unusable — hide rather than offer a button that can only
+       fail at subscribe() time, after the user has already granted the OS permission. */
+    if(!_isValidVapidKey(_pushCfg.publicKey)){el.innerHTML='';return;}
 
     const perm=Notification.permission;
     let body;

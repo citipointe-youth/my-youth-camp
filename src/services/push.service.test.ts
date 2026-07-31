@@ -68,9 +68,18 @@ function settings(over: Partial<CampSettings> = {}): CampSettings {
   } as CampSettings;
 }
 
+/**
+ * A REAL (throwaway) VAPID keypair, never used anywhere but this file.
+ *
+ * ⚠ Do not shorten these back to `'pub'`/`'priv'`. `readPushConfig` now validates the key
+ * SHAPE, and the placeholders this fixture used to carry are exactly the class of value the
+ * 2026-07-31 production incident put in the env var — so the old fixture was structurally
+ * incapable of catching it, and every test here passed while prod served table text to
+ * clients. A fixture that could not represent the bug is worse than no fixture.
+ */
 const VAPID_ENV = {
-  VAPID_PUBLIC_KEY: 'pub',
-  VAPID_PRIVATE_KEY: 'priv',
+  VAPID_PUBLIC_KEY: 'BJ-idCQNM8bZ2axCsNHf4JYvMsj4GGSIcjfENwYKV4tBNOIRFxk0jNeyR2vWk6QLlWLgJj_QaUPCM1xzlNI9Gbk',
+  VAPID_PRIVATE_KEY: 'XkGecBFumrALnTadmHDalScbnqMUMfyZ5c8Vxozax80',
   VAPID_SUBJECT: 'mailto:a@b.c',
 } as NodeJS.ProcessEnv;
 
@@ -93,6 +102,69 @@ describe('push config gating', () => {
     expect(readPushConfig({ VAPID_PUBLIC_KEY: 'p' } as NodeJS.ProcessEnv)).toBeNull();
     expect(readPushConfig({ VAPID_PUBLIC_KEY: 'p', VAPID_PRIVATE_KEY: 'k' } as NodeJS.ProcessEnv)).toBeNull();
     expect(isPushConfigured(VAPID_ENV)).toBe(true);
+  });
+
+  /**
+   * Regression guard for the 2026-07-31 production incident: `VAPID_PUBLIC_KEY` held pasted
+   * TABLE TEXT — including the private key and CRON_SECRET rows. It was served verbatim to
+   * every authenticated client by `GET /push/config`, and reached the SPA's `atob()`, whose
+   * `InvalidCharacterError` on a leader's phone was the only symptom anyone ever saw.
+   *
+   * A structurally invalid key must make the feature INERT, never half-working, and must
+   * never be handed to a client.
+   */
+  describe('malformed VAPID values are rejected, not served', () => {
+    // Quiet the deliberate console.error these cases emit.
+    beforeEach(() => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    it('rejects the exact shape of the incident — a multi-line table paste', () => {
+      const pasted =
+        'VAPID_PRIVATE_KEY|3x_AQQLPQkbMUttSI1RQT3R6lusG04pSiuh8kzZuxY4|yes\n' +
+        'VAPID_SUBJECT|mailto:youth@example.com|no\n';
+      expect(
+        readPushConfig({ ...VAPID_ENV, VAPID_PUBLIC_KEY: pasted } as NodeJS.ProcessEnv),
+      ).toBeNull();
+    });
+
+    it('rejects a public key that is valid base64url but the wrong length', () => {
+      expect(
+        readPushConfig({ ...VAPID_ENV, VAPID_PUBLIC_KEY: 'QUJD' } as NodeJS.ProcessEnv),
+      ).toBeNull();
+    });
+
+    it('rejects a 65-byte public key that is not an uncompressed point (no 0x04 tag)', () => {
+      const wrongTag = Buffer.alloc(65, 1).toString('base64url');
+      expect(
+        readPushConfig({ ...VAPID_ENV, VAPID_PUBLIC_KEY: wrongTag } as NodeJS.ProcessEnv),
+      ).toBeNull();
+    });
+
+    it('rejects a private key that is not a 32-byte scalar', () => {
+      expect(
+        readPushConfig({ ...VAPID_ENV, VAPID_PRIVATE_KEY: 'QUJD' } as NodeJS.ProcessEnv),
+      ).toBeNull();
+    });
+
+    it('rejects a subject that is neither mailto: nor https://', () => {
+      expect(
+        readPushConfig({ ...VAPID_ENV, VAPID_SUBJECT: 'youth@example.com' } as NodeJS.ProcessEnv),
+      ).toBeNull();
+    });
+
+    /* A trailing newline from `vercel env add` is invisible and is the single most likely
+       paste defect. It must be tolerated, not treated as corruption. */
+    it('tolerates surrounding whitespace on all three values', () => {
+      const cfg = readPushConfig({
+        VAPID_PUBLIC_KEY: `  ${VAPID_ENV['VAPID_PUBLIC_KEY']}\n`,
+        VAPID_PRIVATE_KEY: `${VAPID_ENV['VAPID_PRIVATE_KEY']}\n`,
+        VAPID_SUBJECT: ' mailto:a@b.c ',
+      } as NodeJS.ProcessEnv);
+      expect(cfg).not.toBeNull();
+      expect(cfg?.publicKey).toBe(VAPID_ENV['VAPID_PUBLIC_KEY']);
+      expect(cfg?.subject).toBe('mailto:a@b.c');
+    });
   });
 });
 

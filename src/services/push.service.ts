@@ -67,7 +67,26 @@ export interface PushConfig {
 }
 
 /**
- * Reads VAPID config from the environment, or null when it is not fully set.
+ * Decoded byte length of a raw VAPID key. The public key is an uncompressed P-256 point
+ * (0x04 || X || Y = 1 + 32 + 32); the private key is the 32-byte scalar.
+ */
+const VAPID_PUBLIC_KEY_BYTES = 65;
+const VAPID_PRIVATE_KEY_BYTES = 32;
+const UNCOMPRESSED_POINT_TAG = 0x04;
+
+/** Decodes base64url, returning null for anything that isn't valid base64url. */
+function decodeBase64Url(value: string): Buffer | null {
+  if (!/^[A-Za-z0-9\-_]+=*$/.test(value)) return null;
+  try {
+    return Buffer.from(value, 'base64url');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads VAPID config from the environment, or null when it is not fully set OR not
+ * structurally valid.
  *
  * Read at CALL time, not at module load: `api/index.ts` is a serverless entrypoint and
  * reading `process.env` into a module constant makes the value impossible to change without
@@ -76,12 +95,56 @@ export interface PushConfig {
  * All three must be present. A partially-configured deployment is treated as unconfigured
  * rather than half-working — signing with a missing subject fails at the push service with an
  * opaque 400, which is far harder to diagnose than the feature simply being off.
+ *
+ * ⚠ THE SHAPE CHECKS ARE NOT DEFENSIVE PARANOIA — THEY ARE A POST-INCIDENT CONTROL.
+ * On 2026-07-31 `VAPID_PUBLIC_KEY` in production held 180 characters of pasted TABLE TEXT
+ * (pipes, `mailto:`, literal `\n`) rather than a key. Two things followed, both of which
+ * these checks now prevent:
+ *   1. `GET /push/config` served that string to every authenticated client, and it contained
+ *      the VAPID PRIVATE KEY and CRON_SECRET rows. An unvalidated env var became a secret
+ *      leak over the wire.
+ *   2. The SPA fed it to `atob()`, so the only symptom any leader ever saw was
+ *      `InvalidCharacterError` on their phone — a full deploy/retest cycle away from the
+ *      actual cause.
+ * A malformed value must make the feature cleanly INERT (`configured:false`, no card, no
+ * sends, nothing served) and say so in the server log. It must never reach a client.
+ *
+ * `trim()` is applied first: a trailing newline from `vercel env add` is the single most
+ * likely paste defect and is otherwise invisible.
  */
 export function readPushConfig(envSource: NodeJS.ProcessEnv = process.env): PushConfig | null {
-  const publicKey = envSource['VAPID_PUBLIC_KEY'] ?? '';
-  const privateKey = envSource['VAPID_PRIVATE_KEY'] ?? '';
-  const subject = envSource['VAPID_SUBJECT'] ?? '';
+  const publicKey = (envSource['VAPID_PUBLIC_KEY'] ?? '').trim();
+  const privateKey = (envSource['VAPID_PRIVATE_KEY'] ?? '').trim();
+  const subject = (envSource['VAPID_SUBJECT'] ?? '').trim();
   if (!publicKey || !privateKey || !subject) return null;
+
+  const pub = decodeBase64Url(publicKey);
+  if (!pub || pub.length !== VAPID_PUBLIC_KEY_BYTES || pub[0] !== UNCOMPRESSED_POINT_TAG) {
+    // Length only — NEVER log the value itself, which is exactly how the leak spread.
+    console.error(
+      `[push] VAPID_PUBLIC_KEY is not a valid uncompressed P-256 point (got ${publicKey.length} chars, ` +
+        `${pub ? pub.length : 'un-decodable'} bytes). Push is DISABLED. Re-set the env var — a multi-line ` +
+        `or table paste is the known cause.`,
+    );
+    return null;
+  }
+
+  const priv = decodeBase64Url(privateKey);
+  if (!priv || priv.length !== VAPID_PRIVATE_KEY_BYTES) {
+    console.error(
+      `[push] VAPID_PRIVATE_KEY is not a valid 32-byte P-256 scalar (got ${privateKey.length} chars). ` +
+        `Push is DISABLED.`,
+    );
+    return null;
+  }
+
+  // web-push requires a `mailto:` or `https:` subject and fails at the push service with an
+  // opaque 400 otherwise — the exact "half-working" state this function exists to prevent.
+  if (!/^(mailto:|https:\/\/)/.test(subject)) {
+    console.error(`[push] VAPID_SUBJECT must start with "mailto:" or "https://". Push is DISABLED.`);
+    return null;
+  }
+
   return { publicKey, privateKey, subject };
 }
 
