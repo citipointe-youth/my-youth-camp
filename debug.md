@@ -359,6 +359,16 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-07-31 — "Other" removed from the student gender picker
+
+| Symptom | Go to |
+|---|---|
+| **A student's gender box is blank / says "— Select —"** | Intended. `_stuFormFields` shows the placeholder whenever the stored value is not `male`/`female` — almost always `'other'`, which `import.service` assigns to a NEW person when the Form CSV's Gender cell is blank or unparseable. The record needs a real answer; pick one and save. |
+| **"Choose Male or Female" won't let me save** | The guard in `stuSave`/`stuCreate`. It exists so a legacy `'other'` row can't be silently rewritten to male by a select falling back to its first option. Fix the gender, don't remove the guard. |
+| **A student silently became male after an unrelated edit** | This is the bug the placeholder prevents — if it reappears, someone deleted the placeholder branch in `_stuFormFields` or the guard. Check both. |
+| **`'other'` still appears in data / the API accepts it** | Correct and deliberate. `GENDERS` in `src/core/types/enums.ts` still includes it because `import.service`'s default depends on it and narrowing the enum would make existing rows fail validation on read. Only the admin's *choice* was removed. |
+| **Gender filters elsewhere show no "Other"** | They never did — the three other gender `<select>`s (My Youth, Data table, Student edit list) are filters and have always been Male/Female. |
+
 ### 2026-07-31 — Notices tile removed from the Admin console
 
 | Symptom | Go to |

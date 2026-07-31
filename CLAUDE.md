@@ -443,6 +443,33 @@ recomputing it. If a real "who will see this?" figure is ever wanted, compute it
 deliberately unapplied** and must stay that way until both secrets are set, or every tick fires
 silently into a 404/401 (`pg_net` is fire-and-forget and surfaces nothing).
 
+## "Other" removed from the student gender picker — deployed 2026-07-31
+
+Owner request, SPA-only, no backend/schema change. `sw.js` `camp-v60`→**`camp-v61`**.
+`npm run typecheck` clean, `npm run test` = 759 pass (unchanged — browser-only code).
+
+`_stuFormFields`' `#seGen` (Individual Student Data Edit → add & edit) now offers **Male /
+Female only**.
+
+> ⚠️ **It was NOT simply deleted, and must not be "tidied" into a plain two-option select.**
+> `'other'` records genuinely exist in prod: `import.service.ts` defaults a brand-new person to
+> `gender:'other'` when the Form CSV's Gender cell is blank or unparseable (`Person.gender` is
+> non-nullable and needs *some* value), and **this screen is exactly where an admin fixes them**.
+> With the option gone, such a student's `<select>` would fall back to its FIRST option — Male —
+> so saving any unrelated field would silently re-record them as male. Gender drives
+> `genderScope` visibility for `b-`/`g-` church logins and the accommodation pools, so that is a
+> real data change, not a cosmetic one.
+
+Instead: anything that isn't `male`/`female` renders a **blank "— Select —" placeholder**, and
+`stuSave`/`stuCreate` both refuse with *"Choose Male or Female"* until a real choice is made.
+Add (`s` null) gets the placeholder too, so a new student can't be created as male by
+inattention either — that was pre-existing behaviour and is now closed.
+
+**`GENDERS` in `src/core/types/enums.ts` still contains `'other'` and the backend still accepts
+it.** Deliberate: the import default depends on it, and narrowing the enum would make every
+existing `'other'` row fail validation on read. This change is about what an admin can *choose*.
+The other three gender `<select>`s in the SPA are filters and were already Male/Female only.
+
 ## Registration lists: second export button (.zip) — deployed 2026-07-31
 
 Owner request, SPA-only, no backend/schema change. `sw.js` `camp-v59`→**`camp-v60`**.

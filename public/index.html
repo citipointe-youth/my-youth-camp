@@ -6027,7 +6027,22 @@ function stuApply(){
 }
 function _stuFormFields(s){
   const chSel=`<select id="seCh">${_stuChurches.map(c=>`<option value="${esc(c.id)}"${s&&c.id===s.churchId?' selected':''}>${esc(c.name)}</option>`).join('')}</select>`;
-  const genSel=`<select id="seGen"><option value="male"${s&&s.gender==='male'?' selected':''}>Male</option><option value="female"${s&&s.gender==='female'?' selected':''}>Female</option><option value="other"${s&&s.gender==='other'?' selected':''}>Other</option></select>`;
+  /* 2026-07-31 (owner request): "Other" is no longer a CHOOSABLE gender.
+     ⚠ It is NOT simply deleted, because 'other' records genuinely exist: `import.service`
+     defaults a brand-new person to `gender:'other'` when the Form CSV's Gender cell is blank or
+     unparseable (Person.gender is non-nullable), and this screen is exactly where an admin fixes
+     them. Dropping the option outright would leave such a student's select falling back to the
+     FIRST option — Male — so saving any unrelated field would silently re-record them as male.
+     Gender drives `genderScope` visibility for b-/g- church logins and the accommodation pools,
+     so that is a real data change, not a cosmetic one.
+     Instead: anything that is not male/female shows a blank placeholder, and `stuSave`/`stuCreate`
+     refuse to submit until a real choice is made. Add (`s` null) gets the placeholder too, so a
+     new student can't be created as male by inattention either. */
+  const _gKnown=s&&(s.gender==='male'||s.gender==='female');
+  const genSel=`<select id="seGen">`
+    +(_gKnown?'':`<option value="" selected>— Select —</option>`)
+    +`<option value="male"${s&&s.gender==='male'?' selected':''}>Male</option>`
+    +`<option value="female"${s&&s.gender==='female'?' selected':''}>Female</option></select>`;
   const grSel=`<select id="seGr"><option value="">—</option>${GRADES.map(g=>`<option value="${g}"${s&&s.grade===g?' selected':''}>Grade ${g}</option>`).join('')}</select>`;
   const accSel=`<select id="seAcc"><option value=""${s&&!s.accommodationKind?' selected':''}>—</option><option value="tent"${s&&s.accommodationKind==='tent'?' selected':''}>Tent</option><option value="classroom"${s&&s.accommodationKind==='classroom'?' selected':''}>Classroom</option></select>`;
   return `<label>First name</label><input class="fld" id="seFirst" value="${esc(s?s.firstName:'')}">
@@ -6058,6 +6073,8 @@ async function stuSave(id){
   const b=_stuFormBody();
   if(!b.firstName||!b.lastName){toast('Enter first + last name');return;}
   if(!b.churchId){toast('Pick a church');return;}
+  // See _stuFormFields: refuse rather than let a legacy 'other' record be saved as male by default.
+  if(b.gender!=='male'&&b.gender!=='female'){toast('Choose Male or Female');return;}
   try{await api('/registrants/'+id,{method:'PATCH',body:b});closeModal();toast('Student updated');await _rStu();}catch(e){toast(e.message);}}
 function stuAdd(){
   modal(`<h3>Add student</h3>
@@ -6069,6 +6086,7 @@ async function stuCreate(){
   const b=_stuFormBody();
   if(!b.firstName||!b.lastName){toast('Enter first + last name');return;}
   if(!b.churchId){toast('Pick a church');return;}
+  if(b.gender!=='male'&&b.gender!=='female'){toast('Choose Male or Female');return;}
   try{await api('/registrants',{method:'POST',body:b});closeModal();toast('Student added');await _rStu();}catch(e){toast(e.message);}}
 async function _rStu(){const el=document.getElementById('stage');const y=el?el.scrollTop:0;await RENDER.adminStudents();if(el)el.scrollTop=y;}
 
