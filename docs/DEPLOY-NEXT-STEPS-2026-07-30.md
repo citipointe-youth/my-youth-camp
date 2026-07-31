@@ -41,17 +41,20 @@ If you see anything broken, stop and tell Claude before continuing.
 
 ## Step 2 — Add the VAPID keys to Vercel (5 min)
 
-These sign your push messages. I generated the keypair for you:
+These sign your push messages.
+
+> ⚠️ **The keypair originally printed here has been REDACTED and must never be used.**
+> This repo (`citipointe-youth/my-youth-camp`) is **public**, so committing the private key
+> published it. A fresh keypair was generated on 2026-07-31 and set directly in Vercel; it was
+> never written to any tracked file. **Never paste a VAPID private key, `CRON_SECRET`, or any
+> other credential into a file in this repo** — set it with `vercel env add` or the dashboard.
+
+Generate a keypair with `npx web-push generate-vapid-keys`. You need three values:
 
 ```
-VAPID_PUBLIC_KEY
-BETUA3aHbhTHDkJjdN0EArp5n3jdjFLxbkWPkSX-eNyZP1TrgddRgc1o1xFDuXQXLeOtrmC-z6JH3-mC5XN9GNs
-
-VAPID_PRIVATE_KEY
-Vv85ykMlFI8YXVB1lV3eI2HWGVocLSGiMFCJhgvomns
-
-VAPID_SUBJECT
-mailto:youth@citipointechurch.com
+VAPID_PUBLIC_KEY     <the public key it prints>
+VAPID_PRIVATE_KEY    <the private key it prints — Sensitive>
+VAPID_SUBJECT        mailto:youth@citipointechurch.com
 ```
 
 **Where:** Vercel → team `citipointe-youth` → project `my-youth-camp` → Settings →

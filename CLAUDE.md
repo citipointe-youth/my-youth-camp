@@ -437,11 +437,58 @@ the `discount_code_overrides` precedent. An edit now preserves the existing valu
 recomputing it. If a real "who will see this?" figure is ever wanted, compute it from
 `canSeeNotification` over the USERS table (tens of rows), never by scanning people.
 
-### Still gated on the owner (as of this push)
-`CRON_SECRET`, the three `VAPID_*` env vars, and migration **`0014`** — see
-`docs/DEPLOY-NEXT-STEPS-2026-07-30.md`, written for the owner to work through. **`0014` is still
-deliberately unapplied** and must stay that way until both secrets are set, or every tick fires
-silently into a 404/401 (`pg_net` is fire-and-forget and surfaces nothing).
+### ~~Still gated on the owner~~ — ALL TURNED ON 2026-07-31, see the section below
+
+## The tick is LIVE — secrets set, `0014` applied, warning proven end-to-end — 2026-07-31
+
+Config + verification only. **No application code changed** (this section and the redaction in
+`docs/DEPLOY-NEXT-STEPS-2026-07-30.md` are the entire diff). The chain described in the two
+2026-07-30 sections above is now actually running.
+
+- **Vercel env vars set** (Production **and** Preview): `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
+  (Sensitive), `VAPID_SUBJECT`, `CRON_SECRET` (Sensitive), via `vercel env add`. Redeployed —
+  env vars only reach a NEW build.
+- **`cron_secret` is in Supabase Vault** and matches Vercel. **Verified, not assumed:** before
+  scheduling anything, a one-off `net.http_get` was fired from the DB using
+  `vault.decrypted_secrets` against the real prod route — `net._http_response` returned **200**.
+  That exercises the exact path `pg_cron` uses, so `0014` was never applied on hope.
+- **Migration `0014` APPLIED** and its history row **reconciled** from the generated timestamp
+  `20260731011901` to version `'0014'`. `cron.job` = `camp-push-tick`, `*/5 * * * *`, `active`.
+  First automated run 01:20:00Z `succeeded` → 200.
+- **⚠️ The `0009`–`0012` + `0016`–`0017` drift is UNCHANGED** (still six rows under generated
+  timestamps). `supabase db push` would still try to re-run all six. Still its own task.
+
+### The end-to-end test (run against prod, then fully reverted)
+The unit tests were not trusted. Camp dates were temporarily today's, the church time restriction
+on, and the PM window narrowed to put "now" inside the 60-minute lead. One tick returned
+**`checkinWarningsCreated: 6, failed: 0`** and wrote exactly what the 2026-07-30 hardening claims:
+
+- **Per-login addressing (item 1) CONFIRMED** — `b-citipointe-brisbane` got **20** and
+  `g-citipointe-brisbane` got **17**, each `target_user_id`-addressed to that one login. This is
+  the exact bug item 1 fixed; before it, both accounts saw both contradictory counts.
+- **Expiry (item 2) CONFIRMED** — `expires_at = 02:14Z` = 12:14 Brisbane = the window close.
+  Correct to the minute, so `zonedToInstant` is not re-introducing the UTC-vs-Brisbane bug (the
+  old failure landed 10 hours early).
+- **Dedupe CONFIRMED** — an immediate second tick returned `checkinWarningsCreated: 0`.
+- Copy pluralises correctly ("1 student" / "20 students"); `audience_estimate` carries the
+  remaining count (the reason item 14 kept the column).
+
+Reverted after: the 6 notices deleted, PM window restored to `12:00`/`23:00`.
+
+> ⚠️ **CHANGING THE CAMP DATES IN THE UI MOVES THE SCHEDULE AND DEVOTIONALS WITH THEM.**
+> `remapDays()`/`applyDayMoves()` re-key both by POSITION (2026-07-28 item 3). After the date
+> change all 48 schedule items + the devotional sat on `2026-07-31`–`08-03`. **So camp dates must
+> be reverted through the admin UI, never by SQL** — a direct SQL revert strands every schedule
+> and devotional row on the old dates and those screens go blank. Remap is lossless only while
+> the day COUNT matches (shrinking hides the surplus).
+
+### Push is configured but STILL UNPROVEN
+`pushAttempted: 0` on every tick — there are **zero** `push_subscriptions`, so no push service has
+ever been contacted and no notification has reached a device. `/push/config` is `auth:true` and was
+never read with a session, so `configured:true` is **inferred** from the env vars being present in
+the build, not observed. **Do not claim push works** until a real device subscribes and receives
+one. The iOS adoption problem (no permission prompt until Add to Home Screen) is unchanged and is
+still the biggest risk.
 
 ## "Other" removed from the student gender picker — deployed 2026-07-31
 
@@ -2697,12 +2744,13 @@ the audience rule, the subscription table and the warning detector; the fan-out 
   `nwfafrgojqkxylbppywo` after applying; history row reconciled to version `'0013'` (the MCP
   `apply_migration` tool records a generated timestamp — see the `0005` note above, this is still
   required after every apply on this project).
-- **`0014_push_cron_schedule.sql` — committed, DELIBERATELY NOT APPLIED.** It creates
-  `pg_cron`/`pg_net` and schedules the tick. Applying it before the route is live in prod means
-  every tick 404s **silently** into `net._http_response` (pg_net is fire-and-forget). Applying it
-  before `select vault.create_secret('<secret>','cron_secret')` exists means every tick 401s, also
-  silently. Both preconditions are written at the top of the file. It was split out of `0013` for
-  exactly this reason.
+- **`0014_push_cron_schedule.sql` — APPLIED to prod 2026-07-31**, history row reconciled to
+  `'0014'`. Both preconditions (route live; `cron_secret` in Vault matching Vercel's
+  `CRON_SECRET`) were satisfied AND the secret match was proven by a one-off `net.http_get`
+  returning 200 before the schedule was created. See the 2026-07-31 section near the top.
+  The warning at the top of the file about silent 404/401s still applies to any future
+  re-apply or URL change — `pg_net` is fire-and-forget and `net._http_response` is the only
+  place a failure ever shows up.
 - **`0015_discount_code_overrides.sql` — APPLIED to prod 2026-07-27**, immediately BEFORE the push
   that merged this whole branch to `master` (see the 2026-07-27 section at the bottom). One
   `settings.discount_code_overrides jsonb not null default '{}'`; verified present, and the history
