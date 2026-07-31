@@ -732,3 +732,13 @@ New/changed symbols — grep the name, don't trust offsets. Migration `0017`
 | **Pressing it twice created two sets** | Intended. The dedupe key carries the run's timestamp so the button is repeatable. That is also what stops it colliding with — or consuming — the real `checkin-warn:<session>:<user>` key, which would suppress the genuine warning for that session. |
 | **Nothing arrived on the admin's phone** | The admin's copy is a separate notice with `targetUserId = actor.id` — real warnings are church-scoped, so without it an admin sees nothing. If the church logins got theirs and the admin didn't, the admin has no push subscription; use "Send a test" on Notices to check that device first. |
 | **Can I use it during camp?** | Yes, and it uses the genuinely open session when there is one. But it messages every church login, so it is a confirm-first action; the SPA asks before sending. |
+
+### 2026-07-31 — alerts offered when initials are set
+
+| Symptom | Go to |
+|---|---|
+| **I set initials and got no alerts offer** | Check the gates in `_maybeOfferPushAfterInitials()` in order: preview mode, missing `serviceWorker`/`PushManager`/`Notification`, `Notification.permission` already `granted` **or** `denied` (neither is re-promptable), iOS-but-not-installed, the once-per-device flag `localStorage.ycp_push_asked`, and finally an absent/invalid server VAPID key. Any one of them silently returns — by design, none of them should surface a toast. |
+| **My admin/director account never gets offered** | Correct and unavoidable: initials are **church accounts only** (`_isChurchAccount`). Every other role sets none, so this hook never fires for them. They turn alerts on from the Notices card. |
+| **It offered once, I cancelled, now it never asks** | Intended. The flag is written *before* the sheet opens so a cancel is respected rather than nagged. Clear `ycp_push_asked` in devtools to re-test, or use the Notices card. |
+| **Can it call `Notification.requestPermission()` directly instead of the sheet?** | No. It runs from a `setTimeout`, so user activation is gone and WebKit refuses the call — that is the original "Could not turn on alerts" bug. The sheet's own button is what restores activation. Keep the `_pushOn`/`_pushConsentGo` split. |
+| **Why not prompt on install instead?** | There is no install-time hook in any PWA — nothing fires on Add to Home Screen, and a gesture-less `requestPermission()` is refused by both iOS Safari and Chrome. Initials are the earliest real user gesture that means "this device is mine". |

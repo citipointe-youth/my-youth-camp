@@ -514,6 +514,39 @@ than offering a button that can only fail after the user has already granted OS 
 > shorten it back.** Six regression tests cover the malformed cases, including the literal
 > table-paste string.
 
+## Alerts offered when a leader sets their initials — 2026-07-31
+
+`_maybeOfferPushAfterInitials()`, called 600ms after `_confirmEnforceInitials` (the login
+gate — the main path) and after `_confirmInitials` when initials were **set**, not cleared.
+`sw.js` → `camp-v67`. SPA-only.
+
+**Why initials:** a PWA gets **no install-time hook** — nothing fires on Add to Home Screen —
+so there is no "on installation" moment to hang this off. Setting initials is the closest this
+app has to *a person has just claimed this device*, which is when the offer makes sense.
+
+**It opens OUR consent sheet, not the OS prompt**, and both reasons matter:
+1. an OS prompt fired straight off the initials save explains nothing, and a tap on "Allow" is
+   not meaningful consent to a safeguarding-adjacent alert that renders on a lock screen;
+2. it runs from a `setTimeout`, so **user activation is already gone and WebKit would refuse
+   `requestPermission()` outright**. The sheet's own button restores it — the same
+   `_pushOn`/`_pushConsentGo` split that fixed the original iOS bug. Do not "simplify" this
+   into a direct `requestPermission()` call; that is the 2026-07-31 bug rebuilt.
+
+**Every gate must pass:** not a preview mode; `serviceWorker` + `PushManager` + `Notification`
+present; `Notification.permission === 'default'` (granted/denied are never re-promptable, so
+asking is pure noise); on iOS, installed to the Home Screen; never asked before on this device;
+and the server's VAPID key present and valid. The asked-flag (`localStorage.ycp_push_asked`) is
+written **before** the sheet opens, so cancelling is respected — one offer per device, ever.
+Anyone who declines can still turn alerts on from Notices.
+
+> ⚠️ **SCOPE: initials are CHURCH ACCOUNTS ONLY** (`_isChurchAccount`). Admin, director, zone
+> leader and first-aid logins never set initials, so they **never see this offer** and must use
+> the Notices card. Church logins are the accounts that receive the check-in warning, so this is
+> the right audience — but it is not "every role gets prompted", and nobody should assume it is.
+
+Also corrected the consent sheet copy: it still promised an alert for any camp notice, and only
+**urgent** ones alert since the priority change earlier the same day.
+
 ## Admin test button for the check-in warning — 2026-07-31
 
 **`Admin → Settings → Check-in & timing → Send test check-in alert`** →

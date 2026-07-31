@@ -1,6 +1,44 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-31 - Offer alerts when a leader sets their initials on a device
+-----------------------------------------------------------------------------------
+SPA only. sw.js camp-v66 -> camp-v67. Verified: npm run typecheck clean, npx vitest
+run = 794 pass / 49 files (unchanged - SPA-only change), SPA + sw.js node --check OK.
+SPA node --check extract range is now 847-7001.
+
+  Owner question: can the notification prompt be triggered when initials are set on a
+  device for the first time?
+
+  Yes, and initials are the right hook - a PWA gets NO install-time hook (nothing
+  fires on Add to Home Screen), and setting initials is the closest this app has to
+  "a person has just claimed this device".
+
+  _maybeOfferPushAfterInitials() is called 600ms after _confirmEnforceInitials (the
+  login gate - the main path) and after _confirmInitials when initials were SET, not
+  cleared.
+
+  It opens OUR consent sheet, not the OS prompt, for two reasons: an OS prompt fired
+  off the initials save explains nothing, and this runs from a setTimeout where user
+  activation is already gone so WebKit would refuse it anyway. The sheet's own button
+  (_pushConsentGo) restores activation - the same split that fixed the iOS bug.
+
+  Gates, all of which must pass: not a preview mode; serviceWorker + PushManager +
+  Notification present; Notification.permission === 'default' (granted/denied are
+  never re-promptable, so asking is noise); on iOS, installed to the Home Screen;
+  never asked before on this device; and the server's VAPID key is present and valid.
+  The asked-flag (localStorage ycp_push_asked) is written BEFORE the sheet opens so a
+  cancel is respected - anyone who declines can still turn alerts on from Notices.
+
+  SCOPE NOTE: initials are CHURCH ACCOUNTS ONLY (_isChurchAccount). Admin, director,
+  zone leader and first-aid logins never set initials, so they never see this offer -
+  they turn alerts on from the Notices screen. Church logins are the accounts that
+  receive the check-in warning, so this is the right audience, but it is not "every
+  role gets prompted".
+
+  Also corrected the consent sheet copy, which still said a camp notice would alert
+  them - only URGENT notices do since earlier today.
+
 2026-07-31 - ADMIN TEST BUTTON: fire the "students still to check in" warning on demand
 -----------------------------------------------------------------------------------
 Backend + SPA. sw.js camp-v65 -> camp-v66. Verified: npm run typecheck clean,

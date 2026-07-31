@@ -1072,7 +1072,13 @@ function promptInitials(force){
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
   setTimeout(()=>{const e=document.getElementById('liInit');if(e)e.focus();},50);
 }
-function _confirmInitials(){_saveLeaderInitials(val('liInit'));closeModal();toast(LEADER_INITIALS?('Initials set: '+LEADER_INITIALS):'Initials cleared');}
+function _confirmInitials(){
+  _saveLeaderInitials(val('liInit'));closeModal();
+  toast(LEADER_INITIALS?('Initials set: '+LEADER_INITIALS):'Initials cleared');
+  // Only when initials were actually SET — clearing them is not "a leader has claimed this
+  // device". The delay lets this modal finish closing before the consent sheet opens.
+  if(LEADER_INITIALS)setTimeout(_maybeOfferPushAfterInitials,600);
+}
 // Enforced initials gate (item 7). A church account MUST set initials once per login before doing
 // attributed work; shown at login + session restore with NO skip. Dismissing it leaves the header
 // badge on "Set initials"; the write-path guard `_ensureInitials()` re-shows it before the first
@@ -1089,6 +1095,8 @@ function _confirmEnforceInitials(){
   const v=(val('liInit')||'').trim();
   if(!v){const e=document.getElementById('liInit');if(e){e.style.borderColor='#e11d48';e.focus();}toast('Please enter your initials');return;}
   _saveLeaderInitials(v);closeModal();toast('Initials set: '+LEADER_INITIALS);
+  // The main path: a church leader setting initials for the first time on this device.
+  setTimeout(_maybeOfferPushAfterInitials,600);
 }
 // Guard for attributed writes: true when initials are present (normal case — no prompt at all),
 // else pops the enforced gate and returns false so the caller aborts and retries after saving.
@@ -6786,11 +6794,46 @@ function _pushOn(){
   // Raw HTML (not esc'd) so the three paragraphs render as paragraphs. Every fragment
   // below is a hardcoded literal, so there is no untrusted input to escape here.
   modal(`<h3>Alerts on this device</h3>
-    <p class="sub" style="margin:8px 0 14px">We&rsquo;ll notify this device when an urgent incident is logged (leadership accounts only), when a camp notice goes out, and about an hour before your check-in window closes if students are still unchecked.
+    <p class="sub" style="margin:8px 0 14px">We&rsquo;ll notify this device when an urgent incident is logged (leadership accounts only), when an <b>urgent</b> camp notice goes out, and about an hour before your check-in window closes if students are still unchecked. Ordinary notices don&rsquo;t alert you &mdash; they just appear in the app.
       <br><br>Alerts <b>never contain a student&rsquo;s name</b> or any medical or incident detail &mdash; just a prompt to open the app. They may appear on your lock screen, so keep this device locked and don&rsquo;t leave it with students.
       <br><br>We store a device registration for this account until you turn alerts off here.</p>
     <button class="btn" onclick="_pushConsentGo()">Turn on alerts</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+}
+
+/* Offer alerts the first time a leader sets their initials on this device (owner request,
+   2026-07-31). Setting initials is the closest thing this app has to "a person has just
+   claimed this device", which is the moment the offer makes sense — a PWA gets NO
+   install-time hook (nothing fires on Add to Home Screen), so there is no earlier one.
+
+   This opens OUR consent sheet, not the OS prompt. Two reasons, and neither is cosmetic:
+     1. an OS prompt fired straight off the initials save would explain nothing, and a tap
+        on "Allow" is not meaningful consent to a safeguarding-adjacent alert that renders
+        on a lock screen;
+     2. it is called from a setTimeout, so user activation is already gone — the OS prompt
+        would be refused. The sheet's own button restores it (see `_pushConsentGo`).
+
+   Asked at most ONCE per device: the flag is written BEFORE the sheet opens, so cancelling
+   is respected. Anyone who declines can still turn alerts on from the Notices screen. */
+function _pushAskedKey(){return 'ycp_push_asked';}
+async function _maybeOfferPushAfterInitials(){
+  try{
+    if(PREVIEW_MODE||ACCOUNT_PREVIEW)return;
+    if(!('serviceWorker'in navigator)||!('PushManager'in window)||!('Notification'in window))return;
+    // 'granted' or 'denied' — the browser will not prompt again either way, so asking is
+    // pure noise. Only 'default' is still askable.
+    if(Notification.permission!=='default')return;
+    // On iOS no prompt is possible at all outside an installed PWA; the Notices card
+    // already explains how to install, so don't surface a dead-end sheet here.
+    if(_isIOS()&&!_isStandalone())return;
+    try{if(localStorage.getItem(_pushAskedKey()))return;}catch(_){}
+    // Never offer what the server can't deliver — same gate as the Notices card.
+    if(_pushCfg===null){try{_pushCfg=await api('/push/config');}catch(_){return;}}
+    if(!_pushCfg||!_pushCfg.configured)return;
+    if(!_isValidVapidKey(_pushCfg.publicKey))return;
+    try{localStorage.setItem(_pushAskedKey(),'1');}catch(_){}
+    _pushOn();
+  }catch(_){}
 }
 
 /* ⚠ `Notification.requestPermission()` MUST be called synchronously inside this click
