@@ -142,17 +142,25 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
    above (the strip that shows below the fixed-height .app now blends instead of reading black);
    this full-inset reservation keeps the icons off the very edge. (Supersedes the Bug-3 2026-07-17
    fractional-inset tweak, which had under-reserved the safe area.) */
-.tabs{display:flex;background:#fff;border-top:1px solid var(--line);padding:4px 6px max(6px,env(safe-area-inset-bottom));gap:2px;box-shadow:0 -2px 10px rgba(30,27,75,.05);position:fixed;left:0;right:0;bottom:0;z-index:100;}
-/* Bug 15 (2026-07-28) — the light-purple strip UNDER the bottom nav, still reported after the
-   2026-07-26 `html{background:#fff}` fix. That fix only covered the CANVAS; the strip iOS
-   exposes below the layout viewport (dynamic toolbar retracting / keyboard dismissing) is also
-   painted by the BODY box, which carried `--paper`. Two changes together close it:
-   (1) `body` is now white and `--paper` lives on `.app` alone (which is where the tinted app
-       column is actually wanted — the letterbox at 540–980px was already documented as white);
-   (2) `.tabs::after` extends the nav's own white surface 120px BELOW it. It sits inside the
-       nav's stacking context (z-index 100) and starts at `top:100%`, so it can never cover
-       page content — there is no content below the nav's bottom edge. */
-.tabs::after{content:"";position:absolute;left:0;right:0;top:100%;height:120px;background:#fff;pointer-events:none;}
+/* `--vp-short` (2026-07-31) — SHORT-LAYOUT-VIEWPORT COMPENSATION. See `_vpFit()` for the full
+   diagnosis and the measurements. Short version: on an installed iPhone, iOS launches the standalone
+   PWA with a layout viewport 62px SHORTER than the screen (exactly `safe-area-inset-top`), while the
+   web view itself still covers the whole screen — so `bottom:0` resolves 62px above the physical
+   bottom and the uncovered strip shows the white canvas. `_vpFit()` measures the shortfall and sets
+   this var; it is 0px in the normal case, so this transform is a no-op everywhere else. */
+.tabs{display:flex;background:#fff;border-top:1px solid var(--line);padding:4px 6px max(6px,env(safe-area-inset-bottom));gap:2px;box-shadow:0 -2px 10px rgba(30,27,75,.05);position:fixed;left:0;right:0;bottom:0;z-index:100;transform:translateY(var(--vp-short,0px));}
+/* ~~`.tabs::after`~~ REMOVED 2026-07-31. It painted the nav's white surface 120px BELOW itself, added
+   for Bug 15 (2026-07-28) to hide a light-purple strip under the nav. It is now BOTH redundant and
+   actively harmful:
+   - redundant, because that strip is painted by `html` and `body`, and since 2026-07-26/28 BOTH are
+     `#fff` (`--paper` lives on `.app` alone) — so the strip is already white with no help from here;
+   - harmful, because it made the 62px gap above indistinguishable from nav chrome. The owner
+     reported this as "the white bar at the bottom is pretty tall", not as "the nav is floating",
+     and that is precisely why: 91px of real nav + 62px of gap painted the same white read as one
+     tall bar. It disguised the very bug class it was sitting on top of.
+   DO NOT re-add it. If a coloured strip ever reappears under the nav, the cause is a shortfall that
+   `_vpFit()` is not catching (or an `html`/`body` background regression) — fix that, don't paint
+   over it, or the next occurrence is invisible again. */
 .tab{flex:1;text-align:center;padding:7px 4px 6px;font-size:var(--t-xs);color:var(--muted);cursor:pointer;border:none;background:none;position:relative;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:12px;transition:background .15s,color .15s;}
 .tab .ic{display:block;transition:transform .15s;}
 .tab.on{color:var(--blue);font-weight:700;background:var(--chip);}
@@ -1781,6 +1789,81 @@ if(window.visualViewport)window.visualViewport.addEventListener('resize',_fixVie
 document.addEventListener('focusout',function(e){
   if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))setTimeout(_fixViewportGap,60);
 });
+/* SHORT-LAYOUT-VIEWPORT COMPENSATION (2026-07-31) — the seventh and, unlike Follow-ups 3-7, a
+   MEASURED fix for the bottom nav not reaching the bottom of the screen.
+
+   MEASURED ON THE OWNER'S iPhone 16 Pro (402 x 874pt), installed to the Home Screen, via the
+   readout below. Broken state at launch vs. corrected state after one drag:
+
+       innerHeight   812 -> 874        nav.bottom       812 -> 874
+       scrollHeight  812 -> 874        safe-top          62 ->  62
+       vv.height     812 -> 874        safe-bottom       34 ->  34
+       white at the bottom of the screen: 96pt -> 34pt
+
+   874 - 812 = 62 = EXACTLY `safe-area-inset-top`. 62 + 34 = 96 = exactly the white measured in the
+   broken state. So: iOS launches the standalone PWA with a LAYOUT VIEWPORT 62px shorter than the
+   screen, while the WEB VIEW still covers the whole screen — proven by `safe-area-inset-bottom`
+   reporting 34px in the broken state, which it only does when the view extends into the
+   home-indicator region. `bottom:0` therefore resolves to 812, i.e. 62px above the physical bottom,
+   and that uncovered strip shows the white `html` canvas.
+
+   ⚠️ THIS IS WHY THE PREVIOUS SIX ATTEMPTS ALL MISSED. Every in-page metric agrees with itself:
+   innerHeight, clientHeight, scrollHeight, visualViewport and `100dvh` ALL report the short 812,
+   and BOTH gap checks (`innerHeight - nav.bottom` and `vv.height + vv.offsetTop - nav.bottom`) read
+   0 — the nav really is at the bottom of the viewport it was given. Nothing inside the layout
+   viewport can see the problem. `window.screen.height` is the ONLY reference that reports the true
+   874, which is what makes this detectable at all. Do not "simplify" this to a viewport-relative
+   measurement; it will read 0 and silently do nothing.
+
+   WHY IT NEVER SELF-CORRECTS: on Home the content is shorter than the viewport (scrollHeight ==
+   innerHeight == 812), so the document is not scrollable, so iOS never gets the scroll that would
+   make it re-lay-out. The owner's "drag it down and it works" IS that missing recompute. A
+   `scrollTo` cannot substitute — there is nowhere to scroll to.
+
+   THE FIX COMPENSATES RATHER THAN COAXING. It translates the nav down by the measured shortfall,
+   which is deterministic and needs no cooperation from iOS, and it is self-cancelling: once iOS
+   settles, the shortfall is 0 and the transform is removed. `.screen`'s bottom padding is measured
+   from the layout-viewport bottom, so moving the nav DOWN only ever increases content clearance.
+
+   GATED HARD TO iOS STANDALONE. In Safari, `screen.height - innerHeight` is large and legitimate
+   (browser chrome), and on Android the system bars do the same — compensating there would shove
+   the nav off-screen. Standalone iOS only, and only for a shortfall in a plausible range. */
+var _VP_MAX_SHORT=140,_vpShortNow=-1;
+function _vpIsIOS(){
+  try{
+    return /iPad|iPhone|iPod/.test(navigator.userAgent)||
+      (navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  }catch(_){return false;}
+}
+function _vpIsStandalone(){
+  try{return window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;}
+  catch(_){return false;}
+}
+function _vpShortfall(){
+  if(!_vpIsStandalone()||!_vpIsIOS())return 0;
+  try{
+    // screen.height is in CSS px and already orientation-adjusted; it is the only reference that
+    // reports the TRUE screen height when the layout viewport is short.
+    var sh=(window.screen&&window.screen.height)||0,ih=window.innerHeight||0;
+    if(!sh||!ih)return 0;
+    var d=Math.round(sh-ih);
+    return (d>0&&d<=_VP_MAX_SHORT)?d:0;
+  }catch(_){return 0;}
+}
+function _vpFit(){
+  try{
+    var d=_vpShortfall();
+    if(d===_vpShortNow)return;          // only touch the DOM on a real change
+    _vpShortNow=d;
+    document.documentElement.style.setProperty('--vp-short',d+'px');
+  }catch(_){}
+}
+_vpFit();
+requestAnimationFrame(_vpFit);
+window.addEventListener('pageshow',_vpFit);              // resume from the back/forward cache
+document.addEventListener('visibilitychange',_vpFit);    // resume from background — a common trigger
+window.addEventListener('orientationchange',function(){setTimeout(_vpFit,300);});
+
 /* ⚠️ TEMPORARY DIAGNOSTIC — 2026-07-31, viewport/bottom-nav gap investigation. DELETE THIS BLOCK
    (and the `.vpdbg` CSS rule, and the `_vpDbgTap` call in the header markup) once the floating-nav
    bug is fixed. It exists because the nav has now been "fixed" six times blind (see CLAUDE.md
@@ -1830,7 +1913,8 @@ function _vpDbgRender(){
     var cs=getComputedStyle(probe);
     function n(v){return (v===undefined||v===null)?'-':(Math.round(v*10)/10);}
     var rows=[
-      ['standalone', (window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true)?'YES':'no'],
+      ['standalone', _vpIsStandalone()?'YES':'no'],
+      ['screen.height', n(window.screen&&window.screen.height)],
       ['innerHeight', n(window.innerHeight)],
       ['clientHeight', n(de.clientHeight)],
       ['scrollHeight', n(de.scrollHeight)],
@@ -1844,22 +1928,32 @@ function _vpDbgRender(){
       ['nav.bottom', r?n(r.bottom):'-'],
       ['nav.height', r?n(r.height):'-'],
       ['GAP (inner-nav.bottom)', r?n(window.innerHeight-r.bottom):'-'],
-      ['GAP (vv-nav.bottom)', (vv&&r)?n(vv.height+vv.offsetTop-r.bottom):'-']
+      ['GAP (vv-nav.bottom)', (vv&&r)?n(vv.height+vv.offsetTop-r.bottom):'-'],
+      // THE decisive one: the shortfall is invisible to every viewport-relative metric above.
+      ['SHORTFALL', n(_vpShortfall())],
+      ['--vp-short applied', getComputedStyle(document.documentElement).getPropertyValue('--vp-short').trim()||'0px'],
+      // With the fix working this is 0 in BOTH states: nav bottom == true screen bottom.
+      ['REAL GAP (screen-nav)', r?n(((window.screen&&window.screen.height)||0)-r.bottom):'-']
     ];
     box.innerHTML=rows.map(function(x){
-      var hot=/^GAP/.test(x[0])&&x[1]!=='-'&&Math.abs(parseFloat(x[1]))>1;
+      var hot=/^(GAP|REAL GAP|SHORTFALL)/.test(x[0])&&x[1]!=='-'&&Math.abs(parseFloat(x[1]))>1;
       return '<div'+(hot?' style="color:#fca5a5;font-weight:800"':'')+'>'+esc(x[0])+': '+esc(String(x[1]))+'</div>';
     }).join('');
   }catch(_){}
 }
+/* One tick drives BOTH: `_vpFit` always (it early-returns unless the shortfall actually changed,
+   so the steady-state cost is two property reads), the readout only when it is switched on.
+   The poll is what catches iOS settling the viewport WITHOUT firing an event — the case where
+   nothing scrolls and no resize fires is exactly the bug being compensated for. */
+function _vpTick(){_vpFit();if(_vpDbgOn())_vpDbgRender();}
 if(window.visualViewport){
-  window.visualViewport.addEventListener('resize',_vpDbgRender);
-  window.visualViewport.addEventListener('scroll',_vpDbgRender);
+  window.visualViewport.addEventListener('resize',_vpTick);
+  window.visualViewport.addEventListener('scroll',_vpTick);
 }
-window.addEventListener('resize',_vpDbgRender);
-window.addEventListener('scroll',_vpDbgRender,{passive:true});
-window.addEventListener('orientationchange',function(){setTimeout(_vpDbgRender,300);});
-setInterval(_vpDbgRender,500);
+window.addEventListener('resize',_vpTick);
+window.addEventListener('scroll',_vpTick,{passive:true});
+window.addEventListener('orientationchange',function(){setTimeout(_vpTick,300);});
+setInterval(_vpTick,500);
 /* END TEMPORARY DIAGNOSTIC */
 function _spinner(id,label){
   const el=document.getElementById(id);
