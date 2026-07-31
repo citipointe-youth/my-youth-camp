@@ -1857,9 +1857,10 @@ function navModel(role,mode){
     /* admin pre-camp — bottom nav (phone) keeps Data Import in Notices' old slot (bug 6).
        The desktop sidebar (2026-07-20) gets a dedicated Notices extra — sidebar has room where
        the 4-slot phone bottom nav doesn't.
-       ⚠ 2026-07-31: the Admin console's Notices tile (the old "bug 5" route) was REMOVED at the
-       owner's request, so on a PHONE in pre-camp an admin now has no route to Notices at all —
-       `extras` render only in the >=980px sidebar. Accepted, but don't be surprised by it. */
+       ⚠ 2026-07-31: the Admin console's Notices tile (the old "bug 5" route) was removed and then
+       RESTORED the same day, now under the console's "Camp setup" group and gated to pre-camp.
+       It is the ONLY Notices route for an admin on a PHONE in pre-camp, because `extras` render
+       only in the >=980px sidebar — so don't remove it again without re-opening that gap. */
     return {tabs:[T('home','home','Home'),T('people','users','My Youth'),T('data','note','Data'),T('import','upload','Data Import'),T('admin','gear','Admin')],
             extras:[T('notifs','bell','Notices'),T('budget','star','Budget & Costings'),T('accom','classroom','Accommodation Allocations')]};
   }
@@ -4353,8 +4354,15 @@ RENDER.admin=function(){
   // Item B (2026-07-28): Budget & Costings had no entry point from the admin console — it was
   // only reachable from the pre-camp desktop sidebar. Admin + director both hold `budget:manage`.
   const budgetTile=isAdminOrDirector?_adminTile('dollar','Budget &amp; Costings',"go('budget')"):'';
+  // 2026-07-31 (owner, second pass): Notices is BACK on this console, but **pre-camp only** —
+  // it is the only phone route to Notices for an admin in pre-camp (see the navModel comment).
+  // At camp it is deliberately absent: Notices is already a tile on the at-camp home grid, so a
+  // console tile there would be a duplicate route. Do NOT "fix" this by re-cutting the 4-slot
+  // phone bottom nav — that arrangement is deliberate (bug 6).
+  const noticesTile=CAMP_MODE==='pre-camp'?_adminTile('bell','Notices',"gotoTab('notifs')"):'';
   // Tiles grouped under three headings (re-ordered per admin request):
-  // Camp setup = Setup Wizard, Camp settings, Accommodation, At-Camp Info, Switch mode.
+  // Camp setup = Setup Wizard, Camp settings, Accommodation, At-Camp Info, Notices (pre-camp
+  //   only), Switch mode.
   // People & churches = Accounts & churches, Ministry contacts.
   // Data = Data Import, Data Export/Reset (+ Individual Student Data Edit, at-camp only —
   // not explicitly listed in the request but there's no other home for it in this console).
@@ -4362,18 +4370,19 @@ RENDER.admin=function(){
   // settled — please don't reactively reshuffle again without a deliberate pass.
   // Item 10 (2026-07-28): the "Communications" group is gone — Notices and Scheduled notices are
   // now ONE screen (sub-tabs). Item B added Budget & Costings alongside it.
-  // 2026-07-31 (owner request): the **Notices** tile is REMOVED from this console. Notices is
-  // still reached from the desktop sidebar (`navModel` extras) in both modes, and from the
-  // at-camp home tile grid. ⚠ KNOWN GAP, accepted by the owner: an **admin on a phone in
-  // pre-camp** now has no route to Notices — the 4-slot bottom nav gives that slot to Data
-  // Import (bug 6) and `extras` render only in the >=980px sidebar. This tile was the fix for
-  // "bug 5". If that route is wanted back, restore it here rather than re-cutting the bottom nav.
+  // 2026-07-31 (owner request): the **Notices** tile was removed from this console, which left an
+  // admin on a phone in pre-camp with no route to Notices at all (`navModel` extras render only
+  // in the >=980px sidebar, and the 4-slot bottom nav gives that slot to Data Import — bug 6).
+  // 2026-07-31 (owner, second pass): it is RESTORED under **Camp setup**, gated to **pre-camp**
+  // (`noticesTile` above). At camp it stays off this console — the at-camp home grid already has
+  // a Notices tile, so a console entry would be a second route to the same screen.
   paint('admin',`<div class="h3" style="margin:14px 0 6px">Camp setup</div>
     <div class="tiles">
       ${wizardTile}
       ${_adminTile('gear','Camp settings',"go('adminSettings')")}
       ${_adminTile('tent','Accommodation',"go('adminAccom')")}
       ${_adminTile('calendar','At-Camp Info',"go('atCampInfo')")}
+      ${noticesTile}
       ${modeTile}
     </div>
     <div class="h3" style="margin:16px 0 6px">People &amp; churches</div>
