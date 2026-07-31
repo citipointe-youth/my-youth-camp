@@ -152,6 +152,79 @@ describe('withCheckIn — immutable append only (never touches lifecycle or atCa
   });
 });
 
+// ---------------------------------------------------------------------------
+// N5 — server-side check-in dedup. The SPA's persisted queue can replay an entry
+// after a crash; a repeat of the SAME type as the last entry for that session is
+// a no-op. A genuine in -> out -> in sequence must still be three entries
+// ("checked in" is last-entry-wins for a session).
+// ---------------------------------------------------------------------------
+describe('withCheckIn — (sessionId, person, type) dedup', () => {
+  const inEntry: CheckInEntry = {
+    id: 'ci1',
+    sessionId: 's1',
+    sessionLabel: 'Wed AM',
+    type: 'in',
+    leaderId: 'u1',
+    timestamp: '2026-07-01T08:00:00.000Z',
+  };
+  const outEntry: CheckInEntry = { ...inEntry, id: 'ci2', type: 'out', timestamp: '2026-07-01T09:00:00.000Z' };
+
+  it('(a) a duplicate identical replay is collapsed to one entry, person returned unchanged', () => {
+    const p = basePerson({ lifecycle: 'arrived', atCamp: true });
+    const once = withCheckIn(p, inEntry, 't1');
+    // The replayed entry has a fresh id (person.service mints one per call) but the same
+    // session + type — exactly what a queue replay produces.
+    const replay: CheckInEntry = { ...inEntry, id: 'ci1-replay', timestamp: '2026-07-01T08:00:02.000Z' };
+    const twice = withCheckIn(once, replay, 't2');
+    expect(twice.checkInHistory).toHaveLength(1);
+    expect(twice).toBe(once);
+    expect(twice.updatedAt).toBe('t1');
+    // The P0 presence invariant is untouched either way.
+    expect(twice.atCamp).toBe(true);
+    expect(twice.lifecycle).toBe('arrived');
+  });
+
+  it('(b) a genuine in -> out -> in sequence still produces three entries', () => {
+    const p = basePerson({ lifecycle: 'arrived', atCamp: true });
+    const p1 = withCheckIn(p, inEntry, 't1');
+    const p2 = withCheckIn(p1, outEntry, 't2');
+    const p3 = withCheckIn(p2, { ...inEntry, id: 'ci3', timestamp: '2026-07-01T10:00:00.000Z' }, 't3');
+    expect(p3.checkInHistory).toHaveLength(3);
+    expect(p3.checkInHistory.map((e) => e.type)).toEqual(['in', 'out', 'in']);
+    // Last-entry-wins: they read as checked in.
+    expect(p3.checkInHistory[p3.checkInHistory.length - 1]?.type).toBe('in');
+    expect(p3.atCamp).toBe(true);
+    expect(p3.lifecycle).toBe('arrived');
+  });
+
+  it('(c) two different people in the same session are unaffected by each other', () => {
+    const a = withCheckIn(basePerson({ id: 'pA', lifecycle: 'arrived', atCamp: true }), inEntry, 't1');
+    const b = withCheckIn(basePerson({ id: 'pB', lifecycle: 'arrived', atCamp: true }), { ...inEntry, id: 'ci9' }, 't1');
+    expect(a.checkInHistory).toHaveLength(1);
+    expect(b.checkInHistory).toHaveLength(1);
+  });
+
+  it('(d) the same person in two DIFFERENT sessions is unaffected', () => {
+    const p = basePerson({ lifecycle: 'arrived', atCamp: true });
+    const p1 = withCheckIn(p, inEntry, 't1');
+    const p2 = withCheckIn(p1, { ...inEntry, id: 'ci4', sessionId: 's2', sessionLabel: 'Wed PM' }, 't2');
+    expect(p2.checkInHistory).toHaveLength(2);
+    expect(p2.checkInHistory.map((e) => e.sessionId)).toEqual(['s1', 's2']);
+  });
+
+  it('only the LAST entry for the session is compared — an interleaved other session is skipped', () => {
+    const p = basePerson({ lifecycle: 'arrived', atCamp: true });
+    const p1 = withCheckIn(p, inEntry, 't1');
+    const p2 = withCheckIn(p1, { ...inEntry, id: 'ci5', sessionId: 's2', sessionLabel: 'Wed PM' }, 't2');
+    // s1's last entry is still the 'in' — this replay must collapse despite s2 sitting after it.
+    const p3 = withCheckIn(p2, { ...inEntry, id: 'ci6' }, 't3');
+    expect(p3.checkInHistory).toHaveLength(2);
+    // ...while a genuine s1 check-OUT still appends.
+    const p4 = withCheckIn(p3, outEntry, 't4');
+    expect(p4.checkInHistory).toHaveLength(3);
+  });
+});
+
 describe('withSignEvent — immutable append + lifecycle/atCamp transition', () => {
   it('a sign-OUT event moves arrived -> checked_out, sets atCamp=false, appends history', () => {
     const p = basePerson({ lifecycle: 'arrived', atCamp: true });

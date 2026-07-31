@@ -27,7 +27,7 @@ same day (see CLAUDE.md's 2026-07-31 section).
   org's consent posture for minors applies. Re-ask then; do not treat this row as settled forever.
 - **Q12's answer avoids a specific trap, and that is why the timing matters.** Installing to the
   Home Screen puts the app in a **separate storage partition**, so the leader is logged out and must
-  sign in again — with a randomised `Word.##` password from the distributed CSV, plus an initials
+  sign in again — with a randomised `Word.###` password from the distributed CSV, plus an initials
   re-prompt. Doing that at a training day is supported; doing it mid-camp is the failure the
   question was raised about. **If the training day slips, this cost comes back.**
 - **iOS still gives no notification permission prompt until the app is installed to the Home

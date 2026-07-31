@@ -684,7 +684,7 @@ Practical consequences for *this* app's users:
   to get wrong (people bookmark instead).
 - **The installed PWA has a separate storage partition from the Safari tab.** The leader will be
   **logged out** inside the newly installed app and must log in again — and because church logins
-  are randomised memorable passwords (`Word.##`) handed out on a CSV, some will not have it to
+  are randomised memorable passwords (`Word.###`) handed out on a CSV, some will not have it to
   hand. The initials prompt (`enforceInitials()`) also re-runs, since
   `localStorage['ycp_initials_<user>']` does not carry over. Budget for this in rollout comms; it is
   a real support cost, not a footnote.
@@ -1075,5 +1075,5 @@ never blocking implementation. Recorded verbatim so a future session does not re
 12. **iOS install comms.** ~~Who tells church leaders to Add to Home Screen, and is the forced
     re-login acceptable — especially during camp week?~~ → **Handled at the pre-camp training day**,
     ahead of camp. This deliberately avoids the worst case the question was raised about: the
-    re-login (separate storage partition, randomised `Word.##` password, initials re-prompt) now
+    re-login (separate storage partition, randomised `Word.###` password, initials re-prompt) now
     happens in a supported setting rather than mid-camp.

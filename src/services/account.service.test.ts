@@ -293,10 +293,10 @@ describe('AccountService — gender-scoped church accounts', () => {
     const female = churchUsers.find((u) => u.genderScope === 'female');
     expect(male?.username).toBe('b-victory');
     expect(female?.username).toBe('g-victory');
-    // Memorable Word.## passwords in the credentials, and they actually authenticate.
+    // Memorable Word.### passwords in the credentials, and they actually authenticate.
     expect(res.credentials).toHaveLength(2);
     for (const c of res.credentials) {
-      expect(c.password).toMatch(/^[A-Z][a-z]+\.\d{2}$/);
+      expect(c.password).toMatch(/^[A-Z][a-z]+\.\d{3}$/);
     }
     const maleCred = res.credentials.find((c) => c.gender === 'male');
     expect(maleCred?.username).toBe('b-victory');
@@ -347,7 +347,7 @@ describe('AccountService — gender-scoped church accounts', () => {
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.gender).sort()).toEqual(['female', 'male']);
     for (const r of rows) {
-      expect(r.password).toMatch(/^[A-Z][a-z]+\.\d{2}$/);
+      expect(r.password).toMatch(/^[A-Z][a-z]+\.\d{3}$/);
       expect(r.church).toBe('Victory');
     }
     // Hashes changed; the new passwords authenticate; no mustChangePassword set.
