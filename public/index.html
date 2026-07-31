@@ -531,9 +531,10 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
    button hidden behind the nav (`.modal` was z-index:50, `.ig-wrap` 55, the login gate 60 — all
    below the nav). Current ladder: nav 100 < modal/guide 120 < toast 130 < login/gate 140 < tooltip
    200 < undo toast 9999. GOTCHA: a new overlay must be `position:fixed` AND above 100. */
-/* ⚠️ TEMPORARY DIAGNOSTIC (2026-07-31) — viewport/bottom-nav gap readout. DELETE with the
-   `_vpDbg*` JS block. Anchored TOP-left deliberately: the whole question is what happens at the
-   BOTTOM of the viewport, so the readout must not sit in the region under investigation.
+/* Viewport readout (2026-07-31) — off by default, five taps on the header title. See the `_vpDbg*`
+   JS block for why it is kept rather than deleted. Anchored TOP-left deliberately: the whole
+   question is what happens at the BOTTOM of the viewport, so it must not sit in the region
+   under investigation.
    pointer-events:none so it can never swallow a tap; z-index above the tooltip layer (200) so it
    stays legible over any screen, but below the undo toast (9999). */
 .vpdbg{position:fixed;top:0;left:0;z-index:300;pointer-events:none;background:rgba(14,10,30,.86);
@@ -1883,10 +1884,14 @@ function _vpShortfall(){
    keyboard does NOT change `innerHeight` on iOS (only `visualViewport.height`), so the shortfall is
    0 while typing and this stays asleep until the keyboard has gone.
 
-   ⚠️ UNPROVEN — a programmatic scroll may not carry the same weight with iOS as a finger drag.
-   The failure mode is deliberately benign: if iOS ignores it, the shortfall stays and the result is
-   today's tall bar, never a clipped nav (nothing is moved or resized permanently). If a future
-   session finds this is dead weight, delete it — do NOT escalate it into moving the nav.
+   ✅ CONFIRMED WORKING ON DEVICE 2026-07-31 (installed iPhone 16 Pro, both triggers). This is the
+   first fix to this bug in SEVEN attempts that was verified rather than assumed — see CLAUDE.md.
+   A programmatic scroll does carry enough weight with iOS, which was the open question.
+
+   The failure mode is deliberately benign and should stay that way: if iOS ever ignores the kick,
+   the shortfall simply stays and the result is the old tall bar, never a clipped nav (nothing is
+   moved or resized permanently). ⚠️ Do NOT "improve" this by moving the nav instead — that was
+   tried the same day and reverted; see the note on `.tabs` in the CSS.
 
    Guards, all load-bearing:
    - shortfall must be non-zero, so it is inert on every non-iOS/non-standalone device, and it
@@ -1938,11 +1943,19 @@ if(window.visualViewport)window.visualViewport.addEventListener('resize',functio
 document.addEventListener('focusout',function(e){
   if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))setTimeout(_vpKick,220);
 });
-/* ⚠️ TEMPORARY DIAGNOSTIC — 2026-07-31, viewport/bottom-nav gap investigation. DELETE THIS BLOCK
-   (and the `.vpdbg` CSS rule, and the `_vpDbgTap` call in the header markup) once the floating-nav
-   bug is fixed. It exists because the nav has now been "fixed" six times blind (see CLAUDE.md
-   Follow-ups 3-7) with no device here to measure on, and a static screenshot can only show that
-   ~60 CSS px of gap exists, not what iOS thinks the viewport is.
+/* VIEWPORT READOUT — KEPT DELIBERATELY, was built as a throwaway on 2026-07-31 and earned its place.
+
+   ⚠️ DO NOT DELETE IT AS "debug code left behind". The bottom-nav bug had been fixed blind SIX
+   times (CLAUDE.md Follow-ups 3-7) because every metric a page can normally read agrees with itself
+   in the broken state — `innerHeight`, `clientHeight`, `scrollHeight`, `visualViewport` and `100dvh`
+   ALL report the short height, and both nav-gap checks read 0. This readout is what exposed
+   `screen.height` as the only disagreeing reference and turned a seventh guess into a measurement.
+   It also caught the reverted `translateY` attempt (`kicks fired` / `SHORTFALL` told us instantly
+   that a "fix" had fired and been ignored) AND caught a silent Vercel deploy miss, where the owner
+   was testing an older build than the one we thought was live.
+
+   If this class of bug recurs — a bar at the bottom, a floating nav, layout wrong until you scroll —
+   turn this on FIRST and read SHORTFALL. Do not start editing CSS.
 
    OFF by default. Toggled by tapping the header TITLE five times (persisted in
    localStorage.ycp_vpdebug), so a real leader can never stumble into it.
@@ -2029,7 +2042,7 @@ window.addEventListener('resize',_vpTick);
 window.addEventListener('scroll',_vpTick,{passive:true});
 window.addEventListener('orientationchange',function(){setTimeout(_vpTick,300);});
 setInterval(_vpTick,500);
-/* END TEMPORARY DIAGNOSTIC */
+/* END VIEWPORT READOUT */
 function _spinner(id,label){
   const el=document.getElementById(id);
   if(el){el.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">'+(label||'Loading…')+'</div></div>';const sc=_scroller(el);if(sc)sc.scrollTop=0;}

@@ -22,8 +22,17 @@
 > - **Start a localhost dev server or drive a browser to test.** Verify with `npm run typecheck`
 >   + `npm run test` and reasoning/grep only. CSS/layout changes can't be fully proven this way —
 >   make the change and tell the user to eyeball it on-device.
-> - **Check the Vercel deployment.** GitHub is linked to Vercel; a push to `master` auto-deploys.
->   Pushing is the deploy — no need to poll deployments or curl the prod URL to confirm.
+> - **Check the Vercel deployment** *for an ordinary push*. GitHub is linked to Vercel; a push to
+>   `master` auto-deploys, so pushing is normally the deploy.
+>
+> **⚠️ EXCEPTION, added 2026-07-31 — if you are about to ask the owner to TEST ON A DEVICE, verify
+> the deploy landed first.** A push reached `origin/master` and Vercel **never created a deployment
+> for it**; prod served the old build twenty minutes later and the owner's test screenshots were of
+> a build without the fix, which nearly read as "the fix doesn't work". (Same webhook miss recorded
+> in CLAUDE.md on 2026-07-17.) One command:
+> `curl -s https://my-youth-camp.vercel.app/sw.js | head -1` → confirm the `camp-vNN` you just
+> shipped. Or grep the live HTML for a symbol you just added. Recovery: an **empty commit** to
+> produce a fresh push event (built in ~30s). `vercel deploy --prod --yes` is the CLI fallback.
 
 ### Per-set input template (what to give Claude each time)
 
@@ -189,6 +198,9 @@ Also: `Cache` (313, 30s TTL data cache), `ALLREG/CHURCHES` (~839), `_navToken` (
 | `toast / modal / closeModal` | 422–424 | Transient UI |
 | `dayLong / timeFmt / dtFmt` | 425 | Date formatting (UTC-anchored). `_addDays / _datesBetween` near `adminSettings` derive check-in days. |
 | `fmtPhone` / `telLink` | ~1259 / ~1267 | **(NEW 2026-07-02)** `fmtPhone` normalizes AU mobiles for display — reformats a 10-digit `04xxxxxxxx` to `0411 928 301` and re-adds a dropped leading 0 on a 9-digit truncated number (common when a CSV mobile column got numeric-coerced upstream in Excel/Elvanto). Passes through anything else unchanged (incl. masked contact numbers like `0411****01`). `telLink` (tel: links) and every other phone-display site (Data tab, first-aid leader/parent contacts, search reveal, Student Info/camper card) call it. **Doesn't touch editable phone `<input>` values** (e.g. ministry-contacts editor `pair()`) — only rendered/read-only text. "Phone shown inconsistently / missing leading 0" → here. |
+| `_vpShortfall` / `_vpKick` | ~1857 / ~1897 | **iOS short-layout-viewport fix (2026-07-31).** `_vpShortfall` = `screen.height - innerHeight`, gated to iOS standalone — **the only metric that can see this bug** (everything viewport-relative agrees with itself in the broken state). `_vpKick` briefly makes the document 200px taller, scrolls 1px, restores. Triggers: launch (retried over 1.6s) + `visualViewport.resize`/`focusout` (keyboard). ⚠️ Do NOT replace with a transform on `.tabs` — tried and reverted; the document cannot paint past `innerHeight`. |
+| `_vpDbg*` / `.vpdbg` | ~1935 / CSS ~534 | **Viewport readout.** Off by default; five taps on the header title (`_vpDbgTap` on `#barT`), persisted in `localStorage.ycp_vpdebug`. **KEPT deliberately — do not delete as leftover debug code.** Read `SHORTFALL` + `kicks fired` before touching CSS for any bottom-bar/floating-nav symptom. |
+| `_fixViewportGap` | ~1792 | iOS keyboard-dismiss **scroll restore** (2026-07-29). Distinct from `_vpKick` and both are needed: this restores scroll position, `_vpKick` re-sizes the view. Note it is a **no-op when the document is not scrollable**, which is exactly the state `_vpKick` exists for. |
 | `_initDemoLogin / quick` | 444 / 451 | Demo quick-login (localhost only) |
 | `doLogin / logout / _tryRestoreSession` | 452 / 467 / ~2244 | Auth. `doLogin` saves token+actor to localStorage; `logout` clears localStorage; `_tryRestoreSession` (called at boot) restores session across page reloads. |
 
@@ -358,6 +370,22 @@ tolerate absence via `?? false`.
 ---
 
 ## Symptom router (fastest path)
+
+### 2026-07-31 — ⚠️ ANY bottom bar / floating nav / "wrong until I scroll" symptom — READ THIS FIRST
+
+**Turn on the viewport readout before touching CSS: tap the header title five times, read
+`SHORTFALL`.** This bug was "fixed" blind SIX times because it is invisible to every metric a page
+can normally read. Full write-up: `CLAUDE.md`, "THE BOTTOM-NAV / TALL-WHITE-BAR BUG IS ACTUALLY
+FIXED".
+
+| Symptom | Go to |
+|---|---|
+| **Tall white bar under the bottom nav; correct after you drag/scroll** | The known bug. iOS hands the installed PWA a layout viewport ~58-62px shorter than the screen. `_vpKick()` (`public/index.html`) fixes it by making the document briefly taller, scrolling 1px, and restoring. If it is back: readout on → `SHORTFALL` non-zero + `kicks fired` 0 means the kick never triggered (event wiring); non-zero + `kicks fired` ≥1 means iOS ignored it (new iOS behaviour — do NOT escalate to moving the nav). |
+| **Same bar after opening and dismissing a keyboard** | Same bug, second trigger. Wired via `visualViewport.resize` + `focusout` in the `_vpKick` block. Note a keyboard does NOT change `innerHeight` on iOS (only `visualViewport.height`), so `SHORTFALL` is correctly 0 *while* typing. |
+| **Half the nav bar is hidden / nav clipped at the bottom** | Someone re-added a downward `transform` on `.tabs`. Tried and reverted 2026-07-31 — **the document cannot paint past `innerHeight`**, so a translated nav is simply clipped. See the do-not-retry note on `.tabs` in the CSS. |
+| **A COLOURED (not white) strip under the nav** | `html`/`body` backgrounds — both must be `#fff`; `--paper` belongs on `.app` alone. iOS fills that strip with the *document's* backdrop colour, **not** the manifest `background_color`. Do NOT re-add `.tabs::after` (it paints below `innerHeight` and is invisible). |
+| **`SHORTFALL` reads 0 but the layout still looks wrong** | Not this bug. `SHORTFALL` is `screen.height - innerHeight`, gated to iOS standalone — it is 0 by design in Safari, on Android and on desktop. |
+| **Nav gap metrics both read 0 yet there is clearly a gap** | Expected, and the trap that cost six attempts. `innerHeight`/`clientHeight`/`scrollHeight`/`visualViewport`/`100dvh` all agree with each other in the broken state. Only `window.screen.height` disagrees. |
 
 ### 2026-07-31 — "Other" removed from the student gender picker
 

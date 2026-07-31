@@ -439,6 +439,101 @@ recomputing it. If a real "who will see this?" figure is ever wanted, compute it
 
 ### ~~Still gated on the owner~~ — ALL TURNED ON 2026-07-31, see the section below
 
+## ✅ THE BOTTOM-NAV / TALL-WHITE-BAR BUG IS ACTUALLY FIXED — 2026-07-31
+
+**Seventh attempt, and the first one verified on a device instead of assumed.** Follow-ups 3-7
+(2026-07-24), the 2026-07-26 `html{background:#fff}` change and the 2026-07-28 `.tabs::after`
+change were all blind guesses at this. SPA-only (`public/index.html`); no backend, schema or
+migration change. `sw.js` `camp-v68`→**`camp-v73`** across the whole investigation.
+
+> **If a bar/gap/floating-nav symptom EVER comes back: turn on the viewport readout FIRST (five
+> taps on the header title) and read `SHORTFALL`. Do not start editing CSS.** That is the entire
+> lesson of this session.
+
+### The actual root cause
+iOS gives the installed PWA a **layout viewport ~58-62px SHORTER than the screen** — at launch,
+and again after a keyboard is dismissed. Measured on the owner's iPhone 16 Pro (402x874pt):
+
+| | broken | after one drag |
+|---|---|---|
+| `innerHeight` / `scrollHeight` / `vv.height` | 816 (and 812 on another screen) | **874** |
+| `nav.bottom` | 816 | 874 |
+| `screen.height` | 874 | 874 |
+| white at the bottom of the screen | **96pt** | 34pt |
+
+`874 - 812 = 62` = exactly `safe-area-inset-top`; `62 + 34` = exactly the 96pt of white measured.
+The nav is at `bottom:0` of the viewport it was given — it is the **viewport** that is short.
+
+### ⚠️ Why six previous attempts all missed it
+**Every metric a page can normally read agrees with itself in the broken state.** `innerHeight`,
+`clientHeight`, `scrollHeight`, `visualViewport` and `100dvh` ALL report the short height, and
+BOTH nav-gap checks (`innerHeight - nav.bottom`, `vv.height + vv.offsetTop - nav.bottom`) read
+**0**. Nothing inside the layout viewport can see the problem. **`window.screen.height` is the
+only reference that reports the true height** — that is what made this findable at all.
+
+### ⚠️ TWO THINGS THAT DO NOT WORK — both tried on 2026-07-31, do not repeat
+1. **Moving the nav down** (`transform:translateY(<shortfall>)`). Built on the inference that
+   `safe-area-inset-bottom` reporting 34px while broken proved the WEB VIEW still covered the
+   screen and only the layout viewport was short. **That inference is FALSE.** The web view is
+   short too: with `innerHeight` 816 the last painted row of a full-screen screenshot was 815pt —
+   **the document cannot paint past `innerHeight`.** The nav went to 841-874 and was clipped
+   ("half of the nav bar was hidden"), strictly worse than the bar it replaced. Reverted same day.
+   The strip below belongs to iOS. No transform, negative margin or ancestor height can reach it.
+2. **`.tabs::after`** (the 120px white slab, 2026-07-28 Bug 15). It painted below the nav's bottom
+   edge, which is already at `innerHeight` — so it was clipped and **never visible**. Removed;
+   removing it changed nothing on screen. This also finally explains Bug 15 properly: that strip is
+   **not** filled with the manifest `background_color` (`#0b1220`, near-black), it is filled by iOS
+   extending the **document's own backdrop colour** — which is why `html{background:#fff}` fixed its
+   *colour* in 2026-07-26 and why it read light-purple when `html`/`body` carried `--paper`.
+   **`html`/`body` backgrounds are the only control over that strip's colour.**
+
+### The fix that works — `_vpKick()`
+The strip can't be painted, so the view has to actually get bigger, and the one thing observed to do
+that is **a real scroll**. `_vpKick()` briefly makes the document 200px taller than the viewport,
+scrolls 1px, and puts both back.
+
+**That "briefly taller" step is the whole trick.** On Home the content is shorter than the viewport
+(`scrollHeight === innerHeight`), so the document is **not scrollable and there is nowhere to scroll
+to** — which is why the pre-existing `_fixViewportGap()` (`scrollTo(0, scrollY)`, 2026-07-29) is a
+no-op in exactly the state that needs it, and why the bug never self-corrected. Both remain: this
+one re-sizes the view, `_fixViewportGap` restores scroll position after a keyboard.
+
+**Two triggers, both owner-reported and both covered:** app launch (retried over the first 1.6s —
+iOS is still moving things well after the first frame, hence 62px on one screen and 58px on
+another) and keyboard-dismiss (via `visualViewport.resize` + `focusout`). A keyboard does **not**
+change `innerHeight` on iOS, only `visualViewport.height`, so the shortfall reads 0 while typing and
+the kick correctly stays asleep until the keyboard has gone.
+
+Guards, all load-bearing: gated to iOS standalone with a plausible-range check (in Safari and on
+Android that same `screen.height - innerHeight` difference is legitimate browser/system chrome, and
+kicking there would scroll the page for no reason); never while an input is focused; a
+`_vpKicking` flag + 600ms cooldown, because the kick changes layout and can re-enter through the
+resize listener that called it; and the restore runs in a double rAF **and** on the throw path, so
+a failure mid-kick cannot strand the document with 200px of dead scroll space. It stops firing by
+itself once the shortfall reaches 0. Verified in isolation — 14 cases run against the real
+extracted functions with stubbed globals (detection, Safari/Android inertness, both restores,
+re-entrancy, cooldown).
+
+### The readout is KEPT — `_vpDbg*` + `.vpdbg`, off by default, five taps on the header title
+Built as a throwaway; **do not delete it as leftover debug code.** It is the only reason this was
+diagnosed, it caught the failed `translateY` attempt immediately (`kicks fired` + `SHORTFALL`
+distinguish "never ran" from "ran and iOS ignored it"), and it caught the deploy miss below.
+Costs a cached-boolean check every 500ms when off; `pointer-events:none` so it can never swallow
+a tap; every read wrapped, since it renders on every screen for every role.
+
+### ⚠️ DEPLOY GOTCHA THAT COST A WHOLE TEST CYCLE — a push is NOT proof of a deploy
+`48459c0` reached `origin/master` and **Vercel never created a deployment for it.** The last
+production build stayed at the previous commit and prod served the old `sw.js` twenty minutes
+later, so the owner's test screenshots were of a build without the fix in it — which nearly read as
+"the fix doesn't work". Same webhook miss recorded on 2026-07-17. Recovered with an **empty commit**
+to produce a fresh push event; it built in ~30s.
+**When asking the owner to test on a device, verify the deploy landed first** — `curl -s
+https://my-youth-camp.vercel.app/sw.js | head -1` and check the `camp-vNN` you just shipped, or grep
+the live HTML for a symbol you just added. This supersedes the "no need to poll Vercel" line in the
+verify-and-deploy convention **for device-test cycles specifically**; for ordinary pushes it still
+holds. (`vercel deploy --prod --yes` is the documented CLI fallback but was blocked by a permission
+rule in this session.)
+
 ## 🔐 SECRET INCIDENT + `VAPID_PUBLIC_KEY` was never a key — 2026-07-31
 
 Found while chasing the follow-up to the iOS fix below: after the activation fix landed, the
