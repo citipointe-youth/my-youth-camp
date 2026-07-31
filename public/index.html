@@ -1865,6 +1865,79 @@ function _vpShortfall(){
     return (d>0&&d<=_VP_MAX_SHORT)?d:0;
   }catch(_){return 0;}
 }
+/* `_vpKick()` — give iOS the scroll it is waiting for, so it re-sizes the view itself.
+
+   ⚠️ THIS IS THE ONLY APPROACH LEFT. The strip below the short view belongs to iOS and cannot be
+   painted into (proven 2026-07-31 — see `_vpShortfall()` above), so the view has to actually get
+   bigger. The one thing observed to do that is a REAL SCROLL: every time the owner dragged the
+   screen, the shortfall went to 0 and stayed there.
+
+   WHY IT NEVER HAPPENS ON ITS OWN, and why the existing `_fixViewportGap()` cannot do it: on Home
+   the content is shorter than the viewport (`scrollHeight === innerHeight`), so the document is not
+   scrollable and there is nowhere to scroll TO. `_fixViewportGap`'s `scrollTo(0, scrollY)` is a
+   no-op in exactly the state that needs it. So this briefly makes the document TALLER than the
+   viewport, scrolls 1px, and puts both back — a scroll that can actually happen.
+
+   TWO TRIGGERS, both reported by the owner: app launch, and keyboard-open-then-dismissed. The
+   keyboard one is why this hangs off `visualViewport.resize` as well as the launch events. Note a
+   keyboard does NOT change `innerHeight` on iOS (only `visualViewport.height`), so the shortfall is
+   0 while typing and this stays asleep until the keyboard has gone.
+
+   ⚠️ UNPROVEN — a programmatic scroll may not carry the same weight with iOS as a finger drag.
+   The failure mode is deliberately benign: if iOS ignores it, the shortfall stays and the result is
+   today's tall bar, never a clipped nav (nothing is moved or resized permanently). If a future
+   session finds this is dead weight, delete it — do NOT escalate it into moving the nav.
+
+   Guards, all load-bearing:
+   - shortfall must be non-zero, so it is inert on every non-iOS/non-standalone device, and it
+     STOPS once it has worked (a successful kick makes the shortfall 0);
+   - never while an input is focused — a 1px scroll under a live keyboard would move the field;
+   - `_vpKicking` + a cooldown, because the kick itself changes layout and can re-enter through the
+     resize listener that called it;
+   - the restore runs in a `finally`-style double rAF, so a throw mid-kick cannot strand the
+     document with 200px of dead scroll space. */
+var _VP_KICK_COOLDOWN=600,_vpKicking=false,_vpKickAt=0,_vpKicks=0;
+function _vpKick(){
+  try{
+    if(_vpKicking)return;
+    var now=Date.now();
+    if(now-_vpKickAt<_VP_KICK_COOLDOWN)return;
+    if(_vpShortfall()<=0)return;
+    var ae=document.activeElement;
+    if(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))return;
+    _vpKicking=true;_vpKickAt=now;_vpKicks++;
+    var de=document.documentElement,sc=document.scrollingElement||de;
+    var y=sc.scrollTop,prev=de.style.minHeight;
+    var restore=function(){
+      try{de.style.minHeight=prev;sc.scrollTop=y;}catch(_){}
+      _vpKicking=false;
+    };
+    try{
+      de.style.minHeight=(window.innerHeight+200)+'px';
+      void de.offsetHeight;                 // flush layout so the scroll below can take effect
+      sc.scrollTop=y+1;
+    }catch(_){restore();return;}
+    requestAnimationFrame(function(){requestAnimationFrame(restore);});
+  }catch(_){_vpKicking=false;}
+}
+/* Launch is the first trigger, and its timing is not observable from here — the shortfall has been
+   seen at 58px and 62px on different screens, so iOS is still moving things around well after the
+   first frame. Retry over the first couple of seconds rather than guessing one moment; each attempt
+   early-returns the instant the shortfall is 0, so at most one of these does any work. */
+requestAnimationFrame(_vpKick);
+[120,400,900,1600].forEach(function(ms){setTimeout(_vpKick,ms);});
+window.addEventListener('load',function(){setTimeout(_vpKick,60);});
+window.addEventListener('pageshow',function(){setTimeout(_vpKick,60);});
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden)setTimeout(_vpKick,120);   // returning from background
+});
+window.addEventListener('orientationchange',function(){setTimeout(_vpKick,350);});
+/* The keyboard-dismiss trigger. 120ms lets the viewport settle first — kicking mid-animation just
+   burns the cooldown on a measurement that is about to change. */
+if(window.visualViewport)window.visualViewport.addEventListener('resize',function(){setTimeout(_vpKick,120);});
+document.addEventListener('focusout',function(e){
+  if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))setTimeout(_vpKick,220);
+});
 /* ⚠️ TEMPORARY DIAGNOSTIC — 2026-07-31, viewport/bottom-nav gap investigation. DELETE THIS BLOCK
    (and the `.vpdbg` CSS rule, and the `_vpDbgTap` call in the header markup) once the floating-nav
    bug is fixed. It exists because the nav has now been "fixed" six times blind (see CLAUDE.md
@@ -1934,7 +2007,10 @@ function _vpDbgRender(){
       ['SHORTFALL', n(_vpShortfall())],
       // NOT a defect on its own: the page cannot paint past innerHeight, so a non-zero value here
       // is the iOS-owned strip, not a mispositioned nav. See the _vpShortfall() comment.
-      ['screen-nav (unpaintable)', r?n(((window.screen&&window.screen.height)||0)-r.bottom):'-']
+      ['screen-nav (unpaintable)', r?n(((window.screen&&window.screen.height)||0)-r.bottom):'-'],
+      // Distinguishes "the kick never ran" from "it ran and iOS ignored it" — without this, a
+      // SHORTFALL of 0 could equally mean the bug just did not occur on this launch.
+      ['kicks fired', _vpKicks]
     ];
     box.innerHTML=rows.map(function(x){
       var hot=/^(GAP|REAL GAP|SHORTFALL)/.test(x[0])&&x[1]!=='-'&&Math.abs(parseFloat(x[1]))>1;
