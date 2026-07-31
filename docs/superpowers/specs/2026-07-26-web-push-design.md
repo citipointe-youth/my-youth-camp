@@ -33,9 +33,9 @@ rewritten. Recorded here so the reasoning is not lost.
 | D9 | **Advisory lock (old §5 Layer 1) deleted.** Session-level `pg_try_advisory_lock` is unsafe on a transaction pooler — the lock is taken on a connection returned to the pool mid-handler and can outlive the tick, wedging every subsequent run. Layer 2's atomic claim is a genuine guarantee alone | §5 |
 | D10 | **`canSeeNotification(actor, notif, now)` extracted** from `getActorFeed` and used by both the in-app feed and the push audience resolver | §4.9 (new) |
 
-Still open and **not blocking implementation** — organisational, needed before rollout to real
-leaders: old §12 questions 9 (third-party transfer posture), 10 (under-18 account holders),
-11 (privacy notice ownership), 12 (iOS install comms). Carried into §10 phase 7.
+~~Still open~~ — **§12 questions 9–12 were ANSWERED by the owner 2026-07-31** (third-party transfer
+posture accepted; no under-18 login holders; youth team owns the privacy/compliance update; iOS
+install handled at the pre-camp training day). See §12. Nothing organisational now gates rollout.
 
 ---
 
@@ -1060,16 +1060,20 @@ retention (D6–D8) are already signed off, so they are no longer gates.
 | 7 | Logout behaviour | **Keeps the subscription** — devices are personal, not handed on (D5→D6, §9.3) |
 | 8 | Admin revoke-all-devices | **Not built.** Deactivating the account achieves it via the §4.9 resolver, and the post-camp login lock now suppresses too (D7→D8) |
 
-**Still open — organisational, not blocking implementation.** These gate *rollout to real leaders*,
-not phases 1–6. Carried into §10 phase 7.
+**ANSWERED by the owner 2026-07-31 — rollout is no longer gated.** All four were organisational,
+never blocking implementation. Recorded verbatim so a future session does not re-litigate them.
 
-9. **Third-party transfer posture.** Does the org have any position on Apple/Google/Mozilla
-   receiving push **metadata** (endpoints, timing, frequency — never camper data)? This is
-   unavoidable with Web Push; if it is not acceptable, the feature cannot proceed in this form.
-10. **Under-18 account holders.** Is any leader with a login themselves a minor? If so their device
-    registration is a minor's personal data and the org's consent posture for minors applies.
-11. **Privacy notice.** Is there an existing published privacy notice this needs to be added to, and
-    who owns updating it?
-12. **iOS install comms.** Who tells church leaders to Add to Home Screen, and is the re-login it
-    forces (separate storage partition, randomised `Word.##` password, initials re-prompt) an
-    acceptable cost — especially if it happens during camp week?
+9. **Third-party transfer posture.** ~~Does the org have any position on Apple/Google/Mozilla
+   receiving push **metadata** (endpoints, timing, frequency — never camper data)?~~
+   → **Accepted.** Push metadata transfer is fine. The feature proceeds in this form.
+10. **Under-18 account holders.** ~~Is any leader with a login themselves a minor?~~
+    → **No.** Every login holder is a trusted leader who has been through compliance training, so
+    no device registration is a minor's personal data. ⚠ Revisit **only** if a login is ever issued
+    to someone under 18 — that would reintroduce the minors' consent posture for that account.
+11. **Privacy notice.** ~~Who owns updating it?~~ → **The youth team**, as part of updating the
+    compliance data.
+12. **iOS install comms.** ~~Who tells church leaders to Add to Home Screen, and is the forced
+    re-login acceptable — especially during camp week?~~ → **Handled at the pre-camp training day**,
+    ahead of camp. This deliberately avoids the worst case the question was raised about: the
+    re-login (separate storage partition, randomised `Word.##` password, initials re-prompt) now
+    happens in a supported setting rather than mid-camp.

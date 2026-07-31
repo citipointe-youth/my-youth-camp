@@ -7,6 +7,35 @@ without going through clarifying questions first.
 
 ---
 
+## 2026-07-31 — Owner answers to web-push §12 q9–12 (ANSWERED — record of record)
+
+The last four open questions on web push. All organisational; none blocked the build. With these
+answered **nothing gates rollout to real leaders**, and the tick + check-in warning went live the
+same day (see CLAUDE.md's 2026-07-31 section).
+
+| # | Question | Owner's answer |
+|---|---|---|
+| 9 | Posture on Apple/Google/Mozilla receiving push **metadata** (endpoint, timing, size — never camper data)? | **Accepted.** Proceed in this form. |
+| 10 | Is any account holder under 18? | **No.** Every login holder is a trusted leader who has been through compliance training. |
+| 11 | Who owns and publishes the privacy notice? | **The youth team**, as part of updating the compliance data. |
+| 12 | Who delivers the iOS "Add to Home Screen" comms, and when? | **At the pre-camp training day**, ahead of camp. |
+
+### What still matters despite these being answered
+
+- **⚠ Q10 is a statement about TODAY's accounts, not a permanent property.** If a login is ever
+  issued to someone under 18, that device registration becomes a minor's personal data and the
+  org's consent posture for minors applies. Re-ask then; do not treat this row as settled forever.
+- **Q12's answer avoids a specific trap, and that is why the timing matters.** Installing to the
+  Home Screen puts the app in a **separate storage partition**, so the leader is logged out and must
+  sign in again — with a randomised `Word.##` password from the distributed CSV, plus an initials
+  re-prompt. Doing that at a training day is supported; doing it mid-camp is the failure the
+  question was raised about. **If the training day slips, this cost comes back.**
+- **iOS still gives no notification permission prompt until the app is installed to the Home
+  Screen.** The design names this as the single biggest adoption risk to the whole feature. The
+  answer to q12 is a plan to mitigate it, not a removal of it: **assume alerts reach roughly the
+  fraction of leaders who actually complete the install, and keep nothing safety-critical dependent
+  on a push alone.** The in-app notice remains the guaranteed channel.
+
 ## 2026-07-30 — Owner decisions on the notification/incident review (ANSWERED — record of record)
 
 Seven questions were put to the owner before any dependent code was written. These are their
@@ -20,7 +49,7 @@ something that was declined.
 | 3 | Soft-delete incidents? | **No — hard delete stays.** |
 | 4 | Should a zone leader be able to file against another zone? | **Keep allowed.** The existing test pinning this (`incident.service.test.ts:51`) stands. Zone was still constrained to the four `ZONE_NAMES` so a typo can't mis-file a record. |
 | 5 | Is web push actually shipping, or is the in-app notice the whole feature? | **Web push IS shipping for this camp.** Phases 4–6 built and deployed 2026-07-30, inert until the VAPID keys are set. |
-| 6 | The four organisational questions in the web-push design §12 | **Still unanswered.** See below — these gate ROLLOUT to real leaders, not the code. |
+| 6 | The four organisational questions in the web-push design §12 | **ANSWERED 2026-07-31** — see the 2026-07-31 section below. Nothing organisational gates rollout now. |
 | 7 | Turn the tick on this session? | **No** — the owner is doing the Supabase/Vercel configuration themselves. See `docs/DEPLOY-NEXT-STEPS-2026-07-30.md`. |
 
 ### ⚠ Declined — do NOT build these without asking again
@@ -45,13 +74,8 @@ recorded here because "nobody thought of it" and "the owner said no" look identi
 
 ### Still open
 
-- **Web-push design §12's four organisational questions are UNANSWERED** and gate rollout to real
-  leaders: the org's posture on transferring even metadata to US-based processors (Apple/Google/
-  Mozilla see endpoint, timing and message size on every send, though never a minor's data); whether
-  any account holder is under 18; who owns and publishes the privacy notice; and who delivers the
-  iOS "Add to Home Screen" comms. **iOS gives no notification permission prompt at all until the app
-  is installed to the Home Screen** — the design names this as the single biggest adoption risk, and
-  it is a comms problem, not a code problem.
+- ~~**Web-push design §12's four organisational questions are UNANSWERED**~~ → **ANSWERED
+  2026-07-31, see the section below.** Rollout is no longer gated on anything organisational.
 - **Incidents are still unreachable pre-camp** (item 4.7 from the review, never put to the owner).
   `RENDER.incidents` was deliberately made mode-independent on 2026-07-18, but the only route to it
   is the at-camp home tile, so that revert's intent still isn't delivered (`public/index.html`

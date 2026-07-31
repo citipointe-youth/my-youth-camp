@@ -181,9 +181,12 @@ screen) has the instructions. **Assume alerts reach roughly the fraction of lead
 complete that, and make sure nothing safety-critical depends only on a push.** The in-app
 notice is the guaranteed channel; push is the nudge.
 
-## Four questions still unanswered (they gate rollout, not the build)
+## ~~Four questions still unanswered~~ — ALL ANSWERED 2026-07-31
 
-From the web-push design §12, still open:
+Recorded in `docs/PLANNED-IMPROVEMENTS.md` (2026-07-31 section). In short: metadata transfer
+**accepted**; **no** under-18 login holders (all are compliance-trained leaders); the **youth team**
+owns the privacy/compliance update; iOS install happens at the **pre-camp training day**.
+Nothing organisational gates rollout now. The original questions, for context:
 
 1. **Third-party transfer posture.** Every push transits Apple, Google or Mozilla. They can't
    read the payload (it's end-to-end encrypted) but they do see the endpoint, exact timing and

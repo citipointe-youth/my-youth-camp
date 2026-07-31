@@ -482,6 +482,15 @@ Reverted after: the 6 notices deleted, PM window restored to `12:00`/`23:00`.
 > and devotional row on the old dates and those screens go blank. Remap is lossless only while
 > the day COUNT matches (shrinking hides the surplus).
 
+### Web-push §12 q9–12 ANSWERED — nothing organisational gates rollout
+Metadata transfer to Apple/Google/Mozilla **accepted**; **no under-18 login holders** (all are
+compliance-trained leaders — re-ask if that ever changes); the **youth team** owns the privacy /
+compliance update; the iOS Add-to-Home-Screen install happens at the **pre-camp training day**.
+Full record + the caveats that survive: `docs/PLANNED-IMPROVEMENTS.md` 2026-07-31 section.
+⚠ The install still forces a **re-login** (separate storage partition, randomised `Word.##`
+password, initials re-prompt) — fine at a training day, painful mid-camp. **If the training day
+slips, that cost comes back.**
+
 ### Push is configured but STILL UNPROVEN
 `pushAttempted: 0` on every tick — there are **zero** `push_subscriptions`, so no push service has
 ever been contacted and no notification has reached a device. `/push/config` is `auth:true` and was
