@@ -2,7 +2,7 @@ import type { CampSettings } from '../core/entities/settings';
 import type { Person } from '../core/entities/person';
 import type { User } from '../core/entities/user';
 import type { CheckInSession } from './checkin-sessions';
-import { allowedWindowSession } from './checkin-sessions';
+import { allowedWindowSession, currentSession } from './checkin-sessions';
 import { canAccessPerson } from './person.service';
 import { toActor } from './auth.service';
 import { zonedNow, zonedToInstant } from '../utils/date';
@@ -91,6 +91,54 @@ export function warnWindow(settings: CampSettings, now: Date): WarnWindow | null
 }
 
 /**
+ * A `WarnWindow` for the admin's TEST button, resolved without the timing gate.
+ *
+ * `warnWindow` requires a camp day, an open window and ≤60 minutes left — all four
+ * conditions at once — which is precisely why the feature could never be rehearsed before
+ * it had to work. This picks the session an admin would consider "current":
+ *
+ *  1. the session check-in is genuinely open for right now, if there is one (highest
+ *     fidelity — the test then counts exactly what the real warning would count); else
+ *  2. `currentSession`, which is today's AM/PM if today is a camp day, otherwise the most
+ *     recent past session, otherwise the first upcoming one.
+ *
+ * Returns null only when the camp has no check-in days at all — with none, there is no
+ * session to count against and nothing meaningful to send.
+ *
+ * `windowEndAt` is a real instant so the test notices EXPIRE like real ones. Off a camp day
+ * that instant is in the past, which would make `findActive()` hide them immediately, so the
+ * caller is given a floor — see `CHECKIN_TEST_TTL_MINUTES`.
+ */
+export const CHECKIN_TEST_TTL_MINUTES = 60;
+
+export function testWarnWindow(settings: CampSettings, now: Date): WarnWindow | null {
+  const tz = settings.timezone || DEFAULT_TZ;
+  const days = settings.checkInDays ?? [];
+  if (days.length === 0) return null;
+
+  const { date, time } = zonedNow(tz, now);
+  const windows = {
+    amStart: settings.checkinWindowAmStart ?? '06:00',
+    amEnd: settings.checkinWindowAmEnd ?? '12:00',
+    pmStart: settings.checkinWindowPmStart ?? '12:00',
+    pmEnd: settings.checkinWindowPmEnd ?? '22:00',
+  };
+
+  const session =
+    allowedWindowSession(days, date, time, windows) ?? currentSession(days, date, time);
+  if (!session) return null;
+
+  const windowEnd = session.id.endsWith('~am') ? windows.amEnd : windows.pmEnd;
+  const natural = zonedToInstant(tz, session.day, windowEnd);
+  // Floor the expiry so a test fired outside camp season doesn't create notices that
+  // findActive() filters out the instant they are written.
+  const floor = new Date(now.getTime() + CHECKIN_TEST_TTL_MINUTES * 60 * 1000).toISOString();
+  const windowEndAt = natural && natural > floor ? natural : floor;
+
+  return { session, windowEnd, windowEndAt };
+}
+
+/**
  * Which church LOGINS still have students unchecked for a session whose window closes within
  * WARN_LEAD_MINUTES?
  *
@@ -108,6 +156,32 @@ export function churchesBehind(
 ): ChurchBehind[] {
   const gate = warnWindow(settings, now);
   if (!gate) return [];
+  return churchesBehindFor(people, users, gate);
+}
+
+/**
+ * The counting half, split out from the timing half (2026-07-31).
+ *
+ * `churchesBehind` is gated on `warnWindow`, which is exactly right in production and
+ * exactly wrong for the admin's test button: today is not a camp day, so the real gate
+ * returns null and there is nothing to test until the morning the feature matters. The
+ * admin test resolves its own `WarnWindow` (see `testWarnWindow`) and calls this.
+ *
+ * ⚠ Both callers share THIS function on purpose. The counting rule — present, non-leader,
+ * per gender-scoped LOGIN, last check-in entry wins — is the thing the test needs to
+ * exercise. A test that reimplemented the count would prove only that the second
+ * implementation works.
+ *
+ * `includeZero` is the one behavioural difference: production never sends "0 students still
+ * to check in" (design D4 condition 4), but a test run that silently produced nothing
+ * because everyone happens to be checked in would look like a broken button.
+ */
+export function churchesBehindFor(
+  people: Person[],
+  users: User[],
+  gate: WarnWindow,
+  opts: { includeZero?: boolean } = {},
+): ChurchBehind[] {
   const { session, windowEnd, windowEndAt } = gate;
 
   // Same roster population as checkin.service.getSessionStatus: present, non-leader.
@@ -125,7 +199,7 @@ export function churchesBehind(
     ).length;
 
     // D4 condition 4: never send "0 students still to check in".
-    if (remaining === 0) continue;
+    if (remaining === 0 && !opts.includeZero) continue;
 
     out.push({
       userId: u.id,

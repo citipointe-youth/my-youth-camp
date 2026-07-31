@@ -4926,6 +4926,9 @@ RENDER.adminSettings=async function(){
           <div><label>Afternoon to</label><input class="fld" id="stPmEnd" type="time" value="${esc(s.checkinWindowPmEnd||'22:00')}"></div>
         </div>
         <p class="note-hint">Windows apply only when the restriction above is on. Outside a window (or on a non-camp day) church check-ins are blocked with a friendly message.</p>
+        <label style="margin-top:14px">Test the “still to check in” alert ${helpTip('Sends the real check-in warning to every church login right now, and a copy to you, without waiting for a camp day and the last hour of a window. Titled “(test)” so nobody mistakes it for the real thing. It counts each login’s genuinely outstanding students, so it also tells you whether the counting is right.')}</label>
+        <p class="note-hint" style="text-align:left">The real alert only fires on a camp day, inside a check-in window, in the last hour before it closes — so it can’t normally be rehearsed. This runs the same code now. Church logins with alerts turned on will get a phone notification.</p>
+        <button class="btn ghost sm" type="button" onclick="testCheckinWarning()">${icSm('bell')} Send test check-in alert</button>
       </div>
     </details>
     <details class="setg"><summary>${icSm('key')} Account access ${tick(true)}</summary>
@@ -5126,6 +5129,41 @@ RENDER.sitemap=function(){
     <p class="note-hint">Tap the map to zoom in, tap again to fit.</p>`,'Site map',SETTINGS.campName||'');
 };
 function _mapToggleZoom(){const el=document.getElementById('siteMapImg');if(el)el.classList.toggle('zoom');}
+
+/* Admin test for the "students still to check in" warning (owner request 2026-07-31).
+   Confirms FIRST: this writes a notice into every church login's Notices feed and rings the
+   phone of every church device that has alerts on — it reaches other people, not just the
+   admin pressing it, so it must never fire on a mis-tap. */
+let _ckTestBusy=false;
+async function testCheckinWarning(){
+  if(_ckTestBusy)return;
+  const ok=await confirmSheet({
+    title:'Send a test check-in alert?',
+    body:'Every church login gets a notice titled “Check-in closing soon (test)”, and any church device with alerts turned on will get a phone notification. You will get a copy too.',
+    confirmLabel:'Send test alert',
+  });
+  if(!ok)return;
+  _ckTestBusy=true;
+  try{
+    const r=await api('/admin/test-checkin-warning',{method:'POST',body:{}});
+    // Report what actually happened rather than a bare "sent". The two numbers differ on
+    // purpose: `churches` is who was messaged, `churchesWithOutstanding` is how many a REAL
+    // warning would have found behind — 0 there means the alert works but there was nothing
+    // to be behind on, which is not the same as a broken counter.
+    const bits=[`Sent to ${r.churches} church login${r.churches===1?'':'s'} for ${r.sessionLabel}`];
+    bits.push(r.churchesWithOutstanding>0
+      ? `${r.churchesWithOutstanding} with students still to check in`
+      : 'none currently have students outstanding');
+    if(!r.pushConfigured)bits.push('phone alerts are not configured');
+    else bits.push(`${r.pushSucceeded}/${r.pushAttempted} device${r.pushAttempted===1?'':'s'} notified`);
+    if(r.failed>0)bits.push(`${r.failed} failed to save`);
+    toast(bits.join(' · '));
+  }catch(e){
+    toast('Could not send the test — '+((e&&e.message)||'unknown error'));
+  }finally{
+    _ckTestBusy=false;
+  }
+}
 
 async function saveSettings(){
   try{

@@ -514,6 +514,51 @@ than offering a button that can only fail after the user has already granted OS 
 > shorten it back.** Six regression tests cover the malformed cases, including the literal
 > table-paste string.
 
+## Admin test button for the check-in warning — 2026-07-31
+
+**`Admin → Settings → Check-in & timing → Send test check-in alert`** →
+`POST /admin/test-checkin-warning` → `cron.testCheckinWarnings(actor)` (`admin:manage`).
+`sw.js` → `camp-v66`.
+
+**Why it exists:** job B's gate needs four conditions true *at once* — restriction on, a camp
+day, inside a window, ≤60 minutes left. So the check-in warning could not be rehearsed; the
+first time anyone saw it work would be the morning it had to work.
+
+It runs the **real** pipeline with only the timing gate replaced: `churchesBehindFor` (the
+genuine per-login counting rule) → notice creation → `canSeeNotification` audience resolution
+→ claim → web-push fan-out.
+
+### `checkin-warnings.ts` is now split — don't re-merge it
+
+`churchesBehind` (timing gate) delegates to the new exported **`churchesBehindFor`**
+(counting). Both callers share the counting rule *on purpose*: present, non-leader, per
+gender-scoped LOGIN, last check-in entry wins. **A test that reimplemented the count would
+prove only that the second implementation works.**
+
+**`testWarnWindow()`** resolves a session without the gate: the genuinely open session if
+there is one (highest fidelity), else `currentSession()` — today's, else the most recent past,
+else the first upcoming. It floors the expiry at `CHECKIN_TEST_TTL_MINUTES`, because after
+camp the natural window end is in the past and `findActive()` would hide every test notice the
+instant it was written.
+
+### Three deliberate differences from a real warning
+
+| Difference | Why |
+|---|---|
+| Title says **`(test)`** | These land in real church accounts' Notices feeds. An alert indistinguishable from the real one, out of camp season, is how a leader learns to distrust the alert that matters. |
+| **`includeZero: true`** | Production must never say "0 students still to check in" (design D4 condition 4). But a test that silently sent nothing because everyone happens to be checked in reads as a broken button. The response reports **`churches`** and **`churchesWithOutstanding`** separately so "reached 12 logins" can't be mistaken for "the counting was exercised". |
+| Dedupe key carries the **run timestamp** | Makes the button repeatable, and means it can never collide with — or *consume* — a real `checkin-warn:<session>:<user>` key. A test that burned the real key would suppress the genuine warning for that session. There is a test asserting a real warning created first survives two test runs. |
+
+The triggering admin gets a copy addressed to them. Without it the button is **unobservable to
+the person pressing it** — real warnings are `targetUserId`-scoped to church logins, so an
+admin's own phone stays silent no matter how well it works.
+
+SPA: `confirmSheet` **before** sending — this writes into every church login's feed and rings
+every church device with alerts on, so it must never fire on a mis-tap.
+
+Verified: `npm run typecheck` clean; `npx vitest run` **794 pass / 49 files** (was 785, +9);
+`node --check` OK on `sw.js` and the SPA body (extract range **847–6958**, re-derived).
+
 ## Push behaviour batch — titles, urgent-only, self-test, blank-screen fix — 2026-07-31
 
 The owner's first real subscription worked, and using it surfaced four things. All four were

@@ -325,3 +325,144 @@ describe('makeCronService().run', () => {
     expect(seen[0]!.sort()).toEqual(['n-incident', 'n-urgent']);
   });
 });
+
+describe('makeCronService().testCheckinWarnings — the admin test button', () => {
+  const adminActor = { id: 'usr_admin', role: 'admin', zone: null, churchId: null, displayName: 'Admin' } as never;
+
+  function deps(notifications: InMemoryNotificationRepository, over: Partial<CampSettings> = {}, people: Person[] = [], users: User[] = []) {
+    return {
+      notifications,
+      people: { findAll: vi.fn(async () => people) } as unknown as CronServiceDeps['people'],
+      users: { findAll: vi.fn(async () => users) } as unknown as CronServiceDeps['users'],
+      settings: { getSingleton: vi.fn(async () => settings(over)) } as unknown as CronServiceDeps['settings'],
+    } as CronServiceDeps;
+  }
+
+  it('sends OUTSIDE the warn window — the whole point of the button', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+    // Mid-July: not a camp day at all, so warnWindow() returns null and the real tick
+    // creates nothing. The test button must still produce notices.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T04:00:00.000Z'));
+
+    const cron = makeCronService(deps(notifications, {}, [person()], [user()]));
+    expect(await cron.run()).toMatchObject({ checkinWarningsCreated: 0 });
+
+    const res = await cron.testCheckinWarnings(adminActor);
+    expect(res.churches).toBe(1);
+    // 1 church login + the admin's own copy.
+    expect(res.created).toBe(2);
+  });
+
+  it('includes a church with nothing outstanding, but reports the two counts separately', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T04:00:00.000Z'));
+
+    // No people at all -> every church login is at zero outstanding.
+    const res = await makeCronService(deps(notifications, {}, [], [user()])).testCheckinWarnings(adminActor);
+    expect(res.churches).toBe(1);
+    // A real warning would have sent nothing (design D4 condition 4) — say so rather than
+    // letting "sent to 1 church" imply the counting was exercised.
+    expect(res.churchesWithOutstanding).toBe(0);
+  });
+
+  it('never collides with a REAL warning’s dedupe key, and is repeatable', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+    vi.useFakeTimers();
+    vi.setSystemTime(IN_AM_LEAD);
+
+    const cron = makeCronService(deps(notifications, {}, [person()], [user()]));
+    // A REAL warning first — this is the run that must not be suppressed.
+    expect(await cron.run()).toMatchObject({ checkinWarningsCreated: 1 });
+
+    vi.setSystemTime(new Date(IN_AM_LEAD.getTime() + 1000));
+    const a = await cron.testCheckinWarnings(adminActor);
+    vi.setSystemTime(new Date(IN_AM_LEAD.getTime() + 2000));
+    const b = await cron.testCheckinWarnings(adminActor);
+    expect(a.created).toBe(2);
+    expect(b.created).toBe(2);
+
+    const all = await notifications.findAll();
+    const keys = all.map((n) => n.dedupeKey);
+    expect(new Set(keys).size).toBe(keys.length); // no duplicates, nothing swallowed
+    // The real warning's key survives untouched, so the genuine alert is still deduped.
+    expect(keys).toContain(`checkin-warn:2026-09-29~am:usr_bv`);
+  });
+
+  it('marks every test notice as a test, and routes as a check-in warning', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T04:00:00.000Z'));
+
+    await makeCronService(deps(notifications, {}, [person()], [user()])).testCheckinWarnings(adminActor);
+    for (const n of await notifications.findAll()) {
+      expect(n.title).toContain('(test)');
+      // The prefix is what makes buildPushPayload treat it as a check-in warning.
+      expect(n.dedupeKey?.startsWith('checkin-warn:')).toBe(true);
+      expect(n.priority).toBe('urgent');
+    }
+  });
+
+  it('gives the triggering admin a copy addressed to them', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T04:00:00.000Z'));
+
+    await makeCronService(deps(notifications, {}, [person()], [user()])).testCheckinWarnings(adminActor);
+    const mine = (await notifications.findAll()).filter((n) => n.targetUserId === 'usr_admin');
+    // Without this the button is unobservable to the person pressing it — real warnings are
+    // scoped to church logins only.
+    expect(mine).toHaveLength(1);
+  });
+
+  it('does not expire the test notices instantly when fired out of season', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T04:00:00.000Z'));
+
+    await makeCronService(deps(notifications, {}, [person()], [user()])).testCheckinWarnings(adminActor);
+    // The natural window end is a September instant, i.e. in the FUTURE here — but the same
+    // button pressed after camp would produce a past one, which findActive() hides on write.
+    const active = await notifications.findActive();
+    expect(active.length).toBeGreaterThan(0);
+    for (const n of active) expect(new Date(n.expiresAt!).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('floors the expiry when fired AFTER camp — otherwise the notices are invisible on write', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+    vi.useFakeTimers();
+    // December: currentSession() resolves to the LAST past session, so the natural window
+    // end is months in the past and findActive() would filter every test notice out
+    // immediately. This is the case the CHECKIN_TEST_TTL_MINUTES floor exists for.
+    vi.setSystemTime(new Date('2026-12-01T04:00:00.000Z'));
+
+    await makeCronService(deps(notifications, {}, [person()], [user()])).testCheckinWarnings(adminActor);
+    const active = await notifications.findActive();
+    expect(active.length).toBeGreaterThan(0);
+    for (const n of active) expect(new Date(n.expiresAt!).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('refuses a non-admin actor', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+    const cron = makeCronService(deps(notifications, {}, [person()], [user()]));
+    const churchActor = { id: 'usr_bv', role: 'church', zone: 'Blue', churchId: 'ch_victory' } as never;
+    await expect(cron.testCheckinWarnings(churchActor)).rejects.toThrow();
+    expect(await notifications.findAll()).toHaveLength(0);
+  });
+
+  it('refuses when the camp has no check-in days', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+    const cron = makeCronService(deps(notifications, { checkInDays: [] }, [person()], [user()]));
+    await expect(cron.testCheckinWarnings(adminActor)).rejects.toThrow(/check-in days/i);
+  });
+});

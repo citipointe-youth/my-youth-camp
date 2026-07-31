@@ -719,3 +719,16 @@ New/changed symbols — grep the name, don't trust offsets. Migration `0017`
 | **A test alert arrives but a real one never does** | The test only proves **delivery + the deep link** — it reuses the check-in warning's payload shape but bypasses notice creation, audience resolution and claiming. If tests work and real alerts don't, look at `resolvePushAudience` / `canSeeNotification` / `isPushable`, not at VAPID. |
 | **Tapping "Send a test" repeatedly deleted my subscription** | It shouldn't — a failed *test* deliberately does not count towards `PUSH_FAILURE_LIMIT`. A 410 still prunes, because that endpoint is genuinely dead. Real sends still count. |
 | **Could `/push/test` be used to spam another leader?** | No. The user id comes from the session and is never read from the body — it can only reach devices the caller already opted in on. Keep it that way: the payload renders as a genuine camp alert on a locked phone, so a body-supplied id would be a spoofing primitive. |
+
+### 2026-07-31 — admin test button for the check-in warning
+
+| Symptom | Go to |
+|---|---|
+| **Where is it?** | `Admin → Settings → Check-in & timing`, bottom of the card. `POST /admin/test-checkin-warning` → `cron.testCheckinWarnings`, gated `admin:manage`. |
+| **The toast says "none currently have students outstanding"** | The alert worked; there was just nothing to be behind on. `churches` is who was messaged, `churchesWithOutstanding` is what a REAL warning would have found — they are reported separately precisely so this case can't be mistaken for a broken counter. Check a student in/out and press it again. |
+| **It says phone alerts are not configured** | `isPushConfigured()` is false — a VAPID env var is missing or malformed. The in-app notices were still created. See the 2026-07-31 secret-incident section. |
+| **A church says they got the alert but the number looked wrong** | The count comes from `churchesBehindFor`, the SAME function the real warning uses — present + non-leader, per gender-scoped login, last check-in entry wins. If the number is wrong, it is wrong for the real alert too. Don't "fix" it in one place. |
+| **Test notices are cluttering the Notices feed** | They expire like real ones — at the session's window end, or `CHECKIN_TEST_TTL_MINUTES` from now, whichever is later. Out of season the floor is what stops them being invisible on write. |
+| **Pressing it twice created two sets** | Intended. The dedupe key carries the run's timestamp so the button is repeatable. That is also what stops it colliding with — or consuming — the real `checkin-warn:<session>:<user>` key, which would suppress the genuine warning for that session. |
+| **Nothing arrived on the admin's phone** | The admin's copy is a separate notice with `targetUserId = actor.id` — real warnings are church-scoped, so without it an admin sees nothing. If the church logins got theirs and the admin didn't, the admin has no push subscription; use "Send a test" on Notices to check that device first. |
+| **Can I use it during camp?** | Yes, and it uses the genuinely open session when there is one. But it messages every church login, so it is a confirm-first action; the SPA asks before sending. |

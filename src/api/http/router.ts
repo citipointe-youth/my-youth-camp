@@ -53,7 +53,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const exportCtrl = makeExportController({ exportService: services.exportService });
   const account = makeAccountController({ account: services.account, auth: services.auth });
   const settingsCtrl = makeSettingsController({ settings: services.settings });
-  const admin = makeAdminController({ admin: services.admin });
+  const admin = makeAdminController({ admin: services.admin, cron: services.cron });
   const cronCtrl = makeCronController({ tick: services.cron });
   const pushCtrl = makePushController({ subscriptions: services.pushSubscriptionRepo, push: services.push });
 
@@ -92,6 +92,8 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/admin/defaults', auth: true, handler: (r) => admin.saveDefaults(r) },
     { method: 'POST', path: '/admin/new-year', auth: true, handler: (r) => admin.newYear(r) },
     { method: 'DELETE', path: '/admin/notifications', auth: true, handler: (r) => admin.clearNotifications(r) },
+    // Admin test button — fires a check-in warning at every church login right now.
+    { method: 'POST', path: '/admin/test-checkin-warning', auth: true, handler: (r) => admin.testCheckinWarning(r) },
 
     // ----- Registrants (pre-camp / Hub) -----
     { method: 'GET', path: '/registrants', auth: true, handler: (r) => registrant.list(r) },

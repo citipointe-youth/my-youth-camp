@@ -1,6 +1,49 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-31 - ADMIN TEST BUTTON: fire the "students still to check in" warning on demand
+-----------------------------------------------------------------------------------
+Backend + SPA. sw.js camp-v65 -> camp-v66. Verified: npm run typecheck clean,
+npx vitest run = 794 pass / 49 files (was 785/49, 9 new), SPA + sw.js node --check
+OK. SPA node --check extract range is now 847-6958.
+
+  Owner request: a button in Admin -> Settings -> Check-in & timing that triggers the
+  check-in warning to all churches so the feature can be tested.
+
+  WHY IT WAS NEEDED - job B's gate needs four things true AT ONCE (restriction on, a
+  camp day, inside a window, <= 60 minutes left), so the alert could not be rehearsed
+  before the morning it has to work.
+
+  POST /admin/test-checkin-warning -> cron.testCheckinWarnings(actor), assertCan
+  'admin:manage'. Runs the REAL pipeline with only the timing gate replaced:
+  churchesBehindFor (the actual per-login counting rule) -> notice creation ->
+  canSeeNotification audience resolution -> claim -> web-push fan-out.
+
+  checkin-warnings.ts is split: churchesBehind (timing gate) now delegates to a new
+  exported churchesBehindFor (counting), so the test shares the counting rule instead
+  of reimplementing it. New testWarnWindow() resolves a session without the gate -
+  the open session if there is one, else currentSession() - and floors the expiry at
+  CHECKIN_TEST_TTL_MINUTES so a test fired out of season doesn't create notices that
+  findActive() hides the instant they are written.
+
+  Three deliberate differences from a real warning:
+    - title says "(test)". These land in real church feeds; an alert indistinguishable
+      from the real one, out of season, teaches leaders to distrust the real one.
+    - includeZero: every active church login is included even at 0 outstanding
+      (production must never say "0 students still to check in"). The response
+      reports `churches` and `churchesWithOutstanding` SEPARATELY so 0 outstanding
+      can't be mistaken for proof the counting works.
+    - dedupe key carries the run timestamp, so the button is repeatable and can never
+      collide with - or consume - a real checkin-warn:<session>:<user> key. Tested.
+
+  The triggering admin gets a copy addressed to them; without it the button is
+  unobservable to the person pressing it, since real warnings are targetUserId-scoped
+  to church logins.
+
+  SPA: confirmSheet BEFORE sending (it reaches other people's phones, so it must not
+  fire on a mis-tap), and the toast reports both counts, devices notified, and
+  whether push is configured at all.
+
 2026-07-31 - PUSH BEHAVIOUR: notice title on the lock screen, urgent-only pushes,
              self-test button, and the blank-screen deep-link bug
 -----------------------------------------------------------------------------------

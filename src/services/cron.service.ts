@@ -5,7 +5,10 @@ import type {
   ISettingsRepository,
 } from '../repositories/interfaces/entity-repositories';
 import type { Notification } from '../core/entities/notification';
-import { churchesBehind, warnWindow } from './checkin-warnings';
+import { churchesBehind, churchesBehindFor, testWarnWindow, warnWindow } from './checkin-warnings';
+import { assertCan } from './access-control';
+import { BadRequestError } from '../core/errors/app-error';
+import type { Actor } from '../core/entities/user';
 import { isPushConfigured, isPushable, type PushService } from './push.service';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
@@ -199,7 +202,164 @@ export function makeCronService(deps: CronServiceDeps) {
         pushDeferred,
       };
     },
+
+    /**
+     * Admin "send a test check-in warning" (owner request, 2026-07-31).
+     *
+     * Job B's four gate conditions — restriction on, a camp day, inside a window, ≤60
+     * minutes left — all have to be true at once, which means the check-in warning is
+     * unrehearsable outside camp: the first time anyone sees it work is the morning it has
+     * to work. This runs the REAL pipeline with only the timing gate replaced.
+     *
+     * What is genuinely exercised: `churchesBehindFor` (the actual per-login counting rule),
+     * notice creation, `canSeeNotification` audience resolution, the claim, and the web-push
+     * fan-out. What is NOT: `warnWindow` itself — see `testWarnWindow` for the session it
+     * substitutes.
+     *
+     * Three deliberate differences from a real warning, each of which is a lie-avoidance
+     * measure rather than a shortcut:
+     *
+     *  - the title says "(test)". These land in real church accounts' Notices feeds, and an
+     *    alert that looks identical to the real thing, out of camp season, is how a leader
+     *    learns to distrust the alert that matters.
+     *  - `includeZero` is on, so every active church login is included even at zero
+     *    outstanding. Production must never say "0 students still to check in"; a test that
+     *    silently sent nothing because everyone is checked in would read as a broken button.
+     *  - the dedupe key carries the run's timestamp, so the button is repeatable and can
+     *    never collide with — or consume — a REAL warning's `checkin-warn:<session>:<user>`
+     *    key. A test that burned the real dedupe key would suppress the genuine warning for
+     *    that session.
+     *
+     * The triggering admin also gets a copy addressed to them. Without it the button is
+     * unobservable to the person pressing it: real warnings are `targetUserId`-scoped to
+     * church logins, so an admin's own phone would stay silent no matter how well it worked.
+     */
+    async testCheckinWarnings(actor: Actor): Promise<CheckinWarningTestResult> {
+      assertCan(actor, 'admin:manage');
+
+      const settings = await deps.settings.getSingleton();
+      if (!settings) throw new BadRequestError('Camp settings are not set up yet');
+
+      const now = new Date();
+      const gate = testWarnWindow(settings, now);
+      if (!gate) {
+        throw new BadRequestError(
+          'No check-in days are set for this camp, so there is no session to test against.',
+        );
+      }
+
+      const [people, users] = await Promise.all([deps.people.findAll(), deps.users.findAll()]);
+      const behind = churchesBehindFor(people, users, gate, { includeZero: true });
+
+      const runKey = `test-${now.getTime()}`;
+      const made: Notification[] = [];
+
+      for (const b of behind) {
+        const n: Notification = {
+          id: newId('notif'),
+          scope: 'church',
+          zone: null,
+          churchId: b.churchId,
+          priority: 'urgent',
+          title: 'Check-in closing soon (test)',
+          body: `${b.remaining} student${b.remaining === 1 ? '' : 's'} still to check in — the ${b.sessionLabel} window closes at ${b.windowEnd}. This is a test.`,
+          senderId: 'system',
+          senderName: 'Camp system',
+          senderRole: 'admin',
+          leadersOnly: false,
+          audienceEstimate: b.remaining,
+          expiresAt: b.windowEndAt,
+          scheduledFor: null,
+          pushSentAt: null,
+          // Unique per run — repeatable, and it can never collide with a real warning's key.
+          dedupeKey: `checkin-warn:${runKey}:${b.userId}`,
+          targetUserId: b.userId,
+          createdAt: nowISO(),
+        };
+        made.push(n);
+      }
+
+      // The admin's own copy — the only part of this they can observe on their own device.
+      made.push({
+        id: newId('notif'),
+        scope: 'camp',
+        zone: null,
+        churchId: null,
+        priority: 'urgent',
+        title: 'Check-in closing soon (test)',
+        body: `Test check-in warning sent to ${behind.length} church login${behind.length === 1 ? '' : 's'} for ${gate.session.label}. This is a test.`,
+        senderId: 'system',
+        senderName: 'Camp system',
+        senderRole: 'admin',
+        leadersOnly: false,
+        audienceEstimate: behind.length,
+        expiresAt: gate.windowEndAt,
+        scheduledFor: null,
+        pushSentAt: null,
+        dedupeKey: `checkin-warn:${runKey}:${actor.id}`,
+        targetUserId: actor.id,
+        createdAt: nowISO(),
+      });
+
+      let createdCount = 0;
+      let failedCount = 0;
+      for (const n of made) {
+        try {
+          await deps.notifications.save(n);
+          createdCount += 1;
+        } catch (err) {
+          failedCount += 1;
+          console.error('[cron] test checkin-warning save failed', { id: n.id, err });
+        }
+      }
+
+      // Push inline rather than waiting up to 5 minutes for the next tick — the whole point
+      // of a test button is a result you can see now. The tick would pick these up anyway if
+      // this fails, because an unpushed notice stays unclaimed.
+      let pushAttempted = 0;
+      let pushSucceeded = 0;
+      let pushConfigured = false;
+      if (deps.push && isPushConfigured()) {
+        pushConfigured = true;
+        try {
+          const res = await deps.push.sendForNotifications(made, users, settings);
+          pushAttempted = res.attempted;
+          pushSucceeded = res.succeeded;
+        } catch (err) {
+          console.error('[cron] test checkin-warning push failed', { err });
+        }
+      }
+
+      return {
+        ok: true,
+        sessionLabel: gate.session.label,
+        windowEnd: gate.windowEnd,
+        churches: behind.length,
+        // Churches genuinely behind, i.e. what a REAL warning would have sent. Reported
+        // separately so a test that reached 12 logins but found 0 outstanding students
+        // cannot be mistaken for proof that the counting works.
+        churchesWithOutstanding: behind.filter((b) => b.remaining > 0).length,
+        created: createdCount,
+        failed: failedCount,
+        pushConfigured,
+        pushAttempted,
+        pushSucceeded,
+      };
+    },
   };
+}
+
+export interface CheckinWarningTestResult {
+  ok: true;
+  sessionLabel: string;
+  windowEnd: string;
+  churches: number;
+  churchesWithOutstanding: number;
+  created: number;
+  failed: number;
+  pushConfigured: boolean;
+  pushAttempted: number;
+  pushSucceeded: number;
 }
 
 export type CronService = ReturnType<typeof makeCronService>;

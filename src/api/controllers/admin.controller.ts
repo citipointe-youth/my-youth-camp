@@ -1,10 +1,16 @@
 import type { HttpRequest } from '../http/types';
 import type { AdminService } from '../../services/admin.service';
+import type { CronService } from '../../services/cron.service';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 import { SetModeSchema } from '../../core/validation/content.schema';
 
 export interface AdminControllerServices {
   admin: AdminService;
+  /**
+   * Only for the check-in-warning test button. Optional so existing wirings and the
+   * controller tests construct unchanged; the route 400s rather than throwing if absent.
+   */
+  cron?: Pick<CronService, 'testCheckinWarnings'>;
 }
 
 export function makeAdminController(services: AdminControllerServices) {
@@ -38,6 +44,17 @@ export function makeAdminController(services: AdminControllerServices) {
     async clearNotifications(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.admin.clearNotifications(req.ctx.actor);
+    },
+
+    /**
+     * POST /admin/test-checkin-warning — fire the check-in "students still to check in"
+     * warning at every church login now, without waiting for a camp day and a lead window.
+     * `admin:manage` is asserted inside the service.
+     */
+    async testCheckinWarning(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      if (!services.cron) throw new BadRequestError('Check-in warnings are not available in this environment');
+      return services.cron.testCheckinWarnings(req.ctx.actor);
     },
 
     async setMode(req: HttpRequest) {
