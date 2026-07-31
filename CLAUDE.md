@@ -443,6 +443,45 @@ recomputing it. If a real "who will see this?" figure is ever wanted, compute it
 deliberately unapplied** and must stay that way until both secrets are set, or every tick fires
 silently into a 404/401 (`pg_net` is fire-and-forget and surfaces nothing).
 
+## Registration lists: second export button (.zip) — deployed 2026-07-31
+
+Owner request, SPA-only, no backend/schema change. `sw.js` `camp-v59`→**`camp-v60`**.
+`npm run typecheck` clean, `npm run test` = 759 pass (unchanged — this is browser-only code).
+
+The card now has **Download images** (the original staggered per-file downloads) and
+**Download as .zip**. Both call the shared **`_rlGenerate(say)`**, which does the fetch, the
+tiering and the drawing exactly once, so the two buttons can never produce different sets —
+`exportRegistrationPngs` and `exportRegistrationZip` only differ in how they deliver the result.
+`_rlSaveBlob` is the one anchor-click download helper.
+
+### The zip writer is hand-rolled (`_zipBlob`, `_crc32`, `_deflateRaw`, `_dosDateTime`, `_CRC_T`)
+**Nothing in this repo can make a zip** — `exceljs` writes xlsx and is server-side, and the
+browser's vendored `xlsx` build doesn't expose one. Adding JSZip for a single button was not
+worth a new vendored dependency. Classic 32-bit layout: local header + data per entry, then the
+central directory, then the EOCD. **No zip64**, so entries and the archive cap at 4GB — a set of
+name-only PNGs is a few hundred KB, so that limit is unreachable here.
+
+- **DEFLATE comes from the platform**, `CompressionStream('deflate-raw')` (Chrome 80+, Safari
+  16.4+, Firefox 113+). Where it is absent — **or where deflating makes the entry BIGGER, which
+  is the normal case for a PNG, since PNG is already deflated** — that entry falls back to STORE
+  (method 0). A store-only zip is still a completely valid zip.
+- ⚠ **The CRC and the uncompressed-size field always describe the ORIGINAL bytes**, never the
+  deflated ones; only the compressed-size field is the deflated length. Getting that backwards
+  produces an archive that looks fine until something tries to extract it.
+- The central-directory entry's last field is the offset of that entry's **local** header, not
+  its data.
+- A real DOS date/time is written. A zero date is accepted by most tools but shows as an invalid
+  timestamp in Windows Explorer.
+
+**Verified, not assumed:** the real `_zipBlob` was run in node over two entries — one highly
+compressible (exercising DEFLATE) and one of random bytes (exercising the STORE fallback, which
+is what a PNG hits) — and the resulting archive was extracted by **Windows' own
+`Expand-Archive`** with byte-identical SHA256 hashes on both entries. `_crc32` also matches the
+standard `"123456789"` → `0xCBF43926` vector.
+
+If the zip ever fails to build, `exportRegistrationZip` catches it and points the user at the
+"Download images" button, which shares all the generation code and cannot be affected.
+
 ## Notices tile removed from the Admin console — deployed 2026-07-31
 
 Owner request, SPA-only (`public/index.html`), no backend/schema change. `sw.js`

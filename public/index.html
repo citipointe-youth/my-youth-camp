@@ -5362,7 +5362,8 @@ RENDER.adminData=async function(){
       <option value="grade">By grade (one per year level)</option>
     </select>
     <p class="note-hint" style="text-align:left;margin-top:6px">Automatic picks by size: under 50 registrations = one image, 50–100 = guys &amp; girls, over 100 = one per year level. A separate Leaders image is always included.</p>
-    <button class="btn" style="width:100%;margin-top:8px" onclick="exportRegistrationPngs()">${icSm('download')} Generate &amp; download</button>
+    <button class="btn" style="width:100%;margin-top:8px" onclick="exportRegistrationPngs()">${icSm('download')} Download images</button>
+    <button class="btn ghost" style="width:100%;margin-top:8px" onclick="exportRegistrationZip()">${icSm('download')} Download as .zip</button>
     <div id="rlStatus" class="note-hint" style="text-align:left;display:none"></div>
   </div>`;
   // PC-1 order, updated: 1. Data table, 2. Budget, 3. Save Defaults, 4. Compliance Export,
@@ -5511,46 +5512,145 @@ function _rlDraw(sheet,churchName,dateLabel){
   return new Promise(res=>cv.toBlob(res,'image/png'));
 }
 
-async function exportRegistrationPngs(){
+/* Fetch + build every image once. BOTH export buttons go through this, so the two can never
+   produce different sets. Returns null (having already toasted) when there is nothing to do. */
+async function _rlGenerate(say){
   const churchId=sel('rlChurch'),split=sel('rlSplit')||'auto';
-  const st=document.getElementById('rlStatus');
-  const say=m=>{if(st){st.style.display=m?'block':'none';st.textContent=m;}};
-  if(!churchId){toast('Pick a church first');return;}
+  if(!churchId){toast('Pick a church first');return null;}
   const churchName=(function(){const s=document.getElementById('rlChurch');return (s&&s.selectedIndex>=0&&s.options[s.selectedIndex].text)||'Church';})();
   say('Loading registrations…');
   let regs;
   try{regs=await api('/registrants?churchId='+encodeURIComponent(churchId));}
-  catch(e){say('');toast(e.message);return;}
+  catch(e){say('');toast(e.message);return null;}
   // `status` is 'cancelled' for a withdrawn registration — never list them.
   const active=(regs||[]).filter(r=>r.status!=='cancelled');
   // RegistrantDto maps person kind → 'camper' | 'leader'.
   const students=_rlSort(active.filter(r=>r.kind!=='leader'));
   const leaders=_rlSort(active.filter(r=>r.kind==='leader'));
-  if(!students.length&&!leaders.length){say('');toast('No registrations for '+churchName);return;}
+  if(!students.length&&!leaders.length){say('');toast('No registrations for '+churchName);return null;}
   const tier=_rlTier(students.length,split);
   const sheets=_rlSheets(students,leaders,tier);
   const day=localDateISO();
   const dateLabel='Registered as at '+dtFmt(new Date().toISOString());
   say('Generating '+sheets.length+' image'+(sheets.length===1?'':'s')+'…');
-  let n=0;
+  const files=[];
   for(const sheet of sheets){
     try{
       const blob=await _rlDraw(sheet,churchName,dateLabel);
-      if(!blob)continue;
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');
-      a.href=url;a.download=_rlSlug(churchName)+'-'+_rlSlug(sheet.label)+'-'+day+'.png';
-      document.body.appendChild(a);a.click();a.remove();
-      // Revoking immediately can cancel the download on some mobile browsers.
-      setTimeout(()=>URL.revokeObjectURL(url),20000);
-      n++;
-      /* Mobile Safari and Chrome throttle simultaneous downloads and silently DROP the tail —
-         an unstaggered loop loses most of a 7-image by-grade run. Do not remove this delay. */
-      await new Promise(r=>setTimeout(r,300));
+      if(blob)files.push({name:_rlSlug(churchName)+'-'+_rlSlug(sheet.label)+'-'+day+'.png',blob});
     }catch(e){}
   }
-  say(n+' image'+(n===1?'':'s')+' downloaded ('+tier+' split).');
+  return {churchName,day,tier,files};
+}
+
+function _rlSaveBlob(blob,name){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=name;
+  document.body.appendChild(a);a.click();a.remove();
+  // Revoking immediately can cancel the download on some mobile browsers.
+  setTimeout(()=>URL.revokeObjectURL(url),20000);
+}
+
+async function exportRegistrationPngs(){
+  const st=document.getElementById('rlStatus');
+  const say=m=>{if(st){st.style.display=m?'block':'none';st.textContent=m;}};
+  const out=await _rlGenerate(say);
+  if(!out)return;
+  let n=0;
+  for(const f of out.files){
+    _rlSaveBlob(f.blob,f.name);n++;
+    /* Mobile Safari and Chrome throttle simultaneous downloads and silently DROP the tail —
+       an unstaggered loop loses most of a 7-image by-grade run. Do not remove this delay. */
+    await new Promise(r=>setTimeout(r,300));
+  }
+  say(n+' image'+(n===1?'':'s')+' downloaded ('+out.tier+' split).');
   toast(n+' image'+(n===1?'':'s')+' downloaded');
+}
+
+async function exportRegistrationZip(){
+  const st=document.getElementById('rlStatus');
+  const say=m=>{if(st){st.style.display=m?'block':'none';st.textContent=m;}};
+  const out=await _rlGenerate(say);
+  if(!out)return;
+  if(!out.files.length){say('');toast('Nothing to export');return;}
+  say('Building zip…');
+  try{
+    const entries=[];
+    for(const f of out.files)entries.push({name:f.name,data:new Uint8Array(await f.blob.arrayBuffer())});
+    const zip=await _zipBlob(entries);
+    _rlSaveBlob(zip,_rlSlug(out.churchName)+'-registrations-'+out.day+'.zip');
+    say(out.files.length+' image'+(out.files.length===1?'':'s')+' zipped ('+out.tier+' split).');
+    toast('Zip downloaded');
+  }catch(e){say('');toast('Could not build the zip — use "Download images" instead');}
+}
+
+/* ===== Minimal ZIP writer =================================================================
+   Hand-rolled because nothing in this repo can make a zip: the server has exceljs (which
+   writes xlsx and is server-side anyway) and the browser has a vendored xlsx build. Adding
+   JSZip for one button is not worth a new vendored dependency.
+
+   Format: local file header + data per entry, then the central directory, then the EOCD —
+   the classic 32-bit layout. No zip64, which caps an entry (and the archive) at 4GB; a set of
+   name-only PNGs is a few hundred KB, so that limit is unreachable here.
+
+   DEFLATE comes from the platform's own `CompressionStream('deflate-raw')` (Chrome 80+,
+   Safari 16.4+, Firefox 113+). Where it is missing — or where deflating a PNG makes it BIGGER,
+   which is normal, since PNG is already deflated — the entry falls back to STORE (method 0).
+   A store-only zip is still a completely valid zip; the user just gets less shrinkage.  */
+const _CRC_T=(function(){const t=new Uint32Array(256);
+  for(let i=0;i<256;i++){let c=i;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[i]=c>>>0;}
+  return t;})();
+function _crc32(u8){let c=0xFFFFFFFF;for(let i=0;i<u8.length;i++)c=_CRC_T[(c^u8[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+async function _deflateRaw(u8){
+  if(typeof CompressionStream!=='function')return null;
+  try{
+    const s=new Blob([u8]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(s).arrayBuffer());
+  }catch(_){return null;}
+}
+/* DOS date/time. A zero date is accepted by most tools but shows as an invalid timestamp in
+   Windows Explorer, so write a real one. Seconds have 2s resolution by format. */
+function _dosDateTime(d){
+  return {
+    time:((d.getHours()&31)<<11)|((d.getMinutes()&63)<<5)|((d.getSeconds()/2)&31),
+    date:(((d.getFullYear()-1980)&127)<<9)|(((d.getMonth()+1)&15)<<5)|(d.getDate()&31),
+  };
+}
+async function _zipBlob(entries){
+  const enc=new TextEncoder(),parts=[],central=[],dt=_dosDateTime(new Date());
+  let offset=0;
+  for(const e of entries){
+    const nameB=enc.encode(e.name);
+    const crc=_crc32(e.data);
+    let body=await _deflateRaw(e.data),method=8;
+    if(!body||body.length>=e.data.length){body=e.data;method=0;}
+    const lh=new Uint8Array(30+nameB.length),lv=new DataView(lh.buffer);
+    lv.setUint32(0,0x04034b50,true);lv.setUint16(4,20,true);lv.setUint16(6,0,true);
+    lv.setUint16(8,method,true);lv.setUint16(10,dt.time,true);lv.setUint16(12,dt.date,true);
+    // CRC and the uncompressed size always describe the ORIGINAL bytes, never the deflated ones.
+    lv.setUint32(14,crc,true);lv.setUint32(18,body.length,true);lv.setUint32(22,e.data.length,true);
+    lv.setUint16(26,nameB.length,true);lv.setUint16(28,0,true);
+    lh.set(nameB,30);
+    parts.push(lh,body);
+    const ch=new Uint8Array(46+nameB.length),cv=new DataView(ch.buffer);
+    cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);
+    cv.setUint16(8,0,true);cv.setUint16(10,method,true);
+    cv.setUint16(12,dt.time,true);cv.setUint16(14,dt.date,true);
+    cv.setUint32(16,crc,true);cv.setUint32(20,body.length,true);cv.setUint32(24,e.data.length,true);
+    cv.setUint16(28,nameB.length,true);cv.setUint16(30,0,true);cv.setUint16(32,0,true);
+    cv.setUint16(34,0,true);cv.setUint16(36,0,true);cv.setUint32(38,0,true);
+    cv.setUint32(42,offset,true);          // where this entry's LOCAL header starts
+    ch.set(nameB,46);
+    central.push(ch);
+    offset+=lh.length+body.length;
+  }
+  const cdSize=central.reduce((a,c)=>a+c.length,0);
+  const eo=new Uint8Array(22),ev=new DataView(eo.buffer);
+  ev.setUint32(0,0x06054b50,true);ev.setUint16(4,0,true);ev.setUint16(6,0,true);
+  ev.setUint16(8,entries.length,true);ev.setUint16(10,entries.length,true);
+  ev.setUint32(12,cdSize,true);ev.setUint32(16,offset,true);ev.setUint16(20,0,true);
+  return new Blob(parts.concat(central,[eo]),{type:'application/zip'});
 }
 /* Standalone import screen (its own "Data Import" admin console tile / nav entry) — also
    gives director (who has import:run but not the Admin tab) a way to import. Reuses
