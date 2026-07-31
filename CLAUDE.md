@@ -439,6 +439,59 @@ recomputing it. If a real "who will see this?" figure is ever wanted, compute it
 
 ### ~~Still gated on the owner~~ — ALL TURNED ON 2026-07-31, see the section below
 
+## "Alerts on this device" — iOS opt-in fixed + moved to Notices — deployed 2026-07-31
+
+Owner bug report: the Home card's "Turn on alerts" button worked on a laptop but an **installed
+iPhone** answered *"Could not turn on alerts on this device"*. SPA-only (`public/index.html`), no
+backend/schema change. `npm run typecheck` clean, `npx vitest run` = **765 pass / 49 files**
+(unchanged — this is browser-only code). SPA + `sw.js` `node --check` OK. `sw.js`
+`camp-v62`→**`camp-v63`**.
+
+### The bug: user activation is lost across `await` in WebKit
+The generic toast was the `catch` in `_pushOn`, so the failure was a **throw**, not one of the
+"not possible here" branches. The only browser-behaviour difference in that code path is user
+activation: `_pushOn` did `await confirmSheet(...)` and *then* called
+`Notification.requestPermission()`. **WebKit scopes user activation to the event handler's own
+call stack**, so a call made after an `await` — even one resolved from a click — has already left
+that stack and is rejected with `NotAllowedError`. Chrome uses a *time-based* transient-activation
+window instead, which is exactly why it worked on the laptop and looked device-specific.
+
+`_pushOn` is now split in two and **must stay split**: it only opens the consent sheet, and
+**`_pushConsentGo`** is the sheet's own `onclick`, calling `requestPermission()` as its first
+statement (before `closeModal()`, before anything async). The rest moved to **`_pushFinish`**.
+Both API shapes are handled (Promise return *and* the legacy callback arg).
+
+> ⚠️ Do NOT "tidy" this back into one `async` function, and do not re-introduce `confirmSheet`
+> here. Any `await` between the tap and `requestPermission()` re-creates the bug, and it is
+> invisible on every desktop browser.
+
+### The generic toast is gone (`_pushFail`)
+One bare "Could not turn on alerts on this device" covered permission, service worker, push
+service and API failures alike — which is why placing this cost a full deploy-and-retest cycle.
+The toast now names the error: `NotAllowedError` = activation/permission, `AbortError` = the OS
+push service refused, anything else = our API.
+
+> **This fix is reasoned, not device-proven** — it cannot be verified without an installed
+> iPhone. If it still fails, the toast now says which step, and that is a one-tap diagnosis.
+
+### Moved off Home to the Notices screen (owner request)
+`_pushCardHtml()`/`_renderPushCard()` are gone from **both** Home renders (`RENDER.home` and
+`renderHomeAtCamp`); `RENDER.notifs` is now the **only** caller, in both its branches (feed and
+Scheduled). The card is also compact now — a `btn ghost sm` labelled button, no card chrome and no
+heading, since the screen is already titled "Notices".
+
+**Roles that can reach it:** church/zoneLeader/director have Notices as a bottom-nav tab; admin
+reaches it via the Admin console tile (pre-camp) or the at-camp home Notices tile — `extras` render
+only in the ≥980px sidebar, so those tiles are load-bearing (see the 2026-07-31 tile section below).
+⚠ **`firstAid` has no Notices screen at all and therefore cannot opt in** — but it could not before
+either: `RENDER.home` redirects firstAid straight to Search, so the Home card never rendered for
+that role. Not a regression; flagged because it is now the only role with no route.
+
+**There is deliberately still a tap.** A PWA gets no install-time permission hook — no event fires
+at "Add to Home Screen", and both iOS Safari and Chrome refuse a gesture-less
+`requestPermission()` (silently on iOS). "It should just ask on install" is not implementable; the
+earliest possible prompt is a tap after first launch.
+
 ## The tick is LIVE — secrets set, `0014` applied, warning proven end-to-end — 2026-07-31
 
 Config + verification only. **No application code changed** (this section and the redaction in

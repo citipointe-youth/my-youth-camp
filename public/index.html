@@ -2046,13 +2046,11 @@ RENDER.home=async function renderHome(skipModeSync){
   {const notices=_noticeFeed(feed).slice(0,3);
     body+=_alertBannerHtml(feed)
     +`<div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
-    <div id="homeNotices" style="margin-top:10px">${notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>'}</div>`
-    // Pre-camp too, not just at-camp: incidents are role-gated rather than mode-gated,
-    // and a leader should be able to opt in before camp starts rather than on day 1.
-    +_pushCardHtml();
+    <div id="homeNotices" style="margin-top:10px">${notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>'}</div>`;
+    // The "Alerts on this device" opt-in used to sit here. Moved to the Notices screen
+    // (owner request 2026-07-31) — see the WEB PUSH section at the bottom of this file.
   }
   paint('home',body,'My Church Hub',isWide?'All churches':(ACTOR.churchName?esc(ACTOR.churchName):esc(ACTOR.displayName)));
-  _renderPushCard();
 };
 
 function accLabelOf(tent,cls){const p=tent&&cls?'mixed':tent?'tent':cls?'classroom':'none';
@@ -2192,11 +2190,9 @@ async function renderHomeAtCamp(){
   <div id="homePulse"></div>
   ${_alertBannerHtml(feed)}
   <div class="rowsb" style="margin-top:18px"><h3 class="sec" style="margin:0">Notices</h3></div>
-  <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>
-  ${_pushCardHtml()}`;
+  <div id="homeNotices" style="margin-top:10px">${noticesHtml}</div>`;
   paint('home','','Home',d.greetingName||ACTOR.displayName);
   document.getElementById('home').innerHTML=html;
-  _renderPushCard();
   // (No urgent-notice modal here any more — urgent notices render in the banner that
   // `_alertBannerHtml(feed)` already injected above the "Notices" heading in `html` above.)
   if(['director','admin'].includes(ACTOR.role))_renderDirectorDigest();
@@ -3243,17 +3239,20 @@ RENDER.notifs=async function(sub){
     window._schedList=list;
     const rows=list.length?list.map(_schedNoticeCard).join('')
       :'<p class="note-hint">No scheduled notices. Compose a notice and choose “Schedule” to send it later.</p>';
-    paint('notifs',`<button class="btn" onclick="composeNew()">${ic('edit')} Send a notice</button>${seg}${rows}`,'Notices','Pending delivery');
+    paint('notifs',`<button class="btn" onclick="composeNew()">${ic('edit')} Send a notice</button>${seg}${_pushCardHtml()}${rows}`,'Notices','Pending delivery');
+    _renderPushCard();
     return;
   }
   const feed=_noticeFeed(await api('/notifications'));
-  paint('notifs',`${canSend?`<button class="btn" onclick="composeNew()">${ic('edit')} Send a notice</button>`:`<p class="note-hint">Church accounts receive notices; zone leaders, directors and admins send.</p>`}${seg}
+  paint('notifs',`${canSend?`<button class="btn" onclick="composeNew()">${ic('edit')} Send a notice</button>`:`<p class="note-hint">Church accounts receive notices; zone leaders, directors and admins send.</p>`}${seg}${_pushCardHtml()}
     ${feed.length?'':`<p class="note-hint">No ${CAMP_MODE==='pre-camp'?'pre-camp':'camp'} notices yet. Directors, zone leaders and admins can post camp, zone or church updates here.</p>`}${feed.map(n=>`<div class="ncard ${n.priority==='urgent'?'urgent':n.scope==='zone'?'zone':''}">
       <div class="ntop"><span class="ntag">${n.scope==='camp'?icSm('diamond')+' Camp-wide':n.scope==='church'?'Church':esc(n.zone||'')+' Zone'}</span>
       ${n.priority==='urgent'?'<span class="ntag" style="background:#fdecec;color:var(--danger)">Urgent</span>':''}
       <span class="ntime">${timeFmt(n.createdAt)}</span></div>
       <div class="ntitle">${esc(n.title)}</div><div class="nbody">${esc(n.body)}</div>
       <div class="rowsb" style="align-items:center;margin-top:6px"><div class="nfrom" style="margin:0">— ${esc(n.senderName)}</div>${canDelete?`<button class="btn ghost sm" onclick="deleteNotice('${n.id}')">Delete</button>`:''}</div></div>`).join('')}`,'Notices',CAMP_MODE==='pre-camp'?'Pre-camp updates':'Camp & zone updates');
+  // Async, self-contained, and writes only into the `#pushCard` div painted above.
+  _renderPushCard();
 };
 async function deleteNotice(id){if(!await confirmSheet({title:'Delete this notice for everyone?',confirmLabel:'Delete',danger:true}))return;try{await api('/notifications/'+id,{method:'DELETE'});toast('Notice deleted');RENDER.notifs();}catch(e){toast(e.message);}}
 
@@ -6631,10 +6630,17 @@ document.addEventListener('visibilitychange',()=>{
    `_pushCardHtml()` returns a STATIC EMPTY CONTAINER and nothing else. Every piece of
    real work happens in `_renderPushCard()`, which is async, wrapped head-to-toe in
    try/catch, and only ever writes into that one container. Nothing here can throw during
-   a Home render. That matters more than usual: this card sits on the Home screen of every
-   role, so a render-time exception would blank the app's landing screen for everyone —
-   and `Notification`, `PushManager` and `serviceWorker` are all absent or throwing on
-   some of the browsers in use (older iOS especially). Keep this shape. */
+   a screen render — `Notification`, `PushManager` and `serviceWorker` are all absent or
+   throwing on some of the browsers in use (older iOS especially). Keep this shape even
+   though the blast radius shrank when the card moved off Home (below).
+
+   ⚠ 2026-07-31 (owner request): this lives on the NOTICES screen now, as a compact inline
+   button — NOT on either Home screen. `RENDER.notifs` is the only caller. Note the roles
+   that reach Notices: church/zoneLeader/director have it as a bottom-nav tab; admin gets
+   it from the Admin console tile (pre-camp) or the at-camp home Notices tile, because
+   `extras` render only in the >=980px sidebar. **firstAid has no Notices screen at all**,
+   so that role cannot opt in — it could not before either, since `RENDER.home` redirects
+   firstAid straight to Search and the card never rendered for them. */
 
 let _pushCfg=null;      // cached GET /push/config result
 let _pushBusy=false;
@@ -6685,7 +6691,7 @@ async function _renderPushCard(){
     if(_isIOS()&&!_isStandalone()){
       // No prompt is even possible here. Give the actual remedy, not a dead button.
       body=`<p class="note-hint" style="margin:0">Install this app to your Home Screen to get camp alerts on this device — tap Share, then <b>Add to Home Screen</b>, and open it from there.</p>
-        <a class="btn ghost" style="margin-top:8px;display:inline-block" href="/install.html">How to install</a>`;
+        <a class="btn ghost sm" style="margin-top:8px;display:inline-block" href="/install.html">How to install</a>`;
     }else if(perm==='denied'){
       // The app cannot re-prompt once denied; only OS/browser settings can undo it.
       body=`<p class="note-hint" style="margin:0">Alerts are blocked for this site. To turn them on, allow notifications for this app in your ${_isIOS()?'iPhone Settings → Notifications':'browser site settings'}, then come back.</p>`;
@@ -6693,14 +6699,15 @@ async function _renderPushCard(){
       const reg=await navigator.serviceWorker.ready;
       const sub=await reg.pushManager.getSubscription();
       if(sub&&perm==='granted'){
-        body=`<div class="rowsb"><span class="sub" style="margin:0">${icSm('check')} Alerts are on for this device</span>
+        body=`<div class="rowsb" style="align-items:center"><span class="sub" style="margin:0">${icSm('check')} Alerts are on for this device</span>
           <button class="btn ghost sm" onclick="_pushOff()">Turn off</button></div>`;
       }else{
-        body=`<p class="note-hint" style="margin:0 0 8px">Get a notification on this device when an urgent incident is logged, a camp notice goes out, or your check-in window is about to close.</p>
-          <button class="btn" onclick="_pushOn()">Turn on alerts</button>`;
+        body=`<button class="btn ghost sm" onclick="_pushOn()">${icSm('bell')} Turn on alerts for this device</button>`;
       }
     }
-    el.innerHTML=`<div class="card" style="margin-top:18px"><h3 class="sec" style="margin:0 0 8px">Alerts on this device</h3>${body}</div>`;
+    // Compact by design: this sits inline on the Notices screen, not as a Home card
+    // (owner request 2026-07-31). No heading — the surrounding screen is already "Notices".
+    el.innerHTML=`<div style="margin:12px 0 4px">${body}</div>`;
   }catch(_){
     // Never leave a half-rendered card, and never let this break Home.
     try{el.innerHTML='';}catch(__){}
@@ -6710,23 +6717,56 @@ async function _renderPushCard(){
 /* The consent step. The browser's own prompt says only "<site> wants to send you
    notifications" — nothing about what, how often, or that a safeguarding-adjacent alert
    can render on a lock screen. Tapping "Allow" is not meaningful consent to that, so we
-   say it plainly first. Never call requestPermission() on load — only from this tap. */
-async function _pushOn(){
+   say it plainly first. Never call requestPermission() on load — only from a tap.
+
+   ⚠⚠ THIS IS SPLIT INTO TWO FUNCTIONS ON PURPOSE — DO NOT MERGE THEM BACK.
+   `_pushOn` only opens the consent sheet; `_pushConsentGo` is the sheet's OWN click
+   handler and calls `Notification.requestPermission()` as its first statement. See the
+   activation note on `_pushConsentGo`. The previous shape (`await confirmSheet(...)` and
+   then request the permission) is the 2026-07-31 "Could not turn on alerts on this
+   device" bug on an installed iPhone. */
+function _pushOn(){
   if(_pushBusy)return;
-  // bodyRaw (not body) so the three paragraphs render as paragraphs — `body` runs esc()
-  // over the string and newlines would collapse into one wall of text. Every fragment
+  // Raw HTML (not esc'd) so the three paragraphs render as paragraphs. Every fragment
   // below is a hardcoded literal, so there is no untrusted input to escape here.
-  const ok=await confirmSheet({
-    title:'Alerts on this device',
-    bodyRaw:"We&rsquo;ll notify this device when an urgent incident is logged (leadership accounts only), when a camp notice goes out, and about an hour before your check-in window closes if students are still unchecked."
-      +"<br><br>Alerts <b>never contain a student&rsquo;s name</b> or any medical or incident detail &mdash; just a prompt to open the app. They may appear on your lock screen, so keep this device locked and don&rsquo;t leave it with students."
-      +"<br><br>We store a device registration for this account until you turn alerts off here.",
-    confirmLabel:'Turn on alerts',
-  });
-  if(!ok)return;
+  modal(`<h3>Alerts on this device</h3>
+    <p class="sub" style="margin:8px 0 14px">We&rsquo;ll notify this device when an urgent incident is logged (leadership accounts only), when a camp notice goes out, and about an hour before your check-in window closes if students are still unchecked.
+      <br><br>Alerts <b>never contain a student&rsquo;s name</b> or any medical or incident detail &mdash; just a prompt to open the app. They may appear on your lock screen, so keep this device locked and don&rsquo;t leave it with students.
+      <br><br>We store a device registration for this account until you turn alerts off here.</p>
+    <button class="btn" onclick="_pushConsentGo()">Turn on alerts</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+}
+
+/* ⚠ `Notification.requestPermission()` MUST be called synchronously inside this click
+   handler, before any `await`.
+
+   WebKit scopes user activation to the event handler's own call stack. A call made after
+   an `await` — even one resolved from a click, as `confirmSheet()` is — has already left
+   that stack and WebKit rejects it with `NotAllowedError`. Chrome uses a time-based
+   transient-activation window instead, so the old shape worked on a laptop and failed on
+   an installed iPhone: exactly the reported symptom, and exactly why it looked
+   device-specific rather than like a code bug.
+
+   So: request first, close the sheet second, do everything else in `_pushFinish`. Do NOT
+   "tidy" this into one async function. */
+function _pushConsentGo(){
+  if(_pushBusy)return;
   _pushBusy=true;
+  // Handles both API shapes: modern browsers return a Promise, older ones take a callback.
+  // Resolving twice is harmless — a Promise settles once.
+  const permP=new Promise((res,rej)=>{
+    try{
+      const r=Notification.requestPermission(res);
+      if(r&&typeof r.then==='function')r.then(res,rej);
+    }catch(e){rej(e);}
+  });
+  closeModal();
+  _pushFinish(permP);
+}
+
+async function _pushFinish(permP){
   try{
-    const perm=await Notification.requestPermission();
+    const perm=await permP;
     if(perm!=='granted'){toast(perm==='denied'?'Alerts blocked — allow notifications for this app in your device settings':'Alerts not enabled');return;}
     const reg=await navigator.serviceWorker.ready;
     let sub=await reg.pushManager.getSubscription();
@@ -6741,11 +6781,21 @@ async function _pushOn(){
     await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg.keyId}});
     toast('Alerts are on for this device');
   }catch(e){
-    toast('Could not turn on alerts on this device');
+    _pushFail(e);
   }finally{
     _pushBusy=false;
     _renderPushCard();
   }
+}
+
+/* The old toast was a bare "Could not turn on alerts on this device" for every possible
+   failure — permission, service worker, the push service, or the API call. That is what
+   made the iPhone report cost a whole deploy-and-retest cycle to place. Name the error so
+   the next report says which step died (`NotAllowedError` = activation/permission,
+   `AbortError` = the OS push service refused, anything else = our API). */
+function _pushFail(e){
+  const n=(e&&(e.name||e.message))?String(e.name||e.message):'unknown error';
+  toast('Could not turn on alerts — '+n);
 }
 
 async function _pushOff(){
