@@ -455,8 +455,17 @@ Config + verification only. **No application code changed** (this section and th
 - **Migration `0014` APPLIED** and its history row **reconciled** from the generated timestamp
   `20260731011901` to version `'0014'`. `cron.job` = `camp-push-tick`, `*/5 * * * *`, `active`.
   First automated run 01:20:00Z `succeeded` → 200.
-- **⚠️ The `0009`–`0012` + `0016`–`0017` drift is UNCHANGED** (still six rows under generated
-  timestamps). `supabase db push` would still try to re-run all six. Still its own task.
+- **✅ THE MIGRATION HISTORY DRIFT IS FIXED (2026-07-31).** All six rows (`0009`–`0012`,
+  `0016`–`0017`) were reconciled from their generated timestamps in one statement, deriving the
+  version from each row's own `name` (`set version = left(name,4) where version ~ '^\d{14}$' and
+  name ~ '^\d{4}_'`) after a collision guard returned 0. **`supabase_migrations.schema_migrations`
+  now reads exactly `0001`–`0019`, contiguous** — 19 rows, 19 files on disk — for the first time
+  since the 2026-07-16 consolidation. A `supabase db push` now correctly sees everything applied.
+  Reversal mapping if ever needed: `20260720012415`→`0009`, `20260723131647`→`0010`,
+  `20260723131721`→`0011`, `20260723181751`→`0012`, `20260728114005`→`0016`,
+  `20260729125651`→`0017`.
+  ⚠️ **This only stays clean if every future `apply_migration` is followed by the reconcile step.**
+  That step has now been skipped six times historically; it is not optional on this project.
 
 ### The end-to-end test (run against prod, then fully reverted)
 The unit tests were not trusted. Camp dates were temporarily today's, the church time restriction
@@ -490,6 +499,36 @@ Full record + the caveats that survive: `docs/PLANNED-IMPROVEMENTS.md` 2026-07-3
 ⚠ The install still forces a **re-login** (separate storage partition, randomised `Word.###`
 password, initials re-prompt) — fine at a training day, painful mid-camp. **If the training day
 slips, that cost comes back.**
+
+### Clean-up batch, same day — passwords, check-in dedup, Notices route, history drift
+Built by two parallel subagents in isolated worktrees (backend / SPA — disjoint files), merged and
+gated together. `npm run typecheck` clean, `npx vitest run` = **765 pass / 49 files** (was 759; 6
+new). SPA + `sw.js` `node --check` OK. `sw.js` `camp-v61`→**`camp-v62`**.
+
+- **B8 — church passwords widened to `Word.###`** (three zero-padded digits, `Donkey.683`).
+  Keyspace ~11.7k → ~117k. ⚠ **Existing passwords are hashed and stay valid, so the wider keyspace
+  does NOT take effect until someone re-runs "Randomise & export church passwords" and
+  redistributes the CSV.** Owner's plan is to do that at the pre-camp training day, alongside the
+  iOS install. Also fixed latent arithmetic in the `minLength` backstop — a result is
+  `word.length + 4` chars, and the code still said `- 3`.
+- **N5 — `withCheckIn` is now idempotent.** A replayed identical entry is a no-op instead of
+  writing a duplicate row into the compliance export. ⚠ It compares **only against the last entry
+  for that same session**, never the whole history, because "checked in" is **last-entry-wins**
+  (`toRosterEntry`, `checkin-warnings.ts`): a genuine in→out→in is three real entries and must keep
+  working. There are tests pinning both halves. `atCamp`/`lifecycle` still untouched (P0 invariant).
+- **Notices tile restored to the admin console, pre-camp only** — see that section below.
+- **Migration history drift fixed** — see above.
+- **`.claude/` added to `.gitignore`.** Agent worktrees live there and were **not** ignored: a
+  stray `git add -A` would have published a second full copy of the tree to this **public** repo,
+  and `vitest` was globbing them (147 files / 2289 tests instead of 49 / 765 — a badly misleading
+  green). Remove worktrees before trusting a test count.
+
+**Owner DECLINED this round, do not build without asking again:** a hard pre-camp mode gate on
+`RENDER.incidents` (it is already unreachable pre-camp via every nav path; a hard gate was built
+and reverted on 2026-07-17 because it stranded real safeguarding records — prod holds 6 incidents,
+3 high-severity, all logged pre-camp); removing the Budget & Costings console tile; and S7's
+`POST /admin/reset` hardening (the export guard still latches open after the first export — the
+only real barrier remains the client modal + typed phrase).
 
 ### Push is configured but STILL UNPROVEN
 `pushAttempted: 0` on every tick — there are **zero** `push_subscriptions`, so no push service has
@@ -575,14 +614,14 @@ nothing tested referenced this tile). SPA + `sw.js` `node --check` OK.
 changed: the five other `gotoTab('notifs')` call sites are notice-card taps and post-send
 redirects, and the `notifs` screen, route and nav entries are all intact.
 
-> ⚠️ **KNOWN GAP, accepted by the owner: an admin on a PHONE in PRE-CAMP now has no route to
-> Notices.** The 4-slot phone bottom nav for that role gives Notices' old slot to Data Import
-> (bug 6), and `navModel`'s `extras` — where Notices lives for admin — render **only in the
-> ≥980px sidebar**. This tile was the original fix for "bug 5" and was the last phone route.
-> Unaffected: admin at-camp (Notices is a tile on the at-camp home grid), admin on desktop
-> (sidebar, both modes), and every other role (Notices is a real bottom-nav tab for church,
-> zoneLeader and director). **If the route is wanted back, restore the console tile — do not
-> re-cut the 4-slot bottom nav**, which was deliberately arranged.
+> ✅ **THE GAP THIS OPENED WAS CLOSED THE SAME DAY — see the 2026-07-31 section at the top.**
+> Removing the tile left an admin on a PHONE in PRE-CAMP with no route to Notices at all: the
+> 4-slot phone bottom nav gives Notices' old slot to Data Import (bug 6), and `navModel`'s
+> `extras` — where Notices lives for admin — render **only in the ≥980px sidebar**. The tile is
+> now **restored under "Camp setup", gated to pre-camp** (at camp the at-camp home grid already
+> carries one, so a console entry would be a duplicate route). **Do not remove it again without
+> re-opening that gap, and do not "fix" it by re-cutting the 4-slot bottom nav**, which was
+> deliberately arranged.
 
 The stale comment in `navModel` that pointed at this tile ("Notices is also reachable via a
 button on Admin Settings (bug 5)") has been corrected in the same commit.
@@ -1056,12 +1095,12 @@ reconciled** from their generated timestamps (`20260730122502`/`20260730122518`)
 and verified present by query. Next migration = **`0020`**. See the 2026-07-26 web-push section at
 the bottom of this file for the gating conditions on `0014`.
 
-⚠️ **Newly-observed history drift — `0016` and `0017` are ALSO recorded under generated timestamps**
-(`20260728114005`, `20260729125651`), not just the known `0009`–`0012`. Spotted 2026-07-30 while
-reconciling `0018`/`0019`. The schema is correct; only the version labels drifted, because the
-reconciliation step was skipped again. Left alone deliberately (consistent with the standing
-decision on `0009`–`0012`) but it widens the same consequence: **a `supabase db push` would consider
-six migrations unapplied and try to re-run them.** Fix all six together as its own task.
+✅ **~~Newly-observed history drift~~ — ALL SIX ROWS RECONCILED 2026-07-31.** `0009`–`0012` and
+`0016`–`0017` had all been recorded under generated timestamps because the reconcile step was
+skipped six times. Fixed together as its own task, exactly as this note asked for. **The history
+table now reads exactly `0001`–`0019` with no gaps**, so `supabase db push` no longer sees six
+phantom-unapplied migrations. Details + the reversal mapping are in the 2026-07-31 section near
+the top of this file.
 
 **Prod reconciled 2026-07-16 (code) + 2026-07-17 (DB).** The code-ref removal (dropping
 `tentPrice`/`classroomPrice` from the settings entity/schema/seed/mapper + fixtures)

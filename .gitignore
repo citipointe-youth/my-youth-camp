@@ -16,3 +16,8 @@ supabase/.temp/
 .env
 .env.*
 !.env.example
+
+# Agent worktrees + local agent scratch. NEVER commit these: this repo is PUBLIC,
+# and a stray `git add -A` while a subagent worktree exists would publish a full
+# second copy of the tree. Vitest also globs them, inflating the test count.
+.claude/

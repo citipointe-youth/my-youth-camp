@@ -76,12 +76,17 @@ recorded here because "nobody thought of it" and "the owner said no" look identi
 
 - ~~**Web-push design §12's four organisational questions are UNANSWERED**~~ → **ANSWERED
   2026-07-31, see the section below.** Rollout is no longer gated on anything organisational.
-- **Incidents are still unreachable pre-camp** (item 4.7 from the review, never put to the owner).
-  `RENDER.incidents` was deliberately made mode-independent on 2026-07-18, but the only route to it
-  is the at-camp home tile, so that revert's intent still isn't delivered (`public/index.html`
-  admits this in a comment). Not built; worth one question next session.
-- **Migration history drift now covers `0009`–`0012` AND `0016`–`0017`.** Six rows recorded under
-  generated timestamps. Schema is correct; a `supabase db push` would try to re-run all six.
+- ~~**Incidents are still unreachable pre-camp**~~ (item 4.7) → **PUT TO THE OWNER 2026-07-31 and
+  CLOSED: leave exactly as-is.** They confirmed Incidents *should not* be reachable pre-camp, which
+  is already the live behaviour (the pre-camp home card was removed 2026-07-20). **No hard mode
+  gate was added, deliberately** — one was built on 2026-07-17 and reverted the same day because it
+  stranded already-logged records, and prod currently holds **6 incidents, 3 high-severity, all
+  logged pre-camp** against a September camp. So the screen still renders if reached, keeping those
+  reviewable and deletable. Don't "finish the job" by gating it.
+- ~~**Migration history drift**~~ → **FIXED 2026-07-31.** All six rows reconciled; the history table
+  now reads exactly `0001`–`0019` with no gaps. See CLAUDE.md's 2026-07-31 section for the method
+  and the reversal mapping. ⚠ Stays clean only if the reconcile step follows every future
+  `apply_migration` — it has been skipped six times.
 
 ---
 
