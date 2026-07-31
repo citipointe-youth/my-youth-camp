@@ -443,6 +443,28 @@ recomputing it. If a real "who will see this?" figure is ever wanted, compute it
 deliberately unapplied** and must stay that way until both secrets are set, or every tick fires
 silently into a 404/401 (`pg_net` is fire-and-forget and surfaces nothing).
 
+## Notices tile removed from the Admin console — deployed 2026-07-31
+
+Owner request, SPA-only (`public/index.html`), no backend/schema change. `sw.js`
+`camp-v58`→**`camp-v59`**. `npm run typecheck` clean, `npm run test` = 759 pass (unchanged —
+nothing tested referenced this tile). SPA + `sw.js` `node --check` OK.
+
+`RENDER.admin`'s Data group no longer renders `_adminTile('bell','Notices',…)`. Nothing else
+changed: the five other `gotoTab('notifs')` call sites are notice-card taps and post-send
+redirects, and the `notifs` screen, route and nav entries are all intact.
+
+> ⚠️ **KNOWN GAP, accepted by the owner: an admin on a PHONE in PRE-CAMP now has no route to
+> Notices.** The 4-slot phone bottom nav for that role gives Notices' old slot to Data Import
+> (bug 6), and `navModel`'s `extras` — where Notices lives for admin — render **only in the
+> ≥980px sidebar**. This tile was the original fix for "bug 5" and was the last phone route.
+> Unaffected: admin at-camp (Notices is a tile on the at-camp home grid), admin on desktop
+> (sidebar, both modes), and every other role (Notices is a real bottom-nav tab for church,
+> zoneLeader and director). **If the route is wanted back, restore the console tile — do not
+> re-cut the 4-slot bottom nav**, which was deliberately arranged.
+
+The stale comment in `navModel` that pointed at this tile ("Notices is also reachable via a
+button on Admin Settings (bug 5)") has been corrected in the same commit.
+
 ## Four-item owner batch — deployed 2026-07-31
 
 Owner batch: Android install prompt, gender-narrowed hero accommodation, a new registration-list

@@ -1854,10 +1854,12 @@ function navModel(role,mode){
     if(role==='director')
       return {tabs:[T('home','home','Home'),T('people','users','My Youth'),T('data','note','Data'),T('help','help','Help'),T('notifs','bell','Notices')],
               extras:[T('budget','star','Budget & Costings'),T('accom','classroom','Accommodation Allocations')]};
-    /* admin pre-camp — bottom nav (phone) keeps Data Import in Notices' old slot (bug 6);
-       Notices is also reachable via a button on Admin Settings (bug 5). The desktop sidebar
-       (2026-07-20) additionally gets a dedicated Notices extra — sidebar has room where the
-       4-slot phone bottom nav doesn't. */
+    /* admin pre-camp — bottom nav (phone) keeps Data Import in Notices' old slot (bug 6).
+       The desktop sidebar (2026-07-20) gets a dedicated Notices extra — sidebar has room where
+       the 4-slot phone bottom nav doesn't.
+       ⚠ 2026-07-31: the Admin console's Notices tile (the old "bug 5" route) was REMOVED at the
+       owner's request, so on a PHONE in pre-camp an admin now has no route to Notices at all —
+       `extras` render only in the >=980px sidebar. Accepted, but don't be surprised by it. */
     return {tabs:[T('home','home','Home'),T('people','users','My Youth'),T('data','note','Data'),T('import','upload','Data Import'),T('admin','gear','Admin')],
             extras:[T('notifs','bell','Notices'),T('budget','star','Budget & Costings'),T('accom','classroom','Accommodation Allocations')]};
   }
@@ -4359,8 +4361,13 @@ RENDER.admin=function(){
   // Reviewed 2026-07-18 (frontend assessment, two independent passes): grouping is considered
   // settled — please don't reactively reshuffle again without a deliberate pass.
   // Item 10 (2026-07-28): the "Communications" group is gone — Notices and Scheduled notices are
-  // now ONE screen (sub-tabs), and its single tile lives under Data with the rest of the
-  // record-keeping. Item B added Budget & Costings alongside it.
+  // now ONE screen (sub-tabs). Item B added Budget & Costings alongside it.
+  // 2026-07-31 (owner request): the **Notices** tile is REMOVED from this console. Notices is
+  // still reached from the desktop sidebar (`navModel` extras) in both modes, and from the
+  // at-camp home tile grid. ⚠ KNOWN GAP, accepted by the owner: an **admin on a phone in
+  // pre-camp** now has no route to Notices — the 4-slot bottom nav gives that slot to Data
+  // Import (bug 6) and `extras` render only in the >=980px sidebar. This tile was the fix for
+  // "bug 5". If that route is wanted back, restore it here rather than re-cutting the bottom nav.
   paint('admin',`<div class="h3" style="margin:14px 0 6px">Camp setup</div>
     <div class="tiles">
       ${wizardTile}
@@ -4376,7 +4383,6 @@ RENDER.admin=function(){
     </div>
     <div class="h3" style="margin:16px 0 6px">Data</div>
     <div class="tiles">
-      ${_adminTile('bell','Notices',"gotoTab('notifs')")}
       ${importTile}${dataTile}${budgetTile}${studentsTile}
     </div>`,'Admin console','Back office');
 };

@@ -359,6 +359,14 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-07-31 — Notices tile removed from the Admin console
+
+| Symptom | Go to |
+|---|---|
+| **"An admin can't get to Notices"** | Expected on a **phone in pre-camp** — the console tile was removed 2026-07-31 at the owner's request and `navModel`'s `extras` (where Notices lives for admin) render only in the **≥980px sidebar**. Not a regression to "fix" by re-cutting the bottom nav, which is deliberately 4 slots with Data Import in that position (bug 6). Restore `_adminTile('bell','Notices',"gotoTab('notifs')")` in `RENDER.admin` if the route is wanted back. |
+| **Notices missing for a non-admin role** | Unrelated to the above — church/zoneLeader/director all have `notifs` as a real bottom-nav tab in `navModel`. Go there. |
+| **Notices unreachable for admin AT camp** | Also unrelated — that role gets a Notices tile in the at-camp home grid (`renderHomeAtCamp`, the `ACTOR.role!=='director'` push). |
+
 ### 2026-07-31 — four-item owner batch (install prompt, hero accommodation, PNG lists, testimony picker)
 
 | Symptom | Go to |
