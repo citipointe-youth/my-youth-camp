@@ -3,7 +3,9 @@ import { randomInt } from 'node:crypto';
 /**
  * Memorable church-login passwords (Feature 6, 2026-07-17).
  *
- * Format: `Word.##` — a Capitalised common noun + `.` + two digits (e.g. `Cat.09`, `Otter.42`).
+ * Format: `Word.###` — a Capitalised common noun + `.` + three digits (e.g. `Cat.009`,
+ * `Donkey.683`). The digits are always zero-padded to exactly three, so the shape is uniform when
+ * a password is read aloud off a printed CSV.
  * These are the real passwords handed to churches, so they must be easy to read aloud and type.
  * The wordlist is curated (simple, unambiguous animals/nouns; no offensive or easily-confused
  * words). `mustChangePassword` is deliberately NOT set on accounts using these — they are the
@@ -33,21 +35,21 @@ function capitalise(word: string): string {
 }
 
 /**
- * Generate a memorable password of the form `Word.##`.
+ * Generate a memorable password of the form `Word.###`.
  *
  * @param minLength minimum total length the result must satisfy (the account schema min is 6;
- *   `Word.##` is at least `3 + 1 + 2 = 6` chars for the shortest word, so the default already
+ *   `Word.###` is at least `3 + 1 + 3 = 7` chars for the shortest word, so the default already
  *   passes). If a higher minimum is requested the word is chosen (and, if the wordlist can't
  *   reach it, padded) so the result always meets it.
  */
 export function memorablePassword(minLength = 6): string {
-  // A `Word.##` result is `word.length + 3` chars. Prefer words long enough to hit minLength.
-  const neededWordLen = Math.max(0, minLength - 3);
+  // A `Word.###` result is `word.length + 4` chars. Prefer words long enough to hit minLength.
+  const neededWordLen = Math.max(0, minLength - 4);
   const candidates = WORDS.filter((w) => w.length >= neededWordLen);
   const pool = candidates.length > 0 ? candidates : WORDS;
   const word = pool[randomInt(pool.length)] as string;
 
-  const digits = String(randomInt(100)).padStart(2, '0');
+  const digits = String(randomInt(1000)).padStart(3, '0');
   let result = `${capitalise(word)}.${digits}`;
 
   // Backstop: if the (unusually high) min-length still isn't met, lengthen the word with more

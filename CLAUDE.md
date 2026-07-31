@@ -487,7 +487,7 @@ Metadata transfer to Apple/Google/Mozilla **accepted**; **no under-18 login hold
 compliance-trained leaders — re-ask if that ever changes); the **youth team** owns the privacy /
 compliance update; the iOS Add-to-Home-Screen install happens at the **pre-camp training day**.
 Full record + the caveats that survive: `docs/PLANNED-IMPROVEMENTS.md` 2026-07-31 section.
-⚠ The install still forces a **re-login** (separate storage partition, randomised `Word.##`
+⚠ The install still forces a **re-login** (separate storage partition, randomised `Word.###`
 password, initials re-prompt) — fine at a training day, painful mid-camp. **If the training day
 slips, that cost comes back.**
 
@@ -2078,7 +2078,9 @@ RBAC, gender-account creation, password export, parent-mask, login-form attrs).
   `update()` re-asserts scope on the patched result (fail-closed, Finding 4). Legacy accounts /
   non-church roles have `gender_scope=null` = see all genders.
 - **Feature 6 — memorable randomised church passwords + export.** `src/utils/memorable-password.ts`
-  → `Word.##` (capitalised noun + 2 digits, e.g. `Donkey.68`; ≥6 chars). Auto-generated on
+  → `Word.###` (capitalised noun + 3 digits, e.g. `Donkey.683`; ≥6 chars — widened from the
+  original `Word.##` 2-digit form on 2026-07-31, ~11.7k → ~117k keyspace; existing hashed
+  passwords stay valid, only NEW ones use the wider form). Auto-generated on
   church-account creation AND re-generated for ALL church logins by an admin **"Randomise & export
   church passwords"** button (`POST /accounts/churches/randomize-passwords`, **admin-only**) that
   also splits/retires legacy logins and returns `{username,church,gender,password}` rows the SPA
@@ -2510,6 +2512,7 @@ exist.
 - `atCamp` — is the person **physically on site right now?** Only written by `withSignEvent` (attendance sign-in/sign-out path).
 - `lifecycle` — registration state machine: `registered → arrived → checked_out → departed | cancelled`. Only `withSignEvent` advances this beyond `registered`.
 - `withCheckIn` (daily session log) **never** touches `atCamp` or `lifecycle`. It appends to `checkInHistory` only.
+- **`withCheckIn` is idempotent per (session, person, type) — N5, 2026-07-31.** If the LAST entry for the same `sessionId` already has the same `type`, the write is a no-op and the person is returned unchanged (no `updatedAt` bump), so a crash-replay from the SPA's persisted check-in queue can't write a duplicate row into the compliance export. ⚠ It compares against the **last entry for that session only**, never the whole history, because **"checked in" is LAST-ENTRY-WINS** (`toRosterEntry`, `checkin-warnings.ts`) — a genuine in → out → in is three real entries and must keep working. Tests: `person-lifecycle.test.ts`.
 - `checkIn()` in `person.service.ts` guards: throws `BadRequestError` for `lifecycle === 'cancelled'` OR `atCamp === false`. Day-1 first-arrival must go through `signEvent` (attendance sign-in), not the daily check-in path.
 - The check-in roster in `getSessionStatus` filters on `p.atCamp === true`, not `isCamper(p)` — departed campers (`atCamp:false`) never appear on the daily roster.
 - `checkInsDue` on the at-camp dashboard is scoped to `atCampNow` (persons with `atCamp===true`), not all `isCamper()` persons. This prevents departed campers inflating the "still to check in" count.
@@ -2814,12 +2817,13 @@ and rehydrated once at boot (`window._ciqRestored` guard). Two things worth know
 - **Stale-session entries are DROPPED, with a toast.** On restore, anything whose `sessionId` is
   not the currently-selected session is discarded (its window has closed; the POST would 403) and
   the count is toasted so it can be reconciled against the paper sheet, rather than vanishing.
-- ⚠ **Deferred finding (accepted, NOT fixed — needs an owner call):** persistence introduces a
-  narrow double-submit window. In `drainQueue` the `await` can resolve (server write committed)
-  before the sync shift+persist runs; a crash in that one-tick gap replays the entry on reboot, and
-  `withCheckIn` has no `(sessionId, camperId)` dedup — so that is a duplicate row in the compliance
-  export. Pre-S2 the same crash simply LOST the tap. Displayed state is unaffected (last-entry-wins
-  in `toRosterEntry`). The fix is a client idempotency key or server-side dedup — a follow-up.
+- ⚠ **Deferred finding — FIXED 2026-07-31 by server-side dedup (see below).** persistence
+  introduced a narrow double-submit window. In `drainQueue` the `await` can resolve (server write
+  committed) before the sync shift+persist runs; a crash in that one-tick gap replays the entry on
+  reboot, and `withCheckIn` had no `(sessionId, camperId)` dedup — so that was a duplicate row in
+  the compliance export. Pre-S2 the same crash simply LOST the tap. Displayed state was unaffected
+  (last-entry-wins in `toRosterEntry`). The owner chose **server-side dedup** over a client
+  idempotency key — `withCheckIn` is now idempotent.
 
 ### Discount-code overrides
 

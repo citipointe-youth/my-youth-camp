@@ -46,8 +46,30 @@ export function applySignIn(
   return applyCheckIn(person, 'in');
 }
 
-/** Append a check-in entry only — never mutates lifecycle or atCamp. */
+/**
+ * Append a check-in entry only — never mutates lifecycle or atCamp.
+ *
+ * **Idempotent per (session, person, type) against the LAST entry only (N5).** The SPA persists
+ * its check-in queue to localStorage, and a crash between `drainQueue`'s `await` resolving and
+ * the queue being re-persisted replays the entry on reboot — which used to write a duplicate row
+ * into the compliance export. If the most recent entry for this person in the SAME session
+ * already has the same `type`, the write is a no-op and the person is returned unchanged
+ * (`updatedAt` is not bumped either — nothing changed).
+ *
+ * ⚠ It compares against the LAST entry for that session ONLY, never the whole history, because
+ * "checked in" is **last-entry-wins** for a session (`toRosterEntry` in `src/api/dto/person.dto.ts`
+ * and `checkin-warnings.ts` both depend on this). A genuine in → out → in sequence is three real
+ * entries and must keep working; only an immediate repeat of the same type collapses. Entries for
+ * other sessions are irrelevant and are skipped when finding "the last entry for this session".
+ */
 export function withCheckIn(person: Person, entry: CheckInEntry, now: string): Person {
+  for (let i = person.checkInHistory.length - 1; i >= 0; i--) {
+    const prev = person.checkInHistory[i];
+    if (!prev || prev.sessionId !== entry.sessionId) continue;
+    // Last entry for this session — collapse only if it is the same type.
+    if (prev.type === entry.type) return person;
+    break;
+  }
   return {
     ...person,
     checkInHistory: [...person.checkInHistory, entry],
