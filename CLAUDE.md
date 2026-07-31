@@ -463,6 +463,25 @@ check-in warnings by triggering the tick.
 `CRON_SECRET` were generated and set for **Production and Preview**, and the Supabase Vault
 `cron_secret` was updated to match. The exposed values are dead.
 
+**Verified, not assumed** (after the redeploy — env vars only reach a NEW build, and the old
+build was still serving the leaked value until it landed):
+- **`VAPID_PUBLIC_KEY` byte-exact** — pulled back and compared to the generated key: 65 bytes,
+  leading `0x04`, and the *exact browser `atob()` path* (pad → `-_`→`+/` → decode) succeeds.
+- **`CRON_SECRET` end-to-end** — the cron job's OWN command was run verbatim from the DB
+  (`net.http_get` + `vault.decrypted_secrets` → `/internal/cron/tick`) and
+  `net._http_response` returned **200** `{"ok":true,…}`. That exercises the exact path
+  `pg_cron` uses, so Vercel and the Vault are proven in agreement.
+  ⚠ The route is **`/internal/cron/tick`** — read it from `cron.job.command`, don't guess it
+  (`/internal/push-tick` 404s).
+- **All three VAPID vars pass shape validation in prod** — `cron.service` calls
+  `isPushConfigured()` on EVERY tick, so a malformed value would have logged `[push] VAPID_…`.
+  The runtime logs are clean across the post-deploy ticks, which is a positive result for the
+  private key and subject even though both are sensitive and unreadable.
+- ❗ **Still unproven: that the private key is the mathematical PAIR of the public key.** Both
+  came from one `generateVAPIDKeys()` call and one write operation, and the public half
+  verified byte-exact, so the risk is low — but only a real push delivering to a real device
+  proves it. `pushAttempted` is still 0 because there are still zero subscriptions.
+
 ### Gotchas learned doing the rotation — read before touching env vars again
 - **`vercel env add` IGNORES stdin when it detects an agent** (`--non-interactive` is the
   default then). Both `< file` and `cat file |` reported *success* and wrote **empty strings**.
