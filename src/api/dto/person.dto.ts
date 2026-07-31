@@ -58,6 +58,14 @@ export interface RegistrantDto {
   taxAmount: number | null;
   needsReview: boolean;
   needsReviewReason: string | null;
+  /**
+   * The Elvanto form submission date — when this person actually registered.
+   * NOT the same as `createdAt`, which is when the import first created the row: a bulk
+   * import ties a whole batch at one `createdAt`, so ordering by it is meaningless. Null for
+   * anyone with no Elvanto meta (manual entry, or a record predating the Form import).
+   * Consumers must fall back `dateSubmitted` → `createdAt` → name.
+   */
+  dateSubmitted: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -173,6 +181,7 @@ export function toRegistrantDto(p: Person): RegistrantDto {
     taxAmount: p.taxAmount ?? null,
     needsReview: p.needsReview ?? false,
     needsReviewReason: p.needsReviewReason ?? null,
+    dateSubmitted: p.elvantoMeta?.dateSubmitted ?? null,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };

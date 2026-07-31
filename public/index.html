@@ -618,6 +618,16 @@ textarea{min-height:84px;resize:vertical;}
    overlays, because the SPA shell isn't fully up on the login screen. Phones only (see _loginTips). */
 #login .login-tips{text-align:center;font-size:var(--t-2xs);color:var(--muted);margin-top:14px;margin-bottom:0;line-height:1.75;font-weight:600;}
 #login .login-tips a{color:var(--violet);text-decoration:underline;}
+/* Android install banner (2026-07-31) — see _installBanner(). Sits between the sign-in card and
+   the help links. iOS never renders this (no `beforeinstallprompt`); the /install.html link in
+   .login-tips remains the iPhone path. */
+#login .install-banner{margin-top:14px;background:var(--chip);border:1px solid var(--line);border-radius:14px;padding:12px 14px;}
+#login .install-banner .ib-t{font-size:var(--t-xs);font-weight:700;color:var(--violet-d,#6d28d9);margin-bottom:2px;}
+#login .install-banner .ib-s{font-size:var(--t-2xs);color:var(--muted);font-weight:600;line-height:1.5;}
+#login .install-banner .ib-r{display:flex;gap:8px;margin-top:10px;}
+#login .install-banner button{flex:1;border-radius:11px;padding:9px 8px;font-size:var(--t-xs);font-weight:700;font-family:inherit;cursor:pointer;border:1px solid var(--line);}
+#login .install-banner .ib-go{background:var(--violet);border-color:var(--violet);color:#fff;}
+#login .install-banner .ib-no{background:#fff;color:var(--muted);}
 .quick{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
 .quick button{flex:1;min-width:44%;border:1px solid var(--line);background:var(--chip);color:var(--violet-d,#6d28d9);border-radius:12px;padding:9px 8px;font-size:var(--t-xs);cursor:pointer;font-weight:700;font-family:inherit;transition:background .12s;}
 .quick button:active{background:var(--lav,#ede9fe);}
@@ -801,6 +811,9 @@ textarea{min-height:84px;resize:vertical;}
       <button class="btn" type="submit">Sign in</button>
       <div class="err" id="loginErr"></div>
     </form>
+    <!-- Android install prompt, filled in by _installBanner() when Chromium fires
+         `beforeinstallprompt`. Never appears on iOS — that event does not exist there. -->
+    <div id="installBanner" class="install-banner" style="display:none"></div>
     <!-- Login help links, filled in by _loginTips() at boot (phones only). -->
     <p id="loginTips" class="login-tips" style="display:none"></p>
     <!-- Demo quick-login: only rendered for the in-memory demo build, injected by
@@ -1343,6 +1356,56 @@ function _loginTips(){
     +'<br>Password not saving? — <a href="/save-password.html">how to save it manually</a>';
   el.style.display='block';
 }
+/* ── Android install-as-app prompt (2026-07-31) ────────────────────────────────────────────
+   `beforeinstallprompt` is a CHROMIUM event — Safari/iOS never fires it, so the iPhone path is
+   untouched by construction and needs no "not iOS" test anywhere. The existing /install.html
+   guide linked from _loginTips stays the iOS story.
+
+   We show OUR OWN banner rather than auto-firing the native dialog. Chromium refuses a
+   gesture-less `prompt()` in some versions and the refusal is SILENT — the user would get
+   nothing at all and there would be no fallback surface. Calling prompt() inside the tap
+   handler is the only reliable path. DO NOT "simplify" this by calling prompt() straight from
+   the event listener.
+
+   Gated to Android UAs: desktop Chromium fires the same event, and the owner asked for phones.
+   Everything is try/caught — this runs on the login gate, where a throw is maximally visible,
+   and `localStorage` throws outright in some privacy modes. */
+let _deferredInstall=null;
+const _INSTALL_DISMISSED='ycp_installdismissed';
+function _installDismissed(){try{return localStorage.getItem(_INSTALL_DISMISSED)==='1';}catch(_){return false;}}
+function _markInstallDismissed(){try{localStorage.setItem(_INSTALL_DISMISSED,'1');}catch(_){}}
+function _installBanner(){
+  try{
+    if(!/Android/i.test(navigator.userAgent))return;
+    window.addEventListener('beforeinstallprompt',function(e){
+      try{
+        e.preventDefault();          // suppress Chromium's own mini-infobar; we drive it instead
+        _deferredInstall=e;
+        if(_installDismissed())return;
+        const el=document.getElementById('installBanner');
+        if(!el)return;
+        el.innerHTML='<div class="ib-t">Install this app on your phone</div>'
+          +'<div class="ib-s">Adds it to your home screen so it opens full-screen and loads faster.</div>'
+          +'<div class="ib-r"><button type="button" class="ib-go" onclick="_installGo()">Install</button>'
+          +'<button type="button" class="ib-no" onclick="_installNo()">Not now</button></div>';
+        el.style.display='block';
+      }catch(_){}
+    });
+    // Fired when the install completes (by our button or by the browser's own menu). Either way
+    // the banner has done its job and must never come back on this device.
+    window.addEventListener('appinstalled',function(){_markInstallDismissed();_hideInstallBanner();});
+  }catch(_){}
+}
+function _hideInstallBanner(){try{const el=document.getElementById('installBanner');if(el){el.style.display='none';el.innerHTML='';}}catch(_){}}
+async function _installGo(){
+  // The deferred event is SINGLE-USE — once prompt() is called it cannot be reused, so the
+  // banner goes away regardless of what the user chooses in the native dialog. If they dismiss
+  // it, Chromium will fire beforeinstallprompt again on a later visit and we start over.
+  const e=_deferredInstall;_deferredInstall=null;_hideInstallBanner();
+  if(!e)return;
+  try{e.prompt();await e.userChoice;}catch(_){}
+}
+function _installNo(){_markInstallDismissed();_hideInstallBanner();}
 async function doLogin(){
   const err=document.getElementById('loginErr');if(err)err.style.display='none';
   try{
@@ -2044,7 +2107,14 @@ async function renderHomeAtCamp(){
   // Church allocated room(s) — only visible in real at-camp mode, never in preview.
   let myAccom='';
   if(ACTOR.role==='church'&&ACTOR.churchId&&!PREVIEW_MODE){try{const cr=await api('/accommodation/church-rooms/'+ACTOR.churchId);
-    const rooms=(cr&&cr.rooms)||[];
+    let rooms=(cr&&cr.rooms)||[];
+    /* 2026-07-31: narrow to THIS login's gender. The endpoint is church-scoped but not
+       gender-scoped, so a b-/g- account was shown both teams' rooms. `ACTOR.genderScope`
+       ('male'|'female'|null) rides in on the login payload (toSafeUser) and the restored
+       session. A null scope means an unsplit account — keep BOTH rooms rather than blank the
+       line. An empty result after filtering falls through to "To be confirmed" below, the same
+       string used when the fetch fails. Display-only: the endpoint was already access-gated. */
+    if(ACTOR.genderScope==='male'||ACTOR.genderScope==='female')rooms=rooms.filter(r=>r.gender===ACTOR.genderScope);
     myAccom=rooms.length?rooms.map(r=>r.name+' — '+(r.gender==='male'?'Guys':'Girls')+' ('+r.n+')').join(' · '):'To be confirmed';
   }catch(e){myAccom='To be confirmed';}}
   const tiles=[];
@@ -4099,8 +4169,12 @@ RENDER.testimonies=async function(){
   const campers=(Array.isArray(campPage)?campPage:campPage.items||[]).filter(c=>c.kind==='student');
   const items=campers.map(c=>({id:c.id,firstName:c.firstName,lastName:c.lastName,churchName:c.churchName}))
     .sort((a,b)=>(a.firstName+a.lastName).localeCompare(b.firstName+b.lastName));
+  /* 2026-07-31: the church is NO LONGER printed beside each name (owner request). A church
+     login's list is already church-scoped by `_scoped('/campers')`, so the label was pure noise
+     for them; admin/director lose a tiebreak between two identically-named students in different
+     churches, which was accepted as rare. `churchName` stays on `items` — it costs nothing. */
   const opts=`<option value="" selected>No specific student identified</option>`
-    +items.map(c=>`<option value="${c.id}">${esc(c.firstName+' '+c.lastName)} · ${esc(c.churchName)}</option>`).join('');
+    +items.map(c=>`<option value="${c.id}">${esc(c.firstName+' '+c.lastName)}</option>`).join('');
   paint('testimonies',`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Submit a testimony</span>${helpTip('Record a God-moment from camp. Choosing a student is optional — leave it blank for a general testimony. Saved for leaders and directors to review.')}</div>
     <div class="infobox" style="font-size:.82rem">Record a testimony or God-moment from camp. Pick a student if it's about one, or leave it as a general testimony. It is saved with the records that leaders &amp; directors review.</div>
     <div class="card"><label>Student (optional)</label><select id="tmCamper">${opts}</select>
@@ -5269,12 +5343,209 @@ RENDER.adminData=async function(){
   // Item B (2026-07-28): a route to Budget & Costings from here (admin + director both hold
   // `budget:manage`, and this screen is a director's main landing point for records).
   const budgetCard=`<div class="card tap" onclick="go('budget')"><div class="rowsb"><div><div style="font-weight:600">Budget &amp; Costings</div><div class="sub">Registration fee totals by church, with discount-code breakdown</div></div><span class="pill info">View ›</span></div></div>`;
+  // Registration lists (PNG) — 2026-07-31. Church list is filled in after paint by
+  // _loadRegListChurches() so this screen doesn't block on another fetch.
+  const regListsCard=`<div class="card">
+    <div class="lbl" style="margin-top:0">Registration lists (PNG)</div>
+    <p class="note-hint" style="text-align:left">Images of who is registered, to send to grade leaders in the lead-up to camp. Guys on the left, girls on the right, longest-registered first. Names only — no payment, medical or contact details.</p>
+    <label>Church</label><select id="rlChurch"><option value="">Loading…</option></select>
+    <label>Split</label><select id="rlSplit">
+      <option value="auto" selected>Automatic</option>
+      <option value="church">Whole church (one image)</option>
+      <option value="gender">By gender (Guys / Girls)</option>
+      <option value="grade">By grade (one per year level)</option>
+    </select>
+    <p class="note-hint" style="text-align:left;margin-top:6px">Automatic picks by size: under 50 registrations = one image, 50–100 = guys &amp; girls, over 100 = one per year level. A separate Leaders image is always included.</p>
+    <button class="btn" style="width:100%;margin-top:8px" onclick="exportRegistrationPngs()">${icSm('download')} Generate &amp; download</button>
+    <div id="rlStatus" class="note-hint" style="text-align:left;display:none"></div>
+  </div>`;
   // PC-1 order, updated: 1. Data table, 2. Budget, 3. Save Defaults, 4. Compliance Export,
-  // 5. Close-Out, 6. Data reset.
+  // 5. Close-Out, 6. Data reset. Registration lists sits with the other export tools.
   paint('adminData',
-    `${dataTableCard}${budgetCard}${saveDefaultsCard}${complianceCard}${closeOutCard}${dataResetCard}`,
+    `${dataTableCard}${budgetCard}${regListsCard}${saveDefaultsCard}${complianceCard}${closeOutCard}${dataResetCard}`,
     'Data Export/Reset','Export & reset');
+  _loadRegListChurches();
 };
+
+/* ===== REGISTRATION LISTS (PNG) — 2026-07-31 ==============================================
+   Owner request: images of who is registered, per grade, to send to that grade's leaders
+   before camp. Targeted at the church that runs the app (Citipointe Brisbane) but any church
+   can be picked.
+
+   Drawn CLIENT-SIDE on a <canvas>. There is no image library anywhere in this repo — the
+   server has exceljs and the browser has a vendored xlsx, neither of which makes pictures —
+   and rendering these in a Vercel function would add a dependency and a memory cost for
+   something the browser does natively. Do not move this server-side.
+
+   ⚠ NAMES ONLY on the image. No payment status, no accommodation, no medical or contact
+   data. These get forwarded to multiple leaders over consumer messaging apps; this codebase
+   encrypts most of that at rest and it must not be re-published on a shareable picture.  */
+
+const RL_W=1080;            // fixed image width; height grows to fit the longest column
+const RL_PAD=56;
+const RL_ROW=46;            // per-name line height
+
+function _rlSlug(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'list';}
+
+/* Sort key: when did this person actually register?
+   `dateSubmitted` (the Elvanto form date, added to RegistrantDto 2026-07-31) is the real
+   answer. `createdAt` is only when the IMPORT created the row, so a bulk import ties a whole
+   batch — it is a fallback, not the source. Name is the final tiebreak so equal timestamps
+   still produce a stable order rather than whatever the fetch happened to return. */
+function _rlSortKey(r){return String(r.dateSubmitted||r.createdAt||'');}
+function _rlSort(list){
+  return list.slice().sort((a,b)=>{
+    const ka=_rlSortKey(a),kb=_rlSortKey(b);
+    if(ka!==kb)return ka<kb?-1:1;
+    return (a.lastName+a.firstName).localeCompare(b.lastName+b.firstName);
+  });
+}
+function _rlName(r){return ((r.firstName||'')+' '+(r.lastName||'')).trim();}
+/* Clip a name to its column. Canvas does NOT wrap or clip text — an over-long name would
+   otherwise bleed straight across into the girls column. */
+function _rlFit(ctx,text,maxW){
+  if(ctx.measureText(text).width<=maxW)return text;
+  let t=text;
+  while(t.length>1&&ctx.measureText(t+'…').width>maxW)t=t.slice(0,-1);
+  return t+'…';
+}
+
+async function _loadRegListChurches(){
+  const el=document.getElementById('rlChurch');if(!el)return;
+  try{
+    const churches=await api('/accounts/churches');
+    const list=(churches||[]).slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+    if(!list.length){el.innerHTML='<option value="">No churches yet</option>';return;}
+    // Default to the church that runs the app. Matched on NAME, not a hard-coded id — church
+    // rows are recreated by the new-year rollover and their ids do not survive it.
+    const def=list.find(c=>/citipointe\s*brisbane/i.test(c.name||''))||list[0];
+    el.innerHTML=list.map(c=>`<option value="${esc(c.id)}"${c.id===def.id?' selected':''}>${esc(c.name)}</option>`).join('');
+  }catch(e){el.innerHTML='<option value="">Could not load churches</option>';}
+}
+
+/* Which images to produce. Tier is driven by the STUDENT count only — leaders never move the
+   threshold, they always get their own single image for the whole church. */
+function _rlTier(studentCount,override){
+  if(override&&override!=='auto')return override;
+  if(studentCount<50)return 'church';
+  if(studentCount<=100)return 'gender';
+  return 'grade';
+}
+function _rlSheets(students,leaders,tier){
+  const male=l=>l.filter(r=>r.gender==='male'),female=l=>l.filter(r=>r.gender==='female');
+  const sheets=[];
+  if(tier==='church'){
+    sheets.push({label:'All registrations',males:male(students),females:female(students)});
+  }else if(tier==='gender'){
+    // Single-gender sheets: the empty side makes _rlDraw fall back to one wide column.
+    sheets.push({label:'Guys',males:male(students),females:[]});
+    sheets.push({label:'Girls',males:[],females:female(students)});
+  }else{
+    for(const g of [7,8,9,10,11,12]){
+      const inG=students.filter(r=>Number(r.grade)===g);
+      if(inG.length)sheets.push({label:'Year '+g,males:male(inG),females:female(inG)});
+    }
+    /* Anyone with no grade recorded gets their own sheet. Silently dropping a registered
+       student from a roll-call export is the worst failure this feature can have. */
+    const noGrade=students.filter(r=>!r.grade);
+    if(noGrade.length)sheets.push({label:'Grade not recorded',males:male(noGrade),females:female(noGrade)});
+  }
+  if(leaders.length)sheets.push({label:'Leaders',males:male(leaders),females:female(leaders)});
+  return sheets.filter(s=>s.males.length||s.females.length);
+}
+
+/* Draw one sheet and hand back a PNG blob. */
+function _rlDraw(sheet,churchName,dateLabel){
+  const one=!sheet.males.length||!sheet.females.length;   // only one gender present → one wide column
+  const rows=Math.max(sheet.males.length,sheet.females.length);
+  const headH=200, colHeadH=one?0:56, footH=64;
+  const H=headH+colHeadH+rows*RL_ROW+footH;
+  const cv=document.createElement('canvas');
+  cv.width=RL_W;cv.height=H;
+  const x=cv.getContext('2d');
+  const FONT='system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif';
+
+  x.fillStyle='#ffffff';x.fillRect(0,0,RL_W,H);
+  x.fillStyle='#5b21b6';x.fillRect(0,0,RL_W,10);            // violet top rule
+
+  x.fillStyle='#1e1a3a';x.font='700 46px '+FONT;x.textBaseline='alphabetic';
+  x.fillText(churchName,RL_PAD,96);
+  x.fillStyle='#5b21b6';x.font='700 34px '+FONT;
+  x.fillText(sheet.label,RL_PAD,142);
+  x.fillStyle='#6b7280';x.font='600 22px '+FONT;
+  const total=sheet.males.length+sheet.females.length;
+  const counts=one?(total+(total===1?' person':' people')):(sheet.males.length+' guys · '+sheet.females.length+' girls · '+total+' total');
+  x.fillText(counts+'  ·  '+dateLabel,RL_PAD,176);
+  // Rule sits BELOW the 176 baseline and its descenders — at headH-26 it struck through the text.
+  x.fillStyle='#e4e2f5';x.fillRect(RL_PAD,headH-12,RL_W-RL_PAD*2,2);
+
+  const draw=(list,cx,colW,colour,heading)=>{
+    let y=headH+colHeadH;
+    if(heading){
+      x.fillStyle=colour;x.font='800 24px '+FONT;
+      x.fillText(heading,cx,headH+34);
+    }
+    x.fillStyle='#1e1a3a';x.font='500 30px '+FONT;
+    for(const r of list){
+      x.fillText(_rlFit(x,_rlName(r),colW),cx,y+32);
+      y+=RL_ROW;
+    }
+  };
+  if(one){
+    const list=sheet.males.length?sheet.males:sheet.females;
+    draw(list,RL_PAD,RL_W-RL_PAD*2,sheet.males.length?'#1d4ed8':'#db2777','');
+  }else{
+    const colW=(RL_W-RL_PAD*2-40)/2;
+    draw(sheet.males,RL_PAD,colW,'#1d4ed8','GUYS');
+    draw(sheet.females,RL_PAD+colW+40,colW,'#db2777','GIRLS');
+  }
+  x.fillStyle='#9ca3af';x.font='500 20px '+FONT;
+  x.fillText((SETTINGS&&SETTINGS.campName)||'Youth Camp',RL_PAD,H-26);
+
+  return new Promise(res=>cv.toBlob(res,'image/png'));
+}
+
+async function exportRegistrationPngs(){
+  const churchId=sel('rlChurch'),split=sel('rlSplit')||'auto';
+  const st=document.getElementById('rlStatus');
+  const say=m=>{if(st){st.style.display=m?'block':'none';st.textContent=m;}};
+  if(!churchId){toast('Pick a church first');return;}
+  const churchName=(function(){const s=document.getElementById('rlChurch');return (s&&s.selectedIndex>=0&&s.options[s.selectedIndex].text)||'Church';})();
+  say('Loading registrations…');
+  let regs;
+  try{regs=await api('/registrants?churchId='+encodeURIComponent(churchId));}
+  catch(e){say('');toast(e.message);return;}
+  // `status` is 'cancelled' for a withdrawn registration — never list them.
+  const active=(regs||[]).filter(r=>r.status!=='cancelled');
+  // RegistrantDto maps person kind → 'camper' | 'leader'.
+  const students=_rlSort(active.filter(r=>r.kind!=='leader'));
+  const leaders=_rlSort(active.filter(r=>r.kind==='leader'));
+  if(!students.length&&!leaders.length){say('');toast('No registrations for '+churchName);return;}
+  const tier=_rlTier(students.length,split);
+  const sheets=_rlSheets(students,leaders,tier);
+  const day=localDateISO();
+  const dateLabel='Registered as at '+dtFmt(new Date().toISOString());
+  say('Generating '+sheets.length+' image'+(sheets.length===1?'':'s')+'…');
+  let n=0;
+  for(const sheet of sheets){
+    try{
+      const blob=await _rlDraw(sheet,churchName,dateLabel);
+      if(!blob)continue;
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=_rlSlug(churchName)+'-'+_rlSlug(sheet.label)+'-'+day+'.png';
+      document.body.appendChild(a);a.click();a.remove();
+      // Revoking immediately can cancel the download on some mobile browsers.
+      setTimeout(()=>URL.revokeObjectURL(url),20000);
+      n++;
+      /* Mobile Safari and Chrome throttle simultaneous downloads and silently DROP the tail —
+         an unstaggered loop loses most of a 7-image by-grade run. Do not remove this delay. */
+      await new Promise(r=>setTimeout(r,300));
+    }catch(e){}
+  }
+  say(n+' image'+(n===1?'':'s')+' downloaded ('+tier+' split).');
+  toast(n+' image'+(n===1?'':'s')+' downloaded');
+}
 /* Standalone import screen (its own "Data Import" admin console tile / nav entry) — also
    gives director (who has import:run but not the Admin tab) a way to import. Reuses
    adminUpload()'s #fileIn/#impResult elements. */
@@ -6208,7 +6479,7 @@ document.addEventListener('keydown',e=>{
     }
   }
 });
-_initDemoLogin();_loginTips();_tryRestoreSession();
+_initDemoLogin();_loginTips();_installBanner();_tryRestoreSession();
 
 /* B-3: cross-tab + on-focus mode sync. A second tab (or a tab not on Home) used to keep stale
    pre-camp/at-camp nav after an admin switched mode until the user navigated Home. */

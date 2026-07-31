@@ -313,7 +313,7 @@ section above plus everything here went to prod in one push. `npm run typecheck`
 push**, both reconciled to clean version labels and verified present by query.
 
 > ⚠️ **The `node --check` extract range has MOVED.** `public/index.html` grew: the script body is
-> now lines **834–6410** (was 834–6202; 6393 as of this section's own push). Don't cache that
+> now lines **847–6681** (was 834–6410 at this section's own push). Don't cache that
 > range — derive it, e.g.
 > `S=$(grep -n '^<script>$' public/index.html|head -1|cut -d: -f1)`. The naive
 > `<script>…</script>` regex still fails because the file contains the literal `</script>`.
@@ -442,6 +442,82 @@ recomputing it. If a real "who will see this?" figure is ever wanted, compute it
 `docs/DEPLOY-NEXT-STEPS-2026-07-30.md`, written for the owner to work through. **`0014` is still
 deliberately unapplied** and must stay that way until both secrets are set, or every tick fires
 silently into a 404/401 (`pg_net` is fire-and-forget and surfaces nothing).
+
+## Four-item owner batch — deployed 2026-07-31
+
+Owner batch: Android install prompt, gender-narrowed hero accommodation, a new registration-list
+PNG export, and a testimony-picker tidy. SPA + one DTO field. **No schema or migration change.**
+`npm run typecheck` clean, `npm run test` = **759 pass / 49 files** (was 756; 3 new). SPA +
+`sw.js` `node --check` OK. `sw.js` `camp-v57`→**`camp-v58`**.
+Design: `docs/superpowers/specs/2026-07-31-four-item-owner-batch-design.md`.
+
+### 1 — Android "install as web app" prompt (`_installBanner`)
+`beforeinstallprompt` is a **Chromium** event — Safari/iOS never fires it, so **the iPhone path is
+untouched by construction** and there is no "not iOS" test anywhere. `/install.html`, linked from
+`_loginTips`, remains the iOS story and is unchanged.
+
+New `#installBanner` div on the login screen (between the sign-in card and the help links),
+`_installBanner()` called at boot beside `_loginTips()`. It `preventDefault()`s the event
+(suppressing Chromium's mini-infobar), stashes it in `_deferredInstall`, and renders our own
+Install / Not now strip.
+
+⚠ **`prompt()` is called INSIDE the tap handler (`_installGo`), never from the event listener.**
+Chromium refuses a gesture-less `prompt()` in some versions and **the refusal is silent** — the
+user would get nothing at all and there'd be no fallback surface. Do not "simplify" this into an
+auto-fire. The event is also **single-use**: `_installGo` nulls it and hides the banner regardless
+of the user's choice; Chromium re-fires on a later visit if they dismissed the native dialog.
+
+"Not now" and the `appinstalled` event both set `localStorage['ycp_installdismissed']`, which
+suppresses the banner permanently on that device. Gated to **Android** UAs (desktop Chromium fires
+the same event; the owner asked for phones). Every path is `try/catch`ed — this runs on the login
+gate where a throw is maximally visible, and `localStorage` throws outright in some privacy modes.
+
+### 2 — Church hero accommodation narrowed to the login's gender
+`renderHomeAtCamp()` mapped **every** room from `/accommodation/church-rooms/:churchId`, which is
+church-scoped but **not** gender-scoped — so a `b-`/`g-` account saw both teams' rooms. Now
+filtered by `ACTOR.genderScope` (already on the client via `toSafeUser`, and via the restored
+session). Two deliberate behaviours: **a `null` genderScope keeps both rooms** (an unsplit account
+must not get a blank line), and an empty filter result falls through to the existing
+"To be confirmed". Display-only — the endpoint was already access-gated, and narrowing a display
+cannot widen access.
+
+### 3 — Registration lists (PNG) — new export
+New card on Admin → Records & Export (`RENDER.adminData`), **admin + director**. Church dropdown
+(filled after paint by `_loadRegListChurches`, defaulting to *Citipointe Brisbane* **matched on
+NAME, not a hard-coded id** — church rows are recreated by the new-year rollover and their ids do
+not survive it) + a Split override. Symbols: `_rlSlug`/`_rlSortKey`/`_rlSort`/`_rlName`/`_rlFit`/
+`_rlTier`/`_rlSheets`/`_rlDraw`/`exportRegistrationPngs`, and `RL_W`/`RL_PAD`/`RL_ROW`.
+
+Tier from the **student** count only (leaders never move the threshold): `<50` one whole-church
+image, `50–100` Guys + Girls, `>100` one per year level. **Plus a Leaders image at every tier**,
+one per church (not per grade). Overridable from the Split dropdown. Verified by running the pure
+helpers in node: all three splits list every person, with the boundaries exactly at 49/50/100/101.
+
+- **⚠ NAMES ONLY on the image.** No payment status, no accommodation, no medical or contact data.
+  These get forwarded to leaders over consumer messaging apps; this codebase encrypts most of that
+  at rest and it must not be re-published on a shareable picture. Same reasoning as the push-payload
+  rule in item 11 above.
+- **Students with no grade recorded get their own "Grade not recorded" sheet.** Silently dropping a
+  registered student from a roll-call export is the worst failure this feature can have.
+- **`dateSubmitted` was added to `RegistrantDto`** — the only backend change in the batch, no
+  schema change (`elvanto_meta` already round-trips). It is the Elvanto **form submission** date;
+  `createdAt` only says when the IMPORT created the row, so a bulk import ties a whole batch and
+  ordering by it is meaningless. Sort key falls back `dateSubmitted` → `createdAt` → name, and
+  every step is needed. Order is oldest registration at top.
+- **Drawn client-side on a `<canvas>`.** There is no image library in this repo (server `exceljs`,
+  browser vendored `xlsx` — neither makes pictures) and doing this in a Vercel function would add
+  a dependency and a memory cost for something the browser does natively. **Do not move it
+  server-side.** Canvas does not wrap or clip text, hence `_rlFit`.
+- **Downloads are staggered ~300ms.** Mobile Safari and Chrome throttle simultaneous downloads and
+  **silently drop the tail** — an unstaggered loop loses most of a 7-image by-grade run. The
+  object URL is revoked on a 20s timer for the same reason (immediate revoke cancels the download
+  on some mobile browsers).
+
+### 4 — Testimony picker no longer prints the church
+`RENDER.testimonies`' `<option>` was `Name · Church`. Removed for **all** roles: a church login's
+list is already church-scoped by `_scoped('/campers')` so the label was noise, and admin/director
+losing a tiebreak between two identically-named students in different churches was accepted as
+rare. `churchName` stays on the built `items` array.
 
 ## Church check-in refused — the UI locked on the wrong rule — 2026-07-31
 

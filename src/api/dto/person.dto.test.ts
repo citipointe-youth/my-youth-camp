@@ -124,3 +124,42 @@ describe('detail DTOs add dateOfBirth back but still never medicareNumber', () =
     expect(toCamperDetailDto(personFixture({ dateOfBirth: null })).dateOfBirth).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// `dateSubmitted` (2026-07-31) — the registration-list PNG export orders people
+// by when they actually registered. `createdAt` cannot answer that: a bulk import
+// stamps a whole batch at one instant. This is the Elvanto form submission date,
+// surfaced from `elvantoMeta` so the browser can sort on it.
+// ---------------------------------------------------------------------------
+describe('toRegistrantDto exposes the Elvanto submission date', () => {
+  it('carries elvantoMeta.dateSubmitted through', () => {
+    const p = personFixture({
+      elvantoMeta: {
+        dateSubmitted: '2026-06-14T09:30:00.000Z',
+        submissionStatus: 'Complete',
+        person: null,
+        personStatus: null,
+        todaysDate: null,
+      },
+    });
+    expect(toRegistrantDto(p).dateSubmitted).toBe('2026-06-14T09:30:00.000Z');
+    expect(toRegistrantDetailDto(p).dateSubmitted).toBe('2026-06-14T09:30:00.000Z');
+  });
+
+  it('is null when there is no Elvanto meta at all', () => {
+    expect(toRegistrantDto(personFixture({ elvantoMeta: null })).dateSubmitted).toBeNull();
+  });
+
+  it('is null when the meta exists but carries no submission date', () => {
+    const p = personFixture({
+      elvantoMeta: {
+        dateSubmitted: null,
+        submissionStatus: null,
+        person: null,
+        personStatus: null,
+        todaysDate: null,
+      },
+    });
+    expect(toRegistrantDto(p).dateSubmitted).toBeNull();
+  });
+});
