@@ -514,6 +514,35 @@ than offering a button that can only fail after the user has already granted OS 
 > shorten it back.** Six regression tests cover the malformed cases, including the literal
 > table-paste string.
 
+## Alerts offer extended to every role + prod notices cleared — 2026-07-31
+
+`_maybeOfferPushAfterInitials` is now **`_maybeOfferAlerts`** — it has two entry points and the
+old name described only one. `sw.js` → `camp-v68`. SPA-only.
+
+**`_offerAlertsAfterLogin()`** is called from all **three** post-sign-in paths, and all three
+are needed: `doLogin`, `submitChangePassword` (a `mustChangePassword` account lands there, not
+in `doLogin`), and `_tryRestoreSession` (reopening the installed app). 900ms delay — longer
+than the initials path, because Home is still painting immediately after sign-in.
+
+> ⚠️ **It skips church accounts deliberately.** `enforceInitials()` has already opened a
+> blocking, unskippable modal on that path. A second modal 900ms later would replace it and
+> leave the account with **no initials set** — which then blocks every attributed write. Church
+> logins keep getting the offer after they save their initials instead.
+
+Every existing gate still applies, so it remains **at most one offer per device, ever**:
+permission `default`, iOS installed, `ycp_push_asked` unset, server VAPID key valid.
+
+### Production data: notices cleared
+
+All `notifications` rows deleted at the owner's request — **32**: 30 `Check-in closing soon
+(test)` from the 06:09 test-button run (it reached 30 church logins, so the button works at
+real scale), and 2 `Incident logged` alerts from 27–28 July.
+
+**The 6 rows in `incidents` are untouched.** Those notices are only the *alerts*; the incident
+records themselves live in their own table and were never in scope. `push_subscriptions` (2)
+also untouched, so no device has to re-subscribe. Verified after: `notifications` 0,
+`incidents` 6, `push_subscriptions` 2.
+
 ## Alerts offered when a leader sets their initials — 2026-07-31
 
 `_maybeOfferPushAfterInitials()`, called 600ms after `_confirmEnforceInitials` (the login

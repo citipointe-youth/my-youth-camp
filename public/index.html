@@ -1077,7 +1077,7 @@ function _confirmInitials(){
   toast(LEADER_INITIALS?('Initials set: '+LEADER_INITIALS):'Initials cleared');
   // Only when initials were actually SET — clearing them is not "a leader has claimed this
   // device". The delay lets this modal finish closing before the consent sheet opens.
-  if(LEADER_INITIALS)setTimeout(_maybeOfferPushAfterInitials,600);
+  if(LEADER_INITIALS)setTimeout(_maybeOfferAlerts,600);
 }
 // Enforced initials gate (item 7). A church account MUST set initials once per login before doing
 // attributed work; shown at login + session restore with NO skip. Dismissing it leaves the header
@@ -1096,7 +1096,7 @@ function _confirmEnforceInitials(){
   if(!v){const e=document.getElementById('liInit');if(e){e.style.borderColor='#e11d48';e.focus();}toast('Please enter your initials');return;}
   _saveLeaderInitials(v);closeModal();toast('Initials set: '+LEADER_INITIALS);
   // The main path: a church leader setting initials for the first time on this device.
-  setTimeout(_maybeOfferPushAfterInitials,600);
+  setTimeout(_maybeOfferAlerts,600);
 }
 // Guard for attributed writes: true when initials are present (normal case — no prompt at all),
 // else pops the enforced gate and returns false so the caller aborts and retries after saving.
@@ -1449,6 +1449,7 @@ async function doLogin(){
     // Item 7: church accounts must set initials once per login (enforced, no skip).
     _loadLeaderInitials();
     enforceInitials();
+    _offerAlertsAfterLogin();   // non-church roles only — church gets it after initials
   }catch(e){if(err){err.textContent=e.message;err.style.display='block';}else toast(e.message);}
 }
 function logout(){
@@ -1496,6 +1497,7 @@ async function submitChangePassword(){
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
     _loadLeaderInitials();
     enforceInitials();
+    _offerAlertsAfterLogin();
   }catch(e){_mcpErr(e.message);}
 }
 // Brisbane-anchored "today" (YYYY-MM-DD), mirroring the backend's zonedNow(). The camp's
@@ -6632,6 +6634,7 @@ async function _tryRestoreSession(){
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
     _loadLeaderInitials(); // restore the badge/prefill
     enforceInitials();     // item 7: a restored church session with no initials is still gated
+    _offerAlertsAfterLogin();  // reopening the installed app counts as a sign-in for this offer
     // Cold start from a tapped notification (sw.js openWindow('/?nav=…')). Done AFTER
     // gotoTab('home') so 'home' stays on the stack and Back behaves normally. Routed through
     // _pushNavTo because an unknown screen name is NOT ignored by go() — it blanks the app.
@@ -6801,10 +6804,20 @@ function _pushOn(){
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
 
-/* Offer alerts the first time a leader sets their initials on this device (owner request,
-   2026-07-31). Setting initials is the closest thing this app has to "a person has just
-   claimed this device", which is the moment the offer makes sense — a PWA gets NO
-   install-time hook (nothing fires on Add to Home Screen), so there is no earlier one.
+/* Offer alerts once per device (owner request, 2026-07-31). Two entry points, because the
+   right moment differs by role:
+
+     - CHURCH accounts: straight after they set their initials. Setting initials is the
+       closest thing this app has to "a person has just claimed this device".
+     - EVERY OTHER role: shortly after sign-in. They never set initials, so without this
+       they would only ever find alerts by wandering onto the Notices screen.
+
+   A PWA gets NO install-time hook — nothing fires on Add to Home Screen — so neither of
+   these can be moved earlier.
+
+   ⚠ `_offerAlertsAfterLogin` deliberately SKIPS church accounts: `enforceInitials()` has
+   already opened a blocking, unskippable modal on that path, and a second modal 900ms later
+   would replace it and leave the account with no initials.
 
    This opens OUR consent sheet, not the OS prompt. Two reasons, and neither is cosmetic:
      1. an OS prompt fired straight off the initials save would explain nothing, and a tap
@@ -6816,7 +6829,14 @@ function _pushOn(){
    Asked at most ONCE per device: the flag is written BEFORE the sheet opens, so cancelling
    is respected. Anyone who declines can still turn alerts on from the Notices screen. */
 function _pushAskedKey(){return 'ycp_push_asked';}
-async function _maybeOfferPushAfterInitials(){
+function _offerAlertsAfterLogin(){
+  // Church accounts are served by the initials path — see the warning above.
+  if(_isChurchAccount())return;
+  // Longer than the initials delay: Home is still painting right after sign-in, and a modal
+  // that lands mid-render reads as a glitch rather than an offer.
+  setTimeout(_maybeOfferAlerts,900);
+}
+async function _maybeOfferAlerts(){
   try{
     if(PREVIEW_MODE||ACCOUNT_PREVIEW)return;
     if(!('serviceWorker'in navigator)||!('PushManager'in window)||!('Notification'in window))return;

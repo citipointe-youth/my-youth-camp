@@ -742,3 +742,12 @@ New/changed symbols — grep the name, don't trust offsets. Migration `0017`
 | **It offered once, I cancelled, now it never asks** | Intended. The flag is written *before* the sheet opens so a cancel is respected rather than nagged. Clear `ycp_push_asked` in devtools to re-test, or use the Notices card. |
 | **Can it call `Notification.requestPermission()` directly instead of the sheet?** | No. It runs from a `setTimeout`, so user activation is gone and WebKit refuses the call — that is the original "Could not turn on alerts" bug. The sheet's own button is what restores activation. Keep the `_pushOn`/`_pushConsentGo` split. |
 | **Why not prompt on install instead?** | There is no install-time hook in any PWA — nothing fires on Add to Home Screen, and a gesture-less `requestPermission()` is refused by both iOS Safari and Chrome. Initials are the earliest real user gesture that means "this device is mine". |
+
+### 2026-07-31 — the alerts offer on non-church logins
+
+| Symptom | Go to |
+|---|---|
+| **A church login got the alerts offer instead of the initials gate** | It shouldn't — `_offerAlertsAfterLogin()` returns early for `_isChurchAccount()`. If a church account ever sees a consent sheet where the initials gate belongs, that guard has been removed, and the account will end up with no initials (which blocks every attributed write). |
+| **A director/admin never gets offered after logging in** | Check the three call sites are all still there: `doLogin`, `submitChangePassword`, `_tryRestoreSession`. The middle one is easy to miss — a `mustChangePassword` account never reaches `doLogin`'s tail. Then check the gates in `_maybeOfferAlerts` (permission already `granted`/`denied`, iOS not installed, `ycp_push_asked` already set, VAPID key absent/invalid). |
+| **The offer appears every time I sign in** | It shouldn't. `ycp_push_asked` is written before the sheet opens. If it repeats, either localStorage is being cleared between sessions (private browsing, "clear site data") or the flag write is throwing — it's wrapped in a try/catch that deliberately swallows, so a storage-disabled browser will re-offer. |
+| **Where did all the notices go?** | Production `notifications` was cleared to 0 on 2026-07-31 at the owner's request (32 rows: 30 from the check-in test run, 2 incident alerts). **`incidents` was not touched** — the notices were only the alerts. `push_subscriptions` untouched, so no device needed to re-subscribe. |

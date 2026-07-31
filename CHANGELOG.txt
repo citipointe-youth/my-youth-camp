@@ -1,6 +1,36 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-31 - Alerts offer extended to every role (post-login) + prod notices cleared
+-----------------------------------------------------------------------------------
+SPA only. sw.js camp-v67 -> camp-v68. Verified: npm run typecheck clean, npx vitest
+run = 794 pass / 49 files (unchanged - SPA-only change), SPA + sw.js node --check OK.
+SPA node --check extract range is now 847-7021.
+
+  _maybeOfferPushAfterInitials renamed _maybeOfferAlerts - it now has two entry
+  points and the old name only described one of them.
+
+  New _offerAlertsAfterLogin(), called from all THREE post-sign-in paths: doLogin,
+  submitChangePassword (the mustChangePassword gate lands there instead of doLogin),
+  and _tryRestoreSession (reopening the installed app). 900ms delay - longer than the
+  initials path, because Home is still painting right after sign-in.
+
+  ⚠ It SKIPS church accounts on purpose. enforceInitials() has already opened a
+  blocking, unskippable modal on that path; a second modal 900ms later would replace
+  it and leave the account with no initials set. Church logins keep getting the offer
+  after they save their initials.
+
+  All the existing gates still apply, so this is still at most ONE offer per device
+  ever: permission must be 'default', iOS must be installed, the ycp_push_asked flag
+  must be unset, and the server VAPID key must be present and valid.
+
+  PROD DATA: cleared all notifications rows at the owner's request - 32 deleted (30
+  "Check-in closing soon (test)" from the 06:09 test run, 2 "Incident logged" alerts
+  from 27-28 July). The 6 rows in `incidents` are UNTOUCHED - those notices are only
+  the alerts, the incident records live in their own table. push_subscriptions (2)
+  untouched, so no device needs to re-subscribe. Verified after: notifications 0,
+  incidents 6, push_subscriptions 2.
+
 2026-07-31 - Offer alerts when a leader sets their initials on a device
 -----------------------------------------------------------------------------------
 SPA only. sw.js camp-v66 -> camp-v67. Verified: npm run typecheck clean, npx vitest
