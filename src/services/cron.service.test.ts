@@ -72,6 +72,14 @@ function user(over: Partial<User> = {}): User {
   } as User;
 }
 
+/**
+ * A REAL (throwaway) VAPID keypair — the same one push.service.test.ts uses, and it exists
+ * for the same reason: `isPushConfigured()` validates key SHAPE, so a placeholder string
+ * would make job C silently no-op and the gate test below would pass without testing it.
+ */
+const VALID_PUB = 'BJ-idCQNM8bZ2axCsNHf4JYvMsj4GGSIcjfENwYKV4tBNOIRFxk0jNeyR2vWk6QLlWLgJj_QaUPCM1xzlNI9Gbk';
+const VALID_PRIV = 'XkGecBFumrALnTadmHDalScbnqMUMfyZ5c8Vxozax80';
+
 /** 2026-09-29 11:05 Brisbane == 01:05 UTC the same day. 55 min before amEnd 12:00. */
 const IN_AM_LEAD = new Date('2026-09-29T01:05:00.000Z');
 
@@ -269,5 +277,51 @@ describe('makeCronService().run', () => {
     }
 
     expect(await notifications.findAll()).toHaveLength(1);
+  });
+
+  // Job C's gate. The service applies the same rule again (push.service.test.ts), but this
+  // asserts the CHEAP half: a normal notice is dropped before any subscription lookup, so
+  // 288 ticks a day do not fan out over every routine notice for the life of the camp.
+  it('job C hands the push service only pushable notices', async () => {
+    const notifications = new InMemoryNotificationRepository();
+    await notifications.init();
+
+    const base = {
+      scope: 'camp' as const, zone: null, churchId: null, senderId: 'u1', senderName: 'Dir',
+      senderRole: 'director' as const, audienceEstimate: 0, expiresAt: null, scheduledFor: null,
+      pushSentAt: null, dedupeKey: null, targetUserId: null, createdAt: '2026-09-29T00:00:00.000Z',
+    };
+    await notifications.save({ ...base, id: 'n-normal', priority: 'normal', title: 'Dinner at 6', body: 'b', leadersOnly: false });
+    await notifications.save({ ...base, id: 'n-urgent', priority: 'urgent', title: 'Bus leaving', body: 'b', leadersOnly: false });
+    await notifications.save({ ...base, id: 'n-incident', priority: 'urgent', title: 'Incident logged', body: 'b', leadersOnly: true });
+
+    const seen: string[][] = [];
+    const deps = {
+      notifications,
+      people: { findAll: vi.fn(async () => []) } as unknown as CronServiceDeps['people'],
+      users: { findAll: vi.fn(async () => [user()]) } as unknown as CronServiceDeps['users'],
+      settings: { getSingleton: vi.fn(async () => settings({ churchCheckinTimeRestricted: false })) } as unknown as CronServiceDeps['settings'],
+      push: {
+        sendForNotifications: vi.fn(async (ns: Notification[]) => {
+          seen.push(ns.map((n) => n.id));
+          return { attempted: 0, succeeded: 0, failed: 0, pruned: 0, deferred: 0 };
+        }),
+      } as unknown as CronServiceDeps['push'],
+    } as CronServiceDeps;
+
+    const env = process.env['VAPID_PUBLIC_KEY'];
+    process.env['VAPID_PUBLIC_KEY'] = VALID_PUB;
+    process.env['VAPID_PRIVATE_KEY'] = VALID_PRIV;
+    process.env['VAPID_SUBJECT'] = 'mailto:camp@example.org';
+    try {
+      await makeCronService(deps).run();
+    } finally {
+      if (env == null) { delete process.env['VAPID_PUBLIC_KEY']; } else { process.env['VAPID_PUBLIC_KEY'] = env; }
+      delete process.env['VAPID_PRIVATE_KEY'];
+      delete process.env['VAPID_SUBJECT'];
+    }
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.sort()).toEqual(['n-incident', 'n-urgent']);
   });
 });

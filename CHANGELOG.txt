@@ -1,6 +1,49 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+2026-07-31 - PUSH BEHAVIOUR: notice title on the lock screen, urgent-only pushes,
+             self-test button, and the blank-screen deep-link bug
+-----------------------------------------------------------------------------------
+Backend + SPA. sw.js camp-v64 -> camp-v65. Verified: npm run typecheck clean,
+npx vitest run = 785 pass / 49 files (was 771/49, 14 new), SPA + sw.js node --check
+OK. SPA node --check extract range is now 847-6920.
+
+  1. BLANK SCREEN opening the app from a tapped notification.
+     ROOT CAUSE - buildPushPayload returned screen 'notices' for an ordinary notice.
+     There is no 'notices' screen; the SPA's Notices screen is 'notifs'. _showScreen
+     strips .active off every <section class="screen"> and then matches nothing, so
+     the app renders an empty frame with NO exception and NOTHING in any log. Only
+     notices were affected - 'checkin' and 'incidents' are both real ids.
+     Fixed twice on purpose: the payload now says 'notifs' (with a test that scrapes
+     the screen ids out of index.html and asserts every emitted screen exists), AND
+     the SPA routes both deep-link paths through _pushNavTo(), which falls back to
+     home for an unknown id. The guard is NOT redundant - notifications already on a
+     phone keep their old payload forever.
+
+  2. The notice's TITLE is now sent; the body still never is. Owner request: identify
+     the notification, keep the detail behind the app. pushTitle() collapses
+     whitespace and caps at 80 chars. The lock-screen block comment in
+     push.service.ts is updated, not deleted - the body rule is unchanged and is
+     still the important one. Author-written titles are the one place a leader can
+     put a camper's name on a lock screen; the compose screen now says so.
+
+  3. isPushable() - normal-priority notices are IN-APP ONLY; only urgent ones push.
+     Previously every active notice pushed, so a routine notice buzzed every leader's
+     phone. Incident alerts and check-in warnings are matched structurally as well as
+     by priority so they cannot be demoted. Applied in the cron filter BEFORE any
+     subscription lookup (a filtered notice is never claimed, so it is re-examined
+     every tick - cheap only because the predicate is pure), and again inside
+     sendForNotifications.
+
+  4. POST /push/test - sends the check-in warning's exact shape to the CALLING
+     account's own devices. User id from the session, never the body. Writes no
+     notification row; a failed test does not count towards PUSH_FAILURE_LIMIT.
+     Button "Send a test" on the alerts card on Notices. Proves delivery and the
+     deep link, NOT the churchesBehind arithmetic.
+
+  5. The "Priority" tooltip on the compose screen now describes the real behaviour
+     (normal = in-app only, urgent = also a phone notification, title only).
+
 2026-07-31 - SECURITY + FIX: VAPID_PUBLIC_KEY held pasted table text (secrets leaked via
              /push/config); full rotation + env-var shape validation
 -----------------------------------------------------------------------------------

@@ -514,6 +514,73 @@ than offering a button that can only fail after the user has already granted OS 
 > shorten it back.** Six regression tests cover the malformed cases, including the literal
 > table-paste string.
 
+## Push behaviour batch — titles, urgent-only, self-test, blank-screen fix — 2026-07-31
+
+The owner's first real subscription worked, and using it surfaced four things. All four were
+in the same round trip. `sw.js` → `camp-v65`.
+
+### 1. 🐞 Opening the app from a notification landed on a BLANK screen
+
+**Root cause, confirmed not inferred:** `buildPushPayload` returned `screen: 'notices'` for an
+ordinary notice. **There is no `notices` screen** — the SPA's Notices screen is **`notifs`**.
+`_navTo` → `_spinner` finds no element and does nothing, then `_showScreen` strips `.active`
+off every `<section class="screen">` and matches nothing. Result: an empty app frame, **no
+exception, nothing in any log**, which is why nothing caught it. The two system triggers were
+unaffected — `checkin` and `incidents` are both real ids — so only tapping a *notice* did it.
+
+Fixed in two independent places, on purpose:
+- the payload now says `notifs`, and a test scrapes `<section class="screen" id="…">` out of
+  `public/index.html` and asserts **every** screen this function can emit actually exists;
+- the SPA routes both deep-link paths (warm `postMessage`, cold `/?nav=`) through
+  **`_pushNavTo()`**, which falls back to `home` for an unknown id and refuses to navigate at
+  all when there is no session. Not redundant with the first fix: **notifications already
+  delivered to a phone keep their old payload forever**, so the guard is what makes the
+  already-sent ones survivable.
+
+### 2. The notice's TITLE now travels; the body still never does
+
+Owner request: identify the notification, keep the detail behind the app. So `buildPushPayload`
+sends `n.title` and still sends a fixed string for `body`. The long lock-screen block comment in
+`push.service.ts` is updated rather than deleted — **the body rule is unchanged and still the
+important one**; it is the field carrying incident summaries and free text about named minors.
+
+Exposed titles are `Check-in closing soon`, `Incident logged · <Zone> Zone` (both system-fixed),
+and the subject a director/zone leader types. That last one is author-controlled — **the one
+place a leader can put a camper's name on every recipient's lock screen.** Accepted trade,
+mitigated twice: `pushTitle()` collapses whitespace and caps at `PUSH_TITLE_MAX` (80), and the
+compose screen tells the author their title shows on locked phones.
+
+### 3. Normal-priority notices no longer buzz anyone — `isPushable()`
+
+Before this, *every* active notice pushed, so "dinner is at 6" alerted every leader's phone —
+the fastest route to a camp where everyone has turned alerts off, urgent ones included. Now:
+**urgent → push; normal → in-app only.** Incident alerts and check-in warnings are matched
+structurally as well as by priority, so neither can be silently demoted by a later edit.
+
+⚠ The gate runs in the **cron filter, before `resolvePushAudience`** — a filtered notice is
+never claimed, so it stays `pushSentAt: null` and is re-examined on all 288 ticks a day until
+it expires. Fine for a pure predicate over a field already in memory; **not** fine after a
+per-user subscription lookup. `sendForNotifications` applies it a second time, deliberately:
+the caller decides *when* to push, the service decides *what may be pushed at all*.
+
+### 4. `POST /push/test` — prove a phone works without waiting for a real alert
+
+Neither real trigger can be exercised on demand: an incident alert means logging a fake
+incident against real people, and the check-in warning needs a camp day, a lead window, and a
+church genuinely behind. The self-test reuses the check-in warning's **exact** shape (title,
+`tag`, `screen: 'checkin'`), so it proves VAPID signature → APNs/FCM → `sw.js` → deep link.
+**It does not prove `churchesBehind` arithmetic — delivery only.** Button: *Send a test*, on
+the alerts card on Notices, visible once the device is subscribed.
+
+Security: the user id comes from the **session, never the body**. A body-supplied id would make
+this "send an arbitrary push to any account", and the payload renders as a genuine camp alert on
+a locked phone. It writes no notification row, and a failed test does **not** count towards
+`PUSH_FAILURE_LIMIT` — a leader debugging their own phone taps it repeatedly, and ten taps must
+not delete the subscription they are testing.
+
+Verified: `npm run typecheck` clean; `npx vitest run` **785 pass / 49 files** (was 771, +14);
+`node --check` OK on `sw.js` and on the SPA script body (extract range **847–6920**, re-derived).
+
 ## "Alerts on this device" — iOS opt-in fixed + moved to Notices — deployed 2026-07-31
 
 Owner bug report: the Home card's "Turn on alerts" button worked on a laptop but an **installed

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { HttpRequest } from '../http/types';
 import type { IPushSubscriptionRepository } from '../../repositories/interfaces/entity-repositories';
-import { readPushConfig } from '../../services/push.service';
+import { readPushConfig, type PushService } from '../../services/push.service';
 import { UnauthorizedError } from '../../core/errors/app-error';
 import { newId } from '../../utils/id';
 import { nowISO } from '../../utils/date';
@@ -31,8 +31,17 @@ const UnsubscribeSchema = z.object({
   endpoint: z.string().url().max(2000),
 });
 
+const TestSchema = z.object({
+  kind: z.enum(['checkin', 'notice']).nullish(),
+});
+
 export interface PushControllerServices {
   subscriptions: IPushSubscriptionRepository;
+  /**
+   * Optional so every existing wiring (and the controller tests) still constructs without
+   * a push service; POST /push/test then reports `configured: false` instead of throwing.
+   */
+  push?: Pick<PushService, 'sendTestToUser'>;
 }
 
 export function makePushController(services: PushControllerServices) {
@@ -107,6 +116,31 @@ export function makePushController(services: PushControllerServices) {
      * of someone who already has your endpoint unsubscribing you. This is also what makes
      * "delete my device registration" a one-row operation for data-subject requests.
      */
+    /**
+     * POST /push/test — send a test alert to the CALLING account's own devices.
+     *
+     * The user id comes from the session and is never accepted from the body, for the same
+     * reason as `subscribe`: a body-supplied id would turn this into "send an arbitrary
+     * push to any account", which is a spoofing primitive (the payload renders as a genuine
+     * camp alert on a locked phone). With the session id it can only ever reach devices the
+     * caller has already opted in on, which is why it needs no extra permission beyond a
+     * valid login — a leader testing their own phone is not a privileged action.
+     *
+     * Not rate-limited at the app layer: the reachable blast radius is the caller's own
+     * handful of devices, and the push services throttle abusive senders themselves.
+     */
+    async test(req: HttpRequest) {
+      const actor = req.ctx?.actor;
+      if (!actor) throw new UnauthorizedError();
+      const data = TestSchema.parse(req.body ?? {});
+      if (!services.push) return { ok: true as const, configured: false, sent: 0, failed: 0 };
+      const res = await services.push.sendTestToUser(actor.id, data.kind ?? 'checkin');
+      // `sent: 0, configured: true` is the interesting case and the SPA words it plainly:
+      // the account holds no subscription on any device (alerts were never turned on, or
+      // were turned on somewhere else).
+      return { ok: true as const, ...res };
+    },
+
     async unsubscribe(req: HttpRequest) {
       const actor = req.ctx?.actor;
       if (!actor) throw new UnauthorizedError();

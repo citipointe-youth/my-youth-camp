@@ -1,4 +1,4 @@
-const CACHE = 'camp-v64';
+const CACHE = 'camp-v65';
 const APP_SHELL = ['/'];
 
 // API paths that must NEVER be served from cache. GOTCHA (from connection-made-simple):
@@ -92,6 +92,12 @@ self.addEventListener('push', (e) => {
 // fixed set of <section class="screen"> elements. So we cannot navigate by URL. Instead
 // we postMessage the target screen to an already-open client, and fall back to
 // openWindow('/?nav=…') for a cold start, which index.html reads once at boot.
+//
+// ⚠ The screen name here is whatever the SERVER put in the payload, and a name with no
+// matching <section> takes the app to a blank page (2026-07-31 bug: the server sent
+// 'notices'; the screen is 'notifs'). The SPA validates it in _pushNavTo() before
+// navigating — do not "simplify" that back to a bare go(). Notifications already sitting
+// on a phone still carry the old payload, so this path must stay survivable.
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   const screen = (e.notification.data && e.notification.data.screen) || 'home';

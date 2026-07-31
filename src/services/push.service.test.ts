@@ -8,7 +8,11 @@ import {
   readPushConfig,
   isPushConfigured,
   MAX_PUSH_SENDS_PER_TICK,
+  PUSH_TITLE_MAX,
+  isPushable,
 } from './push.service';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   InMemoryNotificationRepository,
   InMemoryPushSubscriptionRepository,
@@ -25,7 +29,12 @@ function notif(over: Partial<Notification> = {}): Notification {
     scope: 'camp',
     zone: null,
     churchId: null,
-    priority: 'normal',
+    // 'urgent' by default because almost every test in this file exercises the SEND path,
+    // and since 2026-07-31 only urgent notices enter it (see isPushable). A fixture that
+    // defaults to 'normal' would make most of these tests assert on an empty result while
+    // still looking like they were testing the fan-out. The normal-priority case is tested
+    // explicitly, on purpose, in the isPushable suite below.
+    priority: 'urgent',
     title: 'Title',
     body: 'BODY-SECRET-TEXT',
     senderId: 'u-admin',
@@ -173,18 +182,34 @@ describe('buildPushPayload — the lock-screen rule', () => {
   // decrypted by the service worker and rendered by the OS on a possibly-locked screen,
   // legible to whoever is holding the phone.
   it('NEVER puts a stored notice body in an incident payload', () => {
-    const p = buildPushPayload(notif({ leadersOnly: true, body: 'Student X disclosed …' }));
+    const p = buildPushPayload(
+      notif({ leadersOnly: true, title: 'Incident logged · Blue Zone', body: 'Student X disclosed …' }),
+    );
     expect(JSON.stringify(p)).not.toContain('Student X');
     expect(JSON.stringify(p)).not.toContain('disclosed');
-    expect(p.title).toBe('Camp: urgent alert');
+    expect(p.title).toBe('Incident logged · Blue Zone');
     expect(p.body).toBe('Open the app to view details.');
     expect(p.screen).toBe('incidents');
   });
 
   it('NEVER puts a stored notice body in an ordinary notice payload', () => {
-    const p = buildPushPayload(notif({ body: 'BODY-SECRET-TEXT' }));
+    const p = buildPushPayload(notif({ title: 'Dinner moved to 6pm', body: 'BODY-SECRET-TEXT' }));
     expect(JSON.stringify(p)).not.toContain('BODY-SECRET-TEXT');
-    expect(p.title).toBe('Camp notice');
+    // The TITLE travels (owner's rule, 2026-07-31); the body never does.
+    expect(p.title).toBe('Dinner moved to 6pm');
+    expect(p.body).toBe('Open the app to read it.');
+  });
+
+  it('single-lines and caps an author-written title, and falls back when it is empty', () => {
+    const multi = buildPushPayload(notif({ title: '  Bus   leaving\n  early  ' }));
+    expect(multi.title).toBe('Bus leaving early');
+
+    const long = buildPushPayload(notif({ title: 'x'.repeat(200) }));
+    expect(long.title.length).toBe(PUSH_TITLE_MAX);
+    expect(long.title.endsWith('…')).toBe(true);
+
+    // A title of only whitespace must not produce a blank OS notification.
+    expect(buildPushPayload(notif({ title: '   ' })).title).toBe('Camp notice');
   });
 
   it('carries the aggregate count for a check-in warning — the one deliberate exception', () => {
@@ -197,10 +222,50 @@ describe('buildPushPayload — the lock-screen rule', () => {
     expect(p.tag).toBe('camp-checkin');
   });
 
+  // Regression, 2026-07-31: this returned screen 'notices', and the SPA's Notices screen is
+  // 'notifs'. _showScreen() deactivates every screen then matches nothing, so a tapped
+  // notification opened the app on a BLANK page — no error, nothing in any log. Every screen
+  // named here must be an id that actually exists in public/index.html.
+  it('only ever names a screen the SPA actually has', () => {
+    // cwd, not __dirname: vitest transforms these files to ESM, where __dirname is undefined.
+    const html = readFileSync(join(process.cwd(), 'public', 'index.html'), 'utf8');
+    const ids = new Set(
+      [...html.matchAll(/<section class="screen" id="([A-Za-z0-9_-]+)"/g)].map((m) => m[1]!),
+    );
+    expect(ids.size).toBeGreaterThan(10); // the scrape itself still works
+
+    const screens = [
+      buildPushPayload(notif({ dedupeKey: 'checkin-warn:s:u' })).screen,
+      buildPushPayload(notif({ leadersOnly: true })).screen,
+      buildPushPayload(notif()).screen,
+    ];
+    for (const s of screens) expect(ids.has(s)).toBe(true);
+  });
+
   it('uses generic tags only — never a person or session id', () => {
     const p = buildPushPayload(notif({ dedupeKey: 'checkin-warn:2026-09-29~am:usr_abc' }));
     expect(p.tag).not.toContain('usr_abc');
     expect(p.tag).not.toContain('2026-09-29');
+  });
+});
+
+describe('isPushable — normal notices stay in the app (owner rule, 2026-07-31)', () => {
+  it('does not push an ordinary normal-priority notice', () => {
+    expect(isPushable(notif({ priority: 'normal' }))).toBe(false);
+  });
+
+  it('pushes an urgent notice', () => {
+    expect(isPushable(notif({ priority: 'urgent' }))).toBe(true);
+  });
+
+  // Both system triggers set priority 'urgent' themselves; these assert they would still
+  // be pushed if that ever changed, so a safeguarding alert can't be silently demoted.
+  it('pushes an incident alert regardless of priority', () => {
+    expect(isPushable(notif({ priority: 'normal', leadersOnly: true }))).toBe(true);
+  });
+
+  it('pushes a check-in warning regardless of priority', () => {
+    expect(isPushable(notif({ priority: 'normal', dedupeKey: 'checkin-warn:s:u' }))).toBe(true);
   });
 });
 
@@ -302,6 +367,23 @@ describe('makePushService.sendForNotifications', () => {
 
     const stored = await notifs.findById('n1');
     expect(stored?.pushSentAt ?? null).toBeNull();
+  });
+
+  it('skips a normal-priority notice entirely — and does NOT claim it', async () => {
+    const svc = makePushService({
+      subscriptions: subs, notifications: notifs, env: VAPID_ENV,
+      sleep: async () => {}, random: () => 0,
+    });
+    const u = user();
+    await addDevices(u.id, 2);
+    const n = notif({ priority: 'normal' });
+    await notifs.save(n);
+
+    const res = await svc.sendForNotifications([n], [u], settings());
+    expect(res.attempted).toBe(0);
+    // Unclaimed matters: if the owner ever reverts to pushing normal notices, the pending
+    // ones deliver rather than having been silently burned.
+    expect((await notifs.findById('n1'))?.pushSentAt ?? null).toBeNull();
   });
 
   it('caps sends at MAX_PUSH_SENDS_PER_TICK and defers the rest, leaving them unclaimed', async () => {
@@ -437,5 +519,69 @@ describe('makePushService.sendForNotifications', () => {
     expect(res.pruned).toBe(0);
     const after = await subs.findByUser(u.id);
     expect(after.every((s) => s.lastSuccessAt != null && s.failureCount === 0)).toBe(true);
+  });
+
+  describe('sendTestToUser', () => {
+    it('sends only to the calling user’s own devices', async () => {
+      const svc = makePushService({ subscriptions: subs, notifications: notifs, env: VAPID_ENV });
+      await addDevices('u-me', 2);
+      await addDevices('u-someone-else', 3);
+
+      const sent = vi.spyOn(webpush, 'sendNotification');
+      const res = await svc.sendTestToUser('u-me');
+
+      expect(res).toEqual({ sent: 2, failed: 0, pruned: 0, configured: true });
+      // The endpoints touched must all belong to u-me — this is the whole security property.
+      for (const call of sent.mock.calls) {
+        expect((call[0] as { endpoint: string }).endpoint).toContain('/u-me/');
+      }
+    });
+
+    it('writes no notification row', async () => {
+      const svc = makePushService({ subscriptions: subs, notifications: notifs, env: VAPID_ENV });
+      await addDevices('u-me', 1);
+      await svc.sendTestToUser('u-me');
+      expect(await notifs.findAll()).toHaveLength(0);
+    });
+
+    it('uses the real check-in warning shape, so it exercises the same deep link', async () => {
+      const svc = makePushService({ subscriptions: subs, notifications: notifs, env: VAPID_ENV });
+      await addDevices('u-me', 1);
+      const sent = vi.spyOn(webpush, 'sendNotification');
+      await svc.sendTestToUser('u-me', 'checkin');
+
+      const payload = JSON.parse(sent.mock.calls[0]![1] as string);
+      expect(payload.screen).toBe(buildPushPayload(notif({ dedupeKey: 'checkin-warn:s:u' })).screen);
+      expect(payload.tag).toBe('camp-checkin');
+    });
+
+    it('does not count a failed test towards the pruning limit', async () => {
+      const svc = makePushService({ subscriptions: subs, notifications: notifs, env: VAPID_ENV });
+      await addDevices('u-me', 1);
+      // A leader debugging their own phone taps this repeatedly; PUSH_FAILURE_LIMIT taps
+      // must not delete the subscription they are trying to test.
+      vi.spyOn(webpush, 'sendNotification').mockRejectedValue(
+        Object.assign(new Error('boom'), { statusCode: 500 }),
+      );
+      for (let i = 0; i < 12; i++) await svc.sendTestToUser('u-me');
+      expect(await subs.findByUser('u-me')).toHaveLength(1);
+    });
+
+    it('still prunes a dead endpoint (410) and reports it', async () => {
+      const svc = makePushService({ subscriptions: subs, notifications: notifs, env: VAPID_ENV });
+      await addDevices('u-me', 1);
+      vi.spyOn(webpush, 'sendNotification').mockRejectedValueOnce(
+        Object.assign(new Error('gone'), { statusCode: 410 }),
+      );
+      const res = await svc.sendTestToUser('u-me');
+      expect(res).toEqual({ sent: 0, failed: 0, pruned: 1, configured: true });
+      expect(await subs.findByUser('u-me')).toHaveLength(0);
+    });
+
+    it('reports configured:false rather than throwing when VAPID is unset', async () => {
+      const svc = makePushService({ subscriptions: subs, notifications: notifs, env: {} as NodeJS.ProcessEnv });
+      await addDevices('u-me', 1);
+      expect(await svc.sendTestToUser('u-me')).toEqual({ sent: 0, failed: 0, pruned: 0, configured: false });
+    });
   });
 });

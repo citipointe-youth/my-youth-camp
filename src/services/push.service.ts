@@ -176,6 +176,21 @@ export function isPushConfigured(envSource: NodeJS.ProcessEnv = process.env): bo
  * find there was nothing to do, and the alert is ignored within a day.
  *
  * There is a test asserting the payload never contains a notice's body. Keep it.
+ *
+ * ── 2026-07-31: the TITLE is now sent; the body rule above is unchanged ──
+ *
+ * The owner asked for the notice's own title on the lock screen with the detail only
+ * visible after opening the app, and that is the split this file now implements: `title`
+ * travels, `body` does not. The reasoning above still holds for the body — it is the field
+ * that carries incident summaries and free text about named minors.
+ *
+ * The titles this exposes are: `Check-in closing soon` and `Incident logged · <Zone> Zone`
+ * (both system-generated and fixed), plus the one-line subject a director/zone leader types
+ * in the compose screen. That last one is author-controlled, so it is the one place where a
+ * leader could put a camper's name on every recipient's lock screen. It is a deliberate,
+ * owner-accepted trade — a notification you cannot identify is one people stop reading —
+ * and it is mitigated in two places: `pushTitle()` below caps and single-lines it, and the
+ * compose screen tells the author their title will be visible on locked phones.
  */
 export function buildPushPayload(n: Notification): { title: string; body: string; tag: string; screen: string } {
   // Keyed on the trigger, identified structurally — a check-in warning is the only notice
@@ -183,7 +198,7 @@ export function buildPushPayload(n: Notification): { title: string; body: string
   // system notices. Never keyed on the notice's own text.
   if (n.dedupeKey && n.dedupeKey.startsWith('checkin-warn:')) {
     return {
-      title: 'Check-in closing soon',
+      title: pushTitle(n.title, 'Check-in closing soon'),
       // The ONLY place a stored body is used, and only because it is an aggregate count
       // with no identifying content. See the block comment above.
       body: n.body,
@@ -193,18 +208,67 @@ export function buildPushPayload(n: Notification): { title: string; body: string
   }
   if (n.leadersOnly) {
     return {
-      title: 'Camp: urgent alert',
+      // System-generated and deliberately coarse: `Incident logged · <Zone> Zone`
+      // (incident.service.ts). The SUMMARY, which can describe a minor, stays in `body`
+      // and is never sent.
+      title: pushTitle(n.title, 'Camp: urgent alert'),
       body: 'Open the app to view details.',
       tag: 'camp-alert',
       screen: 'incidents',
     };
   }
   return {
-    title: 'Camp notice',
+    title: pushTitle(n.title, 'Camp notice'),
     body: 'Open the app to read it.',
     tag: 'camp-notice',
-    screen: 'notices',
+    // MUST be a real screen id from index.html (`<section class="screen" id="…">`).
+    // This said 'notices' until 2026-07-31; there is no such screen — the SPA's Notices
+    // screen is `notifs` — so _showScreen() deactivated every screen, matched nothing, and
+    // tapping a notice notification opened the app on a BLANK page. There is a test
+    // asserting every screen in this function is one the SPA actually has. Keep it.
+    screen: 'notifs',
   };
+}
+
+/**
+ * The notice's own title, safe for a lock screen.
+ *
+ * Trimmed, collapsed to one line (a newline in a notification title renders as a space on
+ * some platforms and truncates the rest on others) and capped — iOS shows roughly the first
+ * 40 characters of a title, so anything longer is decoration, and an unbounded
+ * author-controlled string in an OS-rendered surface is not something to hand over on trust.
+ * Falls back to the generic string when a notice somehow has no usable title.
+ */
+export const PUSH_TITLE_MAX = 80;
+
+function pushTitle(raw: string | null | undefined, fallback: string): string {
+  const one = (raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!one) return fallback;
+  return one.length <= PUSH_TITLE_MAX ? one : `${one.slice(0, PUSH_TITLE_MAX - 1).trimEnd()}…`;
+}
+
+/**
+ * Does this notice earn a phone alert? (owner's rule, 2026-07-31)
+ *
+ * Normal-priority notices are IN-APP ONLY. Before this, every active notice was pushed, so
+ * a routine "dinner is at 6" buzzed every leader's phone — which is the fastest way to get
+ * a whole camp's leaders to turn alerts off, taking the urgent ones with them. Urgency is
+ * taken from the notice's own `priority`, the same field the Notices feed styles red, so
+ * what the author picks in the compose screen is exactly what happens.
+ *
+ * Both system triggers already set `priority: 'urgent'` (incident.service.ts,
+ * cron.service.ts job B), so they are unaffected — but they are matched structurally here
+ * as well, so neither can be silently demoted by a later edit to how they are created.
+ *
+ * ⚠ Called BEFORE `resolvePushAudience` in the cron filter, and that ordering is
+ * load-bearing: a filtered-out notice is never claimed, so it stays `pushSentAt: null` and
+ * is re-examined on all 288 ticks a day until it expires. That is fine for a pure predicate
+ * over a field already in memory; it would not be fine after a per-user subscription lookup.
+ */
+export function isPushable(n: Notification): boolean {
+  if (n.dedupeKey && n.dedupeKey.startsWith('checkin-warn:')) return true;
+  if (n.leadersOnly) return true;
+  return n.priority === 'urgent';
 }
 
 /**
@@ -347,6 +411,11 @@ export function makePushService(deps: PushServiceDeps) {
       // applied to real sends and we only claim notices we are actually going to attempt.
       const perNotif: { n: Notification; subs: PushSubscription[] }[] = [];
       for (const n of notifs) {
+        // Second gate, intentionally duplicating the cron filter. The caller decides WHEN to
+        // push; this service decides WHAT may be pushed at all, and "a normal-priority
+        // notice never buzzes a phone" is a property of the feature, not of one caller. A
+        // future second caller (an admin re-send, a backfill) gets the rule for free.
+        if (!isPushable(n)) continue;
         const audience = resolvePushAudience(n, users, settings, nowIso);
         if (audience.length === 0) continue;
         const subs: PushSubscription[] = [];
@@ -419,6 +488,68 @@ export function makePushService(deps: PushServiceDeps) {
       }
 
       return { attempted, succeeded, failed, pruned, deferred };
+    },
+
+    /**
+     * Send a self-test alert to the CALLING account's own devices (no notice, no claim).
+     *
+     * Exists because the two real triggers are both hard to exercise on purpose: an incident
+     * alert means logging a fake incident against real people, and the check-in warning only
+     * fires inside a lead window, on a camp day, with a church genuinely behind on check-ins
+     * — you cannot reproduce that in July to prove a leader's phone is wired up correctly.
+     *
+     * `kind: 'checkin'` deliberately reuses the check-in warning's exact shape — same title
+     * wording, same `screen: 'checkin'` deep link, same `tag` — so it verifies the whole
+     * chain the real alert uses (VAPID signature → APNs/FCM → sw.js push handler →
+     * notificationclick → the SPA landing on the right screen). What it does NOT verify is
+     * `churchesBehind` deciding WHO is behind; it proves delivery, not the arithmetic.
+     *
+     * Only ever sends to `userId`'s own rows, so it is not a channel for messaging anyone
+     * else, and it writes nothing to the notifications table.
+     */
+    async sendTestToUser(
+      userId: string,
+      kind: 'checkin' | 'notice' = 'checkin',
+    ): Promise<{ sent: number; failed: number; pruned: number; configured: boolean }> {
+      const cfg = readPushConfig(envSource);
+      if (!cfg) return { sent: 0, failed: 0, pruned: 0, configured: false };
+
+      const payload =
+        kind === 'checkin'
+          ? {
+              title: 'Check-in closing soon',
+              body: 'Test alert — 3 students still to check in.',
+              tag: 'camp-checkin',
+              screen: 'checkin',
+            }
+          : {
+              title: 'Test alert',
+              body: 'Open the app to read it.',
+              tag: 'camp-notice',
+              screen: 'notifs',
+            };
+
+      const subs = await deps.subscriptions.findByUser(userId);
+      let sent = 0;
+      let failed = 0;
+      let pruned = 0;
+      for (const sub of subs) {
+        const outcome = await sendOne(sub, payload, cfg);
+        if (outcome === 'ok') {
+          sent += 1;
+          await deps.subscriptions.save({ ...sub, lastSuccessAt: nowISO(), failureCount: 0 });
+        } else if (outcome === 'gone') {
+          pruned += 1;
+          await deps.subscriptions.deleteByEndpoint(sub.endpoint);
+        } else {
+          // A failed TEST must not count towards the pruning limit — the whole point of the
+          // button is that a leader taps it repeatedly while debugging their own phone, and
+          // ten taps would otherwise delete a subscription that is merely temporarily
+          // unreachable. Real sends still count; see sendForNotifications.
+          failed += 1;
+        }
+      }
+      return { sent, failed, pruned, configured: true };
     },
 
     /**

@@ -55,7 +55,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const settingsCtrl = makeSettingsController({ settings: services.settings });
   const admin = makeAdminController({ admin: services.admin });
   const cronCtrl = makeCronController({ tick: services.cron });
-  const pushCtrl = makePushController({ subscriptions: services.pushSubscriptionRepo });
+  const pushCtrl = makePushController({ subscriptions: services.pushSubscriptionRepo, push: services.push });
 
   return [
     // ----- First-run admin setup (permanently disabled once admin has a password) -----
@@ -230,6 +230,8 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'GET', path: '/push/config', auth: true, handler: (r) => pushCtrl.config(r) },
     { method: 'POST', path: '/push/subscribe', auth: true, handler: (r) => pushCtrl.subscribe(r) },
     { method: 'DELETE', path: '/push/subscribe', auth: true, handler: (r) => pushCtrl.unsubscribe(r) },
+    // Self-test only — reaches the caller's own devices and nobody else's.
+    { method: 'POST', path: '/push/test', auth: true, handler: (r) => pushCtrl.test(r) },
 
     // ----- Internal (scheduler) -----
     { method: 'GET', path: '/internal/cron/tick', auth: false, handler: (r) => cronCtrl.tick(r) },

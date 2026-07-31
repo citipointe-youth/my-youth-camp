@@ -6,7 +6,7 @@ import type {
 } from '../repositories/interfaces/entity-repositories';
 import type { Notification } from '../core/entities/notification';
 import { churchesBehind, warnWindow } from './checkin-warnings';
-import { isPushConfigured, type PushService } from './push.service';
+import { isPushConfigured, isPushable, type PushService } from './push.service';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 
@@ -168,7 +168,12 @@ export function makeCronService(deps: CronServiceDeps) {
           // the expiry filter, so an expired warning is never pushed late — which is the
           // whole point of giving them an expiry.
           const active = await deps.notifications.findActive();
-          const unpushed = active.filter((n) => n.pushSentAt == null);
+          // `isPushable` is the normal-vs-urgent gate (owner's rule, 2026-07-31): normal
+          // notices are in-app only and never buzz a phone. Applied HERE, before any
+          // per-user subscription lookup — see the note on isPushable about why the
+          // ordering matters. A filtered-out notice is never claimed, so flipping the rule
+          // back later would deliver it, not swallow it.
+          const unpushed = active.filter((n) => n.pushSentAt == null && isPushable(n));
           if (unpushed.length > 0) {
             // Job B only loads users inside the warn window; job C needs them regardless.
             if (users.length === 0) users = await deps.users.findAll();
