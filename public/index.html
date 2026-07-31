@@ -518,6 +518,14 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
    button hidden behind the nav (`.modal` was z-index:50, `.ig-wrap` 55, the login gate 60 — all
    below the nav). Current ladder: nav 100 < modal/guide 120 < toast 130 < login/gate 140 < tooltip
    200 < undo toast 9999. GOTCHA: a new overlay must be `position:fixed` AND above 100. */
+/* ⚠️ TEMPORARY DIAGNOSTIC (2026-07-31) — viewport/bottom-nav gap readout. DELETE with the
+   `_vpDbg*` JS block. Anchored TOP-left deliberately: the whole question is what happens at the
+   BOTTOM of the viewport, so the readout must not sit in the region under investigation.
+   pointer-events:none so it can never swallow a tap; z-index above the tooltip layer (200) so it
+   stays legible over any screen, but below the undo toast (9999). */
+.vpdbg{position:fixed;top:0;left:0;z-index:300;pointer-events:none;background:rgba(14,10,30,.86);
+  color:#fff;font:600 10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;padding:4px 7px;
+  border-radius:0 0 8px 0;max-width:62vw;}
 .modal{position:fixed;inset:0;background:rgba(14,10,30,.6);display:none;align-items:flex-end;z-index:120;}
 .modal.show{display:flex;}
 .sheet{background:#fff;width:100%;border-radius:24px 24px 0 0;padding:20px 17px max(20px,env(safe-area-inset-bottom));animation:rise .2s;max-height:88dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
@@ -740,7 +748,7 @@ textarea{min-height:84px;resize:vertical;}
   <header class="bar" id="bar" style="display:none">
     <div id="nprog"></div>
     <div class="bk" onclick="back()">&#8249;</div>
-    <div class="ttl"><span class="t" id="barT">Camp Platform</span><span class="s" id="barS"></span></div>
+    <div class="ttl"><span class="t" id="barT" onclick="_vpDbgTap()">Camp Platform</span><span class="s" id="barS"></span></div>
     <div class="bar-actions">
       <div class="mode-badge" id="modeBadge"></div>
       <div class="mode-badge" id="dayBadge" onclick="switchPreviewPhase()" style="cursor:pointer;display:none" title="Tap to switch the previewed check-in view"></div>
@@ -1773,6 +1781,86 @@ if(window.visualViewport)window.visualViewport.addEventListener('resize',_fixVie
 document.addEventListener('focusout',function(e){
   if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))setTimeout(_fixViewportGap,60);
 });
+/* ⚠️ TEMPORARY DIAGNOSTIC — 2026-07-31, viewport/bottom-nav gap investigation. DELETE THIS BLOCK
+   (and the `.vpdbg` CSS rule, and the `_vpDbgTap` call in the header markup) once the floating-nav
+   bug is fixed. It exists because the nav has now been "fixed" six times blind (see CLAUDE.md
+   Follow-ups 3-7) with no device here to measure on, and a static screenshot can only show that
+   ~60 CSS px of gap exists, not what iOS thinks the viewport is.
+
+   OFF by default. Toggled by tapping the header TITLE five times (persisted in
+   localStorage.ycp_vpdebug), so a real leader can never stumble into it.
+
+   pointer-events:none — it must never swallow a tap, even while it's on. Every read is wrapped:
+   this runs on every screen for every role, so a throw here would be maximally visible. */
+var _VPDBG_KEY='ycp_vpdebug';
+/* Cached, not re-read from localStorage on every tick — the poll below runs twice a second for
+   EVERY user forever, and when the readout is off it must cost essentially nothing. */
+var _vpDbgEnabled=(function(){try{return localStorage.getItem(_VPDBG_KEY)==='1';}catch(_){return false;}})();
+function _vpDbgOn(){return _vpDbgEnabled;}
+var _vpDbgTaps=0,_vpDbgT=0;
+function _vpDbgTap(){
+  clearTimeout(_vpDbgT);_vpDbgTaps++;
+  _vpDbgT=setTimeout(function(){_vpDbgTaps=0;},1200);
+  if(_vpDbgTaps<5)return;
+  _vpDbgTaps=0;
+  _vpDbgEnabled=!_vpDbgEnabled;
+  try{localStorage.setItem(_VPDBG_KEY,_vpDbgEnabled?'1':'0');}catch(_){}
+  try{toast(_vpDbgEnabled?'Viewport readout ON':'Viewport readout off');}catch(_){}
+  _vpDbgRender();
+}
+function _vpDbgRender(){
+  try{
+    var box=document.getElementById('vpdbg');
+    if(!_vpDbgOn()){if(box)box.remove();return;}
+    if(!box){
+      box=document.createElement('div');
+      box.id='vpdbg';box.className='vpdbg';
+      document.body.appendChild(box);
+    }
+    var vv=window.visualViewport,de=document.documentElement,tabs=document.querySelector('.tabs');
+    var r=tabs?tabs.getBoundingClientRect():null;
+    // safe-area insets aren't readable directly — resolve them through a probe element.
+    var probe=document.getElementById('vpdbgProbe');
+    if(!probe){
+      probe=document.createElement('div');probe.id='vpdbgProbe';
+      probe.style.cssText='position:fixed;left:-9999px;top:0;width:0;'+
+        'padding-bottom:env(safe-area-inset-bottom);padding-top:env(safe-area-inset-top);';
+      document.body.appendChild(probe);
+    }
+    var cs=getComputedStyle(probe);
+    function n(v){return (v===undefined||v===null)?'-':(Math.round(v*10)/10);}
+    var rows=[
+      ['standalone', (window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true)?'YES':'no'],
+      ['innerHeight', n(window.innerHeight)],
+      ['clientHeight', n(de.clientHeight)],
+      ['scrollHeight', n(de.scrollHeight)],
+      ['scrollY', n(window.scrollY)],
+      ['vv.height', vv?n(vv.height):'n/a'],
+      ['vv.offsetTop', vv?n(vv.offsetTop):'n/a'],
+      ['vv.pageTop', vv?n(vv.pageTop):'n/a'],
+      ['vv.scale', vv?n(vv.scale):'n/a'],
+      ['safe-top', cs.paddingTop],
+      ['safe-bottom', cs.paddingBottom],
+      ['nav.bottom', r?n(r.bottom):'-'],
+      ['nav.height', r?n(r.height):'-'],
+      ['GAP (inner-nav.bottom)', r?n(window.innerHeight-r.bottom):'-'],
+      ['GAP (vv-nav.bottom)', (vv&&r)?n(vv.height+vv.offsetTop-r.bottom):'-']
+    ];
+    box.innerHTML=rows.map(function(x){
+      var hot=/^GAP/.test(x[0])&&x[1]!=='-'&&Math.abs(parseFloat(x[1]))>1;
+      return '<div'+(hot?' style="color:#fca5a5;font-weight:800"':'')+'>'+esc(x[0])+': '+esc(String(x[1]))+'</div>';
+    }).join('');
+  }catch(_){}
+}
+if(window.visualViewport){
+  window.visualViewport.addEventListener('resize',_vpDbgRender);
+  window.visualViewport.addEventListener('scroll',_vpDbgRender);
+}
+window.addEventListener('resize',_vpDbgRender);
+window.addEventListener('scroll',_vpDbgRender,{passive:true});
+window.addEventListener('orientationchange',function(){setTimeout(_vpDbgRender,300);});
+setInterval(_vpDbgRender,500);
+/* END TEMPORARY DIAGNOSTIC */
 function _spinner(id,label){
   const el=document.getElementById(id);
   if(el){el.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">'+(label||'Loading…')+'</div></div>';const sc=_scroller(el);if(sc)sc.scrollTop=0;}
