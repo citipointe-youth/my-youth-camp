@@ -142,25 +142,30 @@ body{font:var(--t-body)/1.55 "Plus Jakarta Sans",-apple-system,BlinkMacSystemFon
    above (the strip that shows below the fixed-height .app now blends instead of reading black);
    this full-inset reservation keeps the icons off the very edge. (Supersedes the Bug-3 2026-07-17
    fractional-inset tweak, which had under-reserved the safe area.) */
-/* `--vp-short` (2026-07-31) — SHORT-LAYOUT-VIEWPORT COMPENSATION. See `_vpFit()` for the full
-   diagnosis and the measurements. Short version: on an installed iPhone, iOS launches the standalone
-   PWA with a layout viewport 62px SHORTER than the screen (exactly `safe-area-inset-top`), while the
-   web view itself still covers the whole screen — so `bottom:0` resolves 62px above the physical
-   bottom and the uncovered strip shows the white canvas. `_vpFit()` measures the shortfall and sets
-   this var; it is 0px in the normal case, so this transform is a no-op everywhere else. */
-.tabs{display:flex;background:#fff;border-top:1px solid var(--line);padding:4px 6px max(6px,env(safe-area-inset-bottom));gap:2px;box-shadow:0 -2px 10px rgba(30,27,75,.05);position:fixed;left:0;right:0;bottom:0;z-index:100;transform:translateY(var(--vp-short,0px));}
-/* ~~`.tabs::after`~~ REMOVED 2026-07-31. It painted the nav's white surface 120px BELOW itself, added
-   for Bug 15 (2026-07-28) to hide a light-purple strip under the nav. It is now BOTH redundant and
-   actively harmful:
-   - redundant, because that strip is painted by `html` and `body`, and since 2026-07-26/28 BOTH are
-     `#fff` (`--paper` lives on `.app` alone) — so the strip is already white with no help from here;
-   - harmful, because it made the 62px gap above indistinguishable from nav chrome. The owner
-     reported this as "the white bar at the bottom is pretty tall", not as "the nav is floating",
-     and that is precisely why: 91px of real nav + 62px of gap painted the same white read as one
-     tall bar. It disguised the very bug class it was sitting on top of.
-   DO NOT re-add it. If a coloured strip ever reappears under the nav, the cause is a shortfall that
-   `_vpFit()` is not catching (or an `html`/`body` background regression) — fix that, don't paint
-   over it, or the next occurrence is invisible again. */
+/* ⚠️ DO NOT translate this nav downwards to "reach" the bottom of the screen. That was tried on
+   2026-07-31 (`transform:translateY(var(--vp-short))`) and REVERTED the same day: on the short
+   launch viewport the nav moved DOWN past the edge of the WEB VIEW and got clipped — the owner
+   reported "half of the nav bar was hidden until I scrolled down", which is strictly worse than
+   the tall white bar it was trying to fix. Measured proof: the last painted row of the screenshot
+   sat at 815pt with `innerHeight` 816, i.e. the page cannot paint past `innerHeight`. The strip
+   between the short viewport and the physical screen bottom belongs to iOS, not to the document.
+   See `_vpShortfall()` for the full measurements. */
+.tabs{display:flex;background:#fff;border-top:1px solid var(--line);padding:4px 6px max(6px,env(safe-area-inset-bottom));gap:2px;box-shadow:0 -2px 10px rgba(30,27,75,.05);position:fixed;left:0;right:0;bottom:0;z-index:100;}
+/* ~~`.tabs::after`~~ REMOVED 2026-07-31 — it was dead paint. It extended the nav's white surface
+   120px BELOW itself, added for Bug 15 (2026-07-28) to hide a light-purple strip under the nav.
+   Removing it changed nothing on screen, and the reason is worth recording, because it also
+   explains Bug 15 properly for the first time:
+
+   The nav's bottom edge already sits at `innerHeight`, and the document CANNOT PAINT PAST
+   `innerHeight` (measured 2026-07-31: with `innerHeight` 816, the last painted row of a full-screen
+   screenshot was 815pt). So `::after` was drawing into a clipped region and was never visible.
+
+   The strip below it belongs to iOS. Note it is NOT filled with the manifest `background_color`
+   (`#0b1220`, near-black) — it is white, because iOS extends the DOCUMENT's own backdrop colour
+   into it. That is why the 2026-07-26 `html{background:#fff}` change worked and why the strip used
+   to read light-purple when `html`/`body` carried `--paper`. The backgrounds are the real fix for
+   the COLOUR of that strip; this pseudo-element never was.
+   DO NOT re-add it. If a coloured strip appears under the nav, fix `html`/`body`. */
 .tab{flex:1;text-align:center;padding:7px 4px 6px;font-size:var(--t-xs);color:var(--muted);cursor:pointer;border:none;background:none;position:relative;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:12px;transition:background .15s,color .15s;}
 .tab .ic{display:block;transition:transform .15s;}
 .tab.on{color:var(--blue);font-weight:700;background:var(--chip);}
@@ -1820,15 +1825,25 @@ document.addEventListener('focusout',function(e){
    make it re-lay-out. The owner's "drag it down and it works" IS that missing recompute. A
    `scrollTo` cannot substitute — there is nowhere to scroll to.
 
-   THE FIX COMPENSATES RATHER THAN COAXING. It translates the nav down by the measured shortfall,
-   which is deterministic and needs no cooperation from iOS, and it is self-cancelling: once iOS
-   settles, the shortfall is 0 and the transform is removed. `.screen`'s bottom padding is measured
-   from the layout-viewport bottom, so moving the nav DOWN only ever increases content clearance.
+   ⚠️ COMPENSATING BY MOVING THE NAV DOWN DOES NOT WORK — TRIED AND REVERTED 2026-07-31.
+   The first version of this set `--vp-short` and translated `.tabs` down by the shortfall. It was
+   built on the inference that `safe-area-inset-bottom` reporting 34px in the broken state proved
+   the WEB VIEW still covered the whole screen and only the LAYOUT VIEWPORT was short. That
+   inference is FALSE. The web view is short too: with `innerHeight` 816 the last painted row of a
+   full-screen screenshot was 815pt, so the document cannot paint past `innerHeight`, and the nav
+   translated to 841-874 was simply clipped ("half of the nav bar was hidden until I scrolled
+   down" — strictly worse than the tall bar). The strip between the short viewport and the physical
+   screen bottom belongs to iOS and is painted with the manifest `background_color`; no CSS in this
+   document can reach it. Do not try this again in any form — transform, negative margin, or
+   `height:100vh` on an ancestor.
 
-   GATED HARD TO iOS STANDALONE. In Safari, `screen.height - innerHeight` is large and legitimate
-   (browser chrome), and on Android the system bars do the same — compensating there would shove
-   the nav off-screen. Standalone iOS only, and only for a shortfall in a plausible range. */
-var _VP_MAX_SHORT=140,_vpShortNow=-1;
+   Observed shortfalls so far: 62px (Home, pre-camp) and 58px (Home, at-camp preview), against a
+   true `screen.height` of 874. It varies, and it always resolves to 0 on the first real scroll.
+
+   WHAT REMAINS HERE is measurement only — `_vpShortfall()` feeds the readout so the next attempt
+   starts from numbers instead of inference. The real fix has to make iOS re-size the view; it
+   cannot be papered over from inside the document. */
+var _VP_MAX_SHORT=140;
 function _vpIsIOS(){
   try{
     return /iPad|iPhone|iPod/.test(navigator.userAgent)||
@@ -1850,20 +1865,6 @@ function _vpShortfall(){
     return (d>0&&d<=_VP_MAX_SHORT)?d:0;
   }catch(_){return 0;}
 }
-function _vpFit(){
-  try{
-    var d=_vpShortfall();
-    if(d===_vpShortNow)return;          // only touch the DOM on a real change
-    _vpShortNow=d;
-    document.documentElement.style.setProperty('--vp-short',d+'px');
-  }catch(_){}
-}
-_vpFit();
-requestAnimationFrame(_vpFit);
-window.addEventListener('pageshow',_vpFit);              // resume from the back/forward cache
-document.addEventListener('visibilitychange',_vpFit);    // resume from background — a common trigger
-window.addEventListener('orientationchange',function(){setTimeout(_vpFit,300);});
-
 /* ⚠️ TEMPORARY DIAGNOSTIC — 2026-07-31, viewport/bottom-nav gap investigation. DELETE THIS BLOCK
    (and the `.vpdbg` CSS rule, and the `_vpDbgTap` call in the header markup) once the floating-nav
    bug is fixed. It exists because the nav has now been "fixed" six times blind (see CLAUDE.md
@@ -1931,9 +1932,9 @@ function _vpDbgRender(){
       ['GAP (vv-nav.bottom)', (vv&&r)?n(vv.height+vv.offsetTop-r.bottom):'-'],
       // THE decisive one: the shortfall is invisible to every viewport-relative metric above.
       ['SHORTFALL', n(_vpShortfall())],
-      ['--vp-short applied', getComputedStyle(document.documentElement).getPropertyValue('--vp-short').trim()||'0px'],
-      // With the fix working this is 0 in BOTH states: nav bottom == true screen bottom.
-      ['REAL GAP (screen-nav)', r?n(((window.screen&&window.screen.height)||0)-r.bottom):'-']
+      // NOT a defect on its own: the page cannot paint past innerHeight, so a non-zero value here
+      // is the iOS-owned strip, not a mispositioned nav. See the _vpShortfall() comment.
+      ['screen-nav (unpaintable)', r?n(((window.screen&&window.screen.height)||0)-r.bottom):'-']
     ];
     box.innerHTML=rows.map(function(x){
       var hot=/^(GAP|REAL GAP|SHORTFALL)/.test(x[0])&&x[1]!=='-'&&Math.abs(parseFloat(x[1]))>1;
@@ -1941,11 +1942,9 @@ function _vpDbgRender(){
     }).join('');
   }catch(_){}
 }
-/* One tick drives BOTH: `_vpFit` always (it early-returns unless the shortfall actually changed,
-   so the steady-state cost is two property reads), the readout only when it is switched on.
-   The poll is what catches iOS settling the viewport WITHOUT firing an event — the case where
-   nothing scrolls and no resize fires is exactly the bug being compensated for. */
-function _vpTick(){_vpFit();if(_vpDbgOn())_vpDbgRender();}
+/* The poll is what catches iOS settling the viewport WITHOUT firing an event — in the bug state
+   nothing scrolls and no resize fires, so an event-only readout would never update. */
+function _vpTick(){if(_vpDbgOn())_vpDbgRender();}
 if(window.visualViewport){
   window.visualViewport.addEventListener('resize',_vpTick);
   window.visualViewport.addEventListener('scroll',_vpTick);
