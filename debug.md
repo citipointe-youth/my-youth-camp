@@ -250,6 +250,20 @@ check "expected vs actual" before touching code.
 >   on purpose** — do not mirror it into `budget.ts`, and do not delete `church.campers`/`.leaders`,
 >   which the CSV export still walks unmerged. Its one real hazard is `codeHint`, which must survive
 >   the merge ONLY when every contributing scope reported the same code.
+> - **⚠️ "THE BUDGET TOTAL IS TOO LOW" / "PAID IN PERSON SHOWS $0" → CHECK `settings.tent_price` AND
+>   `classroom_price` FIRST, BEFORE READING ANY CODE.** They were NULL in prod through 2026-08-02, so
+>   every `inperson`-tagged ticket fell through to `amountPaid` (usually 0) — 11 people, ~$2,050
+>   missing. `_personValue` was correct the whole time. The warning existed but was rendered inside
+>   the collapsed Discount codes card; it is now `priceGate` at the top of the budget body. **Do not
+>   move it back inside a collapsible.**
+> - **`_budUpgrades()` / `_budTicketKind()` / `_budUpgGroup()`** — the tent→classroom upgrade card.
+>   "Who is in a classroom without paying the upgrade" = `accommodationKind === 'classroom'` **while
+>   `registrationType` says tent** (the church accommodation override is what makes the two diverge).
+>   ⚠️ `_budTicketKind` mirrors `mapTicketType` in `ticket-import.service.ts` — change both.
+>   ⚠️ Sponsor/discount/in-person classes are excluded deliberately (a sponsored place is $0 by
+>   design, not a debt), and "nothing recorded" is its own bucket, never defaulted to "hasn't paid".
+>   The amount owed only renders when `classroomPrice` is set; the paid/unpaid split has a
+>   price-independent fallback (paid more than their own ticket cost) so the card still works without it.
 
 ## Frontend — `public/index.html` (single ~2,920-line SPA)
 

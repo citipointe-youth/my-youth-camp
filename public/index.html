@@ -3905,6 +3905,73 @@ function _budMergeScopes(campers,leaders){
     return m;
   }).sort((a,c)=>(order.has(a.key)?order.get(a.key):99)-(order.has(c.key)?order.get(c.key):99));
 }
+/* ── Tent → classroom upgrades (2026-08-02) ────────────────────────────────────────────────────
+   Owner: "show people who have paid for the tent → classroom upgrade compared to people in
+   classrooms who haven't paid for the upgrade."
+
+   The signal is a DIVERGENCE between two fields that normally agree, because one of them is
+   derived from the other at import time:
+     · `registrationType` — the verbatim Elvanto ticket ("EARLY BIRD | Tent Accomodation").
+     · `accommodationKind` — where they are ACTUALLY sleeping, which starts as the mapped ticket
+       type but is then overwritten by the church accommodation override (whose documented purpose
+       in import.service.ts is literally "corrects wrong ticket-type purchases").
+   So `accommodationKind === 'classroom'` while the ticket says **tent** means: moved into a
+   classroom holding a tent ticket. That is the upgrade population, and nothing else identifies it —
+   the money alone cannot, because a $150 classroom person is indistinguishable from a $150 tent
+   person once you stop looking at the ticket.
+
+   Confirmed against prod 2026-08-02: 5 people camp-wide, all at Carindale. Four paid $150 and owe
+   the $40 difference; one paid $190 against a $150 ticket, i.e. already upgraded. Those four are
+   exactly the `4 × $150` that was buried in the old run-on breakdown line of the Classroom row.
+
+   ⚠️ `_budTicketKind` MIRRORS `mapTicketType` in `src/services/ticket-import.service.ts` — substring
+   match, classroom tested first. If that ever changes, this silently mis-sorts people; change both.
+
+   Deliberately EXCLUDED: anyone whose class is not plain `classroom` (sponsor/discount/in-person).
+   A sponsored classroom place is $0 by design, not an unpaid upgrade, and calling it one would
+   put a real person on a "hasn't paid" list wrongly. */
+function _budTicketKind(t){
+  const v=(t||'').toLowerCase();
+  if(v.indexOf('classroom')>=0)return 'classroom';
+  if(v.indexOf('tent')>=0)return 'tent';
+  return null;
+}
+function _budUpgrades(regs,filterId){
+  const prices=_budPrices(),tags=_budTags();
+  const delta=(prices.tent!=null&&prices.classroom!=null)?(prices.classroom-prices.tent):null;
+  const paid=[],owing=[],unknown=[];
+  (regs||[]).filter(r=>r.status!=='cancelled')
+    .filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
+    .filter(r=>r.accommodationKind==='classroom'&&_budTicketKind(r.registrationType)==='tent')
+    .forEach(r=>{
+      const p={churchId:r.churchId,churchName:r.churchName,kind:r.kind==='leader'?'leader':'camper',
+        registrationCost:r.registrationCost==null?null:Number(r.registrationCost),
+        amountPaid:r.amountPaid==null?null:Number(r.amountPaid),
+        accommodationKind:r.accommodationKind||null,discountCode:r.discountCode};
+      const cls=_classifyTicket(p,tags);
+      if(cls!=='classroom')return;                      // sponsored/discounted — not an upgrade case
+      const value=_personValue(p,cls,prices);
+      const row={name:((r.firstName||'')+' '+(r.lastName||'')).trim()||'(no name)',
+        churchName:r.churchName,kind:p.kind,value,cost:p.registrationCost};
+      if(value==null){unknown.push(row);return;}
+      /* Two ways to decide "they paid the upgrade", because the definitive one needs a setting the
+         camp may not have filled in yet:
+           · classroom price set → did they reach it? (definitive)
+           · not set → did they pay MORE than their own tent ticket cost? (price-independent, and
+             it correctly finds the one $190-against-a-$150-ticket person in prod)
+         Without the price we still can't say HOW MUCH is owed — `owes` stays null and the UI says
+         so rather than printing a made-up number. */
+      const done=prices.classroom!=null?(value>=prices.classroom)
+        :(p.registrationCost!=null&&value>p.registrationCost);
+      row.owes=(prices.classroom!=null)?Math.max(0,prices.classroom-value):null;
+      (done?paid:owing).push(row);
+    });
+  const byName=(a,b)=>a.churchName.localeCompare(b.churchName)||a.name.localeCompare(b.name);
+  paid.sort(byName);owing.sort(byName);unknown.sort(byName);
+  const owedTotal=owing.reduce((s,r)=>s+(r.owes||0),0);
+  return {tent:prices.tent,classroom:prices.classroom,delta,paid,owing,unknown,owedTotal,
+    total:paid.length+owing.length+unknown.length};
+}
 function computeBudgetClient(regs,filterId){
   const tags=_budTags(),prices=_budPrices();
   const num=v=>v==null?null:Number(v);
@@ -4001,6 +4068,25 @@ function _budChurchCodes(c){
   return `<div class="lbl" style="margin:10px 0 4px">Discount codes</div>
     <div class="budchip-row">${rows.map(r=>`<span class="budchip">${esc(r.code)} <b>×${r.count}</b></span>`).join('')}</div>`;
 }
+/* One group of the upgrade card, grouped by church so a director can act on it church by church.
+   Names are shown deliberately — this screen is director/admin only, and "4 people owe $40" is not
+   actionable without knowing which four. */
+function _budUpgGroup(title,rows,warn){
+  if(!rows.length)return '';
+  const byChurch=new Map();
+  rows.forEach(r=>{const a=byChurch.get(r.churchName)||[];a.push(r);byChurch.set(r.churchName,a);});
+  const body=[...byChurch.entries()].map(([church,list])=>
+    `<div class="buddet-hd">${esc(church)}</div>`+list.map(r=>
+      `<div class="buddet"><span class="buddet-k">${esc(r.name)}${r.kind==='leader'?' <span class="sub">(leader)</span>':''}</span>
+       <span class="buddet-n">${r.value==null?'nothing recorded':'paid '+_money(r.value)}</span>
+       <b class="buddet-v">${r.owes?_money(r.owes)+' owing':''}</b></div>`).join('')).join('');
+  return `<div class="budrow${warn?' budrow-warn':''} tap" onclick="this.classList.toggle('open')">
+    <span class="budrow-chev">${icSm('chevron')}</span>
+    <div class="budrow-label">${esc(title)}${warn?' '+icSm('alert'):''}</div>
+    <div class="budrow-qty">${rows.length} ${rows.length===1?'person':'people'}</div>
+    <b class="budrow-amt"></b>
+    <div class="budrow-det">${body}</div></div>`;
+}
 function drawBudget(){
   const scope=sel('budChurch')||'all';
   const rep=computeBudgetClient(window._budgetRegs,scope);
@@ -4087,10 +4173,10 @@ function drawBudget(){
         ${_BUD_TAGS.map(([v,l])=>`<option value="${v}"${r.tag===v?' selected':''}>${esc(l)}</option>`).join('')}
       </select></div>`:''}</div>`;
   const discBody=disc.rows.length?disc.rows.map(discRow).join(''):'<p class="sub" style="padding:6px 0">No discount codes recorded.</p>';
-  // A "paid in person" code can only be valued once the admin has set the reference prices in
-  // Camp settings, so say so here rather than letting the total quietly under-read.
-  const priceWarn=(_canBudget&&disc.rows.some(r=>r.tag==='inperson')&&(prices.tent==null||prices.classroom==null))
-    ?`<div class="warnbox">${icSm('alert')} Set the tent and classroom ticket prices in Camp settings — without them, a code tagged “paid in person” falls back to whatever the invoice recorded (often $0).</div>`:'';
+  /* The "set the ticket prices" warning USED to live here. It was invisible: this card is
+     collapsed by default and sits in the second column, so prod ran with both prices NULL and
+     every in-person ticket valued at $0 without anyone seeing why. It is now `priceGate`, at the
+     top of the screen. Do not move it back inside a collapsed disclosure. */
   const discSection=`<div class="card budchurch" data-cid="disc" style="margin-top:14px">
     <div class="rowsb budchurch-hd" onclick="_budToggle('disc')" style="cursor:pointer">
       <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="budchev">${icSm('chevron')}</span>
@@ -4098,9 +4184,45 @@ function drawBudget(){
       <span class="sub">${disc.rows.length} code${disc.rows.length===1?'':'s'}</span></div>
     <div class="budchurch-body">
       <p class="sub" style="padding:2px 0 8px">Classify each code so its tickets land in the right budget category. Tent/classroom comes from the student's ticket type.</p>
-      ${priceWarn}${discBody}</div></div>`;
+      ${discBody}</div></div>`;
+  /* ⚠️ THE TICKET PRICES WERE NEVER SET, AND THE WARNING WAS HIDDEN (2026-08-02).
+     `_personValue` has valued an in-person code at the base ticket price since 2026-07-29 — the
+     logic was right all along. But prod had `tent_price` and `classroom_price` NULL, so every
+     in-person ticket fell through to `amountPaid` (usually 0) and the owner reasonably read that
+     as "paid in person isn't being counted". The warning that says exactly this already existed —
+     buried inside the Discount codes card, which is COLLAPSED by default and in the second column.
+     A warning behind a closed disclosure is not a warning. It now sits at the top of the screen,
+     unmissable, and says what the money is worth instead of just naming the setting. */
+  const upg=_budUpgrades(window._budgetRegs,scope);
+  const needPrices=prices.tent==null||prices.classroom==null;
+  const inpersonCount=rep.churches.reduce((t,c)=>t+(c.categories||[])
+    .filter(x=>x.key.indexOf('inperson')>=0).reduce((u,x)=>u+x.count,0),0);
+  // Camp settings is admin-only (see the role map), so a director gets the same facts without a
+  // button that would bounce them off a screen they cannot open.
+  const isAdmin=ACTOR&&ACTOR.role==='admin';
+  const priceGate=(needPrices&&(inpersonCount>0||upg.total>0))
+    ?`<div class="warnbox" style="margin-bottom:12px">${icSm('alert')} <b>The tent and classroom ticket prices aren't set.</b>
+       ${inpersonCount>0?` ${inpersonCount} ${inpersonCount===1?'person':'people'} paid in person — until the prices are set they are valued at whatever the invoice recorded, which is usually <b>$0</b>, so the total below under-reads.`:''}
+       ${upg.total>0?` Classroom upgrades can't be priced either.`:''}
+       ${isAdmin?`<button class="btn alt sm" style="margin-top:8px" onclick="go('adminSettings')">Open Camp settings</button>`
+        :`<div class="sub" style="margin-top:6px">An admin can set them in Camp settings → Ticket prices.</div>`}</div>`:'';
+  const upgSection=upg.total?`<div class="card budchurch" data-cid="upg" style="margin-top:14px">
+    <div class="rowsb budchurch-hd" onclick="_budToggle('upg')" style="cursor:pointer">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="budchev">${icSm('chevron')}</span>
+        <div style="font-weight:700">Classroom upgrades</div></div>
+      <span class="sub">${upg.owing.length} outstanding</span></div>
+    <div class="budchurch-body">
+      <p class="sub" style="padding:2px 0 8px">People sleeping in a classroom who bought a <b>tent</b> ticket.${
+        upg.delta!=null?` The upgrade is ${_money(upg.delta)} (${_money(upg.tent)} tent → ${_money(upg.classroom)} classroom).`
+        :' Set the ticket prices to see what each one owes.'}</p>
+      ${_budUpgGroup('Upgrade paid',upg.paid,false)}
+      ${_budUpgGroup('Upgrade outstanding',upg.owing,true)}
+      ${_budUpgGroup('No payment recorded',upg.unknown,false)}
+      ${upg.owedTotal?`<div class="rowsb" style="padding-top:8px;border-top:1px solid var(--line);margin-top:6px">
+        <span class="lbl">Outstanding</span><b>${_money(upg.owedTotal)}</b></div>`:''}
+    </div></div>`:'';
   const box=document.getElementById('budgetBody');
-  if(box)box.innerHTML=`<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${discSection}</div></div>`;
+  if(box)box.innerHTML=`${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${upgSection}${discSection}</div></div>`;
 }
 function _budToggle(cid){const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.toggle('open');}
 // Selecting the blank option clears the tag (the code reverts to a plain full-price ticket).

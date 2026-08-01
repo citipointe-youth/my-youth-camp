@@ -1,5 +1,61 @@
 # CLAUDE.md — Youth Camp Platform
 
+## Budget: in-person pricing was inert, + tent→classroom upgrade tracking — 2026-08-02 (2nd)
+
+`npm run typecheck` clean, `npx vitest run` **850 pass / 54 files** (SPA-only change), SPA + `sw.js`
+`node --check` OK, `sw.js` `camp-v77`→**`camp-v78`**. No schema change.
+
+### C — 🟠 "PAID IN PERSON SHOULD BE VALUED AT THE TICKET PRICE" — IT ALREADY WAS. THE WARNING WAS HIDDEN.
+`_personValue` has returned the base ticket price for an `inperson`-tagged code since 2026-07-29 and
+the logic was never wrong. **Prod had `settings.tent_price` and `classroom_price` NULL** (verified by
+query, not inferred), so every in-person ticket fell through to `amountPaid` — usually 0 — and the
+owner reasonably read the `10 × $0` on the card as "this isn't being counted". Real impact: **11
+people, ~$2,050 missing from the grand total** at the camp's own prices.
+
+> ⚠️ **THE WARNING THAT SAID EXACTLY THIS ALREADY EXISTED AND WAS USELESS.** It was rendered inside
+> the *Discount codes* card — **collapsed by default, second column**. A warning behind a closed
+> disclosure is not a warning. This is the second time a correct-but-invisible signal has cost real
+> debugging time on this screen. **Do not move it back inside a collapsible.**
+
+Now `priceGate`, at the very top of the budget body, stating the consequence (*"N people paid in
+person … the total below under-reads"*) rather than just naming a setting, with an **Open Camp
+settings** button — admin only, because `adminSettings` is admin-gated and a director would bounce.
+
+**Before diagnosing any budget figure as wrong, check the two prices are set.** Almost every "the
+budget is under-reading" report will be this.
+
+### D — Tent → classroom upgrade tracking (new)
+Owner: show who paid the tent→classroom upgrade vs who is in a classroom without it. The signal is a
+**divergence between two fields that normally agree**, because one is derived from the other at
+import:
+
+- `registrationType` — the verbatim Elvanto ticket (`"EARLY BIRD | Tent Accomodation"`).
+- `accommodationKind` — where they actually sleep. Starts as the mapped ticket type, then is
+  overwritten by the **church accommodation override**, whose stated purpose in `import.service.ts`
+  is *"corrects wrong ticket-type purchases"*.
+
+So `accommodationKind === 'classroom'` **while the ticket says tent** is the upgrade population.
+Nothing else identifies it: money alone cannot, because a $150 classroom person and a $150 tent
+person are identical once you stop looking at the ticket.
+
+Verified against prod: **5 people, all at Carindale.** Four paid $150 and owe the $40 difference;
+one paid $190 against a $150 ticket, i.e. already upgraded. Those four are exactly the `4 × $150`
+that used to be buried in the Classroom row's run-on breakdown line.
+
+- **`_budTicketKind` mirrors `mapTicketType`** in `src/services/ticket-import.service.ts` — substring
+  match, **classroom tested first** (`"Classroom Accommodation"` contains neither trap, but a future
+  `"Tent → Classroom Upgrade"` ticket name would hit both). Drift there silently mis-sorts people.
+- **Sponsor / discount / in-person classes are excluded on purpose.** A sponsored classroom place is
+  $0 by design; listing it as "hasn't paid" would put a real person on a debtors list wrongly. Only
+  the plain `classroom` class is considered.
+- **"Paid the upgrade" has two definitions and both ship**, because the definitive one needs a
+  setting the camp may not have filled in: classroom price set → did they reach it; not set → did
+  they pay *more than their own ticket cost*. The fallback correctly finds the one $190-against-$150
+  person with both prices still NULL. The **amount owed** is only shown when the price exists — no
+  invented numbers.
+- People with nothing recorded are a **third bucket**, not defaulted into "hasn't paid". We don't
+  know, and the card says so.
+
 ## Owner follow-up: Home-return jitter + budget cards merged — 2026-08-02
 
 Two owner reports against the 2026-08-01 build. `npm run typecheck` clean, `npx vitest run`
