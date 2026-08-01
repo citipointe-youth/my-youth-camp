@@ -15,7 +15,7 @@
 
    Result on a device modelled as NEVER accepting the kick (the honest worst case):
      OLD  20 kicks in 12s, ~608ms apart, and it never stops (there was no retry cap)
-     NEW   5 kicks, ~944ms apart, then it stops
+     NEW   3 kicks, backing off (1.2s, 2.4s), then it stops
    The old spacing is floored by its own 600ms cooldown, so this model does not reproduce the
    owner's literal "10 times a second" — what it does prove is the SUSTAINED, UNBOUNDED
    re-entry that the visible jitter came from. */
@@ -30,34 +30,36 @@ function run(srcPath, { echoGuard, volley }) {
   const requestAnimationFrame_ = (fn) => { rafs.push(fn); };
 
   const kicks = [];
-  let shortfall = 60, resizeHandler = null, inKick = false;
+  let shortfall = 60, resizeHandler = null;
   const de = { style: { minHeight: '' }, get offsetHeight() { return 1; } };
-  Object.defineProperty(de.style, 'minHeight', {
-    get() { return this._v || ''; },
-    set(v) {
-      this._v = v;
-      if (v && !inKick) {
-        inKick = true; kicks.push(now);
-        // A real iOS chrome animation emits a STREAM of visualViewport resize events, not one.
-        // This is the honest model of the reported symptom: each kick starts an animation that
-        // fires ~10 resizes over ~600ms, and every one of them is a potential re-entry point.
-        for (let i = 1; i <= 10; i++) {
-          setTimeout_(() => {
-            if (kicks.length >= 999) shortfall = 0;  // iOS NEVER accepts: does the kicking ever stop?
-            if (resizeHandler) resizeHandler();
-          }, i * 60);
-        }
+  // The 1px scroll is the kick's observable, not the min-height write — since 2026-08-02 the
+  // latch also writes min-height, permanently, so height writes no longer isolate a kick.
+  const scrollingElement = {
+    _t: 0,
+    get scrollTop() { return this._t; },
+    set scrollTop(v) {
+      const up = v > this._t;
+      this._t = v;
+      if (!up) return;
+      kicks.push(now);
+      // A real iOS chrome animation emits a STREAM of visualViewport resize events, not one.
+      // This is the honest model of the reported symptom: each kick starts an animation that
+      // fires ~10 resizes over ~600ms, and every one of them is a potential re-entry point.
+      for (let i = 1; i <= 10; i++) {
+        setTimeout_(() => {
+          if (kicks.length >= 999) shortfall = 0;  // iOS NEVER accepts: does the kicking ever stop?
+          if (resizeHandler) resizeHandler();
+        }, i * 60);
       }
-      if (!v) inKick = false;
     },
-  });
+  };
   const windowStub = { screen: { height: 874 }, matchMedia: () => ({ matches: true }),
     navigator: { standalone: true }, scrollY: 0 };
   Object.defineProperty(windowStub, 'innerHeight', { get() { return 874 - shortfall; } });
 
   const sandbox = {
     window: windowStub,
-    document: { documentElement: de, scrollingElement: { scrollTop: 0 }, activeElement: { tagName: 'DIV' } },
+    document: { documentElement: de, scrollingElement, activeElement: { tagName: 'DIV' } },
     navigator: { userAgent: 'iPhone', platform: 'iPhone', maxTouchPoints: 5, standalone: true },
     setTimeout: setTimeout_, clearTimeout: clearTimeout_,
     requestAnimationFrame: requestAnimationFrame_, Date: { now: () => now }, console,

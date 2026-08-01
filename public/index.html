@@ -268,13 +268,31 @@ h3.sec{font-size:var(--t-xs);font-weight:800;letter-spacing:.08em;text-transform
    label (flexes, ellipsis) | qty (never shrinks) | amount (right-aligned, never shrinks). A
    code chip or a mixed-value breakdown gets its OWN sub-line (grid-column:1/-1) under the
    label, never inline with it — that's what used to break onto three lines. */
-.budrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;column-gap:8px;row-gap:2px;align-items:center;padding:6px 0;}
+/* Merged category rows (2026-08-02): chevron | label (flexes, ellipsis) | qty | amount, and a
+   detail panel spanning the label..amount tracks. Campers and leaders are ONE row now — the
+   split lives in the panel — so the card is a short scannable list instead of two parallel
+   lists of the same category names. A separator between rows, because the panel opening in the
+   middle of the list needs a visible boundary or it reads as part of the next row. */
+.budrow{display:grid;grid-template-columns:14px minmax(0,1fr) auto auto;column-gap:8px;row-gap:2px;align-items:center;padding:7px 0;}
+.budrow+.budrow{border-top:1px solid var(--line);}
+.budrow-chev{display:flex;align-items:center;justify-content:center;color:var(--lav-2);transition:transform .18s;}
+.budrow.open>.budrow-chev{transform:rotate(90deg);}
+.budrow.tap{cursor:pointer;}
 .budrow-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--t-sm);font-weight:600;}
 .budrow-qty{white-space:nowrap;flex:none;font-size:var(--t-xs);color:var(--ink-2);text-align:right;}
 .budrow-amt{white-space:nowrap;flex:none;min-width:56px;text-align:right;}
-.budrow-sub{grid-column:1/-1;font-size:var(--t-2xs);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .budrow-warn .budrow-label{color:var(--warn);}
 .budrow-warn .ic-svg{color:var(--warn);}
+/* The detail panel. Aligned as its own 3-track grid so the numbers line up under the row's own
+   qty/amount columns instead of drifting — that alignment is most of what makes it readable. */
+.budrow-det{grid-column:2/-1;display:none;padding:4px 0 2px;}
+.budrow.open>.budrow-det{display:block;}
+.buddet{display:grid;grid-template-columns:minmax(0,1fr) auto auto;column-gap:8px;align-items:baseline;padding:2px 0;font-size:var(--t-2xs);}
+.buddet-k{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
+.buddet-n{white-space:nowrap;color:var(--muted);text-align:right;}
+.buddet-v{white-space:nowrap;text-align:right;min-width:56px;color:var(--ink-2);}
+.buddet-hd{font-size:var(--t-2xs);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:6px 0 1px;}
+.buddet-note{font-size:var(--t-2xs);color:var(--muted);margin-top:3px;}
 /* Compact inline code-usage chips (items 4/5) — "which codes did this ministry use" at a
    glance, no per-code full-width row and no ratio (the per-church/camp-wide denominators
    were being conflated — see the camp-wide discount row for the secondary ratio text). */
@@ -1963,8 +1981,43 @@ function _vpShortfall(){
         capped at `_VP_KICK_MAX` so a device that simply ignores us cannot oscillate forever.
    `_VP_KICK_VERIFY` MUST stay greater than `_VP_KICK_COOLDOWN`, or the retry lands inside its own
    cooldown, early-returns, and the chain dies silently after one attempt. */
-var _VP_KICK_COOLDOWN=900,_VP_KICK_SETTLE=500,_VP_KICK_VERIFY=1000,_VP_KICK_MAX=5;
-var _vpKicking=false,_vpKickAt=0,_vpKicks=0,_vpTries=0,_vpTimer=0;
+/* ⚠️ SECOND ROUND (2026-08-02) — "the whole screen jitters occasionally when returning to Home".
+   The 08-01 fix stopped the launch/keyboard jitter but not this, and the reason is that the two
+   have DIFFERENT causes. This one is a collapse-and-rekick loop, and it is specific to Home:
+
+     Home's content is shorter than the viewport, so the document is not scrollable. A kick makes
+     it scrollable for two frames, iOS grows the view — and then `restore()` puts the height back,
+     the document is un-scrollable again, and iOS collapses the view straight back. The shortfall
+     returns, the verify-retry sees it, and it kicks again. It stopped only when `_vpTries` hit
+     `_VP_KICK_MAX`, i.e. it ran out of budget — NOT because anything was fixed. (Diagnostic: the
+     readout shows `kick tries 3 / 3` after one of these episodes, where a healthy launch reads 1.)
+
+   So the retry chain was treating "iOS ignored us" and "iOS accepted us and then undid it" as the
+   same thing. THE LATCH below is the actual fix: once a shortfall has been seen on this device, the
+   document keeps a permanent floor of `screen.height + 1px`, so it stays scrollable by that 1px
+   even on a short screen and iOS has no reason to collapse the view back. The kick then only has
+   to happen once.
+
+   Why `screen.height` and not a percentage: every viewport-relative unit reports the SHORT height
+   in the bug state (that is the whole nature of this bug — see `_vpShortfall()`), so `100%`/`100dvh`
+   would latch the document to exactly the height it must exceed. `screen.height` is the only
+   reference that reports the true value.
+
+   The latch is deliberately NOT released when the shortfall reaches 0 — releasing it is precisely
+   what re-creates the collapse. Its whole cost is 1px of scroll travel on otherwise-short screens,
+   on iOS standalone only, and only after the bug has actually been observed on that device. */
+var _VP_KICK_COOLDOWN=900,_VP_KICK_SETTLE=800,_VP_KICK_VERIFY=1200,_VP_KICK_MAX=3;
+var _vpKicking=false,_vpKickAt=0,_vpKicks=0,_vpTries=0,_vpTimer=0,_vpLatched=false;
+/* The persistent min-height, as a style value. '' until a kick has armed the latch, so this is
+   inert on every device that never showed the bug. Recomputed on read because `screen.height` is
+   orientation-adjusted and changes on rotate. */
+function _vpLatchValue(){
+  if(!_vpLatched)return '';
+  try{var sh=(window.screen&&window.screen.height)||0;return sh>0?(sh+1)+'px':'';}catch(_){return '';}
+}
+function _vpApplyLatch(){
+  try{var v=_vpLatchValue();if(v)document.documentElement.style.minHeight=v;}catch(_){}
+}
 /* One pending kick at a time. Later callers replace the pending timer rather than adding to it,
    so N triggers in quick succession cost exactly one kick. */
 function _vpKickSoon(ms){
@@ -1997,14 +2050,23 @@ function _vpKick(){
     if(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))return;
     _vpKicking=true;_vpKickAt=now;_vpKicks++;_vpTries++;
     var de=document.documentElement,sc=document.scrollingElement||de;
+    /* Arm and apply the latch BEFORE `prev` is captured, so `prev` IS the latch and `restore()`
+       needs no special case — it stays a single write of one value. Order matters: applying it
+       after the capture would restore to the pre-latch height and the collapse loop would
+       survive the first kick. */
+    _vpLatched=true;_vpApplyLatch();
     var y=sc.scrollTop,prev=de.style.minHeight;
     var restore=function(){
       try{de.style.minHeight=prev;sc.scrollTop=y;}catch(_){}
       _vpKicking=false;
       /* Verify rather than assume. If iOS took the hint the shortfall is now 0 and this retry
          early-returns above; if it did not, this is the ONLY thing that schedules another kick,
-         so attempts stay ~1s apart instead of stacking. */
-      _vpKickSoon(_VP_KICK_VERIFY);
+         so attempts stay seconds apart instead of stacking.
+         The delay grows with each try (1.2s, 2.4s, 3.6s). A device that has not responded to two
+         kicks is not going to respond to a third one delivered fast, and every attempt costs a
+         visible iOS chrome animation — so spacing them out is strictly better than retrying hard.
+         Must stay > `_VP_KICK_COOLDOWN` or the retry lands inside its own cooldown. */
+      _vpKickSoon(_VP_KICK_VERIFY*Math.max(1,_vpTries));
     };
     try{
       de.style.minHeight=(window.innerHeight+200)+'px';
@@ -2029,7 +2091,11 @@ window.addEventListener('pageshow',function(){_vpKickReset();_vpKickSoon(60);});
 document.addEventListener('visibilitychange',function(){
   if(!document.hidden){_vpKickReset();_vpKickSoon(120);}   // returning from background
 });
-window.addEventListener('orientationchange',function(){_vpKickReset();_vpKickSoon(350);});
+/* Rotate changes `screen.height`, so the latch has to be recomputed or it would be a floor from
+   the OTHER orientation — far too tall in landscape, and useless in portrait. */
+window.addEventListener('orientationchange',function(){
+  _vpKickReset();setTimeout(_vpApplyLatch,300);_vpKickSoon(350);
+});
 /* The keyboard-dismiss trigger. 120ms lets the viewport settle first — kicking mid-animation just
    burns the cooldown on a measurement that is about to change.
    ⚠️ THE ECHO GUARD IS THE JITTER FIX (2026-08-01). Our own kick resizes the viewport, so without
@@ -2128,7 +2194,12 @@ function _vpDbgRender(){
       // discrete trigger — it should read 1 on a launch that worked, and only climb toward
       // _VP_KICK_MAX when iOS is genuinely ignoring the kick. A high `kicks fired` with `tries`
       // back at 0 means repeated NEW triggers, not a runaway retry chain.
-      ['kick tries', _vpTries+' / '+_VP_KICK_MAX]
+      ['kick tries', _vpTries+' / '+_VP_KICK_MAX],
+      /* The Home collapse loop (2026-08-02) is diagnosable from these two together: with the latch
+         ON, a return to Home should cost ONE kick and `tries` should sit at 1. `tries` climbing to
+         the max with the latch on means iOS is genuinely ignoring the kick — a different fault
+         from the collapse loop, and not one more retries can fix. */
+      ['latch', _vpLatched?(_vpLatchValue()||'on (no screen.height)'):'off']
     ];
     box.innerHTML=rows.map(function(x){
       var hot=/^(GAP|REAL GAP|SHORTFALL)/.test(x[0])&&x[1]!=='-'&&Math.abs(parseFloat(x[1]))>1;
@@ -3792,6 +3863,48 @@ function _budScopeRows(people,tags,prices){
   });
   return rows;
 }
+/* Merged category rows (2026-08-02) — DISPLAY ONLY, and deliberately client-side.
+
+   The card used to print the campers rows and the leaders rows as two separate labelled lists, so
+   "Classroom" appeared twice with two different sets of numbers and neither one was the figure a
+   director actually wants (what did this ministry owe for classroom?). Owner's report: unreadable
+   at a glance, especially the run-on `↳ 72 × $190 · 4 × $150 · 43 × $0` sub-line under each.
+   One row per category now, campers + leaders summed, with the audience split and the price
+   breakdown moved behind a tap.
+
+   NOT mirrored into src/services/budget.ts, and it should not be: this changes no computed value
+   (every field here is a sum of fields budget.ts already produces), and the CSV export still walks
+   the unmerged `campers`/`leaders` arrays, which is the right shape for a spreadsheet. Both arrays
+   are kept on the church for exactly that reason — do not delete them.
+
+   Two merges that need care, because both can produce a claim the data does not support:
+   - `codeHint` survives only if EVERY contributing scope reported the same code. Campers all on
+     YC26EFT + leaders all on YC26LDR must NOT render as "all YC26EFT".
+   - `valueBreakdown` counts are added per distinct value, so it still sums to `count` — that
+     invariant is what lets the detail panel be read as a complete account of the row. */
+function _budMergeScopes(campers,leaders){
+  const order=new Map(_BUD_CLASSES.map(([k],i)=>[k,i]));
+  const by=new Map();
+  const add=(scope,r)=>{
+    let m=by.get(r.key);
+    if(!m){m={key:r.key,count:0,lineTotal:0,unrecorded:r.unrecorded,valueMissingCount:0,
+      camper:{count:0,lineTotal:0},leader:{count:0,lineTotal:0},_vals:new Map(),_codes:new Set()};
+      by.set(r.key,m);}
+    m.count+=r.count;m.lineTotal+=r.lineTotal;m.valueMissingCount+=r.valueMissingCount;
+    m[scope].count+=r.count;m[scope].lineTotal+=r.lineTotal;
+    (r.valueBreakdown||[]).forEach(x=>m._vals.set(x.value,(m._vals.get(x.value)||0)+x.count));
+    m._codes.add(r.codeHint||'');
+  };
+  (campers||[]).forEach(r=>add('camper',r));
+  (leaders||[]).forEach(r=>add('leader',r));
+  return [...by.values()].map(m=>{
+    m.valueBreakdown=[...m._vals.entries()].map(([value,count])=>({value,count})).sort((a,c)=>c.value-a.value);
+    const codes=[...m._codes];
+    m.codeHint=(codes.length===1&&codes[0])?codes[0]:null;
+    delete m._vals;delete m._codes;
+    return m;
+  }).sort((a,c)=>(order.has(a.key)?order.get(a.key):99)-(order.has(c.key)?order.get(c.key):99));
+}
 function computeBudgetClient(regs,filterId){
   const tags=_budTags(),prices=_budPrices();
   const num=v=>v==null?null:Number(v);
@@ -3816,7 +3929,9 @@ function computeBudgetClient(regs,filterId){
        in src/services/budget.ts. Scoped from the RAW `regs` rather than the reduced `people`
        above, because the reduced shape drops `discountAmount` and the purpose pill needs it. */
     const discountCodes=computeDiscountSummaryClient(regs,c.churchId).rows;
-    return {churchId:c.churchId,churchName:c.churchName,camperCount,leaderCount,total,campers,leaders,discountCodes};});
+    // `campers`/`leaders` stay for the CSV export; `categories` is what the card renders.
+    return {churchId:c.churchId,churchName:c.churchName,camperCount,leaderCount,total,campers,leaders,
+      categories:_budMergeScopes(campers,leaders),discountCodes};});
   churches.sort((a,b)=>a.churchName.localeCompare(b.churchName));
   return {grandTotal:churches.reduce((s,c)=>s+c.total,0),camperCount:churches.reduce((s,c)=>s+c.camperCount,0),
     leaderCount:churches.reduce((s,c)=>s+c.leaderCount,0),churchCount:churches.length,churches,fullAmount:full};
@@ -3900,24 +4015,45 @@ function drawBudget(){
      breakdown (even with some members missing a value, folded into the $0 bucket) still reads
      as a uniform unit price. `unrecorded` keeps its own warning-triangle treatment regardless
      of whether it happens to be mixed — that's a different flag, not a synonym for mixed. */
+  /* One row per category, campers + leaders together (2026-08-02). The collapsed row answers the
+     only question that has to be answerable at a glance — how many, and how much — and everything
+     that used to compete with it for space is now behind the chevron:
+       · the audience split (Campers / Leaders), which is what the owner asked to be able to open;
+       · the per-price breakdown, as an aligned mini-table instead of a run-on ` · `-joined line.
+     A row only becomes tappable when it has something to show (both audiences present, or more
+     than one distinct price, or a code) — a dead chevron on a row with nothing behind it is worse
+     than no chevron. `unrecorded` keeps its warning treatment; that is a data-quality flag, not a
+     synonym for "mixed". */
+  const detLine=(k,n,v)=>`<div class="buddet"><span class="buddet-k">${k}</span>
+    <span class="buddet-n">${n}</span><b class="buddet-v">${_money(v)}</b></div>`;
   const catRow=(r)=>{
     const bd=r.valueBreakdown||[];
     const mixed=bd.length>1;
-    const unitAmount=bd.length?bd[0].value:(r.amount||0);
-    const plainLabel=(_BUD_CLASS_LABEL[r.key]||r.label)+(mixed&&!r.unrecorded?' (mixed)':'');
+    const split=r.camper.count>0&&r.leader.count>0;
+    const unitAmount=bd.length?bd[0].value:0;
+    const label=_BUD_CLASS_LABEL[r.key]||r.key;
+    // Uniform price stays on the collapsed row — opening it would only repeat the same figure.
     const qty=mixed?`${r.count} ${r.count===1?'person':'people'}`:`${r.count} × ${_money(unitAmount)}`;
-    const subParts=[];
-    if(r.codeHint)subParts.push(esc(r.codeHint));
-    if(mixed)subParts.push(bd.map(x=>`${x.count} × ${_money(x.value)}`).join(' · '));
-    else if(r.valueMissingCount&&!r.unrecorded)subParts.push(`${r.valueMissingCount} no cost`);
-    const sub=subParts.length?`<div class="budrow-sub">↳ ${subParts.join(' · ')}</div>`:'';
-    return `<div class="budrow${r.unrecorded?' budrow-warn':''}">
-      <div class="budrow-label">${esc(plainLabel)}${r.unrecorded?' '+icSm('alert'):''}</div>
+    const open=split||mixed||!!r.codeHint;
+    const det=[];
+    if(split){
+      det.push(detLine('Campers',r.camper.count,r.camper.lineTotal));
+      det.push(detLine('Leaders',r.leader.count,r.leader.lineTotal));
+    }
+    if(mixed){
+      if(split)det.push('<div class="buddet-hd">Price breakdown</div>');
+      bd.forEach(x=>det.push(detLine(_money(x.value)+' each','× '+x.count,x.value*x.count)));
+    }
+    if(r.codeHint)det.push(`<div class="buddet-note">All on code ${esc(r.codeHint)}</div>`);
+    if(!mixed&&r.valueMissingCount&&!r.unrecorded)
+      det.push(`<div class="buddet-note">${r.valueMissingCount} with no cost recorded</div>`);
+    return `<div class="budrow${r.unrecorded?' budrow-warn':''}${open?' tap':''}"${open?' onclick="this.classList.toggle(\'open\')"':''}>
+      <span class="budrow-chev">${open?icSm('chevron'):''}</span>
+      <div class="budrow-label">${esc(label)}${r.unrecorded?' '+icSm('alert'):''}</div>
       <div class="budrow-qty">${qty}</div>
       <b class="budrow-amt">${_money(r.lineTotal)}</b>
-      ${sub}</div>`;
+      ${open?`<div class="budrow-det">${det.join('')}</div>`:''}</div>`;
   };
-  const grp=(title,rows)=>rows.length?`<div class="lbl" style="margin:10px 0 4px">${title}</div>${rows.map(catRow).join('')}`:'';
   const single=scope!=='all';
   const churchCard=(c)=>{
     const open=single?'open':'';
@@ -3928,8 +4064,7 @@ function drawBudget(){
           <div class="sub">${c.camperCount} ${c.camperCount===1?'camper':'campers'}${c.leaderCount?` · ${c.leaderCount} ${c.leaderCount===1?'leader':'leaders'}`:''}</div></div></div>
         <b style="font-size:var(--t-h3)">${_money(c.total)}</b></div>
       <div class="budchurch-body">
-        ${grp('Campers',c.campers)}
-        ${grp('Leaders',c.leaders)}
+        ${(c.categories||[]).map(catRow).join('')}
         ${_budChurchCodes(c)}
       </div></div>`;
   };

@@ -1,5 +1,81 @@
 # CLAUDE.md — Youth Camp Platform
 
+## Owner follow-up: Home-return jitter + budget cards merged — 2026-08-02
+
+Two owner reports against the 2026-08-01 build. `npm run typecheck` clean, `npx vitest run`
+**850 pass / 54 files** (unchanged — both changes are SPA-only), SPA + `sw.js` `node --check` OK,
+`sw.js` `camp-v76`→**`camp-v77`**. No schema change; next migration is still `0021`.
+
+### A — 🟠 THE VIEWPORT KICK HAD A SECOND, DIFFERENT JITTER: A COLLAPSE-AND-REKICK LOOP
+The 08-01 fix held for the two triggers it was written for (launch, keyboard dismiss — owner
+confirmed both). What survived was *"the whole screen jitters occasionally when returning to the
+Home screen"*, and it is **not the same bug**, which is why the 08-01 guards did not catch it.
+
+08-01 was a *feedback* loop — our kick caused a resize, the resize listener kicked again. This one
+is a **collapse** loop, and it needs iOS to be *cooperating*:
+
+> Home's content is shorter than the viewport, so the document is not scrollable. The kick makes it
+> scrollable for two frames and iOS grows the view — then `restore()` puts the height back, the
+> document is un-scrollable again, and **iOS collapses the view straight back**. The shortfall
+> returns, the verify-retry sees it, kick again. It stopped only when `_vpTries` hit `_VP_KICK_MAX`,
+> i.e. **it ran out of budget rather than succeeding.**
+
+> ⚠️ **THE RETRY CHAIN WAS CONFLATING TWO OPPOSITE FAILURES** — "iOS ignored the kick" and "iOS
+> accepted the kick and then undid it". Retrying is right for the first and actively harmful for the
+> second, because each retry buys another visible chrome animation and the collapse is guaranteed to
+> follow. Any future change here must keep them distinguishable.
+
+Fixed with **the latch** (`_vpLatched` / `_vpLatchValue()` / `_vpApplyLatch()`): once a shortfall has
+been seen on this device, `<html>` keeps a permanent `min-height` of **`screen.height + 1px`**, so the
+document stays scrollable by that 1px even on a short screen and iOS has no reason to collapse. The
+kick then only has to land once.
+
+- **`screen.height`, not `100%`/`100dvh`.** Every viewport-relative unit reports the SHORT height in
+  the bug state — that is the nature of this bug — so a percentage would latch the document to
+  exactly the height it must exceed. `screen.height` is the only true reference (same reason
+  `_vpShortfall()` uses it).
+- **The latch is applied BEFORE `prev` is captured** inside `_vpKick`, so `prev` *is* the latch and
+  `restore()` stays a single write. Applying it after the capture restores the pre-latch height and
+  the loop survives the first kick.
+- **It is never released.** Releasing it is precisely what re-creates the collapse. Total cost: 1px
+  of scroll travel on otherwise-short screens, iOS standalone only, only after the bug has actually
+  been observed on that device.
+- Re-applied on `orientationchange` — `screen.height` is orientation-adjusted, so a stale latch would
+  be far too tall in landscape.
+
+Also tuned, all secondary to the latch: `_VP_KICK_SETTLE` 500→**800** (covers the chrome animation),
+`_VP_KICK_MAX` 5→**3**, and the retry now **backs off** (`_VP_KICK_VERIFY × _vpTries` = 1.2s, 2.4s,
+3.6s). A device that ignored two kicks will not answer a third delivered fast, and every attempt costs
+a visible animation.
+
+> **Proven, not assumed.** `scripts/vpkick-harness.js` gained scenario 6, which models iOS collapsing
+> the view on a non-scrollable document. Neutering the latch makes it fail 3 of its 4 checks
+> (1 kick → 3, shortfall unresolved, budget exhausted) — the command is in the script header. The
+> harness's kick probe also moved from the `min-height` write to the **1px scroll**, since the latch
+> now writes `min-height` permanently; the scroll is the real mechanism anyway.
+
+### B — Budget cards: campers and leaders merged into one row, detail behind a tap
+Owner: still hard to follow, *"especially just below the 'Classroom' subheadings"*. The 08-01 rebuild
+fixed the wrapping but kept the underlying shape — campers rows and leaders rows as two separate
+labelled lists — so **"Classroom" appeared twice with two different sets of numbers**, and neither
+was the figure a director wants (what did this ministry owe for classroom?). Under each sat the
+run-on `↳ 72 × $190 · 4 × $150 · 43 × $0`.
+
+Now one row per category, campers + leaders summed, tap to open: the audience split (Campers /
+Leaders, which the owner asked for) and the price breakdown as an **aligned mini-table** in the same
+columns as the row above it. The screenshot's card goes from 4 rows + 4 sub-lines + 2 section
+headings to **2 rows**. A row is only tappable when it has something behind it (both audiences, or
+more than one price, or a code) — a dead chevron is worse than none.
+
+- **`_budMergeScopes()` is display-only and deliberately client-side.** It changes no computed value;
+  every field is a sum of fields `budget.ts` already produces. **Do not mirror it into
+  `src/services/budget.ts`**, and **do not delete `church.campers` / `church.leaders`** — the CSV
+  export still walks them unmerged, which is the right shape for a spreadsheet.
+- Two merges that can assert something the data does not support, both guarded and both worth a test
+  if this is touched again: **`codeHint` survives only if every contributing scope reported the same
+  code** (campers all on `YC26EFT` + leaders all on `YC26LDR` must not render as "all YC26EFT"), and
+  `valueBreakdown` counts are added per distinct value so the panel still sums to `count`.
+
 ## Independent review of the 2026-07-30/31 work — five defects fixed + budget cards — 2026-08-01
 
 An independent review of the previous two days (30 commits, ~8,600 insertions) against the

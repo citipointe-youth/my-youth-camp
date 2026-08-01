@@ -192,13 +192,15 @@ check "expected vs actual" before touching code.
 >   the wrong way round / cost looks like the older submission" → here. Same-day ties are reported to
 >   the admin as *"could not determine order"* rather than silently guessing. Handles 12-hour times
 >   (truncating the meridiem inverts the order — there are tests on the 12am/12pm boundary).
-> - **Budget cards restructured** — `.budrow` (fixed 3-track grid), `.budrow-sub` (code chip / value
->   breakdown line), `.budchip-row`/`.budchip` (inline per-church code chips). `CategoryRow.valueBreakdown`
->   exists in BOTH `src/services/budget.ts` and the SPA mirror `_budScopeRows`/`_budValueBreakdown` —
->   change both together. "A budget row shows the wrong people count or a blank unit price" →
->   `_budScopeRows` (mixed rows report a breakdown, never `× —`); "a per-church code count disagrees
->   with the camp-wide panel" → they are the same scoped computation, so suspect the SCOPE argument,
->   not the counting.
+> - **Budget cards restructured** — `.budrow` (4-track grid: chevron | label | qty | amount),
+>   `.budrow-det`/`.buddet*` (the tap-to-open detail panel), `.budchip-row`/`.budchip` (inline
+>   per-church code chips). `CategoryRow.valueBreakdown` exists in BOTH `src/services/budget.ts` and
+>   the SPA mirror `_budScopeRows`/`_budValueBreakdown` — change both together. "A budget row shows
+>   the wrong people count or a blank unit price" → `_budScopeRows` (mixed rows report a breakdown,
+>   never `× —`); "a per-church code count disagrees with the camp-wide panel" → they are the same
+>   scoped computation, so suspect the SCOPE argument, not the counting.
+>   ⚠️ **Superseded in part on 2026-08-02 — see the block below.** `.budrow-sub` and the
+>   `grp('Campers'…)` two-list layout no longer exist.
 > - **`_vpKickSoon(ms)` / `_vpKickReset()` / `_vpTries` / `_VP_KICK_SETTLE` / `_VP_KICK_VERIFY` /
 >   `_VP_KICK_MAX`** — the viewport kick's scheduler. **"The pull-down jitters up and down rapidly"
 >   → the kick is re-entering the resize it caused.** The kick changes layout → iOS fires
@@ -208,13 +210,46 @@ check "expected vs actual" before touching code.
 >   capped at `_VP_KICK_MAX`. ⚠️ `_VP_KICK_VERIFY` must exceed `_VP_KICK_COOLDOWN`, and a
 >   cooldown-blocked kick must RESCHEDULE rather than return, or the retry chain dies after one
 >   attempt. **Turn on the readout (five taps on the header title) and read `kick tries` before
->   editing anything** — `1 / 5` on a good launch; climbing to 5 means iOS is ignoring the kick.
+>   editing anything** — `1 / 3` on a good launch; climbing to the max means iOS is ignoring the kick.
 > - **`scripts/vpkick-harness.js` / `scripts/vpkick-compare.js`** — run the REAL extracted kick
 >   functions against stubbed globals and a fake clock, no device needed. Extraction ranges are in
 >   the script headers (re-derive them, they drift). Two stub traps: `_vpIsIOS` reads a **bare**
 >   `navigator`, and the fake clock must start at a real epoch value or `_vpKickAt = 0` blocks the
 >   first cooldown check. Model the iOS chrome animation as a **stream** of resize events — a
 >   single-echo model shows nothing.
+
+> **2026-08-02 owner follow-up — Home-return jitter + merged budget rows (grep the name).
+> Full rationale: CLAUDE.md, the 2026-08-02 section at the top.**
+> - **⚠️ "The screen jitters when I go back to Home" is a DIFFERENT BUG from "the pull-down jitters".**
+>   Do not reach for the 08-01 guards. That one was a *feedback* loop (our kick caused a resize that
+>   kicked again); this one is a **collapse** loop and it needs iOS to be *cooperating*: Home's
+>   content is short → document not scrollable → the kick works → `restore()` un-scrollables it →
+>   **iOS collapses the view back** → the retry sees the shortfall again. It ended by exhausting
+>   `_VP_KICK_MAX`, not by succeeding.
+> - **`_vpLatched` / `_vpLatchValue()` / `_vpApplyLatch()`** — the fix. Once a shortfall has been seen,
+>   `<html>` keeps a permanent `min-height` of `screen.height + 1px` so the document stays scrollable
+>   by 1px and iOS never collapses. **Read `latch` on the viewport readout first** — `875px` (or
+>   whatever `screen.height + 1` is on that device) means it is armed; `off` means no shortfall has
+>   been seen this session, so any jitter you are chasing is not this. `latch` armed **and** `kick
+>   tries` at the max = iOS genuinely ignoring the kick, a third distinct fault that more retries
+>   cannot fix.
+>   ⚠️ Three things here look like tidy-ups and are not: it must use **`screen.height`** (every
+>   viewport-relative unit reports the short height in the bug state), it must be applied **before
+>   `prev` is captured** in `_vpKick`, and it must **never be released** — releasing it re-creates
+>   the collapse.
+> - **`_VP_KICK_SETTLE` 800 / `_VP_KICK_MAX` 3 / backoff `_VP_KICK_VERIFY × _vpTries`** — retry pacing,
+>   secondary to the latch. Every attempt costs a visible iOS chrome animation, so slower and fewer is
+>   better; do not tune these upward to "try harder".
+> - **`scripts/vpkick-harness.js` scenario 6** covers this (`collapsesOnShortDoc`). To confirm it can
+>   still fail rather than passing by accident, neuter `_vpApplyLatch` in a copy of the extract — the
+>   one-line `sed` is in the script header. The kick probe is now the **1px scroll**, not the
+>   `min-height` write, because the latch writes `min-height` permanently.
+> - **`_budMergeScopes()`** — campers + leaders are ONE budget row now; the audience split and the
+>   price breakdown are behind the row's chevron (`.budrow-det`). "A category total looks wrong" →
+>   check `_budScopeRows` first, this only sums what that produced. ⚠️ **Display-only and client-only
+>   on purpose** — do not mirror it into `budget.ts`, and do not delete `church.campers`/`.leaders`,
+>   which the CSV export still walks unmerged. Its one real hazard is `codeHint`, which must survive
+>   the merge ONLY when every contributing scope reported the same code.
 
 ## Frontend — `public/index.html` (single ~2,920-line SPA)
 
@@ -458,6 +493,7 @@ FIXED".
 | **Same bar after opening and dismissing a keyboard** | Same bug, second trigger. Wired via `visualViewport.resize` + `focusout` in the `_vpKick` block. Note a keyboard does NOT change `innerHeight` on iOS (only `visualViewport.height`), so `SHORTFALL` is correctly 0 *while* typing. |
 | **Half the nav bar is hidden / nav clipped at the bottom** | Someone re-added a downward `transform` on `.tabs`. Tried and reverted 2026-07-31 — **the document cannot paint past `innerHeight`**, so a translated nav is simply clipped. See the do-not-retry note on `.tabs` in the CSS. |
 | **A COLOURED (not white) strip under the nav** | `html`/`body` backgrounds — both must be `#fff`; `--paper` belongs on `.app` alone. iOS fills that strip with the *document's* backdrop colour, **not** the manifest `background_color`. Do NOT re-add `.tabs::after` (it paints below `innerHeight` and is invisible). |
+| **The whole screen jitters when returning to the Home screen** (2026-08-02) | A THIRD trigger, and a different mechanism from the two above — the collapse loop. Read `latch` on the readout, then the 2026-08-02 symbol block near the top of this file. Do not start from the `_vpKick` scheduler. |
 | **`SHORTFALL` reads 0 but the layout still looks wrong** | Not this bug. `SHORTFALL` is `screen.height - innerHeight`, gated to iOS standalone — it is 0 by design in Safari, on Android and on desktop. |
 | **Nav gap metrics both read 0 yet there is clearly a gap** | Expected, and the trap that cost six attempts. `innerHeight`/`clientHeight`/`scrollHeight`/`visualViewport`/`100dvh` all agree with each other in the broken state. Only `window.screen.height` disagrees. |
 
