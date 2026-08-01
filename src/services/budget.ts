@@ -408,6 +408,19 @@ export interface DiscountCodeRow {
   purpose: string | null;
   /** the admin's classification for this code, or null when it hasn't been tagged. */
   tag: DiscountTag | null;
+  /**
+   * The MEASURED average discount as a percentage of the ticket, across everyone who used this
+   * code and has both figures recorded — null when nobody does. This is the raw number `purpose`
+   * is a label for; it is exposed separately so the tag/invoice disagreement below can be detected
+   * from the same figure the label came from, rather than by parsing the label back out.
+   */
+  avgPercent: number | null;
+  /**
+   * Set when the admin's `tag` contradicts what the invoices actually recorded — see
+   * `discountTagConflict`. Null when they agree, when there is no tag, or when there is no
+   * invoice evidence either way.
+   */
+  tagConflict: string | null;
 }
 
 export interface DiscountCodeSummary {
@@ -421,6 +434,12 @@ export interface DiscountCodeSummary {
 const DISCOUNT_PERCENT_BUCKETS = [25, 50, 70, 100] as const;
 /** How many percentage points off a bucket still counts as "nearly divisible". */
 const DISCOUNT_PERCENT_TOLERANCE = 3;
+/**
+ * At/above this, the discount covers the whole ticket. Used for two different judgements that must
+ * agree: labelling a code a ticket-difference correction, and deciding whether a `sponsor` tag is
+ * consistent with the invoices. Not 100 — real invoices land a cent or two short.
+ */
+const FULL_DISCOUNT_PERCENT = 97;
 
 /**
  * Derive a human label for a discount code from the (pre-discount cost, discount amount)
@@ -428,9 +447,50 @@ const DISCOUNT_PERCENT_TOLERANCE = 3;
  * first (a % code stays consistent across different ticket prices); if the average isn't
  * close to one of the four standard tiers, falls back to the average flat dollar amount.
  */
-function deriveDiscountPurpose(pairs: { cost: number; discount: number }[]): string | null {
+/**
+ * The average discount as a percentage of the ticket price, across the people who used a code and
+ * have BOTH figures recorded. Null when nobody does — which is not the same as 0%, and the
+ * difference matters: 0% would mean "measured, and it's a full-price ticket", null means "no
+ * invoice has ever said". Only the latter must suppress the disagreement check below.
+ */
+export function averageDiscountPercent(pairs: { cost: number; discount: number }[]): number | null {
   const valid = pairs.filter((p) => p.cost > 0 && p.discount != null);
   if (!valid.length) return null;
+  return valid.reduce((s, p) => s + (p.discount / p.cost) * 100, 0) / valid.length;
+}
+
+/**
+ * 🔴 THE TAG AND THE INVOICES CAN DISAGREE, AND THE MONEY FOLLOWS THE TAG (2026-08-02).
+ *
+ * A tag is what the admin *says* a code is; `avgPercent` is what the invoices *record*. They are
+ * independent, and `personValue` trusts the tag — a `sponsor` code is hard-coded to $0 regardless
+ * of what arrived. So a code tagged "Full sponsor" whose invoices show a 50% discount silently
+ * discards the half that WAS paid, and the two facts sat side by side on the Budget screen with
+ * nothing marking them as contradictory. That is what the owner spotted on `YC26YP` (2 people,
+ * $75 and $95 genuinely paid, both counted as $0).
+ *
+ * The invoices are evidence, not authority — a code really can be a full sponsorship recorded
+ * badly upstream. So this REPORTS the disagreement and changes no figure; only a human can say
+ * which side is wrong.
+ *
+ * `inperson` is deliberately not checked: a code that zeroes an invoice because the money was
+ * handed over at the desk is *expected* to show a ~100% discount, and a partial one is a legitimate
+ * part-cash arrangement. There is nothing to contradict.
+ */
+export function discountTagConflict(tag: DiscountTag | null, avgPercent: number | null): string | null {
+  if (tag == null || avgPercent == null) return null;
+  const pct = Math.round(avgPercent);
+  if (tag === 'sponsor' && avgPercent < FULL_DISCOUNT_PERCENT)
+    return `Tagged full sponsor, but the invoices record ${pct}% off — the rest was paid and is being counted as $0.`;
+  if (tag === 'discount' && avgPercent >= FULL_DISCOUNT_PERCENT)
+    return `Tagged discounted, but the invoices record the whole ticket discounted (${pct}%).`;
+  return null;
+}
+
+function deriveDiscountPurpose(pairs: { cost: number; discount: number }[]): string | null {
+  const avgPercent = averageDiscountPercent(pairs);
+  if (avgPercent == null) return null;
+  const valid = pairs.filter((p) => p.cost > 0 && p.discount != null);
   /* Item C (2026-07-28) — TICKET-DIFFERENCE CODES.
      When someone buys the wrong ticket and is issued a code covering what they already paid, the
      discount is (nearly) the whole ticket price. Counted as an ordinary concession that reads as
@@ -439,8 +499,7 @@ function deriveDiscountPurpose(pairs: { cost: number; discount: number }[]): str
      for what it is, so a director reading the budget isn't left thinking free places were given
      away. The test is a discount at/above ~97% of the ticket price, which is exactly the
      already-paid-the-difference shape and never a real 70%-or-less concession tier. */
-  const avgPercent = valid.reduce((s, p) => s + (p.discount / p.cost) * 100, 0) / valid.length;
-  if (avgPercent >= 97) return 'Ticket difference — already paid';
+  if (avgPercent >= FULL_DISCOUNT_PERCENT) return 'Ticket difference — already paid';
   const bucket = DISCOUNT_PERCENT_BUCKETS.find((b) => Math.abs(avgPercent - b) <= DISCOUNT_PERCENT_TOLERANCE);
   if (bucket != null) return `${bucket}% Off`;
   const avgDollar = Math.round(valid.reduce((s, p) => s + p.discount, 0) / valid.length);
@@ -475,12 +534,19 @@ export function computeDiscountCodeSummary(
     }
   }
   const rows = [...counts.entries()]
-    .map(([code, count]) => ({
-      code,
-      count,
-      purpose: deriveDiscountPurpose(pairsByCode.get(code) ?? []),
-      tag: t[code] ?? null,
-    }))
+    .map(([code, count]) => {
+      const pairs = pairsByCode.get(code) ?? [];
+      const avgPercent = averageDiscountPercent(pairs);
+      const tag = t[code] ?? null;
+      return {
+        code,
+        count,
+        purpose: deriveDiscountPurpose(pairs),
+        tag,
+        avgPercent,
+        tagConflict: discountTagConflict(tag, avgPercent),
+      };
+    })
     .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
   return { totalInScope: scoped.length, rows };
 }

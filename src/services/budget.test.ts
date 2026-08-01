@@ -415,15 +415,17 @@ describe('computeDiscountCodeSummary', () => {
     const summary = computeDiscountCodeSummary(people);
     expect(summary.totalInScope).toBe(5);
     expect(summary.rows).toEqual([
-      { code: 'EARLYBIRD', count: 2, purpose: null, tag: null },
-      { code: 'ALIVE100', count: 1, purpose: null, tag: null },
+      { code: 'EARLYBIRD', count: 2, purpose: null, tag: null, avgPercent: null, tagConflict: null },
+      { code: 'ALIVE100', count: 1, purpose: null, tag: null, avgPercent: null, tagConflict: null },
     ]);
   });
 
   it('scopes to a single church via filterChurchId', () => {
     const summary = computeDiscountCodeSummary(people, 'c1');
     expect(summary.totalInScope).toBe(3); // 2 EARLYBIRD + 1 blank-code camper, all c1
-    expect(summary.rows).toEqual([{ code: 'EARLYBIRD', count: 2, purpose: null, tag: null }]);
+    expect(summary.rows).toEqual([
+      { code: 'EARLYBIRD', count: 2, purpose: null, tag: null, avgPercent: null, tagConflict: null },
+    ]);
   });
 
   it('no discount codes at all → empty rows, totalInScope still reflects the scope', () => {
@@ -435,8 +437,8 @@ describe('computeDiscountCodeSummary', () => {
     const tags: DiscountTagMap = { EARLYBIRD: 'discount' };
     const summary = computeDiscountCodeSummary(people, undefined, tags);
     expect(summary.rows).toEqual([
-      { code: 'EARLYBIRD', count: 2, purpose: null, tag: 'discount' },
-      { code: 'ALIVE100', count: 1, purpose: null, tag: null },
+      { code: 'EARLYBIRD', count: 2, purpose: null, tag: 'discount', avgPercent: null, tagConflict: null },
+      { code: 'ALIVE100', count: 1, purpose: null, tag: null, avgPercent: null, tagConflict: null },
     ]);
   });
 
@@ -446,7 +448,7 @@ describe('computeDiscountCodeSummary', () => {
       p({ churchId: 'c1', kind: 'camper', registrationCost: 90, discountAmount: 46, discountCode: 'HALF' }), // ~51% — within tolerance
     ];
     expect(computeDiscountCodeSummary(half).rows).toEqual([
-      { code: 'HALF', count: 2, purpose: '50% Off', tag: null },
+      { code: 'HALF', count: 2, purpose: '50% Off', tag: null, avgPercent: expect.closeTo(50.56, 1), tagConflict: null },
     ]);
 
     // Item C (2026-07-28): a code that wipes out the WHOLE ticket price is the "bought the wrong
@@ -456,7 +458,7 @@ describe('computeDiscountCodeSummary', () => {
       p({ churchId: 'c1', kind: 'camper', registrationCost: 150, discountAmount: 150, discountCode: 'ALIVE100' }),
     ];
     expect(computeDiscountCodeSummary(full).rows).toEqual([
-      { code: 'ALIVE100', count: 1, purpose: 'Ticket difference — already paid', tag: null },
+      { code: 'ALIVE100', count: 1, purpose: 'Ticket difference — already paid', tag: null, avgPercent: 100, tagConflict: null },
     ]);
   });
 
@@ -465,7 +467,7 @@ describe('computeDiscountCodeSummary', () => {
       p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 133, discountCode: 'HARDSHIP' }),
     ];
     expect(computeDiscountCodeSummary(seventy).rows).toEqual([
-      { code: 'HARDSHIP', count: 1, purpose: '70% Off', tag: null },
+      { code: 'HARDSHIP', count: 1, purpose: '70% Off', tag: null, avgPercent: expect.closeTo(70, 1), tagConflict: null },
     ]);
   });
 
@@ -475,7 +477,7 @@ describe('computeDiscountCodeSummary', () => {
       p({ churchId: 'c1', kind: 'camper', registrationCost: 150, discountAmount: 20, discountCode: 'SIBLING20' }),
     ];
     expect(computeDiscountCodeSummary(flat).rows).toEqual([
-      { code: 'SIBLING20', count: 2, purpose: '$20 Off', tag: null },
+      { code: 'SIBLING20', count: 2, purpose: '$20 Off', tag: null, avgPercent: expect.closeTo(11.93, 1), tagConflict: null },
     ]);
   });
 
@@ -484,8 +486,75 @@ describe('computeDiscountCodeSummary', () => {
       p({ churchId: 'c1', kind: 'camper', registrationCost: null, discountAmount: null, discountCode: 'MYSTERY' }),
     ];
     expect(computeDiscountCodeSummary(noFinancials).rows).toEqual([
-      { code: 'MYSTERY', count: 1, purpose: null, tag: null },
+      { code: 'MYSTERY', count: 1, purpose: null, tag: null, avgPercent: null, tagConflict: null },
     ]);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * 2026-08-02 — the tag and the invoices can disagree, and the money follows the tag.
+ * Real case that prompted this: prod code `YC26YP`, tagged "Full sponsor", whose two
+ * invoices record exactly 50% off ($75 of $150 and $95 of $190). Both people were valued
+ * at $0. Nothing on screen said the two facts contradicted each other.
+ * ------------------------------------------------------------------------- */
+describe('discountTagConflict', () => {
+  it('flags a full-sponsor tag whose invoices show a partial discount (the YC26YP case)', () => {
+    const ycp: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 150, discountAmount: 75, discountCode: 'YC26YP' }),
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 95, discountCode: 'YC26YP' }),
+    ];
+    const row = computeDiscountCodeSummary(ycp, undefined, { YC26YP: 'sponsor' }).rows[0]!;
+    expect(row.avgPercent).toBeCloseTo(50, 5);
+    expect(row.purpose).toBe('50% Off');
+    expect(row.tagConflict).toContain('Tagged full sponsor');
+    expect(row.tagConflict).toContain('50%');
+  });
+
+  it('a full-sponsor tag whose invoices DO show the whole ticket discounted is consistent', () => {
+    const real: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 150, discountAmount: 150, discountCode: 'KH100' }),
+    ];
+    expect(computeDiscountCodeSummary(real, undefined, { KH100: 'sponsor' }).rows[0]!.tagConflict).toBeNull();
+  });
+
+  it('flags a "discounted" tag that actually wipes out the whole ticket', () => {
+    const whole: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 190, discountCode: 'ODD' }),
+    ];
+    expect(computeDiscountCodeSummary(whole, undefined, { ODD: 'discount' }).rows[0]!.tagConflict)
+      .toContain('Tagged discounted');
+  });
+
+  it('a partial discount tagged "discounted" is exactly what it claims to be — no conflict', () => {
+    const half: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 95, discountCode: 'VICTORY50' }),
+    ];
+    expect(computeDiscountCodeSummary(half, undefined, { VICTORY50: 'discount' }).rows[0]!.tagConflict).toBeNull();
+  });
+
+  it('never flags an in-person code — a desk payment legitimately zeroes OR part-pays an invoice', () => {
+    const cash: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 190, discountCode: 'YC26EFT' }),
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 40, discountCode: 'YC26CASH' }),
+    ];
+    const rows = computeDiscountCodeSummary(cash, undefined, { YC26EFT: 'inperson', YC26CASH: 'inperson' }).rows;
+    expect(rows.every((r) => r.tagConflict === null)).toBe(true);
+  });
+
+  it('no invoice evidence at all cannot contradict anything (null, not a false alarm)', () => {
+    const blind: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: null, discountAmount: null, discountCode: 'MYSTERY' }),
+    ];
+    const row = computeDiscountCodeSummary(blind, undefined, { MYSTERY: 'sponsor' }).rows[0]!;
+    expect(row.avgPercent).toBeNull();
+    expect(row.tagConflict).toBeNull();
+  });
+
+  it('an untagged code is never in conflict, whatever the invoices say', () => {
+    const untagged: BudgetPerson[] = [
+      p({ churchId: 'c1', kind: 'camper', registrationCost: 190, discountAmount: 95, discountCode: 'PLAIN' }),
+    ];
+    expect(computeDiscountCodeSummary(untagged).rows[0]!.tagConflict).toBeNull();
   });
 });
 

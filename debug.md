@@ -492,6 +492,18 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-08-02 — owner batch (Unallocate button, budget redraw, discount tag conflict, overrides moved)
+
+| Symptom | Go to |
+|---|---|
+| **A discount code's grey pill disagrees with its classification** (e.g. "50% Off on invoices" on a code tagged **Full sponsor**) | **Not a bug — the screen is telling you two true, contradictory things, and now says so.** The pill is MEASURED from the invoices (`averageDiscountPercent`); the dropdown is what the admin DECLARED, and `personValue` follows the declaration — a `sponsor` code is hard-coded to $0 whatever arrived. `discountTagConflict` (budget.ts, mirrored as `_discountTagConflict`) renders the warnbox. Real case: prod `YC26YP`, 2 people, $75 and $95 genuinely paid, both counted as $0. **A human decides which side is wrong; the code never "corrects" either.** |
+| A conflict warning fires on a code that looks fine | Rules are only two: `sponsor` with < 97% measured, and `discount` with ≥ 97%. `inperson` is never checked (a desk payment legitimately zeroes an invoice). `avgPercent === null` (no invoice has both figures) can never conflict. `FULL_DISCOUNT_PERCENT` = 97 and is shared with the ticket-difference label — change both or neither. |
+| The budget screen jumps to the top / every church card collapses after classifying a code | Should no longer happen — `_saveDiscountTag` calls **`_budRedraw()`**, not `RENDER.budget()`. A tag change needs no re-fetch (it isn't stored on a person), so it recomputes from `window._budgetRegs` and restores the open `.budchurch` cids + scroll. If it regresses, check nothing put `RENDER.budget()` back. |
+| The Data Import designated list says "Undo" instead of "Unallocate" | `ovRow(o, actionLabel)` in `_renderAllocCards` — one row builder, two labels; cardB passes `'Undo'`, cardC `'Unallocate'`. Both call the same `undoOverride`. |
+| A button in a `.rowsb` row eats the whole width and squashes the text beside it | `.btn` is `display:block;width:100%`, and inside a flex row that `width:100%` becomes the **flex-basis**. Use `btn … sm` (which sets `width:auto`) + `flex:0 0 auto`, and give the text block `flex:1;min-width:0`. Third occurrence of this exact bug (2026-07-08 Confirm button, 2026-08-02 Unallocate button). |
+| "Accommodation overrides" missing from Admin → Accommodation setup | **Moved 2026-08-02** to the **Accommodation allocations** screen (`_accomOverrideCard`), default-**collapsed**. The setup screen keeps a count + an "Open" button. It is **admin-only** there — `PATCH /accounts/churches/:id` is `admin:manage`, and a director reaches the allocations screen but would only get a 403. |
+| The overrides `<details>` slams shut whenever an allocation is changed | It must live **outside** `#accomBody` — `drawAccom()` rewrites that div on every allocation edit. Check the `paint('accom', …)` call in `RENDER.accom`. |
+
 ### 2026-07-31 — 14-item owner batch (reveal audit, admin accounts, church contacts, imports)
 
 | Symptom | Go to |

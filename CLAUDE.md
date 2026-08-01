@@ -4,6 +4,72 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Owner batch — the budget was discarding money a code said had been paid — 2026-08-02
+
+Four owner items. `npm run typecheck` clean, `npx vitest run` **877 pass / 56 files** (was 870;
+**+7**), `node --check` OK on the SPA body (range **927–8185**, re-derived) + `sw.js`.
+`sw.js` `camp-v81`→**`camp-v82`**. **No schema or migration change.**
+
+### 1 — 🟠 A DISCOUNT CODE'S TAG AND ITS INVOICES CAN DISAGREE, AND THE TAG DECIDES THE MONEY
+Owner: *"the grey '50% off' next to `YC26YP` doesn't seem accurate — it's been classed as a full
+sponsor."* **The pill was right. So was the tag. They contradict each other, and nothing said so.**
+
+Measured against prod, not inferred: `YC26YP` has 2 people, `75/150` and `95/190` — **exactly 50%
+off, both**. It is tagged `sponsor`. `personValue` hard-codes a `sponsor` code to **$0**, so **$170
+that genuinely arrived is being counted as nothing.** (`VICTORY50` is the same 50% tagged
+`discount` and is consistent — which is what makes `YC26YP` look like a mis-tag rather than a bug.)
+
+> ⚠️ **THE TWO FACTS HAVE DIFFERENT AUTHORS AND THE SCREEN PRESENTED THEM AS ONE.** The grey pill is
+> **measured** from the invoices; the dropdown under it is what a human **declared**, and the budget
+> follows the declaration. Read together they look like one statement about the code, which is
+> exactly why a straight contradiction survived unnoticed.
+
+New `averageDiscountPercent` + `discountTagConflict` in `budget.ts` (mirrored as `_avgDiscountPct` /
+`_discountTagConflict`); `DiscountCodeRow` gained `avgPercent` and `tagConflict`. The pill now reads
+**"50% Off on invoices"** — naming its source — and a warnbox states the disagreement in full.
+
+- **It REPORTS, it does not correct.** A code really can be a full sponsorship recorded badly
+  upstream. The invoices are evidence, not authority; only a human knows which side is wrong.
+  **Do not "fix" this by making the tag follow the money, or vice versa.**
+- **`inperson` is never checked.** A code that zeroes an invoice because cash was taken at the desk
+  is *expected* to read ~100% (prod: `YC26EFT`, `YC26CASH`), and a partial one is a legitimate
+  part-cash arrangement. There is nothing to contradict.
+- **`avgPercent: null` ≠ 0%.** Null means no invoice ever carried both figures; 0% means measured
+  and full price. Only null suppresses the check — conflating them invents false alarms.
+- `FULL_DISCOUNT_PERCENT` (97) is now **one constant shared** by the ticket-difference label and the
+  sponsor check. They were the same judgement written twice.
+
+### 2 — Classifying a code no longer resets the Budget screen
+`_saveDiscountTag` called `RENDER.budget()` — a full screen re-entry that re-fetches, collapses
+every `.budchurch`, and jumps to the top. The dropdown that triggers it lives in the **Discount
+codes** card near the bottom of a long screen, so the admin was thrown back to the top once per
+code they classified. Now **`_budRedraw()`**: a tag is applied at classification time and is not
+stored on a person, so there is **nothing to re-fetch** — it recomputes from `window._budgetRegs`
+and restores the open card ids + scroll position.
+
+### 3 — Data Import: "Undo" → "Unallocate" on the designated list
+`ovRow` takes an `actionLabel`; cardB keeps `Undo`, cardC says `Unallocate`. **Same `undoOverride`
+call from both** — only the wording differs, because the two reversals mean different things
+(back to the form's church vs back to the unallocated list).
+
+> ⚠️ **THIRD OCCURRENCE OF THE SAME FLEX BUG.** The button was a bare `.btn`, whose base CSS is
+> `display:block;width:100%` — and inside a flex row that `width:100%` becomes the **flex-basis**,
+> so it claimed most of the row and squeezed the name to nothing. Fixed identically to the Confirm
+> button in this same card on 2026-07-08: **`btn ghost sm`** (`.btn.sm` sets `width:auto`) +
+> `flex:0 0 auto;min-width:92px`, with `flex:1;min-width:0` on the text block.
+
+### 4 — "Accommodation overrides" moved to the allocations screen, collapsed
+Off Admin → Accommodation setup (which is for naming rooms) and onto **Accommodation allocations**,
+beside the map that shows where everyone sleeps. `_accomOverrideCard`, default-collapsed, summary
+counts **how many are SET** (not how many churches exist — that is the question a closed disclosure
+has to answer alone). Setup keeps a count + an "Open" button; the Churches tooltip was repointed.
+
+- ⚠️ **It is rendered OUTSIDE `#accomBody`.** `drawAccom()` rewrites that div on every allocation
+  change, so building the card inside it would slam the `<details>` shut — and drop a half-changed
+  `<select>` — every time someone placed a group in a room.
+- ⚠️ **Admin-only**, though the screen is director+admin: `PATCH /accounts/churches/:id` is
+  `admin:manage`, so a director would get a control that can only 403.
+
 ## 🔴 `GET /import/allocations` had been 500ing for a MONTH + the allocation cards — 2026-08-01
 
 Started as an owner request to collapse the Data Import cards; the follow-up report ("I still can't

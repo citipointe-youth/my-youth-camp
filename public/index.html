@@ -4102,14 +4102,37 @@ function computeBudgetClient(regs,filterId){
   return {grandTotal:churches.reduce((s,c)=>s+c.total,0),camperCount:churches.reduce((s,c)=>s+c.camperCount,0),
     leaderCount:churches.reduce((s,c)=>s+c.leaderCount,0),churchCount:churches.length,churches,fullAmount:full};
 }
-/** Mirrors src/services/budget.ts deriveDiscountPurpose. */
-function _deriveDiscountPurpose(pairs){
+/* Mirrors FULL_DISCOUNT_PERCENT in src/services/budget.ts — the point at which a discount covers
+   the whole ticket. Used by BOTH the purpose label and the tag-conflict check below, which must
+   agree with each other. */
+const _FULL_DISCOUNT_PCT=97;
+/** Mirrors src/services/budget.ts averageDiscountPercent. Null = no invoice evidence at all. */
+function _avgDiscountPct(pairs){
   const valid=pairs.filter(x=>x.cost>0&&x.discount!=null);
   if(!valid.length)return null;
-  const avgPercent=valid.reduce((s,x)=>s+(x.discount/x.cost)*100,0)/valid.length;
+  return valid.reduce((s,x)=>s+(x.discount/x.cost)*100,0)/valid.length;
+}
+/* Mirrors src/services/budget.ts discountTagConflict — read ITS doc comment before changing this.
+   The short version: the tag decides the money (`_personValue` hard-codes a `sponsor` code to $0)
+   while `avgPercent` is what the invoices actually recorded, and the two can disagree without
+   anything on screen saying so. Reports only; changes no figure. */
+function _discountTagConflict(tag,avgPercent){
+  if(tag==null||avgPercent==null)return null;
+  const pct=Math.round(avgPercent);
+  if(tag==='sponsor'&&avgPercent<_FULL_DISCOUNT_PCT)
+    return 'Tagged full sponsor, but the invoices record '+pct+'% off — the rest was paid and is being counted as $0.';
+  if(tag==='discount'&&avgPercent>=_FULL_DISCOUNT_PCT)
+    return 'Tagged discounted, but the invoices record the whole ticket discounted ('+pct+'%).';
+  return null;
+}
+/** Mirrors src/services/budget.ts deriveDiscountPurpose. */
+function _deriveDiscountPurpose(pairs){
+  const avgPercent=_avgDiscountPct(pairs);
+  if(avgPercent==null)return null;
+  const valid=pairs.filter(x=>x.cost>0&&x.discount!=null);
   // Item C (2026-07-28) — mirrors budget.ts: a ~full-price code is a "bought the wrong ticket,
   // pay the difference" correction, not a concession. Still counted, but labelled honestly.
-  if(avgPercent>=97)return 'Ticket difference — already paid';
+  if(avgPercent>=_FULL_DISCOUNT_PCT)return 'Ticket difference — already paid';
   const bucket=[25,50,70,100].find(b=>Math.abs(avgPercent-b)<=3);
   if(bucket!=null)return bucket+'% Off';
   const avgDollar=Math.round(valid.reduce((s,x)=>s+x.discount,0)/valid.length);
@@ -4124,8 +4147,12 @@ function computeDiscountSummaryClient(regs,filterId){
     counts.set(code,(counts.get(code)||0)+1);
     const cost=r.registrationCost==null?null:Number(r.registrationCost),discount=r.discountAmount==null?null:Number(r.discountAmount);
     if(cost!=null&&discount!=null){const pairs=pairsByCode.get(code)||[];pairs.push({cost,discount});pairsByCode.set(code,pairs);}});
-  const rows=[...counts.entries()].map(([code,count])=>({code,count,
-    purpose:_deriveDiscountPurpose(pairsByCode.get(code)||[]),tag:tags[code]||null}))
+  const rows=[...counts.entries()].map(([code,count])=>{
+    const pairs=pairsByCode.get(code)||[];
+    const avgPercent=_avgDiscountPct(pairs);
+    const tag=tags[code]||null;
+    return {code,count,purpose:_deriveDiscountPurpose(pairs),tag,avgPercent,
+      tagConflict:_discountTagConflict(tag,avgPercent)};})
     .sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
   return {totalInScope:people.length,rows};
 }
@@ -4285,14 +4312,22 @@ function drawBudget(){
      now leads with a plain count chip, matching the per-church chips — the ratio is still here
      (this IS the camp-wide scope, where "of N" is meaningful) but demoted to quieter secondary
      text so it can't be mistaken for the same figure as a per-church chip. */
-  const discRow=(r)=>`<div class="rowsb" style="padding:5px 0;flex-wrap:wrap;gap:6px">
-    <div style="min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="budcat-l">${esc(r.code)}</span><span class="budchip">×${r.count}</span>${r.purpose?`<span class="gradepill">${esc(r.purpose)}</span>`:''}</div>
+  /* ⚠️ THE GREY PILL DESCRIBES THE INVOICES, THE DROPDOWN BELOW IT DECIDES THE MONEY (2026-08-02).
+     They are two independent facts and the screen used to present them as one, which is how
+     `YC26YP` came to read "50% Off" while tagged Full sponsor — both statements true, mutually
+     contradictory, nothing marking them as such. The pill now says whose fact it is, and
+     `tagConflict` calls out the disagreement in words. See `discountTagConflict` in budget.ts for
+     why this reports rather than corrects. */
+  const discRow=(r)=>`<div style="padding:5px 0">
+   <div class="rowsb" style="flex-wrap:wrap;gap:6px">
+    <div style="min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="budcat-l">${esc(r.code)}</span><span class="budchip">×${r.count}</span>${r.purpose?`<span class="gradepill" title="Measured from the invoices of the people who used this code">${esc(r.purpose)} on invoices</span>`:''}</div>
     <span class="sub" style="white-space:nowrap">${r.count} of ${disc.totalInScope} registrants</span>
     ${_canBudget?`<div class="dc-ovr" style="flex:0 0 100%">
       <select style="width:100%" onchange="_saveDiscountTag('${esc(jsq(r.code))}',this.value)">
         <option value=""${r.tag?'':' selected'}>Plain ticket (no adjustment)</option>
         ${_BUD_TAGS.map(([v,l])=>`<option value="${v}"${r.tag===v?' selected':''}>${esc(l)}</option>`).join('')}
-      </select></div>`:''}</div>`;
+      </select></div>`:''}</div>
+   ${r.tagConflict?`<div class="warnbox" style="margin:6px 0 2px">${icSm('alert')} ${esc(r.tagConflict)}</div>`:''}</div>`;
   const discBody=disc.rows.length?disc.rows.map(discRow).join(''):'<p class="sub" style="padding:6px 0">No discount codes recorded.</p>';
   /* The "set the ticket prices" warning USED to live here. It was invisible: this card is
      collapsed by default and sits in the second column, so prod ran with both prices NULL and
@@ -4370,6 +4405,22 @@ function drawBudget(){
   if(box)box.innerHTML=`${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${upgSection}${priceSection}${discSection}</div></div>`;
 }
 function _budToggle(cid){const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.toggle('open');}
+/* Redraw the budget WITHOUT re-entering the screen (2026-08-02).
+   `drawBudget()` recomputes from `window._budgetRegs`, which a tag change does not invalidate —
+   a tag is applied at classification time, not stored on a person — so there is nothing to
+   re-fetch. What re-rendering DOES destroy is the reader's place: every `.budchurch` is collapsed
+   again and the page jumps. Since the dropdown that triggers this lives inside the Discount codes
+   card, near the bottom of a long screen, that reset threw the admin back to the top of a screen
+   they had to scroll all the way down to reach — once per code they classified.
+   So: capture which cards are open and where the page is, redraw, put both back. */
+function _budRedraw(){
+  const openCids=[...document.querySelectorAll('.budchurch.open')].map(c=>c.getAttribute('data-cid'));
+  const sc=_scroller(document.getElementById('budget'));
+  const y=sc?sc.scrollTop:0;
+  drawBudget();
+  openCids.forEach(cid=>{const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.add('open');});
+  if(sc)sc.scrollTop=y;
+}
 // Selecting the blank option clears the tag (the code reverts to a plain full-price ticket).
 async function _saveDiscountTag(code,tag){
   const t=Object.assign({},_budTags());
@@ -4379,7 +4430,7 @@ async function _saveDiscountTag(code,tag){
     SETTINGS.discountCodeTags=s.discountCodeTags||{};
     _invalidate('/settings');
     toast('Saved');
-    RENDER.budget();
+    _budRedraw();
   }catch(e){toast(e.message||'Could not save');}
 }
 function exportBudget(){
@@ -4406,11 +4457,36 @@ function exportBudget(){
    below is an auto-distribution view (7 per tent, leaders in separate tents). */
 RENDER.accom=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('accom','<p class="note-hint" style="margin-top:24px;text-align:center">Accommodation allocations are available to directors only.</p>','Accommodation allocations','');return;}
-  const [regs,rooms,alloc]=await Promise.all([api(_scoped('/registrants')),api('/accommodation/classrooms'),api('/accommodation/allocations')]);
+  const [regs,rooms,alloc,churches]=await Promise.all([api(_scoped('/registrants')),api('/accommodation/classrooms'),api('/accommodation/allocations'),api('/accounts/churches').catch(()=>[])]);
   window._accomRegs=regs||[];window._accomRooms=rooms||[];window._accomAlloc=alloc||{};
-  paint('accom','<div id="accomBody"></div>','Accommodation allocations','Classrooms by ministry & gender');
+  /* The overrides card sits OUTSIDE `#accomBody` on purpose — `drawAccom()` rewrites that div on
+     every allocation change, and rebuilding the card there would slam the <details> shut (and drop
+     a half-changed <select>) every time someone placed a group in a room. */
+  paint('accom',`<div id="accomBody"></div>${_accomOverrideCard(churches)}`,'Accommodation allocations','Classrooms by ministry & gender');
   drawAccom();
 };
+/* Moved here from Admin → Accommodation setup (2026-08-02, owner request). An override is a
+   statement about where a whole church SLEEPS, so it belongs beside the map that shows where
+   everyone is sleeping, not on the screen for naming rooms.
+   Collapsed by default: 28 churches is a long list, and it is set once and rarely revisited —
+   leaving it open pushed the allocation map itself off the fold. */
+function _accomOverrideCard(churches){
+  if(!ACTOR||ACTOR.role!=='admin')return '';   // PATCH /accounts/churches is admin:manage
+  const rows=(churches||[]).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(c=>`
+    <div class="rowsb" style="align-items:center;padding:8px 4px;border-top:1px solid var(--line)">
+      <span style="font-size:var(--t-sm);min-width:0">${esc(c.name)}</span>
+      <span style="flex:0 0 auto">${_accOvSel('aco_'+c.id,c.accommodationOverride,`saveChurchOverride('${c.id}',this.value)`)}</span>
+    </div>`).join('')||'<p class="note-hint">No churches yet.</p>';
+  const set=(churches||[]).filter(c=>c.accommodationOverride).length;
+  /* The count is how many overrides are SET, not how many churches exist — "is there anything
+     unusual in here?" is the question a collapsed summary has to answer on its own. `helpTip` goes
+     in the body, not the <summary>: tapping the bubble would also toggle the disclosure. */
+  return `<div class="card" style="margin-top:14px"><details>
+    <summary style="cursor:pointer;font-weight:700">Accommodation overrides (${set} set)</summary>
+    <p class="note-hint" style="text-align:left">Force every student and leader from a church into one accommodation type on the next registration upload. ${helpTip(_OVERRIDE_TIP)}</p>
+    ${rows}
+  </details></div>`;
+}
 // Mirrors src/services/accommodation-allocation.ts computeGroups (incl. PC-10 split).
 // Pool = classroom-kind people per church×gender, INCLUDING leaders (matches backend).
 const ACCOM_SPLIT_THRESHOLD=50;
@@ -5473,7 +5549,7 @@ RENDER.adminAccounts=async function(){
   const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option><option value="admin">Admin</option>`;
   paint('adminAccounts',`
     <div class="card"><div class="lbl" style="margin-top:0">Leadership accounts</div>${lr}</div>
-    <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('Churches named in a registration upload are auto-created, with the zone defaulting to Yellow — set the zone and login via Account Info. Accommodation overrides live in Admin → Accommodation setup.')}</div>
+    <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('Churches named in a registration upload are auto-created, with the zone defaulting to Yellow — set the zone and login via Account Info. Accommodation overrides live on the Accommodation allocations screen.')}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" onclick="randomizeChurchPasswords()">${icSm('key')} Randomise &amp; export passwords</button>
       <button class="btn ghost sm" onclick="bulkChurchUpdate()">${icSm('key')} Bulk Church Update</button></div></div>${cr}</div>
     <div class="card"><div class="lbl" style="margin-top:0">Add leadership account</div>
@@ -5705,11 +5781,11 @@ RENDER.adminAccom=async function(){
       </div>
     </div>`).join('')||'<p class="note-hint">No classroom rooms yet.</p>';
   const tileGrid=rooms&&rooms.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:4px">${tiles}</div>`:tiles;
-  const overrideRows=(churches||[]).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(c=>`
-    <div class="rowsb" style="align-items:center;padding:8px 4px;border-top:1px solid var(--line)">
-      <span style="font-size:var(--t-sm)">${esc(c.name)}</span>
-      <span style="flex:none">${_accOvSel('aco_'+c.id,c.accommodationOverride,`saveChurchOverride('${c.id}',this.value)`)}</span>
-    </div>`).join('')||'<p class="note-hint">No churches yet.</p>';
+  /* The "Accommodation overrides" card MOVED to the allocations screen (2026-08-02, owner
+     request) — see `_accomOverrideCard`. This screen is for naming rooms; an override is a
+     statement about where a church sleeps and belongs beside the map. `churches` is still
+     fetched above because the override count line below reports it. */
+  const ovSet=(churches||[]).filter(c=>c.accommodationOverride).length;
   // Item 23 (2026-07-28): a direct route from setup to the allocations map. Setting up rooms and
   // then placing groups in them is one continuous task, but the two screens had no link.
   paint('adminAccom',`<button class="btn" onclick="go('accom')">${icSm('classroom')} Go to accommodation allocations ${icSm('arrowr')}</button>
@@ -5721,7 +5797,10 @@ RENDER.adminAccom=async function(){
         <div style="flex:1;min-width:60px"><label style="font-size:.72rem">Cap</label><input class="fld" id="nrCap" type="number" inputmode="numeric" min="0" value="8"></div>
         <button class="btn sm" onclick="addRoom()" style="flex:none;align-self:flex-end">Add</button>
       </div></div>
-    <div class="card"><h3 class="sec" style="margin-top:0">Accommodation overrides ${helpTip(_OVERRIDE_TIP)}</h3>${overrideRows}</div>`,'Accommodation setup','Classrooms');
+    <div class="card"><div class="rowsb"><div>
+      <div style="font-weight:700">Accommodation overrides</div>
+      <div class="sub">${ovSet} set · now on the allocations screen</div></div>
+      <button class="btn ghost sm" style="flex:0 0 auto" onclick="go('accom')">Open ${icSm('arrowr')}</button></div></div>`,'Accommodation setup','Classrooms');
 };
 async function saveChurchOverride(id,value){
   try{await api('/accounts/churches/'+id,{method:'PATCH',body:{accommodationOverride:value||null}});toast('Saved');}catch(e){toast(e.message);}}
@@ -6819,23 +6898,33 @@ function _renderAllocCards(){
          so long, and it is what the owner asked to collapse out of the way.
        - everything else — a MANUAL override of a church the form did name. That is a deliberate
          correction someone made and is worth keeping visible.
-     Both keep Undo, and both are still fed by the same `_allocState.overrides` array, so an
-     Undo from either section behaves identically. */
+     Both sections still call the SAME `undoOverride`, and both are still fed by the same
+     `_allocState.overrides` array, so the action behaves identically from either — only the BUTTON
+     LABEL differs, because the two reversals mean different things to the reader: undoing a manual
+     override puts the person back on the church their form named, while reversing a designation
+     sends them back to the unallocated list. Hence "Unallocate" on cardC. */
   const ov=_allocState.overrides;
   const designated=ov.filter(o=>o.kind==='unallocated');
   const manual=ov.filter(o=>o.kind!=='unallocated');
-  const ovRow=o=>`
+  /* ⚠️ THE BUTTON MUST BE `btn ghost sm` WITH `flex:0 0 auto`, NOT A BARE `.btn`.
+     `.btn`'s base CSS is `display:block;width:100%`, and inside a flex row an unconstrained
+     `width:100%` becomes the item's FLEX-BASIS — so a plain `.btn` here claims most of the row and
+     squeezes the name/church text down to nothing on a phone. This is the identical bug fixed on
+     the Confirm button in this same card on 2026-07-08. `.btn.sm` sets `width:auto`; the fixed
+     `min-width` keeps the two lists' buttons on one visual column, and the text block's
+     `flex:1;min-width:0` is what lets it take whatever width is left over. */
+  const ovRow=(o,actionLabel)=>`
     <div class="card" style="padding:10px">
       <div class="rowsb">
-        <div>
+        <div style="flex:1;min-width:0">
           <div style="font-weight:600">${esc(o.personName)}</div>
           <div class="sub">${esc(o.formChurch||'—')} → <b>${esc(o.assignedChurchName)}</b></div>
           <div class="sub" style="font-size:var(--t-micro);color:var(--muted)">${o.kind==='unallocated'?'Allocated from unlisted':'Overridden'} · ${esc(o.createdBy)} · ${dtFmt(o.updatedAt)}</div>
         </div>
-        <button class="btn ghost" onclick="undoOverride('${esc(o.id)}')">Undo</button>
+        <button class="btn ghost sm" style="flex:0 0 auto;min-width:92px" onclick="undoOverride('${esc(o.id)}')">${esc(actionLabel)}</button>
       </div>
     </div>`;
-  const manualRows=manual.length?scroller(manual.map(ovRow).join(''),manual.length):'<p class="note-hint">No manual overrides yet.</p>';
+  const manualRows=manual.length?scroller(manual.map(o=>ovRow(o,'Undo')).join(''),manual.length):'<p class="note-hint">No manual overrides yet.</p>';
   /* ⚠ The override search input lives INSIDE this <details>. `_renderOvSearch` reads
      `#ovSearch`/`#ovSearchResults` by id and both bail on a null element, so a collapsed card is
      safe — a <details> keeps its children in the DOM either way. Do not move the search out. */
@@ -6853,8 +6942,8 @@ function _renderAllocCards(){
   // Also collapsed — this one is a record of completed work, not a to-do list.
   const cardC=designated.length?`<div class="card"><details>
     <summary style="cursor:pointer;font-weight:700">Designated from “OTHER” (${designated.length})</summary>
-    <p class="note-hint" style="text-align:left">People who chose “OTHER – please specify below” and have since been given a church. Undo returns them to the unallocated list above.</p>
-    ${scroller(designated.map(ovRow).join(''),designated.length)}
+    <p class="note-hint" style="text-align:left">People who chose “OTHER – please specify below” and have since been given a church. Unallocate returns them to the unallocated list above.</p>
+    ${scroller(designated.map(o=>ovRow(o,'Unallocate')).join(''),designated.length)}
   </details></div>`:'';
 
   const errCard=_allocErrs.length?`<div class="card"><p class="err" style="display:block">Some allocation data could not be loaded, so the lists below may be incomplete: ${esc(_allocErrs.join(' · '))}</p></div>`:'';
