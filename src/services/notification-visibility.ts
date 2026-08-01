@@ -13,12 +13,24 @@ import type { Actor } from '../core/entities/user';
  * them — or worse, a leadersOnly incident alert reaching a church login.
  *
  * Pure: no I/O, no clock. `nowIso` is passed in.
+ *
+ * Belt-and-braces on expiry: every real caller reads from the repository's `findActive()`,
+ * which already filters `expires_at is null or expires_at > now()` before this function ever
+ * runs — so the check below is normally redundant in practice. It stays here anyway because
+ * this function claims to be the SINGLE SOURCE OF TRUTH for audience, and a claim like that
+ * has to hold for a caller that passes `findAll()` results too, not just the two that
+ * currently happen to pre-filter. Without it, an unfiltered caller would push an EXPIRED
+ * notice to phones. A null `expiresAt` means "never expires" and is unaffected.
  */
 export function canSeeNotification(
   actor: Pick<Actor, 'id' | 'role' | 'zone' | 'churchId'>,
   n: Notification,
   nowIso: string,
 ): boolean {
+  // An expired notice is visible to nobody — not even admin/director, who are otherwise
+  // exempt from scope checks below. Expiry is a lifecycle boundary, not an audience rule.
+  if (n.expiresAt && n.expiresAt <= nowIso) return false;
+
   // Scheduled notices are withheld from EVERY audience until their publish time passes.
   if (n.scheduledFor && n.scheduledFor > nowIso) return false;
 

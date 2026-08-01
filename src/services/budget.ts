@@ -121,6 +121,13 @@ export interface CategoryRow {
   valueMissingCount: number;
   /** a discount code consistently associated with this row, if any (UI hint). */
   codeHint?: string | null;
+  /**
+   * The distribution of per-person values behind `lineTotal`, descending by value. A person
+   * with no recorded value (see `valueMissingCount`) is folded into the `value: 0` bucket, so
+   * `valueBreakdown.reduce((s,b)=>s+b.count,0) === count` always. Populated for every row —
+   * a uniform row simply has one entry — so the UI has one field to read regardless of shape.
+   */
+  valueBreakdown: { value: number; count: number }[];
 }
 
 export interface ChurchBudget {
@@ -219,8 +226,9 @@ export function personValue(p: BudgetPerson, cls: TicketClass, prices: BasePrice
 interface Bucket {
   count: number;
   total: number;
-  /** distinct per-person values seen, so a uniform unit price can be reported. */
-  values: Set<number>;
+  /** per-person value → how many people contributed exactly that value, so a uniform unit
+   * price can be reported AND (2026-08-01) a mixed row can show its full distribution. */
+  values: Map<number, number>;
   missing: number;
   codes: Map<string, number>;
 }
@@ -230,17 +238,30 @@ type Scope = Map<TicketClass, Bucket>;
 function addToScope(scope: Scope, p: BudgetPerson, cls: TicketClass, value: number | null): void {
   let b = scope.get(cls);
   if (!b) {
-    b = { count: 0, total: 0, values: new Set(), missing: 0, codes: new Map() };
+    b = { count: 0, total: 0, values: new Map(), missing: 0, codes: new Map() };
     scope.set(cls, b);
   }
   b.count++;
   if (value == null) b.missing++;
   else {
     b.total += value;
-    b.values.add(value);
+    b.values.set(value, (b.values.get(value) ?? 0) + 1);
   }
   const code = (p.discountCode ?? '').trim();
   if (code) b.codes.set(code, (b.codes.get(code) ?? 0) + 1);
+}
+
+/**
+ * `valueBreakdown` for one bucket — every recorded value, plus a `value: 0` bucket for anyone
+ * with no recorded value at all (mirrors how a missing value already contributes $0 to
+ * `lineTotal`, so the two stay consistent). Descending by value.
+ */
+function buildValueBreakdown(b: Bucket): { value: number; count: number }[] {
+  const merged = new Map(b.values);
+  if (b.missing > 0) merged.set(0, (merged.get(0) ?? 0) + b.missing);
+  return [...merged.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, c) => c.value - a.value);
 }
 
 function scopeToRows(scope: Scope): CategoryRow[] {
@@ -249,7 +270,7 @@ function scopeToRows(scope: Scope): CategoryRow[] {
     const b = scope.get(cls);
     if (!b) continue;
     // A single distinct value across the whole row (and nobody missing) → a real unit price.
-    const amount = b.values.size === 1 && b.missing === 0 ? [...b.values][0]! : null;
+    const amount = b.values.size === 1 && b.missing === 0 ? [...b.values.keys()][0]! : null;
     // A code is a "hint" only if EVERY person in the row shares the same single code.
     let codeHint: string | null = null;
     if (b.codes.size === 1) {
@@ -265,6 +286,7 @@ function scopeToRows(scope: Scope): CategoryRow[] {
       unrecorded: cls === 'unknown',
       valueMissingCount: b.missing,
       codeHint,
+      valueBreakdown: buildValueBreakdown(b),
     });
   }
   return rows;

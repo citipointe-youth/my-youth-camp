@@ -101,11 +101,63 @@ describe('duplicate registrations — Form import', () => {
       "First Name,Last Name,Gender,School Grade,Attendee's Church,Type\n" +
       'Ivy,Thompson,Female,Year 9,Victory Church,Tent\n' +
       'Ivy,Thompson,Female,Year 9,Victory Church,Classroom\n';
-    await svc.importCsv(admin, { csvData: noDate });
+    const res = await svc.importCsv(admin, { csvData: noDate });
     const all = await people.findAll();
     expect(all).toHaveLength(1);
-    // Last row wins, exactly as before the sort existed.
+    // Last row wins, exactly as before the sort existed — regression guard: no Date Submitted
+    // column must not perturb file order in any way.
     expect(all[0]!.accommodationKind).toBe('classroom');
+    // With no dates at all, both rows tie on the (empty) sort key — order could not be
+    // determined from the file, and the admin must be told that explicitly.
+    const dup = res.warnings.filter((w) => /appears 2 times/.test(w.message));
+    expect(dup).toHaveLength(1);
+    expect(dup[0]!.message).toMatch(/could NOT be used to determine/);
+  });
+
+  it('same-day duplicates (no time component) warn that order could not be determined', async () => {
+    // Both rows share the exact same date, no time — the sort key ties, so "most recent wins"
+    // cannot actually be applied even though the sort ran without error.
+    const sameDay =
+      `${HEADERS}\n` +
+      'Ivy,Thompson,Female,Year 9,0411928301,Victory Church,2026-08-01,Tent,Asthma\n' +
+      'Ivy,Thompson,Female,Year 9,0411928301,Victory Church,2026-08-01,Classroom,\n';
+    const res = await svc.importCsv(admin, { csvData: sameDay });
+    const dup = res.warnings.filter((w) => /appears 2 times/.test(w.message));
+    expect(dup).toHaveLength(1);
+    expect(dup[0]!.message).toMatch(/could NOT be used to determine which submission is most recent/);
+    expect(dup[0]!.message).toMatch(/Check the ticket type and cost by hand/);
+  });
+
+  it('a dated-with-time file orders same-day submissions correctly within the day', async () => {
+    // Same calendar day, but the second submission carries a later TIME — the upgrade must
+    // still win, and this time the file genuinely does tell us so (no "could not determine").
+    const sameDayWithTime =
+      `${HEADERS}\n` +
+      'Ivy,Thompson,Female,Year 9,0411928301,Victory Church,2026-08-01 09:00,Tent,Asthma\n' +
+      'Ivy,Thompson,Female,Year 9,0411928301,Victory Church,2026-08-01 14:32,Classroom,\n';
+    const res = await svc.importCsv(admin, { csvData: sameDayWithTime });
+    const all = await people.findAll();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.accommodationKind).toBe('classroom');
+    // Blank cell in the later (14:32) row must not clobber the earlier "Asthma" value.
+    expect(all[0]!.medicalConditions).toEqual(['Asthma']);
+    const dup = res.warnings.filter((w) => /appears 2 times/.test(w.message));
+    expect(dup).toHaveLength(1);
+    expect(dup[0]!.message).not.toMatch(/could NOT be used to determine/);
+  });
+
+  it('a dated-with-time file orders correctly even when listed out of order in the file', async () => {
+    // The later (16:00) submission is listed FIRST in the file — only the time-aware sort
+    // key, not row position, should determine the winner.
+    const outOfOrderWithTime =
+      `${HEADERS}\n` +
+      'Ivy,Thompson,Female,Year 9,0411928301,Victory Church,2026-08-01T16:00:00,Classroom,\n' +
+      'Ivy,Thompson,Female,Year 9,0411928301,Victory Church,2026-08-01T08:15:00,Tent,Asthma\n';
+    await svc.importCsv(admin, { csvData: outOfOrderWithTime });
+    const all = await people.findAll();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.accommodationKind).toBe('classroom');
+    expect(all[0]!.medicalConditions).toEqual(['Asthma']);
   });
 });
 

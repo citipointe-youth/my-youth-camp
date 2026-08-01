@@ -56,6 +56,50 @@ export function normalizeDate(raw?: string | null): string | null {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/**
+ * Sort key for ordering import rows by submission time, ascending (oldest/undated first).
+ *
+ * `normalizeDate` is DATE-ONLY by contract (other callers depend on that — do not widen it).
+ * This is a separate helper for the one caller that needs to order SAME-DAY submissions
+ * correctly: it keeps a TIME component when the raw cell actually has one (e.g.
+ * `04/07/2026 14:32` or an ISO datetime), while parsing today's real-world date-only export
+ * (`DD/MM/YYYY`) identically to before — same key for every date-only row on the same day, so
+ * the caller's existing stable-sort + rowNum tiebreak is unaffected. Undated/unparseable rows
+ * return `''`, which sorts before every real date, preserving "no Date Submitted column keeps
+ * original row order".
+ */
+export function submissionSortKey(raw?: string | null): string {
+  const v = (raw ?? '').trim();
+  if (!v) return '';
+  const iso = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(v);
+  if (iso) {
+    const date = iso[1] ?? '';
+    const time = iso[2] ?? '00:00:00';
+    return `${date}T${time.length === 5 ? `${time}:00` : time}`;
+  }
+  const m =
+    /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?/.exec(v);
+  if (!m) return '';
+  const dd = (m[1] ?? '').padStart(2, '0');
+  const mm = (m[2] ?? '').padStart(2, '0');
+  const yyyy = m[3] ?? '';
+  if (Number(mm) < 1 || Number(mm) > 12 || Number(dd) < 1 || Number(dd) > 31) return '';
+  // ⚠ A 12-HOUR TIME MUST BE CONVERTED, NOT TRUNCATED. Without this, `2:32 PM` parsed as
+  // `02:32` and sorted BEFORE an 11:00 AM submission the same day — silently inverting the
+  // "latest submission wins" merge this sort key exists to guarantee, with no warning to the
+  // admin because the key still looks perfectly valid. The meridiem is optional: a 24-hour
+  // time (`14:32`) has no suffix and is used as-is.
+  const mer = (m[7] ?? '').toLowerCase();
+  let hour = Number(m[4] ?? '0');
+  if (mer === 'pm' && hour < 12) hour += 12;
+  else if (mer === 'am' && hour === 12) hour = 0;
+  if (hour > 23) return '';
+  const hh = String(hour).padStart(2, '0');
+  const min = (m[5] ?? '00').padStart(2, '0');
+  const ss = (m[6] ?? '00').padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}`;
+}
+
 /** ISO → DD/MM/YYYY for export; anything not ISO passes through unchanged. */
 export function formatDateAU(iso?: string | null): string {
   const v = (iso ?? '').trim();

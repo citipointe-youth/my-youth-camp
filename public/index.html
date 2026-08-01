@@ -264,6 +264,23 @@ h3.sec{font-size:var(--t-xs);font-weight:800;letter-spacing:.08em;text-transform
 .budcat-l{font-size:var(--t-sm);font-weight:600;}
 .budcat-warn .budcat-l{color:var(--warn);}
 .budcat-warn .ic-svg{color:var(--warn);}
+/* Budget card row rebuild (2026-08-01) — fixed 3-track grid so a row never wraps mid-badge:
+   label (flexes, ellipsis) | qty (never shrinks) | amount (right-aligned, never shrinks). A
+   code chip or a mixed-value breakdown gets its OWN sub-line (grid-column:1/-1) under the
+   label, never inline with it — that's what used to break onto three lines. */
+.budrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;column-gap:8px;row-gap:2px;align-items:center;padding:6px 0;}
+.budrow-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--t-sm);font-weight:600;}
+.budrow-qty{white-space:nowrap;flex:none;font-size:var(--t-xs);color:var(--ink-2);text-align:right;}
+.budrow-amt{white-space:nowrap;flex:none;min-width:56px;text-align:right;}
+.budrow-sub{grid-column:1/-1;font-size:var(--t-2xs);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.budrow-warn .budrow-label{color:var(--warn);}
+.budrow-warn .ic-svg{color:var(--warn);}
+/* Compact inline code-usage chips (items 4/5) — "which codes did this ministry use" at a
+   glance, no per-code full-width row and no ratio (the per-church/camp-wide denominators
+   were being conflated — see the camp-wide discount row for the secondary ratio text). */
+.budchip-row{display:flex;flex-wrap:wrap;gap:6px;}
+.budchip{font-size:var(--t-2xs);font-weight:700;background:var(--chip);color:var(--violet-d);border-radius:999px;padding:3px 9px;white-space:nowrap;}
+.budchip b{font-weight:800;}
 /* A7/PC-12: classroom-allocation room cards as wrapping narrow tiles */
 .accom-rooms{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;align-items:start;}
 .accom-rooms>.card{margin-bottom:0;}
@@ -1927,21 +1944,67 @@ function _vpShortfall(){
      resize listener that called it;
    - the restore runs in a `finally`-style double rAF, so a throw mid-kick cannot strand the
      document with 200px of dead scroll space. */
-var _VP_KICK_COOLDOWN=600,_vpKicking=false,_vpKickAt=0,_vpKicks=0;
+/* ⚠️ THE KICK IS SELF-TRIGGERING — THIS IS WHY THE SCHEDULING BELOW LOOKS OVER-BUILT.
+   (2026-08-01) Owner reported the pull-down "jitters up/down rapidly, ~10 times in a second,
+   then settles correctly", about half the time. Root cause: a kick changes layout, so iOS fires
+   `visualViewport.resize`, and that listener scheduled ANOTHER kick 120ms later. The cooldown is
+   measured from the kick's START, so an echo landing after it had lapsed passed the guard and
+   kicked again — which fired another resize. On top of that the fixed launch volley
+   ([120,400,900,1600]) was not coalesced with anything, so launch attempts stacked on the echoes.
+   Every kick makes iOS animate its chrome, and that animation is the visible jitter. It settled
+   only when the shortfall finally hit 0 and every path started early-returning, which is exactly
+   why it looked like "jitter, then correct".
+   The old comment claimed "at most one of these does any work" — only true once a kick has already
+   SUCCEEDED, and iOS does not resize instantly.
+   Three rules now, and all three matter:
+     1. every trigger goes through `_vpKickSoon`, which COALESCES — a burst collapses to one kick;
+     2. a resize arriving within `_VP_KICK_SETTLE` of our own kick is OUR ECHO and is ignored;
+     3. no fixed volley — after a kick we VERIFY once and only re-kick if the shortfall survived,
+        capped at `_VP_KICK_MAX` so a device that simply ignores us cannot oscillate forever.
+   `_VP_KICK_VERIFY` MUST stay greater than `_VP_KICK_COOLDOWN`, or the retry lands inside its own
+   cooldown, early-returns, and the chain dies silently after one attempt. */
+var _VP_KICK_COOLDOWN=900,_VP_KICK_SETTLE=500,_VP_KICK_VERIFY=1000,_VP_KICK_MAX=5;
+var _vpKicking=false,_vpKickAt=0,_vpKicks=0,_vpTries=0,_vpTimer=0;
+/* One pending kick at a time. Later callers replace the pending timer rather than adding to it,
+   so N triggers in quick succession cost exactly one kick. */
+function _vpKickSoon(ms){
+  try{
+    if(_vpTries>=_VP_KICK_MAX)return;
+    if(_vpTimer)clearTimeout(_vpTimer);
+    _vpTimer=setTimeout(function(){_vpTimer=0;_vpKick();},ms);
+  }catch(_){}
+}
+/* A discrete user-level event (rotate, return from background, keyboard dismissed) is a genuinely
+   new situation, so it gets a fresh budget. Deliberately NOT called from the resize listener —
+   resize is the echo path, and resetting there would restore the unbounded oscillation. */
+function _vpKickReset(){_vpTries=0;}
 function _vpKick(){
   try{
     if(_vpKicking)return;
+    if(_vpShortfall()<=0){_vpTries=0;return;}   // it worked (or never applied) — release the budget
+    if(_vpTries>=_VP_KICK_MAX)return;
     var now=Date.now();
-    if(now-_vpKickAt<_VP_KICK_COOLDOWN)return;
-    if(_vpShortfall()<=0)return;
+    /* ⚠️ A COOLDOWN BLOCK MUST RESCHEDULE, NOT DROP. `_vpKickSoon` coalesces by REPLACING the
+       pending timer, so a late resize echo can cancel the verify-retry queued by `restore()`;
+       if that replacement then lands inside the cooldown and simply returned, the retry chain
+       would die and a device that ignored the first kick would never be kicked again — the fix
+       silently stopping after one attempt. Caught by the isolation harness (2026-08-01), which
+       modelled the iOS chrome animation as a STREAM of resize events rather than a single echo.
+       Re-arming here is safe: the shortfall and try-cap checks above have already run, so this
+       cannot spin. */
+    if(now-_vpKickAt<_VP_KICK_COOLDOWN){_vpKickSoon(_VP_KICK_COOLDOWN-(now-_vpKickAt)+40);return;}
     var ae=document.activeElement;
     if(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))return;
-    _vpKicking=true;_vpKickAt=now;_vpKicks++;
+    _vpKicking=true;_vpKickAt=now;_vpKicks++;_vpTries++;
     var de=document.documentElement,sc=document.scrollingElement||de;
     var y=sc.scrollTop,prev=de.style.minHeight;
     var restore=function(){
       try{de.style.minHeight=prev;sc.scrollTop=y;}catch(_){}
       _vpKicking=false;
+      /* Verify rather than assume. If iOS took the hint the shortfall is now 0 and this retry
+         early-returns above; if it did not, this is the ONLY thing that schedules another kick,
+         so attempts stay ~1s apart instead of stacking. */
+      _vpKickSoon(_VP_KICK_VERIFY);
     };
     try{
       de.style.minHeight=(window.innerHeight+200)+'px';
@@ -1953,21 +2016,31 @@ function _vpKick(){
 }
 /* Launch is the first trigger, and its timing is not observable from here — the shortfall has been
    seen at 58px and 62px on different screens, so iOS is still moving things around well after the
-   first frame. Retry over the first couple of seconds rather than guessing one moment; each attempt
-   early-returns the instant the shortfall is 0, so at most one of these does any work. */
+   first frame. That uncertainty is now handled by the verify-then-retry chain in `restore()`
+   rather than by firing a spread of timers and hoping one lands (which is what caused the
+   2026-08-01 jitter — see the block comment on `_vpKick`). */
 requestAnimationFrame(_vpKick);
-[120,400,900,1600].forEach(function(ms){setTimeout(_vpKick,ms);});
-window.addEventListener('load',function(){setTimeout(_vpKick,60);});
-window.addEventListener('pageshow',function(){setTimeout(_vpKick,60);});
+/* The fixed [120,400,900,1600] volley is GONE. Those four timers were not coalesced with each
+   other or with the resize echo, which is what let attempts stack into the visible jitter. One
+   seeded attempt is enough now: if it does not take, `restore()` schedules the retry itself. */
+_vpKickSoon(120);
+window.addEventListener('load',function(){_vpKickSoon(60);});
+window.addEventListener('pageshow',function(){_vpKickReset();_vpKickSoon(60);});
 document.addEventListener('visibilitychange',function(){
-  if(!document.hidden)setTimeout(_vpKick,120);   // returning from background
+  if(!document.hidden){_vpKickReset();_vpKickSoon(120);}   // returning from background
 });
-window.addEventListener('orientationchange',function(){setTimeout(_vpKick,350);});
+window.addEventListener('orientationchange',function(){_vpKickReset();_vpKickSoon(350);});
 /* The keyboard-dismiss trigger. 120ms lets the viewport settle first — kicking mid-animation just
-   burns the cooldown on a measurement that is about to change. */
-if(window.visualViewport)window.visualViewport.addEventListener('resize',function(){setTimeout(_vpKick,120);});
+   burns the cooldown on a measurement that is about to change.
+   ⚠️ THE ECHO GUARD IS THE JITTER FIX (2026-08-01). Our own kick resizes the viewport, so without
+   this the listener re-entered the kick it was caused by. Do not remove it, and do not call
+   `_vpKickReset()` here — resize is the echo path. */
+if(window.visualViewport)window.visualViewport.addEventListener('resize',function(){
+  if(Date.now()-_vpKickAt<_VP_KICK_SETTLE)return;
+  _vpKickSoon(120);
+});
 document.addEventListener('focusout',function(e){
-  if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))setTimeout(_vpKick,220);
+  if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)){_vpKickReset();_vpKickSoon(220);}
 });
 /* VIEWPORT READOUT — KEPT DELIBERATELY, was built as a throwaway on 2026-07-31 and earned its place.
 
@@ -2049,7 +2122,13 @@ function _vpDbgRender(){
       ['screen-nav (unpaintable)', r?n(((window.screen&&window.screen.height)||0)-r.bottom):'-'],
       // Distinguishes "the kick never ran" from "it ran and iOS ignored it" — without this, a
       // SHORTFALL of 0 could equally mean the bug just did not occur on this launch.
-      ['kicks fired', _vpKicks]
+      ['kicks fired', _vpKicks],
+      // Jitter diagnosis (2026-08-01): `kicks fired` alone cannot tell a smooth single kick from
+      // the oscillation the owner reported. `tries` is the retry budget consumed since the last
+      // discrete trigger — it should read 1 on a launch that worked, and only climb toward
+      // _VP_KICK_MAX when iOS is genuinely ignoring the kick. A high `kicks fired` with `tries`
+      // back at 0 means repeated NEW triggers, not a runaway retry chain.
+      ['kick tries', _vpTries+' / '+_VP_KICK_MAX]
     ];
     box.innerHTML=rows.map(function(x){
       var hot=/^(GAP|REAL GAP|SHORTFALL)/.test(x[0])&&x[1]!=='-'&&Math.abs(parseFloat(x[1]))>1;
@@ -3684,24 +3763,32 @@ function _budTags(){return (SETTINGS&&SETTINGS.discountCodeTags)||{};}
    same thing as `unrecorded` (true only for the 'unknown' accommodation row). `lineTotal` is
    always the exact sum of the members' individual values, whatever `amount` says — that is what
    keeps the grand-total-equals-sum-of-rows invariant true. */
+/* valueBreakdown (2026-08-01) — mirrors budget.ts's buildValueBreakdown EXACTLY: a person with
+   no recorded value folds into the value:0 bucket (same reasoning as budget.ts — a missing
+   value already contributes $0 to lineTotal), so breakdown counts always sum to row.count. */
+function _budValueBreakdown(b){
+  const merged=new Map(b.values);
+  if(b.missing>0)merged.set(0,(merged.get(0)||0)+b.missing);
+  return [...merged.entries()].map(([value,count])=>({value,count})).sort((a,c)=>c.value-a.value);
+}
 function _budScopeRows(people,tags,prices){
   const by=new Map();
   people.forEach(p=>{
     const cls=_classifyTicket(p,tags);
     const val=_personValue(p,cls,prices);
     let b=by.get(cls);
-    if(!b){b={count:0,total:0,values:new Set(),missing:0,codes:new Map()};by.set(cls,b);}
+    if(!b){b={count:0,total:0,values:new Map(),missing:0,codes:new Map()};by.set(cls,b);}
     b.count++;
-    if(val==null)b.missing++;else{b.total+=val;b.values.add(val);}
+    if(val==null)b.missing++;else{b.total+=val;b.values.set(val,(b.values.get(val)||0)+1);}
     const c=(p.discountCode||'').trim();if(c)b.codes.set(c,(b.codes.get(c)||0)+1);
   });
   const rows=[];
   _BUD_CLASSES.forEach(([cls])=>{
     const b=by.get(cls);if(!b)return;
-    const amount=(b.values.size===1&&b.missing===0)?[...b.values][0]:null;
+    const amount=(b.values.size===1&&b.missing===0)?[...b.values.keys()][0]:null;
     let hint=null;if(b.codes.size===1){const [code,n]=[...b.codes.entries()][0];if(n===b.count)hint=code;}
     rows.push({key:cls,label:_budRowLabel(cls,amount),amount,count:b.count,lineTotal:b.total,
-      unrecorded:cls==='unknown',valueMissingCount:b.missing,codeHint:hint});
+      unrecorded:cls==='unknown',valueMissingCount:b.missing,codeHint:hint,valueBreakdown:_budValueBreakdown(b)});
   });
   return rows;
 }
@@ -3788,14 +3875,16 @@ RENDER.budget=async function(){
    Read-only on purpose: the classification dropdown stays in the camp-wide card, because a tag
    applies to the CODE across the whole camp. Two editable copies of one setting, one per
    church, would read as a per-church setting and it isn't. */
+/* Item 4/5 (2026-08-01): a plain count chip, not a "N of total" ratio — the per-church
+   denominator (church headcount) and the camp-wide card's denominator (camp registrants) were
+   two different numbers dressed as the same fact, which is what made the code-usage figures
+   read as contradictory. The camp-wide card keeps its ratio (as quieter secondary text); this
+   one is scannable at a glance instead. */
 function _budChurchCodes(c){
   const rows=c.discountCodes||[];
   if(!rows.length)return '';
-  const total=(c.camperCount||0)+(c.leaderCount||0);
-  return `<div class="lbl" style="margin:10px 0 4px">Discount codes</div>`
-    +rows.map(r=>`<div class="rowsb budcat" style="padding:5px 0">
-      <div style="flex:1;min-width:0"><span class="budcat-l">${esc(r.code)}</span>${r.purpose?`<span class="gradepill">${esc(r.purpose)}</span>`:''}</div>
-      <b style="white-space:nowrap;min-width:70px;text-align:right">${r.count} of ${total}</b></div>`).join('');
+  return `<div class="lbl" style="margin:10px 0 4px">Discount codes</div>
+    <div class="budchip-row">${rows.map(r=>`<span class="budchip">${esc(r.code)} <b>×${r.count}</b></span>`).join('')}</div>`;
 }
 function drawBudget(){
   const scope=sel('budChurch')||'all';
@@ -3804,12 +3893,30 @@ function drawBudget(){
   const head=`<div class="hero" style="margin-bottom:14px"><div class="k">Total registration fees received</div>
     <div class="big" style="font-size:var(--t-xl);margin-top:6px">${_money(rep.grandTotal)}</div>
     <div class="cd" style="margin-top:8px"><div class="meta">${rep.camperCount} campers · ${rep.leaderCount} leaders · ${rep.churchCount} ${rep.churchCount===1?'church':'churches'}</div></div></div>`;
-  // A row's unit price reads "—" rather than "$0" when its members paid different amounts:
-  // writing $0 there would say "free" while the line total says otherwise.
-  const catRow=(r)=>`<div class="rowsb budcat${r.unrecorded?' budcat-warn':''}" style="padding:5px 0">
-    <div style="flex:1;min-width:0"><span class="budcat-l">${esc(r.label)}</span>${r.codeHint?`<span class="gradepill">${esc(r.codeHint)}</span>`:''}${r.unrecorded?` ${icSm('alert')}`:''}${r.valueMissingCount&&!r.unrecorded?`<span class="gradepill">${r.valueMissingCount} no cost</span>`:''}</div>
-    <div class="sub" style="white-space:nowrap">${r.count} × ${r.amount==null?'—':_money(r.amount)}</div>
-    <b style="min-width:70px;text-align:right">${_money(r.lineTotal)}</b></div>`;
+  /* Item 1/2 (2026-08-01) — fixed 3-track row (label | qty | amount), no wrapping, and the
+     old "N × —" placeholder for a mixed-value row is replaced by a real breakdown sub-line
+     (item 2). `valueBreakdown` (mirrors budget.ts) always sums to `count`, so when there's
+     more than one distinct value the row genuinely has mixed contributions; a single-entry
+     breakdown (even with some members missing a value, folded into the $0 bucket) still reads
+     as a uniform unit price. `unrecorded` keeps its own warning-triangle treatment regardless
+     of whether it happens to be mixed — that's a different flag, not a synonym for mixed. */
+  const catRow=(r)=>{
+    const bd=r.valueBreakdown||[];
+    const mixed=bd.length>1;
+    const unitAmount=bd.length?bd[0].value:(r.amount||0);
+    const plainLabel=(_BUD_CLASS_LABEL[r.key]||r.label)+(mixed&&!r.unrecorded?' (mixed)':'');
+    const qty=mixed?`${r.count} ${r.count===1?'person':'people'}`:`${r.count} × ${_money(unitAmount)}`;
+    const subParts=[];
+    if(r.codeHint)subParts.push(esc(r.codeHint));
+    if(mixed)subParts.push(bd.map(x=>`${x.count} × ${_money(x.value)}`).join(' · '));
+    else if(r.valueMissingCount&&!r.unrecorded)subParts.push(`${r.valueMissingCount} no cost`);
+    const sub=subParts.length?`<div class="budrow-sub">↳ ${subParts.join(' · ')}</div>`:'';
+    return `<div class="budrow${r.unrecorded?' budrow-warn':''}">
+      <div class="budrow-label">${esc(plainLabel)}${r.unrecorded?' '+icSm('alert'):''}</div>
+      <div class="budrow-qty">${qty}</div>
+      <b class="budrow-amt">${_money(r.lineTotal)}</b>
+      ${sub}</div>`;
+  };
   const grp=(title,rows)=>rows.length?`<div class="lbl" style="margin:10px 0 4px">${title}</div>${rows.map(catRow).join('')}`:'';
   const single=scope!=='all';
   const churchCard=(c)=>{
@@ -3824,7 +3931,6 @@ function drawBudget(){
         ${grp('Campers',c.campers)}
         ${grp('Leaders',c.leaders)}
         ${_budChurchCodes(c)}
-        <div class="rowsb" style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px"><b>Church total</b><b>${_money(c.total)}</b></div>
       </div></div>`;
   };
   const body=rep.churches.length?`<div class="wide-cards">${rep.churches.map(churchCard).join('')}</div>`:emptyState('star','No registrations yet — import students to see the budget.');
@@ -3833,9 +3939,13 @@ function drawBudget(){
   /* The classification dropdown (2026-07-29) REPLACED the old per-code dollar field
      ("Mark paid in full"). A tag now implies the value, so there is nothing to type: see
      `_personValue`. Blank = a plain full-price ticket. */
+  /* Item 4 (2026-08-01): the camp-wide panel keeps its own denominator (camp registrants) but
+     now leads with a plain count chip, matching the per-church chips — the ratio is still here
+     (this IS the camp-wide scope, where "of N" is meaningful) but demoted to quieter secondary
+     text so it can't be mistaken for the same figure as a per-church chip. */
   const discRow=(r)=>`<div class="rowsb" style="padding:5px 0;flex-wrap:wrap;gap:6px">
-    <div style="min-width:0"><span class="budcat-l">${esc(r.code)}</span>${r.purpose?`<span class="gradepill">${esc(r.purpose)}</span>`:''}</div>
-    <b style="white-space:nowrap">${r.count} used of ${disc.totalInScope}</b>
+    <div style="min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="budcat-l">${esc(r.code)}</span><span class="budchip">×${r.count}</span>${r.purpose?`<span class="gradepill">${esc(r.purpose)}</span>`:''}</div>
+    <span class="sub" style="white-space:nowrap">${r.count} of ${disc.totalInScope} registrants</span>
     ${_canBudget?`<div class="dc-ovr" style="flex:0 0 100%">
       <select style="width:100%" onchange="_saveDiscountTag('${esc(jsq(r.code))}',this.value)">
         <option value=""${r.tag?'':' selected'}>Plain ticket (no adjustment)</option>

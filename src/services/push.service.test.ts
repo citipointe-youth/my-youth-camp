@@ -10,6 +10,8 @@ import {
   MAX_PUSH_SENDS_PER_TICK,
   PUSH_TITLE_MAX,
   isPushable,
+  PUSH_TICK_BUDGET_MS,
+  PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS,
 } from './push.service';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -519,6 +521,158 @@ describe('makePushService.sendForNotifications', () => {
     expect(res.pruned).toBe(0);
     const after = await subs.findByUser(u.id);
     expect(after.every((s) => s.lastSuccessAt != null && s.failureCount === 0)).toBe(true);
+  });
+
+  /**
+   * Defect 3 (2026-08-01): every test above injects `sleep: async () => {}`, which never
+   * models wall-clock cost at all — the fan-out could take 93 real seconds against a 30s
+   * ceiling and every one of those tests would still pass. These tests model TIME instead:
+   * vitest's fake timers virtualize the REAL (non-stubbed) `setTimeout`-based `sleep` plus a
+   * stubbed `sendOne` latency, so `Promise.all`/concurrency/`await` ordering all run for
+   * real — only the clock is fake. That is what lets the assertion below distinguish "the
+   * send loop is actually concurrent" from "the send loop is sequential but fast in test
+   * because nothing really waits" (a hand-rolled elapsed-ms counter can't see concurrency;
+   * fake timers can, because chained `setTimeout`s from parallel tasks interleave exactly as
+   * they would on a real clock).
+   *
+   * ⚠ Verified these FAIL against the pre-2026-08-01 implementation: that loop was strictly
+   * sequential and slept `Math.floor(random()*PUSH_JITTER_MS)` BEFORE EVERY send. With
+   * `random` pinned to 1 (full 4000ms jitter every time) a 40-send tick needs
+   * 40 × (4000 + 325) ≈ 173 SECONDS of virtual time — `advanceTimersByTimeAsync` is only
+   * given `PUSH_TICK_BUDGET_MS` (30s) below, so `settled` would still be `false` and the
+   * assertion fails. Confirmed by reasoning against the old sequential-loop source (see the
+   * HISTORICAL BUG comment on `MAX_PUSH_SENDS_PER_TICK` in push.service.ts) rather than by
+   * re-reverting the file, since the fix is already in place.
+   */
+  describe('worst-case timing — defects 1 and 2 (fan-out cannot finish in 30s; oversized notice never sent)', () => {
+    const SEND_LATENCY_MS = 325;
+
+    function mockDelayedSend(): void {
+      vi.spyOn(webpush, 'sendNotification').mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve({ statusCode: 201 } as never), SEND_LATENCY_MS);
+          }),
+      );
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('a full-cap tick (40 sends, worst-case jitter) completes within PUSH_TICK_BUDGET_MS', async () => {
+      vi.useFakeTimers();
+      mockDelayedSend();
+
+      const svc = makePushService({
+        subscriptions: subs,
+        notifications: notifs,
+        env: VAPID_ENV,
+        // Real (setTimeout-based) default sleep — fake timers virtualize it.
+        // random pinned to the maximum so every send draws the FULL jitter window: the true
+        // worst case, not an average-case guess.
+        random: () => 1,
+      });
+
+      // 10 church notices x 4 devices = 40 sends, exactly MAX_PUSH_SENDS_PER_TICK.
+      const users: User[] = [];
+      const ns: Notification[] = [];
+      for (let i = 0; i < 10; i++) {
+        const uid = `u${i}`;
+        users.push(user({ id: uid, role: 'church', churchId: `c${i}`, zone: null }));
+        await addDevices(uid, 4);
+        const n = notif({ id: `n${i}`, scope: 'church', churchId: `c${i}`, targetUserId: uid });
+        ns.push(n);
+        await notifs.save(n);
+      }
+
+      const resultPromise = svc.sendForNotifications(ns, users, settings());
+      let settled = false;
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      resultPromise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(PUSH_TICK_BUDGET_MS);
+      expect(settled).toBe(true);
+
+      const res = await resultPromise;
+      expect(res.attempted).toBe(40);
+      expect(res.deferred).toBe(0);
+    });
+
+    it('an oversized single notice (104 devices, over the cap) is still sent whole within PUSH_TICK_BUDGET_MS', async () => {
+      vi.useFakeTimers();
+      mockDelayedSend();
+
+      const svc = makePushService({
+        subscriptions: subs,
+        notifications: notifs,
+        env: VAPID_ENV,
+        random: () => 1,
+      });
+
+      // Stands in for the real camp-wide shape (~26 churches x ~4 devices) as one oversized
+      // notice — the case that used to be deferred on every one of the 288 ticks a day,
+      // forever, because it alone always exceeded MAX_PUSH_SENDS_PER_TICK.
+      const uid = 'u-camp-wide';
+      const u = user({ id: uid, role: 'admin', zone: null });
+      await addDevices(uid, 104);
+      const n = notif({ id: 'n-big', scope: 'camp', targetUserId: null });
+      await notifs.save(n);
+
+      const resultPromise = svc.sendForNotifications([n], [u], settings());
+      let settled = false;
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      resultPromise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(PUSH_TICK_BUDGET_MS);
+      expect(settled).toBe(true);
+
+      const res = await resultPromise;
+      // Forward-progress guarantee (defect 2): an oversized notice must eventually be sent
+      // whole, not deferred forever.
+      expect(res.attempted).toBe(104);
+      expect(res.deferred).toBe(0);
+    });
+
+    it('a notice past PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS is not sent, but says so in the log', async () => {
+      // The ceiling is the one place the starvation bug survives by design: past it, a notice
+      // is deferred forever. That is tolerable ONLY because it is observable — the original
+      // bug was so hard to find precisely because `deferred` was counted and never surfaced.
+      // This test pins the observability, not the dropping.
+      const svc = makePushService({
+        subscriptions: subs,
+        notifications: notifs,
+        env: VAPID_ENV,
+        sleep: async () => {},
+        random: () => 0,
+      });
+
+      const uid = 'u-pathological';
+      const u = user({ id: uid, role: 'admin', zone: null });
+      const size = PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS + 1;
+      await addDevices(uid, size);
+      const n = notif({ id: 'n-huge', scope: 'camp', targetUserId: null });
+      await notifs.save(n);
+
+      const errs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((m) => {
+        errs.push(String(m));
+      });
+
+      const res = await svc.sendForNotifications([n], [u], settings());
+      spy.mockRestore();
+
+      expect(res.attempted).toBe(0);
+      expect(res.deferred).toBe(size);
+      // Never claimed, so a later fix (or a raised ceiling) can still deliver it.
+      const after = await notifs.findById('n-huge');
+      expect(after?.pushSentAt).toBeNull();
+      expect(errs.some((e) => e.includes('n-huge') && e.includes('NOT SENT'))).toBe(true);
+    });
   });
 
   describe('sendTestToUser', () => {

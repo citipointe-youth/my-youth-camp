@@ -106,6 +106,30 @@ describe('canSeeNotification', () => {
     expect(canSeeNotification(actor({ id: 'usr_boys' }), n, NOW)).toBe(true);
     expect(canSeeNotification(actor({ id: 'usr_girls' }), n, NOW)).toBe(true);
   });
+
+  // ---- expiry (belt-and-braces on top of findActive()) --------------------------------
+
+  it('hides an expired camp-scope notice from every role, including admin/director', () => {
+    const n = notif({ scope: 'camp', expiresAt: '2026-09-29T01:00:00.000Z' });
+    for (const role of ['church', 'firstAid', 'zoneLeader', 'director', 'admin'] as const) {
+      expect(canSeeNotification(actor({ role }), n, NOW)).toBe(false);
+    }
+  });
+
+  it('hides a notice that expires at exactly now', () => {
+    const n = notif({ scope: 'camp', expiresAt: NOW });
+    expect(canSeeNotification(actor({ role: 'admin' }), n, NOW)).toBe(false);
+  });
+
+  it('shows a notice whose expiry is still in the future', () => {
+    const n = notif({ scope: 'camp', expiresAt: '2026-09-29T03:00:00.000Z' });
+    expect(canSeeNotification(actor(), n, NOW)).toBe(true);
+  });
+
+  it('a null expiresAt means the notice never expires', () => {
+    const n = notif({ scope: 'camp', expiresAt: null });
+    expect(canSeeNotification(actor(), n, NOW)).toBe(true);
+  });
 });
 
 describe('publishedAt / byPublishedDesc', () => {

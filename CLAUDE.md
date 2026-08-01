@@ -1,5 +1,184 @@
 # CLAUDE.md — Youth Camp Platform
 
+## Independent review of the 2026-07-30/31 work — five defects fixed + budget cards — 2026-08-01
+
+An independent review of the previous two days (30 commits, ~8,600 insertions) against the
+then-current `HEAD` (`57e0dc2`). The gate was re-run and confirmed the claims below it:
+`npm run typecheck` clean, `npx vitest run` **832 pass / 54 files** as documented. Five defects
+were found, all fixed here, plus the owner's Budget-screen rebuild and a follow-up fix to the
+2026-07-31 viewport kick. `npm run typecheck` clean, `npx vitest run` = **850 pass / 54 files**
+(was 832; **+18**). SPA + `sw.js` `node --check` OK. `sw.js` `camp-v74`→**`camp-v76`**
+(v75 budget cards, v76 viewport jitter). **No schema or migration change** — next migration is
+still `0021`.
+
+### 1 — 🔴 THE PUSH FAN-OUT COULD NOT FINISH INSIDE `maxDuration: 30`, AND FAILED PERMANENTLY
+The block comment sized the per-tick cap against *"concurrency 10 and ~325ms/send"* and concluded
+a capped tick cost **~3.5s**. **That concurrency was never implemented.** The loop was strictly
+sequential AND slept the jitter *before every individual send* (`sleep(random() * PUSH_JITTER_MS)`,
+mean 2000ms), so a full-cap tick cost `40 × ~2325ms ≈ 93 SECONDS` against a 30s ceiling — killed at
+roughly send 13 of 40.
+
+> ⚠️ This does not degrade gracefully, which is why it ranked above everything else found.
+> `claimForPush` sets `push_sent_at` BEFORE the send loop and **the claim is permanent**, so every
+> notice not reached before the kill is never pushed and never retried. Realistic trigger: 26
+> church logins hitting their window boundary together at one device each ≈ 60s → about half the
+> churches silently never get their check-in warning.
+
+Fixed: sends are flattened to one task per notice×device, each awaits its own jitter *in parallel*,
+then passes through a small counting semaphore (**`PUSH_SEND_CONCURRENCY = 10`**). Worst case is now
+`PUSH_JITTER_MS + ceil(N / PUSH_SEND_CONCURRENCY) × ~325ms` ≈ **5.3s** for a full cap. New
+**`PUSH_TICK_BUDGET_MS = 30_000`** records the ceiling the arithmetic must respect. **Latent, not
+live** — prod had 2 subscriptions, so it would have first failed at camp scale, after the training-day
+install.
+
+### 2 — 🔴 A notice larger than the per-tick cap could NEVER be sent
+`if (item.subs.length <= budget)` with `budget` starting at 40 meant a notice with 41+ subscriptions
+failed on **every** tick, forever — deferred 288 times a day until it expired. The reachable case is
+the worst one: an **urgent camp-wide notice** reaches every login (~104+ subscriptions). The comment's
+defence ("the next tick picks it up") holds for many small notices, never for one large one.
+Fixed with a forward-progress guarantee: when nothing else is claimable, the **largest** notice is
+claimed **alone** (safe now that the send loop has real concurrency).
+
+> ⚠️ **`PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS` WAS FIRST SET TO 200 FROM THE WRONG NUMBER** —
+> "~156 = 26 churches × 6 devices". That undercounts twice: prod has **28** churches and **every
+> church has TWO gender-scoped logins** (`b-`/`g-`), so a camp-wide notice reaches ~56 church
+> accounts plus oversight — ~224 sends at 4 devices each, i.e. **over the ceiling**, so the single
+> most important notice the system can send would still have been dropped. Now **400**, derived
+> from the time budget (~17s) rather than a headcount, so it survives the camp growing again.
+> **Size this against the ACCOUNT count, never the church count.**
+
+A notice past the ceiling now logs `NOT SENT` naming the id and size (no title/body — the
+lock-screen rule). The original bug was hard to find precisely because `deferred` was counted and
+never surfaced; it must never fail silently again. It is deliberately **not claimed**, so raising
+the ceiling later still delivers it.
+
+### 3 — The 587 lines of push tests were structurally incapable of catching #1
+Every test injected `sleep: async () => {}`, so wall-clock cost was never modelled. Same failure
+shape as the `VAPID_ENV = 'pub'/'priv'` fixture that let table-text reach production: **a fixture
+too weak to exercise the class of bug it appears to cover.** Timing is now modelled with fake
+timers, a stubbed 325ms send latency and worst-case jitter, asserting completion inside
+`PUSH_TICK_BUDGET_MS`. These fail against the old loop (~173s of virtual time needed). A further
+test pins the ceiling's observability and that an over-ceiling notice stays unclaimed.
+
+### 4 — `canSeeNotification` did not enforce expiry, though it claimed to
+It is documented as the SINGLE SOURCE OF TRUTH for audience "including expiry" and is used in both
+directions (feed, and the push audience resolver) — but there was no `expiresAt` check. Harmless in
+practice because both callers pre-filter via `findActive()`; a live trap for the next caller, since
+passing `findAll()` results would push **expired** notices to phones. The check is now in the
+function (belt-and-braces with `findActive()`, verified against every caller first) and the
+docstring describes the relationship honestly.
+
+### 5 — Same-day duplicate registrations were still not ordered
+The item-7 sort (2026-07-31) keyed on `normalizeDate`, which is **date-only by contract**. Verified
+against the real export (`../Sample Data New/Form-Submissions_*.csv`): values are date-only
+`DD/MM/YYYY` (`21/05/2026` confirms day-first), so the sort *does* work and its `rowNum` tiebreak is
+correctly stable — **but two submissions on the SAME DAY tie** and fall back to original file order,
+which Elvanto does not guarantee is chronological. "Register, then re-register an hour later to
+upgrade" is a same-day action, so the exact scenario the fix was written for was the one case it
+could not order.
+
+New **`submissionSortKey()`** in `elvanto-mapping.ts` (a SEPARATE helper — `normalizeDate` keeps its
+date-only contract, other callers depend on it) keeps a time component when the cell has one and
+parses today's date-only format identically. When duplicates genuinely tie, the warning now says the
+file's order **could not** determine which is most recent and to check by hand, instead of falsely
+promising "latest wins".
+
+> ⚠️ **A 12-HOUR TIME MUST BE CONVERTED, NOT TRUNCATED.** The first version of this helper accepted
+> `2:32 PM` and dropped the meridiem, yielding `02:32` — sorting an afternoon submission BEFORE an
+> 11:00 AM one and silently inverting the merge the key exists to guarantee, with no warning because
+> the key still looked valid. The 12am/12pm boundary is the case naive `+12` arithmetic breaks;
+> there are tests for both.
+
+### Budget screen — cards restructured (owner request)
+> *"almost impossible to follow in terms of quickly understanding code usage and total money for
+> each ministry."* Owner reviewed three options and chose **keep the cards, restructure each one** —
+> a summary table and a two-tab split were both explicitly REJECTED. Don't reintroduce them.
+
+Each category row is a fixed 3-track grid (`.budrow`, `minmax(0,1fr) auto auto`): label truncates
+with ellipsis, quantity and amount never wrap or shrink; code chips and value breakdowns move to
+their own `.budrow-sub` line. Four specific fixes, all owner-selected:
+- **`11 × —` is gone.** An em-dash unit price on a mixed row read as missing data; rows now show a
+  people count plus a real breakdown (`9 × $105 · 2 × $0`).
+- **The duplicated `Church total` row is gone** — the card header already carries it.
+- **The code-usage denominator is unified.** The card said `4 of 15` while the camp-wide panel said
+  `2 used of 217` — the same kind of fact against two different denominators (church vs camp
+  registrants), the single most confusing thing on the screen. The card now shows a plain `×N` chip
+  and the panel leads with the same chip, demoting the ratio to quiet secondary text.
+- **Per-church codes render as a compact inline chip row**, so "which codes did this ministry use"
+  is answerable without expanding anything.
+
+⚠️ **`valueBreakdown` was added to BOTH `src/services/budget.ts` and the SPA mirror**, not
+client-side only — the two copies drifting is a documented recurring failure here. `Bucket.values`
+became a `Map<value,count>`; `Σ breakdown counts === row.count` always, and the
+grand-total-equals-sum-of-rows invariant is unchanged and still tested. Per-church code counts are
+still **derived by scoping** `computeDiscountCodeSummary`, never counted a second way.
+**Not device-verified** — needs an eyeball at ~360px (ellipsis on long church names, `.budchip-row`
+wrapping) and at ≥980px (the `.bud-grid` split).
+
+## ✅ The viewport kick no longer jitters — the fix was self-triggering — 2026-08-01
+
+Owner: *"when the horizontal bar pull down triggers, half the time it will jitter up/down rapidly
+(10 times within 1 second) then it will be correctly pulled down."* SPA-only. `sw.js` → `camp-v76`.
+
+### Root cause: `_vpKick` re-entered the resize it caused
+A kick changes layout, so iOS fires `visualViewport.resize` — and that listener scheduled **another**
+kick 120ms later. The cooldown was measured from the kick's START, so an echo landing after it had
+lapsed passed the guard and kicked again, firing another resize. On top of that the launch volley
+`[120,400,900,1600]` was four **uncoalesced** timers stacking onto the echoes. Every kick makes iOS
+animate its chrome, and that animation is the visible jitter. It settled only once the shortfall hit
+0 and every path began early-returning — hence "jitter, then correct", and hence intermittent.
+
+> The old comment claimed *"each attempt early-returns the instant the shortfall is 0, so at most one
+> of these does any work."* That is only true once a kick has **already succeeded**, and iOS does not
+> resize instantly. Treat that sentence as the lesson: the guard you reason about statically is not
+> the guard that runs during a 600ms animation.
+
+### Three rules now, all load-bearing
+1. **Coalescing** — every trigger goes through `_vpKickSoon`, which REPLACES the pending timer, so a
+   burst collapses to one kick.
+2. **Echo suppression** — a resize within `_VP_KICK_SETTLE` (500ms) of our own kick is OUR echo and
+   is ignored. This is the loop-breaker. **Do not call `_vpKickReset()` from the resize listener** —
+   resize is the echo path, and resetting there restores the unbounded oscillation.
+3. **Verify-then-retry** — the fixed volley is GONE. `restore()` schedules one re-measure; only a
+   surviving shortfall kicks again, capped at `_VP_KICK_MAX` (5) roughly 1s apart.
+
+⚠️ **`_VP_KICK_VERIFY` MUST stay greater than `_VP_KICK_COOLDOWN`**, or the retry lands inside its own
+cooldown, early-returns, and the chain dies silently after one attempt.
+
+⚠️ **A COOLDOWN BLOCK MUST RESCHEDULE, NOT DROP.** Because `_vpKickSoon` coalesces by *replacing* the
+pending timer, a late resize echo can cancel the verify-retry queued by `restore()`; if that
+replacement then lands inside the cooldown and simply returned, the chain would die and a device that
+ignored the first kick would never be kicked again — the fix silently stopping after one attempt.
+**This bug was in the first version of this fix and was caught only by the harness below.**
+
+### Verified in isolation — `scripts/vpkick-harness.js` + `scripts/vpkick-compare.js`
+The real functions are extracted from `public/index.html` and run against stubbed globals and a fake
+clock (`node scripts/vpkick-harness.js <extracted.js>`; the extraction ranges are in the script
+header). Five scenarios pass: cooperative launch = **exactly 1 kick**; iOS ignoring = capped at 5,
+spaced ≥900ms; 5 rapid triggers = **1 kick**; fast echo = bounded; focused input = **no kick**.
+The comparison run against the previous commit's code, on a device modelled as never accepting:
+
+| | kicks in 12s | spacing | stops? |
+|---|---|---|---|
+| Old (as shipped 2026-07-31) | **20**, unbounded | ~608ms | never |
+| New | **5** | ~944ms | yes, capped |
+
+Two harness failures on the way were STUB bugs, not code bugs, and are worth knowing before reusing
+it: **`_vpIsIOS` reads a BARE `navigator`**, not `window.navigator`, so a sandbox without it throws
+and every kick silently early-returns; and **`_vpKickAt` initialises to `0`**, so a fake clock
+starting at `0` blocks the very first cooldown check — start the clock at a real epoch value.
+Modelling the iOS chrome animation as a **stream** of resize events rather than a single echo is what
+exposed the retry-chain bug; a single-echo model shows nothing.
+
+### The readout gained `kick tries`
+`_vpTries + ' / ' + _VP_KICK_MAX`, beside `kicks fired` (five taps on the header title). `kicks fired`
+alone cannot tell a smooth single kick from an oscillation. On a good launch this reads **1 / 5**;
+climbing toward 5 means iOS is genuinely ignoring the kick, while a high `kicks fired` with `tries`
+back at 0 means repeated NEW triggers, not a runaway chain.
+
+**Still device-only.** The failure mode stays deliberately benign: if iOS ignores us the shortfall
+simply remains and the result is the old tall bar, never a clipped nav.
+
 ## 14-item owner batch — reveal audit, admin accounts, church contacts — 2026-07-31
 
 Owner bug/improvement list (14 numbered items). Backend + SPA + **migration `0020`**

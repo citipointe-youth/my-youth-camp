@@ -245,6 +245,58 @@ describe('computeBudget — amount vs lineTotal', () => {
   });
 });
 
+/* ---------------------------------------------------------------------------
+ * valueBreakdown (2026-08-01) — the per-row value distribution the phone-card rebuild needs
+ * to replace the "11 × —" placeholder with a real breakdown. Backend is the canonical shape;
+ * the SPA mirror (`_budScopeRows` in public/index.html) must match it field-for-field.
+ * ------------------------------------------------------------------------- */
+describe('computeBudget — valueBreakdown', () => {
+  it('a uniform row still reports amount as before, plus a single-entry breakdown', () => {
+    const people: BudgetPerson[] = [
+      p({ accommodationKind: 'tent', registrationCost: 180 }),
+      p({ accommodationKind: 'tent', registrationCost: 180 }),
+      p({ accommodationKind: 'tent', registrationCost: 180 }),
+    ];
+    const row = computeBudget(people).churches[0]!.campers[0]!;
+    expect(row.amount).toBe(180);
+    expect(row.valueBreakdown).toEqual([{ value: 180, count: 3 }]);
+    expect(row.valueBreakdown.reduce((s, b) => s + b.count, 0)).toBe(row.count);
+  });
+
+  it('a mixed row breaks down descending by value; counts sum to the row count', () => {
+    const people: BudgetPerson[] = [
+      ...Array.from({ length: 9 }, () => p({ accommodationKind: 'tent', registrationCost: 105 })),
+      ...Array.from({ length: 2 }, () =>
+        p({ accommodationKind: 'tent', registrationCost: 0, amountPaid: 0 }),
+      ),
+    ];
+    const row = computeBudget(people).churches[0]!.campers[0]!;
+    expect(row.count).toBe(11);
+    expect(row.amount).toBeNull(); // mixed — see the "× —" replacement this feeds
+    expect(row.valueBreakdown).toEqual([
+      { value: 105, count: 9 },
+      { value: 0, count: 2 },
+    ]);
+    expect(row.valueBreakdown.reduce((s, b) => s + b.count, 0)).toBe(row.count);
+    expect(row.lineTotal).toBe(9 * 105);
+  });
+
+  it('a person with nothing recorded folds into the value:0 bucket alongside a real $0', () => {
+    const people: BudgetPerson[] = [
+      p({ accommodationKind: 'tent', registrationCost: 90 }),
+      p({ accommodationKind: 'tent', registrationCost: 0, amountPaid: 0 }), // real $0
+      p({ accommodationKind: 'tent', registrationCost: null, amountPaid: null }), // nothing recorded
+    ];
+    const row = computeBudget(people).churches[0]!.campers[0]!;
+    expect(row.valueMissingCount).toBe(1);
+    expect(row.valueBreakdown).toEqual([
+      { value: 90, count: 1 },
+      { value: 0, count: 2 }, // the real $0 person + the missing person, merged
+    ]);
+    expect(row.valueBreakdown.reduce((s, b) => s + b.count, 0)).toBe(row.count);
+  });
+});
+
 describe('computeBudget — leaders get the same nine classes as campers', () => {
   it('a sponsored leader and a tent leader both classify and total correctly', () => {
     const tags: DiscountTagMap = { SPON: 'sponsor' };

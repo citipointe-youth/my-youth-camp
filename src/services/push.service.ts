@@ -20,9 +20,22 @@ import { nowISO } from '../utils/date';
  */
 
 /**
- * Maximum push sends attempted in a single tick.
+ * Wall-clock ceiling this whole module's arithmetic is built against.
  *
- * ⚠ THIS CAP IS LOAD-BEARING — do not raise it without re-doing the arithmetic below.
+ * Mirrors `vercel.json`'s `maxDuration: 30` for the serverless function
+ * `sendForNotifications` runs inside, invoked every 5 minutes by a pg_cron tick. Every
+ * constant below (`MAX_PUSH_SENDS_PER_TICK`, `PUSH_JITTER_MS`, `PUSH_SEND_CONCURRENCY`,
+ * `PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS`) exists to keep a worst-case tick comfortably under
+ * THIS number, with real headroom for cold start — not flush against it. The reason this
+ * matters more than an ordinary timeout: `claimForPush` sets `push_sent_at` on every claimed
+ * notice BEFORE the send loop, and that claim is PERMANENT. A notice claimed but not actually
+ * sent before the function is killed is never pushed and never retried — a timeout here does
+ * not degrade gracefully, it silently and permanently drops real alerts.
+ */
+export const PUSH_TICK_BUDGET_MS = 30_000;
+
+/**
+ * Maximum push sends attempted in a single tick under the NORMAL per-tick cap.
  *
  * All 26 church logins hit their check-in window boundary at the SAME instant, so one tick
  * can generate up to 26 notices at once. The fan-out unit is the DEVICE, not the account
@@ -30,29 +43,80 @@ import { nowISO } from '../utils/date';
  * church login and each installs it on their own phone), so ~4 leaders per church means
  * ~104 sends from those 26 notices; at 6 devices/church it is ~156.
  *
- * The serverless function has `maxDuration: 30`. At concurrency 10 and ~325ms/send, 104
- * sends is ~8.5s plus cold start, and 156 is ~13s — uncomfortably close, and the failure is
- * not graceful: `claimForPush` takes the `push_sent_at` claim BEFORE sending (design §5), so
- * a timeout loses those pushes PERMANENTLY. They are never retried.
+ * ⚠ HISTORICAL BUG, FIXED 2026-08-01 — this comment used to describe arithmetic the code
+ * never implemented. It claimed "concurrency 10 and ~325ms/send" while the send loop was
+ * actually a strictly sequential `for` loop that additionally `await`ed a random jitter sleep
+ * (mean 2000ms, up to 4000ms) BEFORE EVERY SEND. A full 40-send cap under that loop cost
+ * ~40 × 2325ms ≈ 93 SECONDS against the 30s ceiling — the function died around send 13 and
+ * every remaining claimed-but-unsent notice in that tick was permanently swallowed (see
+ * `PUSH_TICK_BUDGET_MS` above for why that failure mode is silent and unrecoverable).
  *
- * Capping at 40 keeps the worst tick to ~3.5s. The remainder is not lost — it is simply not
- * claimed, so the next tick picks it up. The warning has a 60-minute lead window and the tick
- * runs every 5 minutes, giving 12 ticks ≈ 480 sends of capacity for a ~104-send burst.
+ * The send loop is now ACTUALLY concurrent (`PUSH_SEND_CONCURRENCY` below) and the jitter is
+ * ACTUALLY a shared window rather than a per-send sequential delay (`PUSH_JITTER_MS` below),
+ * so the real worst-case wall clock for a capped tick is:
+ *   PUSH_JITTER_MS + ceil(MAX_PUSH_SENDS_PER_TICK / PUSH_SEND_CONCURRENCY) × ~325ms/send
+ *   = 4000 + ceil(40/10) × 325 = 4000 + 1300 = ~5.3s
+ * — comfortably inside `PUSH_TICK_BUDGET_MS`, with room for cold start and the DB round trips
+ * around the send loop (claim, audience resolution).
+ *
+ * The remainder past the cap is not lost — it is simply not claimed, so the next tick picks
+ * it up. The warning has a 60-minute lead window and the tick runs every 5 minutes, giving 12
+ * ticks ≈ 480 sends of capacity for a ~104-send burst. See `PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS`
+ * for the case a single notice's own audience exceeds this cap.
  */
 export const MAX_PUSH_SENDS_PER_TICK = 40;
+
+/**
+ * How many `sendOne()` calls may be in flight at once.
+ *
+ * This is the piece the old block comment (see the HISTORICAL BUG note above) described but
+ * the code never had — the send loop was fully sequential. A small in-module counting
+ * semaphore (see `sendForNotifications`) caps concurrent outbound HTTPS calls to the push
+ * services at this number; no dependency needed for a limit this small. 10 was the number the
+ * original (aspirational) design comment picked, and there's no evidence it needs to be
+ * higher — see `MAX_PUSH_SENDS_PER_TICK`'s worst-case arithmetic above.
+ */
+export const PUSH_SEND_CONCURRENCY = 10;
 
 /**
  * Milliseconds of random delay spread across a batch (§4.8).
  *
  * Without this, 100+ devices receive their notification within the same few milliseconds and
  * every leader opens the app at once — a self-inflicted thundering herd against `/home` at
- * exactly the moment the check-in rush is starting. The delay is random per send rather than
- * a fixed stagger so it costs no wall-clock time beyond the window itself.
+ * exactly the moment the check-in rush is starting.
  *
- * Kept well under the per-tick time budget above: 4s of jitter plus ~3.5s of sends still
- * leaves ample headroom inside `maxDuration: 30`.
+ * ⚠ Each send draws an INDEPENDENT random offset from this window, and — this is the part
+ * that was broken before 2026-08-01 — every offset is awaited BEFORE that send competes for a
+ * concurrency slot, not chained sequentially after the send ahead of it. So the wall-clock
+ * cost of jitter is bounded by the WINDOW itself (`PUSH_JITTER_MS`, i.e. ≤4s), not by
+ * (window × number of sends). That's what makes "spread 150 devices over 4 seconds" and
+ * "finish comfortably inside 30 seconds" both true at once — see `MAX_PUSH_SENDS_PER_TICK`'s
+ * worst-case arithmetic above.
  */
 export const PUSH_JITTER_MS = 4000;
+
+/**
+ * Absolute ceiling on how large a SINGLE oversized notice may be pushed to when it is let
+ * through the per-tick cap alone (see the forward-progress guarantee in
+ * `sendForNotifications`). A backstop against a pathological audience size, NOT a normal
+ * operating limit — a notice above it is deferred forever, which is the very bug the
+ * forward-progress guarantee exists to fix, so it must sit well above any real camp.
+ *
+ * ⚠ SIZE THIS AGAINST THE REAL ACCOUNT COUNT, NOT THE CHURCH COUNT. It was first set to 200
+ * on the basis of "~156 = 26 churches × 6 devices", which undercounts twice over: prod has 28
+ * churches, and every church has TWO gender-scoped logins (`b-`/`g-`), so a camp-wide urgent
+ * notice reaches ~56 church accounts plus zone leaders/directors/admins. At 4 devices each
+ * that is ~224 sends — over the old ceiling, so the single most important notice the system
+ * can send would have been silently dropped on every tick until it expired.
+ *
+ * 400 is set from the time budget rather than from a headcount, so it survives the camp
+ * growing again: at `PUSH_SEND_CONCURRENCY` it costs
+ * `PUSH_JITTER_MS + ceil(400/10) × 325ms ≈ 4000 + 13_000 = ~17s`, inside
+ * `PUSH_TICK_BUDGET_MS` with headroom for cold start and the DB round trips. Anything past
+ * this is a bug in audience resolution, and `sendForNotifications` logs it rather than
+ * dropping it silently.
+ */
+export const PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS = 400;
 
 /** Delete a subscription after this many consecutive non-fatal failures (design §4.4). */
 export const PUSH_FAILURE_LIMIT = 10;
@@ -441,6 +505,40 @@ export function makePushService(deps: PushServiceDeps) {
           deferred += item.subs.length;
         }
       }
+
+      // ⚠ FORWARD-PROGRESS GUARANTEE (defect fixed 2026-08-01). Before this, a notice whose
+      // own audience exceeded MAX_PUSH_SENDS_PER_TICK failed the `<=` check above on EVERY
+      // tick, forever — an urgent camp-wide notice (~26 churches × ~4 devices ≈ 104
+      // subscriptions, well over the 40 cap) would be deferred 288 times a day until it
+      // expired and was NEVER pushed. `claimable.length === 0` here means every notice this
+      // tick individually exceeded the budget (the loop above never got to push anything) —
+      // in that situation, let the single LARGEST notice through ALONE, ignoring the per-tick
+      // cap. It gets a whole tick to itself. This is safe specifically because the send loop
+      // below has real bounded concurrency now (`PUSH_SEND_CONCURRENCY`) — see
+      // `PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS` for why even this has a ceiling, and why a
+      // notice past THAT ceiling stays deferred rather than risk the 30s budget.
+      if (claimable.length === 0 && perNotif.length > 0) {
+        const largest = perNotif.reduce((a, b) => (b.subs.length > a.subs.length ? b : a));
+        if (largest.subs.length <= PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS) {
+          claimable.push(largest);
+          // `deferred` above already summed every item in perNotif (nothing was claimable),
+          // so un-defer exactly the one we are now claiming — keeps the count truthful.
+          deferred -= largest.subs.length;
+        } else {
+          // Past the backstop, so it stays deferred — i.e. it will never be sent. That is the
+          // original starvation bug surviving at a higher threshold, and the thing that made
+          // the original so hard to find was that it was SILENT: `deferred` is counted but
+          // nothing surfaces it. Say so in the runtime log, naming the notice and the size,
+          // so this shows up as a line to read rather than as an alert that never arrived.
+          // No `body`/`title` in the log line — see the lock-screen rule above.
+          console.error(
+            `[push] notice ${largest.n.id} has ${largest.subs.length} subscriptions, over the ` +
+              `PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS ceiling of ` +
+              `${PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS} — NOT SENT. Audience resolution is ` +
+              `probably wrong, or the camp has outgrown the ceiling.`,
+          );
+        }
+      }
       if (claimable.length === 0) return { ...empty, deferred };
 
       // Atomic claim — only the ids actually returned get pushed, so two overlapping ticks
@@ -452,40 +550,77 @@ export function makePushService(deps: PushServiceDeps) {
       let failed = 0;
       let pruned = 0;
 
+      // Flatten to one send task per (notice, device) pair up front. This is what lets the
+      // jitter window and the concurrency limit act on the whole batch at once instead of
+      // notice-by-notice — see the timing arithmetic on MAX_PUSH_SENDS_PER_TICK above.
+      interface SendTask {
+        sub: PushSubscription;
+        payload: ReturnType<typeof buildPushPayload>;
+      }
+      const tasks: SendTask[] = [];
       for (const item of claimable) {
         if (!claimedIds.has(item.n.id)) continue; // another tick got it
         const payload = buildPushPayload(item.n);
-        for (const sub of item.subs) {
-          // §4.8 jitter — see PUSH_JITTER_MS.
-          await sleep(Math.floor(random() * PUSH_JITTER_MS));
-          attempted += 1;
-          const outcome = await sendOne(sub, payload, cfg);
-          if (outcome === 'ok') {
-            succeeded += 1;
-            await deps.subscriptions.save({
-              ...sub,
-              lastSuccessAt: nowISO(),
-              failureCount: 0,
-            });
-          } else if (outcome === 'gone') {
-            pruned += 1;
-            await deps.subscriptions.deleteByEndpoint(sub.endpoint);
-          } else {
-            failed += 1;
-            const nextCount = sub.failureCount + 1;
-            if (nextCount >= PUSH_FAILURE_LIMIT) {
-              pruned += 1;
-              await deps.subscriptions.deleteByEndpoint(sub.endpoint);
-            } else {
-              await deps.subscriptions.save({
-                ...sub,
-                lastFailureAt: nowISO(),
-                failureCount: nextCount,
-              });
-            }
-          }
-        }
+        for (const sub of item.subs) tasks.push({ sub, payload });
       }
+
+      // A tiny counting semaphore — bounds concurrent `sendOne()` calls to
+      // PUSH_SEND_CONCURRENCY without pulling in a dependency for a limit this small.
+      let activeSends = 0;
+      const waiters: Array<() => void> = [];
+      async function acquireSendSlot(): Promise<void> {
+        if (activeSends < PUSH_SEND_CONCURRENCY) {
+          activeSends += 1;
+          return;
+        }
+        await new Promise<void>((resolve) => waiters.push(resolve));
+        activeSends += 1;
+      }
+      function releaseSendSlot(): void {
+        activeSends -= 1;
+        const next = waiters.shift();
+        if (next) next();
+      }
+
+      await Promise.all(
+        tasks.map(async (task) => {
+          // §4.8 jitter — see PUSH_JITTER_MS. Awaited BEFORE queueing for a concurrency slot,
+          // deliberately: every task's random wait runs in PARALLEL with every other task's,
+          // so the total jitter cost is bounded by the window itself, not by task count × window.
+          await sleep(Math.floor(random() * PUSH_JITTER_MS));
+          await acquireSendSlot();
+          try {
+            attempted += 1;
+            const outcome = await sendOne(task.sub, task.payload, cfg);
+            if (outcome === 'ok') {
+              succeeded += 1;
+              await deps.subscriptions.save({
+                ...task.sub,
+                lastSuccessAt: nowISO(),
+                failureCount: 0,
+              });
+            } else if (outcome === 'gone') {
+              pruned += 1;
+              await deps.subscriptions.deleteByEndpoint(task.sub.endpoint);
+            } else {
+              failed += 1;
+              const nextCount = task.sub.failureCount + 1;
+              if (nextCount >= PUSH_FAILURE_LIMIT) {
+                pruned += 1;
+                await deps.subscriptions.deleteByEndpoint(task.sub.endpoint);
+              } else {
+                await deps.subscriptions.save({
+                  ...task.sub,
+                  lastFailureAt: nowISO(),
+                  failureCount: nextCount,
+                });
+              }
+            }
+          } finally {
+            releaseSendSlot();
+          }
+        }),
+      );
 
       return { attempted, succeeded, failed, pruned, deferred };
     },

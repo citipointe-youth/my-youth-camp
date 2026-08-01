@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ELVANTO_HEADERS, cleanCareText, normalizeDate, formatDateAU,
-  parseGradeOrLeader, yesToConsent, field, titleCaseName,
+  parseGradeOrLeader, yesToConsent, field, titleCaseName, submissionSortKey,
 } from './elvanto-mapping';
 
 describe('elvanto-mapping', () => {
@@ -82,6 +82,38 @@ describe('elvanto-mapping', () => {
 
     it('handles non-ASCII letters', () => {
       expect(titleCaseName('JOSÉ')).toBe('José');
+    });
+  });
+
+  describe('submissionSortKey — 12-hour times', () => {
+    // The real Elvanto export is date-only, so these guard a FORMAT CHANGE. A 12-hour time
+    // that silently truncated its meridiem produced a valid-looking key that inverted the
+    // "latest submission wins" merge — the exact silent mis-order the sort key exists to stop.
+    it('orders an afternoon submission after a morning one on the same day', () => {
+      // Keys are compared as STRINGS by the caller's sort, so assert the string ordering.
+      const pm = submissionSortKey('04/07/2026 2:32 PM');
+      const am = submissionSortKey('04/07/2026 11:00 AM');
+      expect(pm > am).toBe(true);
+    });
+
+    it('converts pm hours and leaves am hours alone', () => {
+      expect(submissionSortKey('04/07/2026 2:32 PM')).toBe('2026-07-04T14:32:00');
+      expect(submissionSortKey('04/07/2026 11:00 AM')).toBe('2026-07-04T11:00:00');
+    });
+
+    it('handles the 12am/12pm boundary, where naive +12 arithmetic breaks', () => {
+      expect(submissionSortKey('04/07/2026 12:15 AM')).toBe('2026-07-04T00:15:00');
+      expect(submissionSortKey('04/07/2026 12:15 PM')).toBe('2026-07-04T12:15:00');
+    });
+
+    it('leaves a 24-hour time untouched and still parses date-only rows', () => {
+      expect(submissionSortKey('04/07/2026 14:32')).toBe('2026-07-04T14:32:00');
+      expect(submissionSortKey('04/07/2026')).toBe('2026-07-04T00:00:00');
+    });
+
+    it('returns the undated sort-first key for blank or unparseable input', () => {
+      expect(submissionSortKey('')).toBe('');
+      expect(submissionSortKey('not a date')).toBe('');
     });
   });
 });

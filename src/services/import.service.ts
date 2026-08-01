@@ -14,7 +14,8 @@ import { parseCsv } from '../utils/csv';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import {
-  cleanCareText, field, isBlankRow, normalizeDate, parseGradeOrLeader, titleCaseName, yesToConsent,
+  cleanCareText, field, isBlankRow, normalizeDate, parseGradeOrLeader, submissionSortKey,
+  titleCaseName, yesToConsent,
 } from './elvanto-mapping';
 import { invalidateDashboardCache } from './dashboard-cache';
 import { z } from 'zod';
@@ -82,12 +83,19 @@ export function makeImportService(
            the behaviour before this change — nothing regresses on a file that never had the
            duplicate problem).
          - `rowNum` is captured from the ORIGINAL position. Reporting a sorted index would point
-           the admin at the wrong line of their spreadsheet, which is worse than not reporting. */
+           the admin at the wrong line of their spreadsheet, which is worse than not reporting.
+
+         2026-08-01 follow-up: the sort key comes from `submissionSortKey`, not `normalizeDate`
+         — it keeps a TIME component when the cell has one, so a same-day upgrade ("register,
+         then re-register an hour later") orders correctly within the day instead of tying and
+         falling back to file order (which Elvanto does not guarantee is chronological). Today's
+         real export is date-only, so this parses identically to before for every current file;
+         see the duplicate-warning tie check below for the case this still cannot resolve. */
       const ordered = rawRows
         .map((row, idx) => ({
           row,
           rowNum: idx + 2,
-          submittedAt: normalizeDate(field(row, 'Date Submitted')) ?? '',
+          submittedAt: submissionSortKey(field(row, 'Date Submitted')),
         }))
         .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt) || a.rowNum - b.rowNum);
       const rows = ordered.map((o) => o.row);
@@ -96,6 +104,11 @@ export function makeImportService(
          Silent merging is correct behaviour but invisible: the admin has no way to know the
          cost they are looking at came from two registrations unless we say so. */
       const seenInFile = new Map<string, number>();
+      // Sort keys already seen per person (by nameChurchKey), so a duplicate whose ORDER could
+      // not actually be determined from the file — same-day/no-time tie, or no Date Submitted at
+      // all — gets a warning that says so, instead of implying "most recent wins" applied when
+      // it silently couldn't.
+      const seenSortKeys = new Map<string, string[]>();
 
       let created = 0;
       let updated = 0;
@@ -334,14 +347,23 @@ export function makeImportService(
           // Item 7: report a repeat submission for the same person in this same file.
           const timesSeen = (seenInFile.get(nck) ?? 0) + 1;
           seenInFile.set(nck, timesSeen);
+          // 2026-08-01: did this row TIE with an earlier one for the same person on the sort
+          // key? A tie (including two rows that both had no usable Date Submitted at all) means
+          // the file gave us no way to tell which submission is actually the most recent one —
+          // "most recent wins" could not be applied, and the admin needs to know that explicitly
+          // rather than trusting a result that's really just file order.
+          const priorKeys = seenSortKeys.get(nck) ?? [];
+          const orderUndetermined = priorKeys.includes(entry.submittedAt);
+          seenSortKeys.set(nck, [...priorKeys, entry.submittedAt]);
           if (timesSeen > 1) {
-            warnings.push({
-              row: rowNum,
-              message:
-                `${firstName} ${lastName} appears ${timesSeen} times in this file — ` +
+            const message = orderUndetermined
+              ? `${firstName} ${lastName} appears ${timesSeen} times in this file with the same ` +
+                `(or no) submission date/time — the file's order could NOT be used to determine ` +
+                `which submission is most recent. Check the ticket type and cost by hand.`
+              : `${firstName} ${lastName} appears ${timesSeen} times in this file — ` +
                 `the most recent submission wins field by field, and a blank cell in it keeps ` +
-                `the earlier value. Check the ticket type and cost.`,
-            });
+                `the earlier value. Check the ticket type and cost.`;
+            warnings.push({ row: rowNum, message });
           }
 
           const rowPhone = phoneKey(mobile);

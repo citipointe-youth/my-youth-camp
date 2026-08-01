@@ -169,6 +169,53 @@ check "expected vs actual" before touching code.
 >   (canvas colour, the bottom-strip fix); **`.sched-row .fld`** (compact editor rows);
 >   **`.setg input[type=time|date|number]`** (capped settings fields).
 
+> **2026-08-01 review fixes + budget cards + viewport jitter — new/changed symbols (grep the name).
+> Full rationale: CLAUDE.md, the two 2026-08-01 sections at the top.**
+> - **"A push notification never arrived" → `src/services/push.service.ts` FIRST, and check the
+>   Vercel runtime log for `[push] notice … NOT SENT`.** Three separate reasons a notice legitimately
+>   does not push, in the order to rule them out: (1) `isPushable(n)` — **normal priority is in-app
+>   only**, only urgent/incident/check-in-warning notices push at all; (2) the per-tick cap
+>   `MAX_PUSH_SENDS_PER_TICK` (40) deferred it to a later tick — normal, it is not lost; (3) its
+>   audience exceeded `PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS` (400), which logs `NOT SENT` and is a
+>   real defect. ⚠️ Do NOT diagnose this by reading `push_sent_at` alone — the claim is taken BEFORE
+>   sending, so a claimed row does not prove delivery.
+> - **`PUSH_TICK_BUDGET_MS` / `PUSH_SEND_CONCURRENCY` / `PUSH_JITTER_MS`** — the tick's time budget.
+>   If you change any of them, redo the arithmetic in the block comment: the old code was sequential
+>   with a per-send jitter sleep and needed ~93s against a 30s `maxDuration`, silently and
+>   permanently dropping the unsent remainder. The timing tests in `push.service.test.ts` use fake
+>   timers and a stubbed send latency — **a test that stubs `sleep` to a no-op cannot catch this.**
+> - **`canSeeNotification` now checks `expiresAt`** (`notification-visibility.ts`). Still the ONE copy
+>   of the audience rules, used forward (feed) and backward (push audience). "A leader sees/doesn't
+>   see a notice they shouldn't/should" → this function, never a second hand-rolled copy.
+> - **`submissionSortKey()`** (`elvanto-mapping.ts`) — orders Form-import rows by submission time.
+>   Separate from `normalizeDate`, which stays DATE-ONLY by contract. "Duplicate registration merged
+>   the wrong way round / cost looks like the older submission" → here. Same-day ties are reported to
+>   the admin as *"could not determine order"* rather than silently guessing. Handles 12-hour times
+>   (truncating the meridiem inverts the order — there are tests on the 12am/12pm boundary).
+> - **Budget cards restructured** — `.budrow` (fixed 3-track grid), `.budrow-sub` (code chip / value
+>   breakdown line), `.budchip-row`/`.budchip` (inline per-church code chips). `CategoryRow.valueBreakdown`
+>   exists in BOTH `src/services/budget.ts` and the SPA mirror `_budScopeRows`/`_budValueBreakdown` —
+>   change both together. "A budget row shows the wrong people count or a blank unit price" →
+>   `_budScopeRows` (mixed rows report a breakdown, never `× —`); "a per-church code count disagrees
+>   with the camp-wide panel" → they are the same scoped computation, so suspect the SCOPE argument,
+>   not the counting.
+> - **`_vpKickSoon(ms)` / `_vpKickReset()` / `_vpTries` / `_VP_KICK_SETTLE` / `_VP_KICK_VERIFY` /
+>   `_VP_KICK_MAX`** — the viewport kick's scheduler. **"The pull-down jitters up and down rapidly"
+>   → the kick is re-entering the resize it caused.** The kick changes layout → iOS fires
+>   `visualViewport.resize` → that listener schedules another kick. Three guards keep it smooth and
+>   all three are load-bearing: coalescing (`_vpKickSoon` replaces the pending timer), echo
+>   suppression (a resize within `_VP_KICK_SETTLE` of our own kick is ignored), and verify-then-retry
+>   capped at `_VP_KICK_MAX`. ⚠️ `_VP_KICK_VERIFY` must exceed `_VP_KICK_COOLDOWN`, and a
+>   cooldown-blocked kick must RESCHEDULE rather than return, or the retry chain dies after one
+>   attempt. **Turn on the readout (five taps on the header title) and read `kick tries` before
+>   editing anything** — `1 / 5` on a good launch; climbing to 5 means iOS is ignoring the kick.
+> - **`scripts/vpkick-harness.js` / `scripts/vpkick-compare.js`** — run the REAL extracted kick
+>   functions against stubbed globals and a fake clock, no device needed. Extraction ranges are in
+>   the script headers (re-derive them, they drift). Two stub traps: `_vpIsIOS` reads a **bare**
+>   `navigator`, and the fake clock must start at a real epoch value or `_vpKickAt = 0` blocks the
+>   first cooldown check. Model the iOS chrome animation as a **stream** of resize events — a
+>   single-echo model shows nothing.
+
 ## Frontend — `public/index.html` (single ~2,920-line SPA)
 
 This one file is the only real navigation cost in the repo. Map below (line numbers are a
