@@ -512,6 +512,7 @@ tolerate absence via `?? false`.
 | First aid has no Site map button | Removed 2026-07-31 (item 4). Deliberate — that was firstAid's only map route. |
 | A revealed number isn't tappable | `faRevealLeader` replaces the button with an `<a href="tel:">`; `reveal()` opens a sheet with a Call button. |
 | Data Import: designated-from-OTHER people missing | They moved to their own default-collapsed "Designated from OTHER" section (`_renderAllocCards`, `kind === 'unallocated'`). |
+| **"I can't see the Unallocated / Church overrides / Designated from OTHER cards"** | **(2026-08-01)** All three are `<details>` with **no `open`** — collapsed, each is one bold line carrying its count. Check the screen first: they render on **`RENDER.import`** (admin console → **Data Import** tile, or the pre-camp bottom-nav Data Import tab) — **not** Admin → Settings, **not** Records & Export. Then check the data: `cardC` renders only when `allocation_overrides` has ≥1 row with `kind='unallocated'`; `cardA`/`cardB` always render (with a "none yet" hint). Then the role: `allocation:manage` = **director + admin** only. |
 | Data Import list won't scroll / shows all rows | `.alloc-scroll` is applied only above `ALLOC_VISIBLE_ROWS` (4). CSS max-height and that constant must stay in step. |
 | Settings Save button off-screen or overlapping | `.setg-save` (`position:fixed`, z-index 105) + the `.setg-savepad` spacer. Must be fixed, not absolute. |
 | "Your day · N still to check in" missing on day 1 | Expected — `renderMyDay` returns '' while `campPhase()==='signin'`. |

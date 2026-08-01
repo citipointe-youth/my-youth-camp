@@ -1,5 +1,36 @@
 # CLAUDE.md — Youth Camp Platform
 
+> ⚠️ **The three "2026-08-02" headings below were misdated** — `git log` puts those commits on
+> **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
+> heading.
+
+## Data Import: all three allocation cards are collapsed by default — 2026-08-01
+
+Owner request. **SPA-only** (`public/index.html` `_renderAllocCards`) — no backend, schema or
+migration change. `npm run typecheck` clean, `npx vitest run` **866 pass / 55 files** (unchanged —
+browser-only code), `node --check` OK on the SPA body + `sw.js`. `sw.js` `camp-v79`→**`camp-v80`**.
+
+**Unallocated registrants**, **Church overrides** and **Designated from "OTHER"** are now all
+`<details>` with **no `open` attribute**. The count moved into each `<summary>`, so "is there
+anything to do here?" is still answerable without expanding anything, and the CSV upload card —
+the screen's actual primary job — stops being pushed off the fold by them. Item 8 (2026-07-31)
+collapsed only the third one; this finishes the job. **Do not add `open` to any of the three.**
+
+> ⚠️ **The "Override a church allocation" search input lives INSIDE cardB's `<details>`.** That is
+> safe — a closed `<details>` keeps its children in the DOM, and `_renderOvSearch` null-guards
+> `#ovSearchResults` — but do not move the search out of the disclosure on the assumption a
+> collapsed card is unreachable. Same for the per-person church `<select>` (`#alloc_<id>`) that
+> `allocatePerson` reads out of cardA.
+
+**Investigation that preceded it, worth not repeating:** the owner reported the
+designated-from-OTHER section as missing. It was not — the markup was live in prod
+(`camp-v79` served it), `allocation_overrides` held **4 rows, all `kind='unallocated'`**, and
+`cardC`'s only gate is `designated.length`. The cards render on **`RENDER.import`** (admin console
+→ Data Import tile, or the pre-camp bottom-nav Data Import tab) — **not** Admin → Settings and
+**not** Records & Export, which is where they were being looked for. A collapsed `<details>` is one
+bold line; that is easy to scroll past, which is part of why all three now look alike and carry
+counts.
+
 ## Budget: family invoices were silently unpriced, + ticket prices are now DERIVED — 2026-08-02 (3rd)
 
 `npm run typecheck` clean, `npx vitest run` **866 pass / 55 files** (was 850; **+16**), SPA + `sw.js`

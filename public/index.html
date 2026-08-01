@@ -6789,8 +6789,14 @@ function _renderAllocCards(){
      back to anything else. `_allocScroll` is applied only when there is something to scroll;
      wrapping a short list would leave a fixed-height box with dead space in it. */
   const scroller=(html,rows)=>rows>ALLOC_VISIBLE_ROWS?`<div class="alloc-scroll">${html}</div>`:html;
-  const cardA=`<div class="card"><div class="h3" style="margin-top:0">Unallocated registrants (${un.length})</div>
-    <p class="note-hint" style="text-align:left">These people chose “OTHER – please specify below” and have no church yet. Allocate each to a church.</p>${scroller(unRows,un.length)}</div>`;
+  /* All three cards are COLLAPSED BY DEFAULT (owner request 2026-08-02). This screen's primary
+     job is the CSV upload at the top; the allocation tools are a secondary task that was pushing
+     it off the fold. `<summary>` carries the count, so "is there anything to do here?" is still
+     answerable without opening anything. Do not add `open` to any of them. */
+  const cardA=`<div class="card"><details>
+    <summary style="cursor:pointer;font-weight:700">Unallocated registrants (${un.length})</summary>
+    <p class="note-hint" style="text-align:left">These people chose “OTHER – please specify below” and have no church yet. Allocate each to a church.</p>${scroller(unRows,un.length)}
+  </details></div>`;
 
   /* Item 8: the single "Church overrides / forced allocations" card is SPLIT IN TWO, because it
      was conflating two things the admin treats differently:
@@ -6816,17 +6822,21 @@ function _renderAllocCards(){
       </div>
     </div>`;
   const manualRows=manual.length?scroller(manual.map(ovRow).join(''),manual.length):'<p class="note-hint">No manual overrides yet.</p>';
-  const cardB=`<div class="card"><div class="h3" style="margin-top:0">Church overrides (${manual.length})</div>
+  /* ⚠ The override search input lives INSIDE this <details>. `_renderOvSearch` reads
+     `#ovSearch`/`#ovSearchResults` by id and both bail on a null element, so a collapsed card is
+     safe — a <details> keeps its children in the DOM either way. Do not move the search out. */
+  const cardB=`<div class="card"><details>
+    <summary style="cursor:pointer;font-weight:700">Church overrides (${manual.length})</summary>
     <p class="note-hint" style="text-align:left">People you moved to a different church than their form said. These persist across re-imports.</p>
     <div class="card" style="padding:10px;background:var(--paper)">
       <div class="lbl" style="margin-top:0">Override a church allocation</div>
       <input class="fld" id="ovSearch" placeholder="Search a registrant by name…" oninput="_renderOvSearch()">
       <div id="ovSearchResults"></div>
     </div>
-    ${manualRows}</div>`;
+    ${manualRows}
+  </details></div>`;
 
-  // Collapsed by default (no `open` attribute) — this is a record of completed work, not a
-  // to-do list, so it should not compete for space with the two cards above it.
+  // Also collapsed — this one is a record of completed work, not a to-do list.
   const cardC=designated.length?`<div class="card"><details>
     <summary style="cursor:pointer;font-weight:700">Designated from “OTHER” (${designated.length})</summary>
     <p class="note-hint" style="text-align:left">People who chose “OTHER – please specify below” and have since been given a church. Undo returns them to the unallocated list above.</p>
