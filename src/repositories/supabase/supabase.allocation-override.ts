@@ -2,7 +2,22 @@ import type { SqlClient } from './client';
 import type { IAllocationOverrideRepository } from '../interfaces/entity-repositories';
 import type { AllocationOverride } from '../../core/entities/allocation-override';
 
-function toRow(r: Record<string, unknown>): AllocationOverride {
+/**
+ * ⚠️ `timestamptz` comes back from postgres.js as a **Date**, never a string. This mapper used to
+ * cast `created_at`/`updated_at` `as string` — a TYPE-LEVEL LIE that compiles clean and then hands
+ * the service a Date. `listOverrides` sorts on `b.updatedAt.localeCompare(...)`, so
+ * `GET /import/allocations` threw `localeCompare is not a function` on EVERY call, 500ing since the
+ * feature shipped (2026-07-03). The SPA's `.catch(()=>[])` swallowed it, so the screen just showed
+ * "Church overrides (0)" and never rendered the Designated-from-OTHER card at all.
+ * Every other repo in this folder already does `(r['x'] as Date).toISOString()`; this was the one
+ * that didn't. **A timestamp column must be converted here, not cast.**
+ */
+function toISO(v: unknown): string {
+  if (v instanceof Date) return v.toISOString();
+  return typeof v === 'string' ? v : '';
+}
+
+export function toAllocationOverride(r: Record<string, unknown>): AllocationOverride {
   return {
     id: r['id'] as string,
     personId: r['person_id'] as string,
@@ -15,8 +30,8 @@ function toRow(r: Record<string, unknown>): AllocationOverride {
     kind: (r['kind'] as AllocationOverride['kind']) ?? 'unallocated',
     note: (r['note'] as string | null) ?? null,
     createdBy: (r['created_by'] as string) ?? '',
-    createdAt: r['created_at'] as string,
-    updatedAt: r['updated_at'] as string,
+    createdAt: toISO(r['created_at']),
+    updatedAt: toISO(r['updated_at']),
   };
 }
 
@@ -40,17 +55,17 @@ export class SupabaseAllocationOverrideRepository implements IAllocationOverride
   async init(): Promise<void> {}
 
   async findAll(): Promise<AllocationOverride[]> {
-    return (await this.sql`select * from allocation_overrides`).map(toRow);
+    return (await this.sql`select * from allocation_overrides`).map(toAllocationOverride);
   }
 
   async findById(id: string): Promise<AllocationOverride | null> {
     const rows = await this.sql`select * from allocation_overrides where id = ${id}`;
-    return rows[0] ? toRow(rows[0]) : null;
+    return rows[0] ? toAllocationOverride(rows[0]) : null;
   }
 
   async findByPersonId(personId: string): Promise<AllocationOverride | null> {
     const rows = await this.sql`select * from allocation_overrides where person_id = ${personId} limit 1`;
-    return rows[0] ? toRow(rows[0]) : null;
+    return rows[0] ? toAllocationOverride(rows[0]) : null;
   }
 
   async save(o: AllocationOverride): Promise<AllocationOverride> {

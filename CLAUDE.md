@@ -4,11 +4,56 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
-## Data Import: all three allocation cards are collapsed by default — 2026-08-01
+## 🔴 `GET /import/allocations` had been 500ing for a MONTH + the allocation cards — 2026-08-01
 
-Owner request. **SPA-only** (`public/index.html` `_renderAllocCards`) — no backend, schema or
-migration change. `npm run typecheck` clean, `npx vitest run` **866 pass / 55 files** (unchanged —
-browser-only code), `node --check` OK on the SPA body + `sw.js`. `sw.js` `camp-v79`→**`camp-v80`**.
+Started as an owner request to collapse the Data Import cards; the follow-up report ("I still can't
+see Designated from OTHER, and the screen doesn't update when I confirm an allocation") uncovered
+two real defects underneath it. `npm run typecheck` clean, `npx vitest run` **870 pass / 56 files**
+(was 866/55; **+4**), `node --check` OK on the SPA body + `sw.js`. `sw.js` `camp-v79`→**`camp-v81`**
+(v80 the collapse, v81 the two fixes). **No schema or migration change.**
+
+### 1 — 🔴 A TYPE CAST THAT WAS A LIE 500'd THE ENDPOINT FROM THE DAY IT SHIPPED
+`supabase.allocation-override.ts`'s mapper read `createdAt: r['created_at'] as string`. **postgres.js
+returns `timestamptz` as a `Date`**, so that cast compiled clean and handed the service a Date;
+`listOverrides`' `b.updatedAt.localeCompare(a.updatedAt)` then threw
+**`localeCompare is not a function`** on *every* call. Confirmed in the Vercel runtime logs — 11 of
+11 calls in a 40-minute window returned **500**, on a feature live since **2026-07-03**.
+
+> ⚠️ **THE SPA HID IT PERFECTLY.** `api('/import/allocations').catch(() => [])` turned a 500 into an
+> empty array, so the screen rendered "Church overrides (0)" and — because `cardC` is gated on
+> `designated.length` — **no Designated-from-OTHER card at all**. That is indistinguishable from
+> "nothing has been allocated yet", which is why nobody reported it for a month. `_loadAllocation`
+> now collects failures in `_allocErrs` and `_renderAllocCards` prints them above the cards. **Keep
+> the catches** (one dead endpoint must not blank the screen) **but never discard the reason again.**
+
+Fixed with `toISO()` in the mapper, matching what **every other repo in that folder already did**
+(`(r['x'] as Date).toISOString()`) — this was the only one that cast instead of converting.
+**A timestamp column must be CONVERTED at the mapper, never cast.** The mapper is now exported as
+`toAllocationOverride` (the `toIncident`/`toNote` convention) with
+`supabase.allocation-override.mapper.test.ts` beside it.
+
+> ⚠️ **The test fixture MUST use real `Date` objects.** A fixture of ISO strings passes against the
+> broken mapper and proves nothing — the same too-weak-fixture failure as the `VAPID_ENV`
+> `'pub'`/`'priv'` placeholders. **Verified, not assumed:** reverting the mapper makes 2 of the 4
+> tests fail with the exact production `TypeError`.
+
+### 2 — Allocating someone didn't update the screen (30s client cache)
+`allocatePerson`/`confirmOverride`/`undoOverride` all called `_invalidate('/registrants')`, which
+does **not** match the `path.startsWith('/import')` branch — so `/import/unallocated` and
+`/import/allocations` were never dropped from the SPA's 30s GET cache, and the `_loadAllocation()`
+immediately after re-rendered the **pre-allocation** arrays. The write had genuinely succeeded (the
+DB rows were there); only the screen was stale. All three now call `_invalidate('/import/…')`, and
+that branch's `Cache.del` list gained `'/import'`.
+
+⚠️ Standing rule this is the second instance of: **a write must invalidate the collection keys the
+screen re-reads, and `_invalidate` matches on PREFIX** — passing a path that lands in the wrong
+branch fails silently and looks like "the save didn't work".
+
+### 3 — The cards themselves (the original request)
+**Unallocated registrants**, **Church overrides** and **Designated from "OTHER"** are now all
+`<details>` with **no `open` attribute**, count in the `<summary>`. Item 8 (2026-07-31) collapsed
+only the third; this finishes it, so the CSV upload card stops being pushed off the fold.
+**Do not add `open` to any of the three.**
 
 **Unallocated registrants**, **Church overrides** and **Designated from "OTHER"** are now all
 `<details>` with **no `open` attribute**. The count moved into each `<summary>`, so "is there
@@ -22,14 +67,17 @@ collapsed only the third one; this finishes the job. **Do not add `open` to any 
 > collapsed card is unreachable. Same for the per-person church `<select>` (`#alloc_<id>`) that
 > `allocatePerson` reads out of cardA.
 
-**Investigation that preceded it, worth not repeating:** the owner reported the
-designated-from-OTHER section as missing. It was not — the markup was live in prod
-(`camp-v79` served it), `allocation_overrides` held **4 rows, all `kind='unallocated'`**, and
-`cardC`'s only gate is `designated.length`. The cards render on **`RENDER.import`** (admin console
-→ Data Import tile, or the pre-camp bottom-nav Data Import tab) — **not** Admin → Settings and
-**not** Records & Export, which is where they were being looked for. A collapsed `<details>` is one
-bold line; that is easy to scroll past, which is part of why all three now look alike and carry
-counts.
+**Where these cards live**, since this cost a round trip: **`RENDER.import`** — admin console →
+**Data Import** tile, or the pre-camp bottom-nav Data Import tab. **Not** Admin → Settings, **not**
+Records & Export.
+
+> **Debugging lesson: the DB said the feature was fine and it was not.** Querying
+> `allocation_overrides` over MCP showed 6 healthy rows with `kind='unallocated'`, and reading the
+> SPA showed correct render logic — so the first two rounds of diagnosis concluded "this should be
+> working". **The MCP SQL tool serialises timestamps to strings, which is exactly the difference
+> that was breaking production.** What settled it in one call was
+> `get_runtime_logs(query='/import/allocations')`. **Reach for the runtime logs before re-reading
+> code that looks correct.**
 
 ## Budget: family invoices were silently unpriced, + ticket prices are now DERIVED — 2026-08-02 (3rd)
 

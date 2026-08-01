@@ -960,7 +960,12 @@ function _invalidate(path){
     // An import rewrites the people set → registrants/campers + the allocation pool +
     // the check-in roster derive from it. Unrelated caches (faq/devotional/notifications/
     // schedule) are NOT touched (was a full Cache.clear() — needless re-fetch churn).
-    Cache.del('/registrants','/campers','/accommodation','/checkin');
+    // '/import' clears the allocation pool + override list themselves (`/import/unallocated`,
+    // `/import/allocations`). Without it, allocating someone re-fetched nothing — `_loadAllocation`
+    // goes through `api()`, whose 30s GET cache returned the PRE-allocation arrays, so the person
+    // stayed in "Unallocated" and never appeared under "Designated from OTHER" until the cache
+    // aged out. The write had actually succeeded; only the screen was stale.
+    Cache.del('/registrants','/campers','/accommodation','/checkin','/import');
   }
   else if(path.startsWith('/accounts'))Cache.del('/accounts','/registrants');
   // Check-in SESSIONS derive from settings.checkInDays, so a settings write can change them →
@@ -6748,13 +6753,22 @@ async function offlineSignInUpload(){
 const UNALLOCATED_ID='__unallocated__'; // must match backend UNALLOCATED_CHURCH_ID
 let _allocState={unallocated:[],regs:[],churches:[],overrides:[]};
 
+/* ⚠️ THESE FETCHES USED TO FAIL SILENTLY, AND ONE OF THEM WAS FAILING FOR A MONTH.
+   `/import/allocations` 500'd on every call (see the repo mapper fix, 2026-08-01) and the bare
+   `.catch(()=>[])` turned that into an empty array — so the screen rendered "Church overrides (0)"
+   and no Designated-from-OTHER card, which reads as "there is nothing here", not "this is broken".
+   `_allocErrs` collects the failures and `_renderAllocCards` prints them. Keep the catches (one
+   dead endpoint must not blank the whole screen) but NEVER go back to discarding the reason. */
+let _allocErrs=[];
 async function _loadAllocation(){
   const wrap=document.getElementById('allocWrap'); if(!wrap) return;
+  _allocErrs=[];
+  const grab=(p,label)=>api(p).catch(e=>{_allocErrs.push(label+': '+((e&&e.message)||'failed'));return [];});
   const [unallocated,regs,churches,overrides]=await Promise.all([
-    api('/import/unallocated').catch(()=>[]),
-    api(_scoped('/registrants')).catch(()=>[]),
-    api('/accounts/churches').catch(()=>[]),
-    api('/import/allocations').catch(()=>[]),
+    grab('/import/unallocated','Unallocated registrants'),
+    grab(_scoped('/registrants'),'Registrants'),
+    grab('/accounts/churches','Churches'),
+    grab('/import/allocations','Church overrides'),
   ]);
   _allocState={unallocated:unallocated||[],regs:regs||[],churches:churches||[],overrides:overrides||[]};
   _renderAllocCards();
@@ -6843,7 +6857,8 @@ function _renderAllocCards(){
     ${scroller(designated.map(ovRow).join(''),designated.length)}
   </details></div>`:'';
 
-  wrap.innerHTML=cardA+cardB+cardC;
+  const errCard=_allocErrs.length?`<div class="card"><p class="err" style="display:block">Some allocation data could not be loaded, so the lists below may be incomplete: ${esc(_allocErrs.join(' · '))}</p></div>`:'';
+  wrap.innerHTML=errCard+cardA+cardB+cardC;
 }
 
 function _renderOvSearch(){
@@ -6860,7 +6875,7 @@ function _renderOvSearch(){
 async function allocatePerson(id){
   const sel=document.getElementById('alloc_'+id); const churchId=sel&&sel.value;
   if(!churchId){toast('Pick a church first');return;}
-  try{await api('/import/allocate',{method:'POST',body:{personId:id,churchId}});toast('Allocated');_invalidate('/registrants');await _loadAllocation();}
+  try{await api('/import/allocate',{method:'POST',body:{personId:id,churchId}});toast('Allocated');_invalidate('/import/allocate');await _loadAllocation();}
   catch(e){toast(e.message||'Failed');}
 }
 
@@ -6878,12 +6893,12 @@ function overridePrompt(id){
 async function confirmOverride(id){
   const sel=document.getElementById('ovSel'); const churchId=sel&&sel.value;
   if(!churchId){toast('Pick a church first');return;}
-  try{await api('/import/allocate',{method:'POST',body:{personId:id,churchId}});closeModal();toast('Church overridden');_invalidate('/registrants');await _loadAllocation();}
+  try{await api('/import/allocate',{method:'POST',body:{personId:id,churchId}});closeModal();toast('Church overridden');_invalidate('/import/allocate');await _loadAllocation();}
   catch(e){toast(e.message||'Failed');}
 }
 
 async function undoOverride(id){
-  try{await api('/import/allocations/'+id,{method:'DELETE'});toast('Reverted');_invalidate('/registrants');await _loadAllocation();}
+  try{await api('/import/allocations/'+id,{method:'DELETE'});toast('Reverted');_invalidate('/import/allocations');await _loadAllocation();}
   catch(e){toast(e.message||'Failed');}
 }
 
