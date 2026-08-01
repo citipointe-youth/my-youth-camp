@@ -11,6 +11,7 @@ import {
   buildNameIndex, findPersonMatch, mergeOwnedFields,
 } from './person-matching';
 import { invalidateDashboardCache } from './dashboard-cache';
+import { buildTicketPriceTable, priceForTicket } from './ticket-prices';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
@@ -37,7 +38,12 @@ export interface InvoiceImportResult {
   updated: number;
   skipped: number;
   deleted: 0;
-  /** Invoices whose invoice number matched MORE THAN ONE person — $ fields withheld for all matched people. */
+  /**
+   * Invoices whose invoice number matched MORE THAN ONE person — a family invoice. Since
+   * 2026-08-02 these are SPLIT across the people on them (by ticket price, or equally with a
+   * review flag when a price is unknown), not withheld. The name is kept for the API shape;
+   * the UI reads it as "N invoices covered multiple people and were split".
+   */
   ambiguousGroupInvoices: number;
   /** Persons who received a NEW accommodationKind guess this run (via the price lookup). */
   guessedAccommodationCount: number;
@@ -118,6 +124,45 @@ export function buildAccommodationPriceLookup(
   return lookup;
 }
 
+/**
+ * Split `total` into parts proportional to `weights`, in cents, so the parts sum to `total`
+ * EXACTLY. Largest-remainder: floor everything, then hand the leftover cents out to whoever
+ * was rounded down hardest.
+ *
+ * ⚠️ Per-person `Math.round(total * w / sum)` does NOT do this — it drifts by a cent or two per
+ * invoice, and with 30 shared invoices that is a camp total that visibly disagrees with the sum
+ * of its own rows. The exactness is the point.
+ */
+export function splitExact(total: number, weights: readonly number[], weightSum: number): number[] {
+  const n = weights.length;
+  if (n === 0) return [];
+  if (!(weightSum > 0)) {
+    // Degenerate (all-zero weights): fall back to an even split rather than dividing by zero.
+    return splitExact(total, weights.map(() => 1), n);
+  }
+  const totalCents = Math.round(total * 100);
+  const exact = weights.map((w) => (totalCents * w) / weightSum);
+  const floors = exact.map((v) => Math.floor(v));
+  let remainder = totalCents - floors.reduce((s, v) => s + v, 0);
+  const order = exact
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  const out = [...floors];
+  // `remainder` can be negative when `total` is (a credit note), so step toward zero either way.
+  const step = remainder >= 0 ? 1 : -1;
+  for (let k = 0; remainder !== 0 && k < order.length * 2; k++) {
+    const idx = order[k % order.length]!.i;
+    out[idx] = (out[idx] ?? 0) + step;
+    remainder -= step;
+  }
+  return out.map((c) => c / 100);
+}
+
+/** Money for a human-readable warning line. Not for display in the UI. */
+function formatMoney(v: number | null): string {
+  return v === null ? '—' : `$${v.toFixed(2)}`;
+}
+
 const OWNED_KEYS = [
   'registrationCost',
   'discountCode',
@@ -156,6 +201,11 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
         opts.minAccommodationSampleSize,
         opts.minAccommodationMajorityRatio,
       );
+
+      /* What each ticket type costs, learned from everyone who already has an invoice. Built ONCE
+         from the pre-run state: a shared invoice is split using prices derived from single-person
+         invoices, which is why the two must not be interleaved. */
+      const priceTable = buildTicketPriceTable(allPeople);
 
       const byInvoiceNumber = new Map<string, Person[]>();
       for (const p of allPeople) {
@@ -269,21 +319,77 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             continue;
           }
 
+          /* ── SHARED (FAMILY) INVOICE ──────────────────────────────────────────────────────
+             ⚠️ THIS BRANCH USED TO WITHHOLD THE MONEY FROM EVERYONE ON THE INVOICE, and that
+             was the single biggest hole in the budget. Measured against prod 2026-08-02:
+
+                 invoices with 1 registrant : 153 — all had money        (0 missing)
+                 invoices with 2 registrants:  26 — NONE had money   (52 people)
+                 invoices with 3 registrants:   4 — NONE had money   (12 people)
+
+             i.e. 64 of 217 people, roughly $11,760 of ticket value, silently reported as $0
+             with no discount code to explain it — which is exactly what the owner noticed.
+             "Cannot attribute a shared total to individuals" was true of the total alone, but
+             we know each person's TICKET, and the ticket has a price (see ticket-prices.ts).
+             A $340 invoice covering a $190 classroom and a $150 tent is not ambiguous at all.
+
+             Split rules, in order:
+               1. every person's ticket price is known → weight by price. When the invoice total
+                  equals the sum of the tickets (the normal case) this is EXACT, not an estimate;
+                  when a discount was applied it apportions it in proportion to what each ticket
+                  cost, which is how a shared discount actually works.
+               2. otherwise → equal split, and everyone is flagged `needsReview`, because that
+                  IS a guess and a human should look before the budget is trusted.
+             Rounding uses largest-remainder so the parts always sum to the invoice EXACTLY —
+             a per-person round() would drift the camp total by cents per invoice. */
           if (viaGroup) {
             ambiguousGroupInvoices++;
+            const ticketPrices = matchedPeople.map((p) => priceForTicket(priceTable, p.registrationType));
+            const allPriced = ticketPrices.every((v) => v != null && v > 0);
+            const weights = allPriced
+              ? (ticketPrices as number[])
+              : matchedPeople.map(() => 1);
+            const weightSum = weights.reduce((s, w) => s + w, 0);
+            const share = (total: number | null): (number | null)[] =>
+              total === null
+                ? matchedPeople.map(() => null)
+                : splitExact(total, weights, weightSum);
+
+            const paidParts = share(amountPaid);
+            const costParts = allPriced ? (ticketPrices as number[]) : share(ticketTotal);
+            const discountParts = share(discountAmount);
+            const feeParts = share(feesAmount);
+            const taxParts = share(taxAmount);
+
             warnings.push({
               row: rowNum,
-              message: `Invoice ${invoiceNumber} matches ${matchedPeople.length} people — financial fields withheld for all of them (cannot attribute a shared total to individuals)`,
+              message: allPriced
+                ? `Invoice ${invoiceNumber} covers ${matchedPeople.length} people — split by ticket price (${
+                    matchedPeople.map((p, i) => `${p.firstName} ${p.lastName} ${formatMoney(paidParts[i] ?? null)}`).join(', ')
+                  })`
+                : `Invoice ${invoiceNumber} covers ${matchedPeople.length} people and at least one ticket type has no known price — split EQUALLY and flagged for review`,
             });
-            if (discountCode) {
-              for (const person of matchedPeople) {
-                const incoming: Partial<Person> = { discountCode };
-                const merged = mergeOwnedFields(person, incoming, OWNED_KEYS);
-                merged.updatedAt = nowISO();
-                const firstTouch = !touched.has(merged.id);
-                touched.set(merged.id, merged);
-                if (firstTouch) updated++;
+
+            for (let m = 0; m < matchedPeople.length; m++) {
+              const person = matchedPeople[m]!;
+              const incoming: Partial<Person> = {};
+              if (costParts[m] != null) incoming.registrationCost = costParts[m]!;
+              if (paidParts[m] != null) incoming.amountPaid = paidParts[m]!;
+              if (discountParts[m] != null) incoming.discountAmount = discountParts[m]!;
+              if (feeParts[m] != null) incoming.feesAmount = feeParts[m]!;
+              if (taxParts[m] != null) incoming.taxAmount = taxParts[m]!;
+              if (discountCode) incoming.discountCode = discountCode;
+              if (!allPriced) {
+                incoming.needsReview = true;
+                incoming.needsReviewReason =
+                  `Shared invoice ${invoiceNumber ?? ''} split equally between ${matchedPeople.length} people — ticket price unknown`.trim();
               }
+              if (Object.keys(incoming).length === 0) continue;
+              const merged = mergeOwnedFields(person, incoming, OWNED_KEYS);
+              merged.updatedAt = nowISO();
+              const firstTouch = !touched.has(merged.id);
+              touched.set(merged.id, merged);
+              if (firstTouch) updated++;
             }
             continue;
           }

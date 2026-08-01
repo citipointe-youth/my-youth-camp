@@ -1,5 +1,68 @@
 # CLAUDE.md — Youth Camp Platform
 
+## Budget: family invoices were silently unpriced, + ticket prices are now DERIVED — 2026-08-02 (3rd)
+
+`npm run typecheck` clean, `npx vitest run` **866 pass / 55 files** (was 850; **+16**), SPA + `sw.js`
+`node --check` OK, `sw.js` `camp-v78`→**`camp-v79`**. No schema change.
+
+Two owner questions, one root cause between them: **the budget could not price a ticket it had not
+seen an invoice for.**
+
+### E — 🔴 A SHARED FAMILY INVOICE ZEROED EVERY PERSON ON IT
+Owner: *"why are a bunch of tickets showing as $0 with no discount code?"* Measured against prod:
+
+| people on invoice | invoices | had money | missing |
+|---|---|---|---|
+| 1 | 153 | **all** | 0 |
+| 2 | 26 | **none** | 52 |
+| 3 | 4 | **none** | 12 |
+
+**64 of 217 people, ~$11,760 of ticket value.** Not a matching failure — a deliberate branch in
+`invoice-import.service.ts` that withheld the money from everyone on a multi-registrant invoice,
+reasoning *"cannot attribute a shared total to individuals"*.
+
+> ⚠️ That reasoning was true of the TOTAL and false of the INVOICE. We know each person's ticket,
+> and the ticket has a price. A $340 invoice covering a $190 classroom and a $150 tent is not
+> ambiguous at all. **A defensible-sounding rationale hid the single biggest hole in the budget for
+> weeks** — the withheld money looked exactly like a $0 ticket, which is why the owner read it as a
+> data problem rather than an import one.
+
+Fixed: shared invoices are **split**. Weight by each person's ticket price when all are known (exact
+when the invoice equals the sum of the tickets; apportions a shared discount in proportion when not);
+equal split **plus `needsReview`** when any price is unknown, because that one really is a guess.
+`splitExact()` uses largest-remainder so the parts sum to the invoice **exactly** — a per-person
+`Math.round` drifts cents and the camp total stops matching the sum of its own rows.
+
+**This is backfilled by re-importing the Billing Contacts CSV — the fix cannot repair rows already
+stored as null.** Tell the owner that explicitly; a code deploy alone changes nothing here.
+
+### F — Ticket prices are DERIVED from the invoices, not configured
+Owner: *"what if there is a standard tent and an early bird tent price?"* There is no answer with two
+scalar settings, which is what `tentPrice`/`classroomPrice` were.
+
+**The price was already in the data.** `registrationCost` comes from the invoice and each ticket type
+has exactly one distinct cost (prod: `Classroom Accommodation` $190 × 108, `EARLY BIRD | Tent
+Accomodation` $150 × 45). New `src/services/ticket-prices.ts` + SPA mirror learns a price per ticket
+type; a standard-tent ticket prices itself the day its first invoice lands, with nothing to maintain.
+
+`personValue`'s in-person cascade is now **their own `registrationCost` → the learned price for their
+ticket type → the scalar setting**. The settings survive only as a last resort for a type nobody has
+an invoice for, and the Camp settings section is relabelled "(optional)" to say so.
+
+> ⚠️ **Tie-break in `buildTicketPriceTable` is deliberately the LOWER price.** This values money as
+> *received*, so guessing high invents income nobody paid. `distinctCosts > 1` is the flag for an
+> ambiguous type. Do not "improve" it to `max`.
+
+Consequences worth knowing:
+- The grand total went **$24,290 → $26,340** on the in-person cascade alone (+$2,050), *without
+  anyone entering a price*. Verified by running both implementations over a real 217-person dump —
+  server and SPA agreed to the cent, with the settings both blank and set.
+- The upgrade card from section D now works with the settings blank: it finds the $190 classroom
+  reference itself and reports **$40 upgrade, $160 outstanding**.
+- The old "set the ticket prices" warning **fired on an empty setting, which no longer means
+  anything**. It now fires on a *measured* failure — a person who paid in person whose ticket type
+  has no price from any source — and names the ticket type. That is the only case a human must fix.
+
 ## Budget: in-person pricing was inert, + tent→classroom upgrade tracking — 2026-08-02 (2nd)
 
 `npm run typecheck` clean, `npx vitest run` **850 pass / 54 files** (SPA-only change), SPA + `sw.js`

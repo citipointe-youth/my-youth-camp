@@ -131,6 +131,26 @@ describe('personValue', () => {
     expect(personValue(person, 'classroom-inperson', { tent: null, classroom:90 })).toBe(90);
   });
 
+  /* The in-person cascade (2026-08-02). Order is ticket price → settings scalar → amountPaid.
+     The scalar settings are now the LAST resort, reachable only for a ticket type nobody has an
+     invoice for — they were the only source before, and one `tentPrice` could not express an
+     early-bird tent and a standard tent at the same time. */
+  it('in-person prefers the person’s OWN ticket price over the scalar setting', () => {
+    const person = p({ accommodationKind: 'classroom', amountPaid: 0, registrationCost: 190 });
+    // Setting says 150 (say, the early-bird figure someone typed in); their ticket says 190.
+    expect(personValue(person, 'classroom-inperson', { tent: null, classroom: 150 }, 190)).toBe(190);
+  });
+
+  it('in-person falls back to the scalar setting when the ticket price is unknown', () => {
+    const person = p({ accommodationKind: 'tent', amountPaid: 0 });
+    expect(personValue(person, 'tent-inperson', { tent: 150, classroom: null }, null)).toBe(150);
+  });
+
+  it('in-person with neither a ticket price nor a setting → falls through, never invents a number', () => {
+    const person = p({ accommodationKind: 'tent', amountPaid: 0, registrationCost: null });
+    expect(personValue(person, 'tent-inperson', NO_PRICES, null)).toBe(0);
+  });
+
   it('*-sponsor → 0 even when registrationCost is 180', () => {
     const person = p({ registrationCost: 180 });
     expect(personValue(person, 'tent-sponsor', NO_PRICES)).toBe(0);

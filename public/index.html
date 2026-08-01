@@ -3815,9 +3815,64 @@ function _classifyTicket(p,tags){
    TOTAL while amountPaid is what actually arrived. That is what makes the grand total read as
    money received. To read it as "value of all places" instead, swap the last two lines here and
    in budget.ts's personValue — nothing else needs to change. Returns null = nothing recorded. */
-function _personValue(p,cls,prices){
-  if(cls==='tent-inperson'&&prices.tent!=null)return prices.tent;
-  if(cls==='classroom-inperson'&&prices.classroom!=null)return prices.classroom;
+/* ── Ticket prices, LEARNED FROM THE INVOICES (2026-08-02) ─────────────────────────────────────
+   Mirrors src/services/ticket-prices.ts EXACTLY — change both together.
+
+   The camp had two scalar settings, `tentPrice` and `classroomPrice`, and they had never been
+   filled in, so anything the budget could not value from an invoice counted as $0. The owner then
+   asked the question that kills the scalar model: *"what if there is a standard tent AND an early
+   bird tent price?"* Two numbers cannot answer it. But the price is already in the data —
+   `registrationCost` comes from the invoice and every ticket type has exactly one distinct cost —
+   so the table is DERIVED. A new ticket type prices itself the moment its first invoice lands.
+
+   ⚠️ Tie-break is deliberately the LOWER price: this values money as received, so guessing high
+   invents income nobody paid. `distinctCosts > 1` is the flag that a type is ambiguous. */
+function _normTicketType(t){return (t==null?'':String(t)).trim().replace(/\s+/g,' ').toLowerCase();}
+function _budTicketPrices(regs){
+  const seen=new Map();
+  (regs||[]).forEach(r=>{
+    const key=_normTicketType(r.registrationType);
+    if(!key)return;
+    const cost=r.registrationCost==null?null:Number(r.registrationCost);
+    if(cost==null||!isFinite(cost))return;
+    const cents=Math.round(cost*100);
+    let e=seen.get(key);
+    if(!e){e={label:String(r.registrationType||'').trim(),counts:new Map()};seen.set(key,e);}
+    e.counts.set(cents,(e.counts.get(cents)||0)+1);
+  });
+  const table=new Map();
+  seen.forEach((e,key)=>{
+    let bestCents=null,bestCount=0,sample=0;
+    e.counts.forEach((count,cents)=>{
+      sample+=count;
+      if(count>bestCount||(count===bestCount&&bestCents!=null&&cents<bestCents)){bestCount=count;bestCents=cents;}
+    });
+    if(bestCents==null)return;
+    table.set(key,{label:e.label,price:bestCents/100,sample:sample,distinctCosts:e.counts.size});
+  });
+  return table;
+}
+function _priceForTicket(table,t){
+  const key=_normTicketType(t);
+  if(!key||!table)return null;
+  const row=table.get(key);
+  return row?row.price:null;
+}
+/** Steps 1-2 of the in-person cascade: this person's own ticket price, if knowable at all. */
+function _resolveTicketPrice(p,table){
+  if(p.registrationCost!=null)return p.registrationCost;
+  return _priceForTicket(table,p.registrationType);
+}
+/* ⚠️ THE IN-PERSON CASCADE (mirrors budget.ts personValue — read its doc comment). Most specific
+   first, and each step is a real fallback: their own ticket cost → the learned price for their
+   ticket TYPE → the admin's scalar setting, which is now only reachable for a ticket type nobody
+   has an invoice for. That last step is all `tentPrice`/`classroomPrice` are for now. */
+function _personValue(p,cls,prices,ticketPrice){
+  if(cls==='tent-inperson'||cls==='classroom-inperson'){
+    if(ticketPrice!=null)return ticketPrice;
+    const fb=cls==='tent-inperson'?prices.tent:prices.classroom;
+    if(fb!=null)return fb;
+  }
   if(cls==='tent-sponsor'||cls==='classroom-sponsor')return 0;
   if(p.amountPaid!=null)return p.amountPaid;
   if(p.registrationCost!=null)return p.registrationCost;
@@ -3842,11 +3897,11 @@ function _budValueBreakdown(b){
   if(b.missing>0)merged.set(0,(merged.get(0)||0)+b.missing);
   return [...merged.entries()].map(([value,count])=>({value,count})).sort((a,c)=>c.value-a.value);
 }
-function _budScopeRows(people,tags,prices){
+function _budScopeRows(people,tags,prices,ptable){
   const by=new Map();
   people.forEach(p=>{
     const cls=_classifyTicket(p,tags);
-    const val=_personValue(p,cls,prices);
+    const val=_personValue(p,cls,prices,_resolveTicketPrice(p,ptable));
     let b=by.get(cls);
     if(!b){b={count:0,total:0,values:new Map(),missing:0,codes:new Map()};by.set(cls,b);}
     b.count++;
@@ -3937,8 +3992,14 @@ function _budTicketKind(t){
   return null;
 }
 function _budUpgrades(regs,filterId){
-  const prices=_budPrices(),tags=_budTags();
-  const delta=(prices.tent!=null&&prices.classroom!=null)?(prices.classroom-prices.tent):null;
+  const prices=_budPrices(),tags=_budTags(),ptable=_budTicketPrices(regs);
+  /* The classroom price to measure against. Prefer the LEARNED price for the classroom ticket
+     people actually hold (there is only one such ticket, and 162 invoices agree on it) over the
+     admin scalar, for the same reason as the personValue cascade. `tent` here is only used to
+     describe the upgrade in words; it is not what anyone is measured against, because with an
+     early-bird AND a standard tent ticket there is no single tent price — each person is compared
+     with their OWN ticket cost instead. */
+  const classroomRef=_budClassroomRef(ptable,prices);
   const paid=[],owing=[],unknown=[];
   (regs||[]).filter(r=>r.status!=='cancelled')
     .filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
@@ -3947,49 +4008,82 @@ function _budUpgrades(regs,filterId){
       const p={churchId:r.churchId,churchName:r.churchName,kind:r.kind==='leader'?'leader':'camper',
         registrationCost:r.registrationCost==null?null:Number(r.registrationCost),
         amountPaid:r.amountPaid==null?null:Number(r.amountPaid),
-        accommodationKind:r.accommodationKind||null,discountCode:r.discountCode};
+        accommodationKind:r.accommodationKind||null,discountCode:r.discountCode,
+        registrationType:r.registrationType||null};
       const cls=_classifyTicket(p,tags);
       if(cls!=='classroom')return;                      // sponsored/discounted — not an upgrade case
-      const value=_personValue(p,cls,prices);
+      const value=_personValue(p,cls,prices,_resolveTicketPrice(p,ptable));
+      // What THEIR tent ticket cost — their own recorded cost first, else the learned price for
+      // that exact ticket type. This is what makes early-bird vs standard tent work per person.
+      const theirTicket=p.registrationCost!=null?p.registrationCost
+        :_priceForTicket(ptable,p.registrationType);
       const row={name:((r.firstName||'')+' '+(r.lastName||'')).trim()||'(no name)',
-        churchName:r.churchName,kind:p.kind,value,cost:p.registrationCost};
+        churchName:r.churchName,kind:p.kind,value,cost:theirTicket};
       if(value==null){unknown.push(row);return;}
-      /* Two ways to decide "they paid the upgrade", because the definitive one needs a setting the
-         camp may not have filled in yet:
-           · classroom price set → did they reach it? (definitive)
-           · not set → did they pay MORE than their own tent ticket cost? (price-independent, and
-             it correctly finds the one $190-against-a-$150-ticket person in prod)
-         Without the price we still can't say HOW MUCH is owed — `owes` stays null and the UI says
-         so rather than printing a made-up number. */
-      const done=prices.classroom!=null?(value>=prices.classroom)
-        :(p.registrationCost!=null&&value>p.registrationCost);
-      row.owes=(prices.classroom!=null)?Math.max(0,prices.classroom-value):null;
+      /* Two ways to decide "they paid the upgrade", because the definitive one needs a classroom
+         price the camp may not have any source for yet:
+           · classroom reference known → did they reach it? (definitive)
+           · not known → did they pay MORE than their own tent ticket cost? (price-independent,
+             and it correctly finds the one $190-against-a-$150-ticket person in prod)
+         Without a reference we still can't say HOW MUCH is owed — `owes` stays null and the UI
+         says so rather than printing a made-up number. */
+      const done=classroomRef!=null?(value>=classroomRef)
+        :(theirTicket!=null&&value>theirTicket);
+      row.owes=(classroomRef!=null)?Math.max(0,classroomRef-value):null;
       (done?paid:owing).push(row);
     });
   const byName=(a,b)=>a.churchName.localeCompare(b.churchName)||a.name.localeCompare(b.name);
   paid.sort(byName);owing.sort(byName);unknown.sort(byName);
   const owedTotal=owing.reduce((s,r)=>s+(r.owes||0),0);
-  return {tent:prices.tent,classroom:prices.classroom,delta,paid,owing,unknown,owedTotal,
+  /* The headline "the upgrade is $X" only makes sense when there is ONE tent price. With an
+     early-bird and a standard tent ticket in play there are two upgrades, so say nothing rather
+     than quote one of them — the per-person `owes` is still exact either way. */
+  const tentPrices=_budTentPrices(ptable);
+  const delta=(classroomRef!=null&&tentPrices.length===1)?(classroomRef-tentPrices[0]):null;
+  return {tent:tentPrices.length===1?tentPrices[0]:null,classroom:classroomRef,delta,
+    tentPriceCount:tentPrices.length,paid,owing,unknown,owedTotal,
     total:paid.length+owing.length+unknown.length};
+}
+/** The classroom ticket's price: learned first (162 invoices agree), admin scalar as fallback. */
+function _budClassroomRef(ptable,prices){
+  let best=null,bestSample=-1;
+  ptable.forEach(row=>{
+    if(_budTicketKind(row.label)!=='classroom')return;
+    if(row.sample>bestSample){bestSample=row.sample;best=row.price;}
+  });
+  return best!=null?best:prices.classroom;
+}
+/** Every distinct tent ticket price in play — length > 1 means early-bird AND standard. */
+function _budTentPrices(ptable){
+  const out=[];
+  ptable.forEach(row=>{
+    if(_budTicketKind(row.label)!=='tent')return;
+    if(out.indexOf(row.price)<0)out.push(row.price);
+  });
+  return out.sort((a,b)=>a-b);
 }
 function computeBudgetClient(regs,filterId){
   const tags=_budTags(),prices=_budPrices();
   const num=v=>v==null?null:Number(v);
+  /* Learned from the FULL set, never the filtered one: a ticket type priced only at another
+     church must still price this church's in-person holders of it. */
+  const ptable=_budTicketPrices(regs);
   const people=(regs||[]).filter(r=>r.status!=='cancelled').filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
     .map(r=>({churchId:r.churchId,churchName:r.churchName,kind:r.kind==='leader'?'leader':'camper',
       registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
-      accommodationKind:r.accommodationKind||null,discountCode:r.discountCode}));
+      accommodationKind:r.accommodationKind||null,discountCode:r.discountCode,
+      registrationType:r.registrationType||null}));
   let full=null;
   const byChurch=new Map();
   people.forEach(p=>{
-    const v=_personValue(p,_classifyTicket(p,tags),prices);
+    const v=_personValue(p,_classifyTicket(p,tags),prices,_resolveTicketPrice(p,ptable));
     if(v!=null&&v>0)full=full==null?v:Math.max(full,v);
     let c=byChurch.get(p.churchId);
     if(!c){c={churchId:p.churchId,churchName:p.churchName,campers:[],leaders:[]};byChurch.set(p.churchId,c);}
     (p.kind==='leader'?c.leaders:c.campers).push(p);
   });
   const churches=[...byChurch.values()].map(c=>{
-    const campers=_budScopeRows(c.campers,tags,prices),leaders=_budScopeRows(c.leaders,tags,prices);
+    const campers=_budScopeRows(c.campers,tags,prices,ptable),leaders=_budScopeRows(c.leaders,tags,prices,ptable);
     const camperCount=campers.reduce((s,r)=>s+r.count,0),leaderCount=leaders.reduce((s,r)=>s+r.count,0);
     const total=campers.reduce((s,r)=>s+r.lineTotal,0)+leaders.reduce((s,r)=>s+r.lineTotal,0);
     /* Item 1 (2026-07-31): per-church discount code counts, mirroring ChurchBudget.discountCodes
@@ -4086,6 +4180,28 @@ function _budUpgGroup(title,rows,warn){
     <div class="budrow-qty">${rows.length} ${rows.length===1?'person':'people'}</div>
     <b class="budrow-amt"></b>
     <div class="budrow-det">${body}</div></div>`;
+}
+/* People the budget genuinely cannot value: they paid in person (so there is no invoice amount)
+   AND their ticket type has no learned price AND no scalar setting covers their accommodation.
+   Returns the ticket type names so the warning can name them. */
+function _budUnpricedInperson(regs,filterId,ptable,prices){
+  const tags=_budTags();
+  const types=new Set();let count=0;
+  (regs||[]).filter(r=>r.status!=='cancelled')
+    .filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
+    .forEach(r=>{
+      const p={registrationCost:r.registrationCost==null?null:Number(r.registrationCost),
+        amountPaid:r.amountPaid==null?null:Number(r.amountPaid),
+        accommodationKind:r.accommodationKind||null,discountCode:r.discountCode,
+        registrationType:r.registrationType||null};
+      const cls=_classifyTicket(p,tags);
+      if(cls!=='tent-inperson'&&cls!=='classroom-inperson')return;
+      if(_resolveTicketPrice(p,ptable)!=null)return;                       // priced from data
+      if((cls==='tent-inperson'?prices.tent:prices.classroom)!=null)return; // priced by the setting
+      count++;
+      types.add((p.registrationType||'').trim()||'(no ticket type)');
+    });
+  return {count,types:[...types]};
 }
 function drawBudget(){
   const scope=sel('budChurch')||'all';
@@ -4194,18 +4310,41 @@ function drawBudget(){
      A warning behind a closed disclosure is not a warning. It now sits at the top of the screen,
      unmissable, and says what the money is worth instead of just naming the setting. */
   const upg=_budUpgrades(window._budgetRegs,scope);
-  const needPrices=prices.tent==null||prices.classroom==null;
-  const inpersonCount=rep.churches.reduce((t,c)=>t+(c.categories||[])
-    .filter(x=>x.key.indexOf('inperson')>=0).reduce((u,x)=>u+x.count,0),0);
+  const ptable=_budTicketPrices(window._budgetRegs);
+  /* ⚠️ THE WARNING FIRES ON A MEASURED FAILURE, NOT ON AN EMPTY SETTING (2026-08-02).
+     Prices are derived from the invoices now, so "the setting is blank" stopped meaning anything —
+     the classroom ticket is priced by 162 invoices whether or not anyone typed a number. What
+     still hurts is a person the budget genuinely cannot value: someone who paid in person holding
+     a ticket type that NOBODY has an invoice for. That is the only case a human has to fix, so it
+     is the only case that warns. Counting people rather than checking a setting also means the
+     message can state the actual damage. */
+  const unpriced=_budUnpricedInperson(window._budgetRegs,scope,ptable,prices);
   // Camp settings is admin-only (see the role map), so a director gets the same facts without a
   // button that would bounce them off a screen they cannot open.
   const isAdmin=ACTOR&&ACTOR.role==='admin';
-  const priceGate=(needPrices&&(inpersonCount>0||upg.total>0))
-    ?`<div class="warnbox" style="margin-bottom:12px">${icSm('alert')} <b>The tent and classroom ticket prices aren't set.</b>
-       ${inpersonCount>0?` ${inpersonCount} ${inpersonCount===1?'person':'people'} paid in person — until the prices are set they are valued at whatever the invoice recorded, which is usually <b>$0</b>, so the total below under-reads.`:''}
-       ${upg.total>0?` Classroom upgrades can't be priced either.`:''}
-       ${isAdmin?`<button class="btn alt sm" style="margin-top:8px" onclick="go('adminSettings')">Open Camp settings</button>`
-        :`<div class="sub" style="margin-top:6px">An admin can set them in Camp settings → Ticket prices.</div>`}</div>`:'';
+  const priceGate=unpriced.count
+    ?`<div class="warnbox" style="margin-bottom:12px">${icSm('alert')} <b>${unpriced.count} ${unpriced.count===1?'person':'people'} paid in person on a ticket with no known price.</b>
+       They are counted at <b>$0</b>, so the total below under-reads. Every other ticket type is priced automatically from its invoices — ${esc(unpriced.types.join(', '))} ${unpriced.types.length===1?'has':'have'} none.
+       ${isAdmin?`<button class="btn alt sm" style="margin-top:8px" onclick="go('adminSettings')">Set a price in Camp settings</button>`
+        :`<div class="sub" style="margin-top:6px">An admin can set a fallback price in Camp settings → Ticket prices.</div>`}</div>`:'';
+  /* The learned price table, shown so the owner can SEE what the budget is using — this is the
+     direct answer to "what if there is a standard tent AND an early bird tent price?": both appear
+     here as separate rows the moment both have invoices, with no setting to maintain. */
+  const priceRows=[...ptable.values()].sort((a,b)=>b.sample-a.sample||a.label.localeCompare(b.label));
+  const priceSection=priceRows.length?`<div class="card budchurch" data-cid="tprices" style="margin-top:14px">
+    <div class="rowsb budchurch-hd" onclick="_budToggle('tprices')" style="cursor:pointer">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="budchev">${icSm('chevron')}</span>
+        <div style="font-weight:700">Ticket prices</div></div>
+      <span class="sub">${priceRows.length} ticket type${priceRows.length===1?'':'s'}</span></div>
+    <div class="budchurch-body">
+      <p class="sub" style="padding:2px 0 8px">Read from the invoices — nothing to set. A new ticket type appears here as soon as one of its invoices is imported.</p>
+      ${priceRows.map(r=>`<div class="budrow${r.distinctCosts>1?' budrow-warn':''}">
+        <span class="budrow-chev"></span>
+        <div class="budrow-label">${esc(r.label)}${r.distinctCosts>1?' '+icSm('alert'):''}</div>
+        <div class="budrow-qty">${r.sample} ${r.sample===1?'person':'people'}</div>
+        <b class="budrow-amt">${_money(r.price)}</b>
+        ${r.distinctCosts>1?`<div class="budrow-det" style="display:block">${r.distinctCosts} different costs recorded for this ticket — the most common is used.</div>`:''}</div>`).join('')}
+    </div></div>`:'';
   const upgSection=upg.total?`<div class="card budchurch" data-cid="upg" style="margin-top:14px">
     <div class="rowsb budchurch-hd" onclick="_budToggle('upg')" style="cursor:pointer">
       <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="budchev">${icSm('chevron')}</span>
@@ -4214,7 +4353,8 @@ function drawBudget(){
     <div class="budchurch-body">
       <p class="sub" style="padding:2px 0 8px">People sleeping in a classroom who bought a <b>tent</b> ticket.${
         upg.delta!=null?` The upgrade is ${_money(upg.delta)} (${_money(upg.tent)} tent → ${_money(upg.classroom)} classroom).`
-        :' Set the ticket prices to see what each one owes.'}</p>
+        :upg.classroom!=null&&upg.tentPriceCount>1?` Classroom is ${_money(upg.classroom)}; with ${upg.tentPriceCount} tent prices in play the upgrade differs per person, so each amount below is worked out against that person's own ticket.`
+        :' No classroom ticket price is known yet, so the amounts cannot be worked out.'}</p>
       ${_budUpgGroup('Upgrade paid',upg.paid,false)}
       ${_budUpgGroup('Upgrade outstanding',upg.owing,true)}
       ${_budUpgGroup('No payment recorded',upg.unknown,false)}
@@ -4222,7 +4362,7 @@ function drawBudget(){
         <span class="lbl">Outstanding</span><b>${_money(upg.owedTotal)}</b></div>`:''}
     </div></div>`:'';
   const box=document.getElementById('budgetBody');
-  if(box)box.innerHTML=`${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${upgSection}${discSection}</div></div>`;
+  if(box)box.innerHTML=`${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${upgSection}${priceSection}${discSection}</div></div>`;
 }
 function _budToggle(cid){const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.toggle('open');}
 // Selecting the blank option clears the tag (the code reverts to a plain full-price ticket).
@@ -5797,9 +5937,9 @@ RENDER.adminSettings=async function(){
         </div>
       </div>
     </details>
-    <details class="setg"><summary>${icSm('dollar')} Ticket prices ${tick(s.tentPrice!=null&&s.classroomPrice!=null)}</summary>
+    <details class="setg"><summary>${icSm('dollar')} Ticket prices <span class="sub">(optional)</span></summary>
       <div class="card">
-        <p class="note-hint" style="text-align:left">What a full-price ticket costs — the no-code invoice amount every discount code is defined against. Used on <b>Budget &amp; Costings</b> to value a ticket whose code is tagged “paid in person”, and to show what “discounted” is measured against. It does <b>not</b> change any student's recorded cost.</p>
+        <p class="note-hint" style="text-align:left"><b>You usually do not need these.</b> Since 2026-08-02 the budget reads each ticket type's price straight from its invoices — see the <b>Ticket prices</b> card on <b>Budget &amp; Costings</b> for what it has learned, including a separate figure for an early-bird and a standard ticket. These two fields are only a <b>fallback</b>, for a ticket type that nobody has an invoice for (e.g. one whose every holder paid in person). The Budget screen tells you if that ever happens. Neither field changes any student's recorded cost.</p>
         <div class="two-col">
           <div><label>Tent ticket ($)</label><input class="fld" id="stTentPrice" type="number" inputmode="decimal" min="0" step="0.01" value="${s.tentPrice==null?'':esc(String(s.tentPrice))}"></div>
           <div><label>Classroom ticket ($)</label><input class="fld" id="stClassroomPrice" type="number" inputmode="decimal" min="0" step="0.01" value="${s.classroomPrice==null?'':esc(String(s.classroomPrice))}"></div>
@@ -6147,7 +6287,7 @@ function _importExtraLine(type,r){
   if(type==='invoices'){
     const parts=[];
     if(r.guessedAccommodationCount)parts.push(`${r.guessedAccommodationCount} accommodation type${r.guessedAccommodationCount===1?'':'s'} guessed from price`);
-    if(r.ambiguousGroupInvoices)parts.push(`${r.ambiguousGroupInvoices} invoice${r.ambiguousGroupInvoices===1?'':'s'} cover multiple people — amounts withheld`);
+    if(r.ambiguousGroupInvoices)parts.push(`${r.ambiguousGroupInvoices} invoice${r.ambiguousGroupInvoices===1?'':'s'} covered multiple people — split by ticket price`);
     if(r.unmatchedInvoices&&r.unmatchedInvoices.length)parts.push(`${r.unmatchedInvoices.length} invoice${r.unmatchedInvoices.length===1?'':'s'} couldn't be matched to anyone`);
     return parts.length?`${icSm('alert')} ${parts.join(' · ')}.`:null;
   }

@@ -250,12 +250,37 @@ check "expected vs actual" before touching code.
 >   on purpose** — do not mirror it into `budget.ts`, and do not delete `church.campers`/`.leaders`,
 >   which the CSV export still walks unmerged. Its one real hazard is `codeHint`, which must survive
 >   the merge ONLY when every contributing scope reported the same code.
-> - **⚠️ "THE BUDGET TOTAL IS TOO LOW" / "PAID IN PERSON SHOWS $0" → CHECK `settings.tent_price` AND
->   `classroom_price` FIRST, BEFORE READING ANY CODE.** They were NULL in prod through 2026-08-02, so
->   every `inperson`-tagged ticket fell through to `amountPaid` (usually 0) — 11 people, ~$2,050
->   missing. `_personValue` was correct the whole time. The warning existed but was rendered inside
->   the collapsed Discount codes card; it is now `priceGate` at the top of the budget body. **Do not
->   move it back inside a collapsible.**
+> - **⚠️ "THE BUDGET TOTAL IS TOO LOW" / "PAID IN PERSON SHOWS $0"** — was the missing
+>   `settings.tent_price` / `classroom_price`, ~$2,050 across 11 people. **Superseded 2026-08-02
+>   (3rd): prices are now DERIVED from the invoices, so an empty setting is no longer a fault.**
+>   See the block below before touching anything here.
+
+> **2026-08-02 (3rd) — family invoices + derived ticket prices (grep the name).
+> Full rationale: CLAUDE.md, the third 2026-08-02 section at the top.**
+> - **⚠️ "A BUNCH OF TICKETS SHOW $0 WITH NO DISCOUNT CODE" → SHARED FAMILY INVOICES.** Check it in
+>   one query: group `people` by `invoice_number` and compare `count(*)` with
+>   `count(*) filter (where amount_paid is not null)`. Prod on 2026-08-02: every 1-person invoice had
+>   money, **every 2- and 3-person invoice had none** — 64 of 217 people, ~$11,760. It was a
+>   deliberate withhold branch in `invoice-import.service.ts`, not a matching failure. They are split
+>   now.
+>   ⚠️ **A DEPLOY DOES NOT BACKFILL THIS.** Rows already stored as null stay null — the owner must
+>   re-import the Billing Contacts CSV once. If they report "still $0 after the fix", ask whether they
+>   re-imported before reading any code.
+> - **`splitExact()`** (`invoice-import.service.ts`) — largest-remainder split so the parts sum to the
+>   invoice EXACTLY. ⚠️ Do not replace with per-person `Math.round`: it drifts cents per invoice and
+>   the camp total stops matching the sum of its own rows. Handles a negative total (credit note).
+> - **`ticket-prices.ts` / `buildTicketPriceTable` / `priceForTicket`, SPA mirror `_budTicketPrices` /
+>   `_priceForTicket` / `_resolveTicketPrice`** — each ticket type's price, LEARNED from the invoices.
+>   This is what lets an early-bird tent and a standard tent ticket coexist; two scalar settings could
+>   not. ⚠️ Tie-break is deliberately the LOWER price (this values money received — guessing high
+>   invents income). ⚠️ Mirror and source must change together.
+> - **`personValue` in-person cascade** = own `registrationCost` → learned type price → scalar
+>   setting. **`settings.tentPrice`/`classroomPrice` are now a last-resort fallback only**, for a
+>   ticket type nobody has an invoice for. A blank setting is NOT a fault on its own.
+> - **`_budUnpricedInperson()`** — what the top-of-screen warning fires on. It counts a *measured*
+>   failure (an in-person payer whose ticket type has no price from any source) rather than checking
+>   whether a setting is blank, and names the offending ticket type. Keep it that way: the
+>   empty-setting check produced a warning that was true, useless, and permanently on.
 > - **`_budUpgrades()` / `_budTicketKind()` / `_budUpgGroup()`** — the tent→classroom upgrade card.
 >   "Who is in a classroom without paying the upgrade" = `accommodationKind === 'classroom'` **while
 >   `registrationType` says tent** (the church accommodation override is what makes the two diverge).

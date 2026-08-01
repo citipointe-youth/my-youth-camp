@@ -1,3 +1,5 @@
+import { buildTicketPriceTable, priceForTicket, type TicketPrice } from './ticket-prices';
+
 // Budget & costings — pure costing logic (Category H / brief §5).
 //
 // This is the CANONICAL costing algorithm and the unit-test target. The SPA mirrors the
@@ -98,6 +100,11 @@ export interface BudgetPerson {
   discountAmount?: number | null;
   /** Owned by the Ticket List import (or a church accommodation override). */
   accommodationKind?: 'tent' | 'classroom' | null;
+  /**
+   * The verbatim Elvanto ticket type. Feeds the learned price table (ticket-prices.ts), which is
+   * how an in-person payer gets valued when the camp runs more than one tent ticket.
+   */
+  registrationType?: string | null;
   /** Owned by the Invoice import — what actually arrived. */
   amountPaid?: number | null;
 }
@@ -214,13 +221,48 @@ export function classifyTicket(p: BudgetPerson, tags: DiscountTagMap): TicketCla
  * To read the budget as "value of all places" instead, swap steps 3 and 4 here and in the SPA
  * mirror `_personValue`. Nothing else needs to change.
  */
-export function personValue(p: BudgetPerson, cls: TicketClass, prices: BasePrices): number | null {
-  if (cls === 'tent-inperson' && prices.tent != null) return prices.tent;
-  if (cls === 'classroom-inperson' && prices.classroom != null) return prices.classroom;
+/**
+ * What one person's place is worth to the budget.
+ *
+ * ⚠️ THE IN-PERSON CASCADE CHANGED 2026-08-02 — read this before simplifying it. Someone who paid
+ * in person has no invoice amount, so their place has to be valued at the TICKET they hold. That
+ * used to be a single scalar setting per accommodation kind, which broke the moment the camp ran
+ * both an early-bird and a standard tent ticket: one `tentPrice` cannot be two prices. The order
+ * is now most-specific-first, and each step is a real fallback, not a preference:
+ *
+ *   1. their own `registrationCost` — the actual price of the actual ticket they bought;
+ *   2. the learned price for their ticket TYPE (ticket-prices.ts) — for someone whose own cost was
+ *      never recorded, but whose ticket type other people have invoices for;
+ *   3. the admin's `tentPrice`/`classroomPrice` setting — last resort, and only reachable for a
+ *      ticket type NOBODY has an invoice for. This is all those settings are for now.
+ *
+ * `ticketPrice` is the already-resolved result of steps 1-2 (computeBudget does the lookup so this
+ * stays a pure function). Null means neither was available.
+ */
+export function personValue(
+  p: BudgetPerson,
+  cls: TicketClass,
+  prices: BasePrices,
+  ticketPrice?: number | null,
+): number | null {
+  if (cls === 'tent-inperson' || cls === 'classroom-inperson') {
+    if (ticketPrice != null) return ticketPrice;
+    const fallback = cls === 'tent-inperson' ? prices.tent : prices.classroom;
+    if (fallback != null) return fallback;
+  }
   if (cls === 'tent-sponsor' || cls === 'classroom-sponsor') return 0;
   if (p.amountPaid != null) return p.amountPaid;
   if (p.registrationCost != null) return p.registrationCost;
   return null;
+}
+
+/** Steps 1-2 of the `personValue` in-person cascade: this person's own ticket price, if knowable. */
+export function resolveTicketPrice(
+  p: BudgetPerson,
+  table: Map<string, TicketPrice>,
+): number | null {
+  if (p.registrationCost != null) return p.registrationCost;
+  return priceForTicket(table, p.registrationType);
 }
 
 interface Bucket {
@@ -306,6 +348,9 @@ export function computeBudget(
   const tags = opts?.tags ?? {};
   const prices = opts?.prices ?? { tent: null, classroom: null };
   const filterChurchId = opts?.filterChurchId;
+  /* Learned from the FULL set, not the filtered one: a ticket type priced only at another church
+     must still price this church's in-person holders of it. */
+  const priceTable = buildTicketPriceTable(people);
   const scoped = filterChurchId ? people.filter((p) => p.churchId === filterChurchId) : people;
 
   let fullAmount: number | null = null;
@@ -321,7 +366,7 @@ export function computeBudget(
       byChurch.set(p.churchId, c);
     }
     const cls = classifyTicket(p, tags);
-    const value = personValue(p, cls, prices);
+    const value = personValue(p, cls, prices, resolveTicketPrice(p, priceTable));
     if (value != null && value > 0) {
       fullAmount = fullAmount == null ? value : Math.max(fullAmount, value);
     }

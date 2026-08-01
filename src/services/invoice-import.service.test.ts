@@ -119,25 +119,86 @@ describe('InvoiceImportService.importInvoicesCsv — invoice-number matching (si
   });
 });
 
-describe('InvoiceImportService.importInvoicesCsv — invoice-number matching (group)', () => {
-  it('withholds $ fields for a group match but still applies discountCode; increments ambiguousGroupInvoices', async () => {
-    const a = person({ id: 'p1', firstName: 'Ada', lastName: 'Lovelace', invoiceNumber: 'INV-200' });
-    const b = person({ id: 'p2', firstName: 'Grace', lastName: 'Hopper', invoiceNumber: 'INV-200' });
-    const { svc, personRepo } = await build([a, b]);
+/* Family invoices (2026-08-02). These used to have their money WITHHELD from everyone on them,
+   which in prod meant 64 of 217 people reported $0 with no discount code to explain it — the
+   single biggest hole in the budget. They are split now; these tests pin the split. */
+describe('InvoiceImportService.importInvoicesCsv — shared family invoices', () => {
+  // Priced from single-invoice people already in the repo, exactly as the real table is built.
+  const priced = (): Person[] => [
+    person({ id: 'seedC', registrationType: 'Classroom Accommodation', registrationCost: 190 }),
+    person({ id: 'seedT', registrationType: 'EARLY BIRD | Tent Accomodation', registrationCost: 150 }),
+  ];
+
+  it('splits a shared invoice by ticket price and the parts sum to the invoice exactly', async () => {
+    // The real prod shape: invoice 030032 — a classroom and a tent sibling, $340 of tickets,
+    // $320 paid after a $20 discount.
+    const a = person({ id: 'p1', firstName: 'Charlotte', lastName: 'Winslow',
+      invoiceNumber: 'INV-200', registrationType: 'Classroom Accommodation' });
+    const b = person({ id: 'p2', firstName: 'Hannah', lastName: 'Winslow',
+      invoiceNumber: 'INV-200', registrationType: 'EARLY BIRD | Tent Accomodation' });
+    const { svc, personRepo } = await build([...priced(), a, b]);
     const res = await svc.importInvoicesCsv(actor('admin'), {
-      csvData: `${HDR}\nINV-200,,,,500,,500,,,SUMMER10`,
+      csvData: `${HDR}\nINV-200,,,,340,20,320,,,SUMMER10`,
     });
     expect(res.ambiguousGroupInvoices).toBe(1);
-    expect(res.warnings.some((w) => w.message.includes('INV-200') && w.message.includes('2'))).toBe(true);
     const all = await personRepo.findAll();
     const pa = all.find((x) => x.id === 'p1')!;
     const pb = all.find((x) => x.id === 'p2')!;
-    for (const p of [pa, pb]) {
-      expect(p.registrationCost).toBeUndefined();
-      expect(p.amountPaid).toBeUndefined();
-      expect(p.discountCode).toBe('SUMMER10');
-    }
+    // Cost is each person's OWN ticket, not a share of the total.
+    expect(pa.registrationCost).toBe(190);
+    expect(pb.registrationCost).toBe(150);
+    // Paid is apportioned 190:150 — and the two parts must add up to the invoice EXACTLY.
+    expect((pa.amountPaid ?? 0) + (pb.amountPaid ?? 0)).toBe(320);
+    expect((pa.discountAmount ?? 0) + (pb.discountAmount ?? 0)).toBe(20);
+    expect(pa.amountPaid!).toBeGreaterThan(pb.amountPaid!);
+    for (const p of [pa, pb]) expect(p.discountCode).toBe('SUMMER10');
+    // A price-based split is a fact, not a guess — it must NOT raise the review flag.
+    for (const p of [pa, pb]) expect(p.needsReview ?? false).toBe(false);
     expect(res.updated).toBe(2);
+  });
+
+  it('splits equally and flags for review when a ticket type has no known price', async () => {
+    const a = person({ id: 'p1', invoiceNumber: 'INV-201', registrationType: 'Mystery Ticket' });
+    const b = person({ id: 'p2', invoiceNumber: 'INV-201', registrationType: 'Mystery Ticket' });
+    const { svc, personRepo } = await build([a, b]);
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: `${HDR}\nINV-201,,,,500,,500,,,`,
+    });
+    const all = await personRepo.findAll();
+    const pa = all.find((x) => x.id === 'p1')!;
+    const pb = all.find((x) => x.id === 'p2')!;
+    expect(pa.amountPaid).toBe(250);
+    expect(pb.amountPaid).toBe(250);
+    for (const p of [pa, pb]) {
+      expect(p.needsReview).toBe(true);
+      expect(p.needsReviewReason).toContain('split equally');
+    }
+    expect(res.warnings.some((w) => w.message.includes('EQUALLY'))).toBe(true);
+  });
+
+  it('never loses or invents a cent when the split does not divide evenly', async () => {
+    // $100 across three equal shares is 33.33/33.33/33.34 — a per-person round() would give
+    // $99.99 and the camp total would stop matching the sum of its rows.
+    const people = ['p1', 'p2', 'p3'].map((id) =>
+      person({ id, invoiceNumber: 'INV-202', registrationType: 'Mystery Ticket' }));
+    const { svc, personRepo } = await build(people);
+    await svc.importInvoicesCsv(actor('admin'), { csvData: `${HDR}\nINV-202,,,,100,,100,,,` });
+    const all = await personRepo.findAll();
+    const paid = ['p1', 'p2', 'p3'].map((id) => all.find((x) => x.id === id)!.amountPaid ?? 0);
+    expect(paid.reduce((s, v) => s + v, 0)).toBe(100);
+    expect(paid.every((v) => v >= 33.33 && v <= 33.34)).toBe(true);
+  });
+
+  it('is idempotent — re-importing the same file does not double the split', async () => {
+    const a = person({ id: 'p1', invoiceNumber: 'INV-203', registrationType: 'Classroom Accommodation' });
+    const b = person({ id: 'p2', invoiceNumber: 'INV-203', registrationType: 'EARLY BIRD | Tent Accomodation' });
+    const { svc, personRepo } = await build([...priced(), a, b]);
+    const csvData = `${HDR}\nINV-203,,,,340,,340,,,`;
+    await svc.importInvoicesCsv(actor('admin'), { csvData });
+    await svc.importInvoicesCsv(actor('admin'), { csvData });
+    const all = await personRepo.findAll();
+    const total = ['p1', 'p2'].reduce((s, id) => s + (all.find((x) => x.id === id)!.amountPaid ?? 0), 0);
+    expect(total).toBe(340);
   });
 });
 
