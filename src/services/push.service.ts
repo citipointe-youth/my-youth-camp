@@ -2,6 +2,8 @@ import webpush from 'web-push';
 import type {
   IPushSubscriptionRepository,
   INotificationRepository,
+  IUserRepository,
+  ISettingsRepository,
 } from '../repositories/interfaces/entity-repositories';
 import type { PushSubscription } from '../core/entities/push-subscription';
 import type { Notification } from '../core/entities/notification';
@@ -94,6 +96,21 @@ export const PUSH_SEND_CONCURRENCY = 10;
  * worst-case arithmetic above.
  */
 export const PUSH_JITTER_MS = 4000;
+
+/**
+ * Below this many total sends in a batch, the jitter above is skipped entirely (2026-08-03).
+ *
+ * The jitter's ONLY job is to stop a crowd of devices opening the app in the same second.
+ * A batch smaller than this is not a crowd, so the delay is pure latency on the alert. Sized
+ * against the real small-fan-out case the owner asked about: a high-severity incident alert
+ * goes to zone leaders + directors + admins, which is ~10-15 devices at camp — comfortably
+ * under this, so an incident alert now carries no jitter at all.
+ *
+ * A camp-wide urgent notice (~224 sends) is far above it and keeps the full window, which is
+ * the case the jitter was written for. Do not raise this to cover that — the whole point is
+ * that the two cases have opposite needs.
+ */
+export const PUSH_JITTER_MIN_SENDS = 20;
 
 /**
  * Absolute ceiling on how large a SINGLE oversized notice may be pushed to when it is let
@@ -248,8 +265,10 @@ export function isPushConfigured(envSource: NodeJS.ProcessEnv = process.env): bo
  * travels, `body` does not. The reasoning above still holds for the body — it is the field
  * that carries incident summaries and free text about named minors.
  *
- * The titles this exposes are: `Check-in closing soon` and `Incident logged · <Zone> Zone`
- * (both system-generated and fixed), plus the one-line subject a director/zone leader types
+ * The titles this exposes are: `Check-in closing soon` and `High priority incident`
+ * (both system-generated and fixed — the incident one is a CONSTANT, not the notice's
+ * stored title; see the `leadersOnly` branch), plus the one-line subject a director/zone
+ * leader types
  * in the compose screen. That last one is author-controlled, so it is the one place where a
  * leader could put a camper's name on every recipient's lock screen. It is a deliberate,
  * owner-accepted trade — a notification you cannot identify is one people stop reading —
@@ -272,11 +291,19 @@ export function buildPushPayload(n: Notification): { title: string; body: string
   }
   if (n.leadersOnly) {
     return {
-      // System-generated and deliberately coarse: `Incident logged · <Zone> Zone`
-      // (incident.service.ts). The SUMMARY, which can describe a minor, stays in `body`
-      // and is never sent.
-      title: pushTitle(n.title, 'Camp: urgent alert'),
-      body: 'Open the app to view details.',
+      /* 2026-08-03: the stored title is DELIBERATELY NOT USED here.
+         `leadersOnly` is set by exactly one code path — `incident.service.log` on a
+         HIGH-severity incident — so this branch is always a high-priority incident alert,
+         and its stored title is `Incident logged · <Zone> Zone`. On a lock screen
+         "Incident logged" reads as a filing confirmation, i.e. something already handled,
+         which is the opposite of what it means. The owner asked for wording that states
+         the severity and the required action.
+         The zone is dropped on purpose: it is a locational detail that belongs in the app,
+         and the in-app notice + Notices list still carry the full `Incident logged · <Zone>
+         Zone` title. Only the phone's lock screen changes.
+         The SUMMARY, which can describe a minor, stays in `body` and is never sent. */
+      title: 'High priority incident',
+      body: 'Open app to view',
       tag: 'camp-alert',
       screen: 'incidents',
     };
@@ -400,6 +427,13 @@ export interface PushSendResult {
 export interface PushServiceDeps {
   subscriptions: IPushSubscriptionRepository;
   notifications: INotificationRepository;
+  /**
+   * Only needed by `sendNow` (2026-08-03). Optional so every existing construction site and
+   * test keeps working unchanged — without them `sendNow` is a documented no-op and the
+   * 5-minute tick remains the delivery path, exactly as before.
+   */
+  users?: IUserRepository;
+  settings?: ISettingsRepository;
   /** Injected for tests; defaults to the real jittered delay. */
   sleep?: (ms: number) => Promise<void>;
   /** Injected for tests; defaults to Math.random. */
@@ -582,12 +616,23 @@ export function makePushService(deps: PushServiceDeps) {
         if (next) next();
       }
 
+      /* 2026-08-03: the jitter is SKIPPED for a small fan-out.
+         PUSH_JITTER_MS exists for exactly one reason, stated at its declaration: stopping
+         100+ devices opening the app in the same second and stampeding the API. Below
+         PUSH_JITTER_MIN_SENDS there is no stampede to prevent, so the delay buys nothing and
+         costs a mean 2s (up to 4s) on the single most time-critical notification the system
+         sends. A high-severity incident reaches ~10-15 devices — every one of them was
+         paying that 2s for a crowd that does not exist.
+         The threshold is on the FLATTENED task count (notice × device), which is the number
+         that actually decides whether the API gets hit at once. */
+      const jitterMs = tasks.length < PUSH_JITTER_MIN_SENDS ? 0 : PUSH_JITTER_MS;
+
       await Promise.all(
         tasks.map(async (task) => {
           // §4.8 jitter — see PUSH_JITTER_MS. Awaited BEFORE queueing for a concurrency slot,
           // deliberately: every task's random wait runs in PARALLEL with every other task's,
           // so the total jitter cost is bounded by the window itself, not by task count × window.
-          await sleep(Math.floor(random() * PUSH_JITTER_MS));
+          if (jitterMs > 0) await sleep(Math.floor(random() * jitterMs));
           await acquireSendSlot();
           try {
             attempted += 1;
@@ -623,6 +668,64 @@ export function makePushService(deps: PushServiceDeps) {
       );
 
       return { attempted, succeeded, failed, pruned, deferred };
+    },
+
+    /**
+     * Push ONE just-created notice immediately, instead of waiting for the next cron tick
+     * (2026-08-03, owner request: "urgent notices take a while to arrive").
+     *
+     * ── Why this exists ──
+     * The tick runs every 5 minutes, so before this the delay between a director tapping
+     * Send (or a zone leader logging a high-severity incident) and the phones buzzing was
+     * uniformly distributed over 0-5 minutes, averaging 2.5. Nothing in the fan-out itself
+     * was slow; the notice was simply sitting unclaimed waiting to be noticed. For a
+     * safeguarding alert that is the whole latency budget spent on polling.
+     *
+     * ── Why this is safe against double-sending ──
+     * It goes through `sendForNotifications`, which claims via `claimForPush` — an ATOMIC
+     * claim. If this call claims the notice, the next tick's `pushSentAt == null` filter
+     * excludes it; if this call loses a race with a tick, `claimedIds` will not contain the
+     * id and this call sends nothing. **Do not "optimise" this into a direct sendOne loop
+     * that skips the claim** — the claim is the only thing preventing a duplicate, and it is
+     * permanent, so a duplicate is not self-correcting.
+     *
+     * ── Why it can never break the caller ──
+     * It NEVER throws and it never reports failure upward. The in-app notice is already
+     * committed by the time this runs and is the guaranteed channel; the tick remains the
+     * safety net and will pick this notice up within 5 minutes if anything here fails or
+     * no-ops. So the worst case is exactly the old behaviour.
+     *
+     * No-ops (returning `null`) when push is unconfigured, when the `users`/`settings` repos
+     * were not injected, or when the notice is not pushable — `sendForNotifications` also
+     * re-checks `isPushable`, so a normal-priority notice cannot buzz a phone through this
+     * door either.
+     *
+     * ⚠ The caller AWAITS this, so it adds latency to the request that created the notice.
+     * That is deliberate: on serverless the function can be frozen the moment the response is
+     * written, so a fire-and-forget send is not reliably delivered. Cost is bounded — an
+     * incident's ~10-15 devices land in well under a second now that
+     * `PUSH_JITTER_MIN_SENDS` skips the jitter at that size.
+     */
+    async sendNow(n: Notification): Promise<PushSendResult | null> {
+      try {
+        if (!readPushConfig(envSource)) return null;
+        if (!deps.users || !deps.settings) return null;
+        if (!isPushable(n)) return null;
+        const [users, settings] = await Promise.all([
+          deps.users.findAll(),
+          deps.settings.getSingleton(),
+        ]);
+        if (!settings) return null;
+        return await this.sendForNotifications([n], users, settings);
+      } catch (err) {
+        // Swallowed on purpose — see the contract above. Logged without title or body: this
+        // runs on the incident path and the lock-screen rule applies to logs too.
+        console.error('[push] immediate send failed; the cron tick will retry', {
+          notificationId: n.id,
+          err,
+        });
+        return null;
+      }
     },
 
     /**

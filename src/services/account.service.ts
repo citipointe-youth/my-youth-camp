@@ -23,13 +23,39 @@ import { nowISO } from '../utils/date';
 import { toSafeUser } from './auth.service';
 import { invalidateDashboardCache } from './dashboard-cache';
 import { memorablePassword } from '../utils/memorable-password';
+import type { UserRole } from '../core/types/enums';
+
+/**
+ * Human-readable role names for the credentials export (2026-08-03).
+ *
+ * A leadership account has no church to print in the CSV's Church column, so its role goes
+ * there instead — `first-aid` in a spreadsheet cell is not a useful label for the person
+ * handing these out.
+ */
+const ROLE_LABELS: Partial<Record<UserRole, string>> = {
+  admin: 'Admin',
+  director: 'Director',
+  zoneLeader: 'Zone leader',
+  firstAid: 'First aid',
+};
 
 /** A church login credential row for the Feature 6 password export. */
 export interface ChurchCredential {
   username: string;
   church: string;
-  gender: GenderScope;
+  /**
+   * Null for a leadership account (2026-08-03). Only church logins are gender-scoped; a
+   * director/zoneLeader/firstAid/admin account has no gender half, and reporting one would
+   * be inventing a distinction that does not exist.
+   */
+  gender: GenderScope | null;
   password: string;
+  /**
+   * The account's role (2026-08-03). Added when the rotation was widened beyond church
+   * logins — with leadership accounts in the same CSV, "which of these is the director?" is
+   * otherwise unanswerable from the username alone.
+   */
+  role?: UserRole;
 }
 
 /** Turn a church name into a stable, username-safe slug base ('Victory Church' → 'victory-church'). */
@@ -378,8 +404,51 @@ export function makeAccountService(
         await retireLegacyChurchLogins(church.id, allUsers);
       }
 
+      /* ── Leadership accounts (2026-08-03, owner request) ──
+         Before this the button rotated church logins ONLY, so director / zone leader /
+         first-aid / secondary-admin passwords were whatever they had been set to, possibly
+         since the account was created, and there was no way to roll them as a set before
+         camp. They are now rotated in the same operation and land in the same CSV.
+
+         ⚠ THE ORIGINAL ADMIN IS EXCLUDED, and this is load-bearing, not a nicety. It is the
+         recovery account — the one login that cannot be deleted, deactivated or demoted by
+         anyone including itself (see `findOriginalAdmin`). An admin who taps this button is
+         very often already locked out of something; rotating the password out from under
+         their own live session, and handing them a new one only via a CSV download that
+         could fail, is how a camp ends up with no way in at all. Secondary admins ARE
+         rotated — they are full peers and the original remains as the fallback.
+
+         Inactive accounts are skipped: rotating a deactivated login puts a working
+         credential for it into a distributed CSV, which is the opposite of deactivating it.
+
+         `mustChangePassword` is deliberately NOT set, matching the church branch above —
+         these ARE the real handed-out passwords, not temporary ones. */
+      const original = findOriginalAdmin(allUsers);
+      const leadership = allUsers.filter(
+        (u) => u.role !== 'church' && u.status === 'active' && u.id !== original?.id,
+      );
+      for (const u of leadership) {
+        const password = memorablePassword();
+        await userRepo.save({
+          ...u,
+          passwordHash: await hashPassword(password),
+          mustChangePassword: false,
+          updatedAt: nowISO(),
+        });
+        rows.push({
+          username: u.username,
+          // No church for a leadership account — label by role so the CSV is readable.
+          church: ROLE_LABELS[u.role] ?? u.role,
+          gender: null,
+          password,
+          role: u.role,
+        });
+      }
+
       invalidateDashboardCache();
-      rows.sort((a, b) => a.church.localeCompare(b.church) || a.gender.localeCompare(b.gender));
+      rows.sort(
+        (a, b) => a.church.localeCompare(b.church) || (a.gender ?? '').localeCompare(b.gender ?? ''),
+      );
       return rows;
     },
 

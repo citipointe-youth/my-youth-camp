@@ -12,12 +12,15 @@ import {
   isPushable,
   PUSH_TICK_BUDGET_MS,
   PUSH_ABSOLUTE_MAX_SINGLE_NOTICE_SENDS,
+  PUSH_JITTER_MIN_SENDS,
 } from './push.service';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   InMemoryNotificationRepository,
   InMemoryPushSubscriptionRepository,
+  InMemoryUserRepository,
+  InMemorySettingsRepository,
 } from '../repositories/in-memory';
 import type { Notification } from '../core/entities/notification';
 import type { User } from '../core/entities/user';
@@ -189,9 +192,17 @@ describe('buildPushPayload — the lock-screen rule', () => {
     );
     expect(JSON.stringify(p)).not.toContain('Student X');
     expect(JSON.stringify(p)).not.toContain('disclosed');
-    expect(p.title).toBe('Incident logged · Blue Zone');
-    expect(p.body).toBe('Open the app to view details.');
+    // 2026-08-03: a FIXED string, not the notice's stored title. "Incident logged" read as
+    // a filing confirmation on a lock screen — the opposite of "act on this now". The zone
+    // is deliberately dropped from the push; the in-app notice keeps the full title.
+    expect(p.title).toBe('High priority incident');
+    expect(p.body).toBe('Open app to view');
     expect(p.screen).toBe('incidents');
+  });
+
+  it('does NOT leak the incident zone onto the lock screen', () => {
+    const p = buildPushPayload(notif({ leadersOnly: true, title: 'Incident logged · Blue Zone' }));
+    expect(JSON.stringify(p)).not.toContain('Blue');
   });
 
   it('NEVER puts a stored notice body in an ordinary notice payload', () => {
@@ -466,7 +477,7 @@ describe('makePushService.sendForNotifications', () => {
     expect(b.attempted).toBe(0); // already claimed
   });
 
-  it('applies jitter within the configured window', async () => {
+  it('applies jitter within the configured window for a LARGE fan-out', async () => {
     const delays: number[] = [];
     const svc = makePushService({
       subscriptions: subs, notifications: notifs, env: VAPID_ENV,
@@ -474,16 +485,41 @@ describe('makePushService.sendForNotifications', () => {
       random: () => 0.5,
     });
     const u = user();
-    await addDevices(u.id, 3);
+    // Must be at or above PUSH_JITTER_MIN_SENDS — this is the crowd the jitter exists for.
+    await addDevices(u.id, PUSH_JITTER_MIN_SENDS);
     const n = notif();
     await notifs.save(n);
 
     await svc.sendForNotifications([n], [u], settings());
-    expect(delays).toHaveLength(3);
+    expect(delays).toHaveLength(PUSH_JITTER_MIN_SENDS);
     for (const d of delays) {
       expect(d).toBeGreaterThanOrEqual(0);
       expect(d).toBeLessThan(4000);
     }
+  });
+
+  /* 2026-08-03. The owner's report was "urgent notices take a while to arrive". One half of
+     that was the 5-minute tick; the other half was this — every device waited a mean 2s for a
+     stampede-avoidance window sized for 100+ devices, even when the audience was 15 phones.
+     Pinning BOTH sides of the threshold, because a change that silently dropped the jitter
+     entirely would look identical on the small-batch test and is exactly the regression that
+     matters at camp scale. */
+  it('skips jitter entirely for a SMALL fan-out (incident-sized audience)', async () => {
+    const delays: number[] = [];
+    const svc = makePushService({
+      subscriptions: subs, notifications: notifs, env: VAPID_ENV,
+      sleep: async (ms) => { delays.push(ms); },
+      random: () => 0.5,
+    });
+    const u = user();
+    await addDevices(u.id, PUSH_JITTER_MIN_SENDS - 1);
+    const n = notif();
+    await notifs.save(n);
+
+    const res = await svc.sendForNotifications([n], [u], settings());
+    // Every device was still contacted — the sends happened, they just didn't wait.
+    expect(res.attempted).toBe(PUSH_JITTER_MIN_SENDS - 1);
+    expect(delays).toHaveLength(0);
   });
 
   it('prunes a subscription the push service reports as gone (404/410)', async () => {
@@ -737,5 +773,124 @@ describe('makePushService.sendForNotifications', () => {
       await addDevices('u-me', 1);
       expect(await svc.sendTestToUser('u-me')).toEqual({ sent: 0, failed: 0, pruned: 0, configured: false });
     });
+  });
+});
+
+/* 2026-08-03 — immediate send. The owner reported urgent notices taking a while to arrive;
+   the dominant cause was that nothing pushed a notice until the next 5-minute cron tick, so
+   the wait averaged 2.5 minutes. `sendNow` closes that, and the ONLY thing that makes it safe
+   is that it goes through the same atomic `claimForPush` the tick uses. These tests exist to
+   stop that guarantee being refactored away — a duplicate push is not self-correcting,
+   because the claim is permanent. */
+describe('makePushService.sendNow — immediate delivery', () => {
+  let subs: InMemoryPushSubscriptionRepository;
+  let notifs: InMemoryNotificationRepository;
+  let users: InMemoryUserRepository;
+  let settingsRepo: InMemorySettingsRepository;
+
+  async function device(userId: string): Promise<void> {
+    await subs.save({
+      id: `${userId}-d0`, userId, endpoint: `https://push.example/${userId}/0`,
+      p256dh: 'p', auth: 'a', consentVersion: 1, createdAt: NOW,
+      lastSuccessAt: null, lastFailureAt: null, failureCount: 0,
+    });
+  }
+
+  function mkNow() {
+    return makePushService({
+      subscriptions: subs, notifications: notifs, users, settings: settingsRepo,
+      env: VAPID_ENV, sleep: async () => {}, random: () => 0,
+    });
+  }
+
+  beforeEach(async () => {
+    subs = new InMemoryPushSubscriptionRepository();
+    notifs = new InMemoryNotificationRepository();
+    users = new InMemoryUserRepository();
+    settingsRepo = new InMemorySettingsRepository();
+    await subs.init();
+    await notifs.init();
+    await users.init();
+    await settingsRepo.init();
+    await settingsRepo.saveSingleton(settings());
+  });
+
+  it('pushes an urgent notice straight away', async () => {
+    const u = user();
+    await users.save(u);
+    await device(u.id);
+    const n = notif();
+    await notifs.save(n);
+
+    const res = await mkNow().sendNow(n);
+    expect(res?.attempted).toBe(1);
+  });
+
+  it('CLAIMS the notice, so the next tick cannot send it a second time', async () => {
+    const u = user();
+    await users.save(u);
+    await device(u.id);
+    const n = notif();
+    await notifs.save(n);
+
+    const svc = mkNow();
+    expect((await svc.sendNow(n))?.attempted).toBe(1);
+
+    // Exactly what the tick does: everything active and not yet claimed.
+    const active = await notifs.findActive();
+    const unpushed = active.filter((x) => x.pushSentAt == null && isPushable(x));
+    expect(unpushed).toHaveLength(0);
+
+    // And even if it were handed the notice anyway, the claim refuses it.
+    expect((await svc.sendForNotifications([n], [u], settings())).attempted).toBe(0);
+  });
+
+  it('does NOT push a normal-priority notice (the urgent-only rule still applies)', async () => {
+    const u = user();
+    await users.save(u);
+    await device(u.id);
+    const n = notif({ priority: 'normal' });
+    await notifs.save(n);
+
+    expect(await mkNow().sendNow(n)).toBeNull();
+    // Load-bearing: an unpushable notice must be left UNCLAIMED, so flipping the rule back
+    // later would deliver it rather than find it already burned.
+    const stored = await notifs.findById(n.id);
+    expect(stored?.pushSentAt).toBeNull();
+  });
+
+  it('no-ops without claiming when VAPID is unconfigured', async () => {
+    const u = user();
+    await users.save(u);
+    await device(u.id);
+    const n = notif();
+    await notifs.save(n);
+
+    const svc = makePushService({
+      subscriptions: subs, notifications: notifs, users, settings: settingsRepo,
+      env: {} as NodeJS.ProcessEnv,
+    });
+    expect(await svc.sendNow(n)).toBeNull();
+    expect((await notifs.findById(n.id))?.pushSentAt).toBeNull();
+  });
+
+  it('no-ops when the users/settings repos were not injected', async () => {
+    const n = notif();
+    await notifs.save(n);
+    const svc = makePushService({ subscriptions: subs, notifications: notifs, env: VAPID_ENV });
+    expect(await svc.sendNow(n)).toBeNull();
+  });
+
+  it('NEVER throws — a push failure must not fail the request that created the notice', async () => {
+    const n = notif();
+    await notifs.save(n);
+    const svc = makePushService({
+      subscriptions: subs,
+      notifications: notifs,
+      users: { findAll: async () => { throw new Error('db down'); } } as unknown as InMemoryUserRepository,
+      settings: settingsRepo,
+      env: VAPID_ENV,
+    });
+    await expect(svc.sendNow(n)).resolves.toBeNull();
   });
 });

@@ -4,6 +4,239 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## 16-item owner batch — push latency, parent masking, Android review — 2026-08-03
+
+Owner list of 20 items; one was withdrawn during clarification (a check-in-screen button,
+superseded by the check-in-status export below) and three were verification requests answered
+in prose rather than code. `npm run typecheck` clean, `npx vitest run` **894 pass / 57 files**
+(was 885/56; **+17**), `node --check` OK on the SPA body (range **956–8564**, re-derived) and
+`sw.js`. `sw.js` `camp-v82`→**`camp-v83`**. **No schema or migration change** — next migration
+is still `0021`.
+
+### 1 — 🟠 URGENT NOTICES WAITED ON A 5-MINUTE POLL, AND THE JITTER TAXED THE SMALL CASE
+Owner: *"urgent notices take a while to arrive… review low-risk ways to reduce the delay, then
+do a similar review of the incidents notifications (max 10-15 devices)."*
+
+Two independent delays, and the guess in the question was the smaller one:
+
+| Source | Cost | Fix |
+|---|---|---|
+| Nothing pushed a notice until the next `pg_cron` tick | 0–5 min, **mean 2.5 min** | `push.sendNow()` at creation |
+| `PUSH_JITTER_MS` spread every send over 4s regardless of audience size | mean **2s** | `PUSH_JITTER_MIN_SENDS` |
+
+**`sendNow(n)`** on the push service, called from `notification.service.send` (urgent only) and
+`incident.service.log` (high severity only). The container now builds `push` BEFORE those two so
+it can be injected; both params are **optional**, so every existing test constructs them
+unchanged and an absent push service is exactly the old behaviour.
+
+- ⚠️ **IT GOES THROUGH `claimForPush`, AND THAT IS THE ONLY THING MAKING IT SAFE.** The claim is
+  atomic and **permanent**. If `sendNow` claims, the tick's `pushSentAt == null` filter skips it;
+  if it loses a race, `claimedIds` will not contain the id and it sends nothing. **Do not
+  "optimise" this into a direct `sendOne` loop that skips the claim** — a duplicate push is not
+  self-correcting.
+- ⚠️ **A SCHEDULED NOTICE IS GATED OUT EXPLICITLY**, not left to the audience resolver.
+  `canSeeNotification` would resolve an empty audience for a future `scheduledFor` — but relying
+  on that means CLAIMING it now and **burning its one permanent claim**, so it could never push
+  when it actually published. `publishesNow` is checked in `send()`.
+- **It never throws and never reports failure upward.** The notice row is already committed and
+  is the guaranteed channel; the tick stays the safety net. Worst case = the old behaviour.
+- **Awaited, not fire-and-forget** — on serverless the function can be frozen the moment the
+  response is written, so a detached send is not reliably delivered. Cost is bounded: an
+  incident's ~10-15 devices now land in well under a second.
+
+**`PUSH_JITTER_MIN_SENDS = 20`** — below that many total (notice × device) sends, the jitter is
+skipped entirely. Its stated purpose is stopping 100+ devices opening the app in the same
+second; an incident alert is 10-15 devices, so every one of them was paying a mean 2s for a
+crowd that does not exist. A camp-wide urgent notice (~224 sends) is far above the threshold and
+keeps the full window. **Both sides are tested** — a change that silently dropped the jitter
+altogether looks identical on the small-batch test alone.
+
+> **The cron cadence was deliberately NOT changed.** `*/1` instead of `*/5` was considered and
+> rejected: with immediate send in place the tick's two real jobs do not benefit — the check-in
+> warning already fires on a **60-minute** lead window, where 5-minute granularity is irrelevant
+> — so it would buy only scheduled-notice push precision, at 5× the invocations and 5× the rows
+> in `net._http_response`.
+
+### 2 — The high-severity push no longer says "Incident logged"
+`buildPushPayload`'s `leadersOnly` branch now returns a **fixed** `title: 'High priority
+incident'` / `body: 'Open app to view'` instead of the notice's stored title. On a lock screen
+"Incident logged" reads as a filing confirmation — something already handled — which is the
+opposite of what it means. **`leadersOnly` is set by exactly one code path** (`incident.service
+.log` on high severity), so that branch is always an incident alert.
+The **zone is dropped from the push on purpose**; the in-app notice and Notices list keep the
+full `Incident logged · <Zone> Zone` title. Tests pin both the wording and that the zone does
+not leak into the payload.
+
+### 3 — 🟠 A CHURCH LOGIN'S PARENT NUMBERS ARE NOW MASKED AND AUDITED
+Owner: *"church login, students screen, mask parents number until revealed by clicking (then
+have it be clickable to call similar to the first aid account). Also check it gets logged."*
+
+`maskParentForFirstAid` → **`maskParentPhone`**, driven by
+**`PARENT_PHONE_MASKED_ROLES = {firstAid, church}`** (firstAid alone since 2026-07-17).
+
+- ⚠️ **THE MASK HAS TO BE AT THE DTO BOUNDARY, NOT IN THE SPA.** Hiding it client-side while the
+  real number still travels in the `/campers` JSON makes the reveal theatre — it is one devtools
+  tap away, and far worse **the audit row is never written**, because nothing forced a call to
+  the audited endpoint. Masking server-side is what makes `GET /search/contact/:id/parent` the
+  only route to the number.
+- **It was already logged, and that was verified rather than assumed.** Church holds
+  `camper:read:sensitive`, and `revealContact` records kind **`parent-contact`** to
+  `reveal_audit` → the compliance workbook's "Sensitive Reveals" sheet. No new capability and no
+  schema change; what changed is that a church now *has* to go through it.
+- **director / admin / zoneLeader are deliberately unaffected** — they run the camp, and a
+  masked roster adds an audited tap to routine oversight for no safeguarding gain.
+- SPA: **`_parentPhoneCell(p,id)`** renders a Reveal button, and `faRevealLeader` (reused
+  verbatim) swaps it for a `tel:` link on success — one tap to reveal, one to call, same as
+  first aid. ⚠️ **It detects the mask by looking for `*` in the value, NOT by testing the role.**
+  A role test here silently offers a Reveal button for a cleartext number (or hides one for a
+  masked one) the moment the server's rule changes. It is also why the pre-camp `/registrants`
+  path, which is not masked, still renders a plain `tel:` link correctly.
+- 9 new tests in `parent-phone-mask.controller.test.ts`, including one asserting the raw number
+  appears **nowhere** in the serialized detail DTO.
+
+### 4 — "Randomise & export passwords" now covers every account but the original admin
+Was church logins only. Now also director / zone leader / first aid / **secondary admins**, in
+the same operation and the same CSV (new `Role` column; `Gender` is blank on a leadership row,
+because only church logins are gender-scoped).
+
+- ⚠️ **THE ORIGINAL ADMIN IS EXCLUDED, AND THIS IS LOAD-BEARING.** It is the recovery account —
+  the one login that cannot be deleted, deactivated or demoted by anyone including itself. An
+  admin pressing this button is often already locked out of something; rotating the password out
+  from under their own live session and returning the new one only via a CSV download that could
+  fail is how a camp ends up with no way in at all. Secondary admins **are** rotated.
+- **Inactive accounts are skipped** — rotating a deactivated login puts a working credential for
+  it into a distributed CSV, the opposite of deactivating it.
+- `mustChangePassword` is still **not** set (these are the real handed-out passwords).
+- The button **moved to its own card at the top** of Accounts & churches. It used to sit in the
+  Churches card header, which was right when it only touched church logins and now describes
+  itself wrongly as well as being hard to find. Filename `church-passwords` → `camp-passwords`.
+
+### 5 — Check-in status export (PNG), and both export cards collapsed
+New **Check-in status (PNG)** card on Records & Export, below Registration lists: pick a camp
+day, get an image of how many check-ins each church **missed**, worst first, morning + afternoon
+summed. Counts only — no names. `_csGather` / `_csDraw` / `exportCheckinStatusPng`, drawn with
+the same canvas conventions as `_rlDraw` so the two images read as a set.
+
+- **"Missed" is the ROSTER's definition, not a second one.** A miss is a person on that session's
+  roster who is not checked in. The roster already excludes leaders and anyone not `atCamp`, so a
+  student who never arrived is not counted. Re-deriving that population from `/registrants` would
+  produce a bigger number than the one the leader was looking at on the check-in screen — the
+  fastest way to make an accountability report nobody trusts. `checkedIn` is
+  **last-entry-wins**, consistent with the check-in screen and `churchesBehind`.
+- ⚠️ **SESSIONS COME FROM `GET /checkin/sessions`, NEVER CONSTRUCTED AS `day~am` + `day~pm`.**
+  Under AC-1 the first camp day is **PM-only** and the last is **AM-only**, so building both ids
+  by hand 404s on exactly the two days most likely to be checked.
+- Rows are **one per church with the `b-`/`g-` logins summed** (owner's choice) — that is who
+  gets chased. Ties break on name so the image is stable between runs.
+- Both this and **Registration lists** are now default-collapsed `<details class="setg">`
+  (owner request). ⚠️ **Do not add `open`** — same standing rule as the three Data Import cards.
+  The `<select>`s stay in the DOM while collapsed, so `sel('rlChurch')` and
+  `_loadRegListChurches()` work regardless of open state.
+
+### 6 — 🟠 THE KEYBOARD SCROLL BUG IS NOT THE ONE `_fixViewportGap` FIXES
+Owner: *"often when a keyboard is opened the screen will slightly scroll up and not return when
+the keyboard is minimised."* This is why the 2026-07-29 fix did not address it:
+
+> `_fixViewportGap` re-scrolls to `window.scrollY` — it repairs the **layout** against a stale
+> viewport height. The reported bug is about the **position**. Focusing an input makes the
+> browser scroll it into view (real and wanted); dismissing the keyboard grows the viewport back
+> but nothing returns the document, because as far as the browser is concerned that scroll was
+> legitimate and is now simply where you are. **Both functions are needed.**
+
+New `_kbScroll` / `_kbArmedAt` / `_kbVH` / `_KB_SETTLE` / `_kbRestore`: capture the offset on
+`focusin`, restore it once the keyboard has gone.
+
+- ⚠️ **It must not fight a deliberate scroll.** If the user scrolls while typing, that position
+  is theirs. The capture is **disarmed by any scroll outside `_KB_SETTLE` (350ms)** — the
+  browser's scroll-into-view lands within a couple of frames of focus; a human scroll does not.
+- ⚠️ **Restores only on a genuine shrink-then-grow of `visualViewport`.** A `<select>` opens a
+  picker on Android without resizing the visual viewport, and a focusout with no keyboard
+  involved must be a no-op, or merely tapping a dropdown would jump the page. `INPUT|TEXTAREA`
+  only (never `SELECT`), phone only (`_isWide()` returns early), and clamped to `scrollHeight`
+  so it cannot scroll past the end of a page that shrank while the keyboard was up.
+
+### 7 — Android compatibility review (owner request) + four low-risk fixes
+Reviewed against the SPA, `sw.js`, `manifest.json` and `push.service.ts`. **The two things most
+likely to be wrong were verified correct:** the `_vpKick` viewport hack is gated
+`_vpIsStandalone() && _vpIsIOS()` and is provably inert on Android, and every modern API in use
+(`CompressionStream`, `PushManager`, `visualViewport`, `beforeinstallprompt`, credentials) is
+feature-detected. The maskable 192/512 icons are correct. Fixed:
+
+- **🔴 `exportBudget()` never appended its anchor to the document** before clicking it — the one
+  export in the file that skipped it. A detached-anchor click is unreliable on mobile Chromium,
+  so this button could silently do nothing on an Android phone.
+- **Six exports revoked their object URL in the same tick as `.click()`.** The repo's own lesson
+  (`_rlSaveBlob`, 2026-07-31: *"revoking immediately can cancel the download on some mobile
+  browsers"*) had only ever been applied to the PNG export. All seven download sites now route
+  through **`_rlSaveBlob` / `_saveTextFile`** — append, click, remove, revoke after 20s. ⚠️
+  **Route every new download through these. Do not hand-roll the anchor dance again.**
+- **The push `badge` was the full-colour app icon.** Android masks `badge` to a silhouette using
+  the **alpha channel alone**, and `icon-192.png` is an opaque gradient tile — every pixel
+  opaque, so it rendered as a featureless blob in the status bar. iOS ignores `badge` entirely,
+  which is why iOS-only testing never showed it. New **`public/icons/badge-mono.png`**: the
+  tent+cross glyph on transparency, 96×96 grey+alpha, generated by hand (there is no image
+  library in this repo) and **verified by decoding it back and rendering it as ASCII**, not
+  assumed. Keep it transparent — a filled background reintroduces the blob. `icon` correctly
+  stays the full-colour tile.
+- **`renotify: true` added.** Replacing a notification that shares a `tag` is **silent** on
+  Android by default, so a second high-severity incident would quietly overwrite the first in the
+  tray with no alert at all. Collapsing is still wanted; being silent about it is not.
+- **`::-webkit-calendar-picker-indicator{display:none}` is now Safari-scoped.** On iOS the whole
+  time field opens the picker so hiding the indicator is free; on Android Chrome that indicator
+  **is** the element that opens it, so the schedule editor's time fields could have been typable
+  with the picker unreachable.
+
+**Reviewed and deliberately NOT changed:** `requireInteraction` on push (a judgement call about
+how insistent an alert should be — worth a decision, not a silent default), and the body-scroll
+shell, which uses no Android-incompatible syntax but has never been device-verified there.
+
+### 8 — The rest
+- **Leader contacts is PRE-CAMP ONLY on the church home** (`_contactsCardHtml` returns `''` at
+  camp). Editing four emergency numbers is not something to invite while an incident is in
+  progress. ⚠️ `RENDER.mycontacts` itself is **not** hard-gated — admin/director reach the same
+  screen, and a hard mode gate has stranded real records on this codebase before (the 2026-07-17
+  incidents revert). This hides a nav entry point, nothing else.
+- **Testimonies & Notes: the record TYPE badge moved to the top-right**, beside the year level.
+  It was the last item on a run-on grey footer line, so the one fact deciding whether a tile is
+  worth reading moved horizontally depending on the church name's length. The name now
+  ellipsises rather than shoving the badge off the row.
+- **The Records filter is a dropdown-style multi-select** (`.msel`), replacing the chips, plus a
+  new **Day** dropdown — four controls that tile as an even 2×2 on a phone. ⚠️ **Not a native
+  `<select multiple>`** (needs ctrl/cmd-click on desktop, renders as a cramped scrolling box on
+  iOS). Semantics are unchanged, including the important one: **an EMPTY set means ALL**, and the
+  button reads "All records" rather than "0 selected", which says the opposite. Day matches on
+  `localDateISO(n.createdAt)` — **Brisbane, not the UTC slice**, which would file everything
+  logged before 10am local under the previous day. "Before camp" is a real option: incidents and
+  notes genuinely get logged ahead of camp and would otherwise vanish the moment a day was picked.
+- **The Schedule screen opens on TODAY** when today is a camp day, else day 1
+  (`_schedDefaultDay`). It always opened on day 1, so from day 2 of camp every visit started on
+  the wrong day — and day 1 is the one day nobody needs to look up.
+- **The medical-consent tick carries the real consent clause** in a tooltip, on both the granted
+  and not-granted states — the same text is what has *not* been agreed to when it is missing.
+- **The alerts consent sheet is about a third of its old length.** ⚠️ Do not cut the lock-screen
+  line or the "no names" line to shorten it further — those two are the substance of the consent.
+
+### Two verification requests — answered, no code change
+- **Renaming the Citipointe logins to `CP-<location>`: SAFE.** Church **name** and Elvanto import
+  matching are keyed on `Church.name` (`import.service.ts` matches `Attendee's Church` against a
+  lowercased name map); `username` is referenced nowhere in any of the three importers. The
+  schema allows hyphens and capitals, and `_churchUserBase`'s `^[bg]-` strip round-trips
+  `CP-Carindale` intact. **Three caveats, all operational:** (a) `account.service.updateUser`
+  **lowercases every username on save**, so it will store and display `cp-carindale` — the login
+  works, the capitals do not stick without a code change; (b) `ycp_initials_<username>` and
+  `ycp_ciq_<username>` are keyed on the username, so **a rename orphans saved initials and any
+  unsynced offline check-ins — let the queue drain before renaming**, and expect leaders to
+  re-enter initials and re-save the credential in their password manager; (c) if one of a renamed
+  pair is ever deleted, "Split church accounts" / "Randomise passwords" regenerates the sibling
+  from `slugifyUsername(church.name)`, producing a mismatched pair.
+- **Excel/CSV export: yes, for every dataset that matters.** The compliance workbook (`.xlsx`, 9
+  sheets), sign-in/out CSV, registrants CSV, offline sign-in sheet (`.xlsx`), notes CSV, budget
+  CSV, first-aid CSV and the passwords CSV all open in Excel. Gaps, all minor: **incidents**,
+  **check-in history** and **reveal audit** have no standalone export and are reachable only
+  inside the workbook (director/admin); **accommodation allocations have no export at all**.
+  Registration lists are PNG/ZIP by design — the same roster is available as CSV elsewhere.
+
+
 ## Owner batch — the budget was discarding money a code said had been paid — 2026-08-02
 
 Four owner items. `npm run typecheck` clean, `npx vitest run` **877 pass / 56 files** (was 870;

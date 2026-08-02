@@ -11,12 +11,28 @@ import { maskPhone } from '../../utils/mask';
 
 const logger = createLogger('audit');
 
-// Bug 1: for the first-aid role the parent/guardian phone is masked at the DTO boundary so it is
-// not present in cleartext in the /campers response — first-aid must go through the audited
-// reveal (GET /search/contact/:id/parent) to see the real number. Every other role legitimately
-// needs its own students' parent contact, so they are unaffected.
-function maskParentForFirstAid<T extends { parentPhone: string | null }>(dto: T, actor: Actor): T {
-  if (actor.role !== 'firstAid' || !dto.parentPhone) return dto;
+/**
+ * Roles whose `/campers` response carries the parent/guardian phone MASKED.
+ *
+ * Bug 1 (2026-07-17) did this for `firstAid`. **`church` was added 2026-08-03** at the owner's
+ * request, so a church leader now taps to reveal a parent's number exactly as first aid does.
+ *
+ * ⚠ The mask has to be at the DTO boundary, not in the SPA. Hiding it client-side while the
+ * real number still travels in the JSON makes the reveal theatre — the number is in devtools,
+ * and more importantly the AUDIT ROW is never written, because nothing forced a call to the
+ * audited endpoint. Masking here is what makes `GET /search/contact/:id/parent` the only way
+ * to see it, and that endpoint records a `parent-contact` reveal against the account.
+ *
+ * Church logins keep `camper:read:sensitive`, so the reveal itself still succeeds — this
+ * changes HOW a church reads the number (one audited tap), not WHETHER it may.
+ *
+ * director/admin/zoneLeader are deliberately unaffected: they run the camp and a masked
+ * roster would add an audited tap to routine oversight work for no safeguarding gain.
+ */
+const PARENT_PHONE_MASKED_ROLES: ReadonlySet<Actor['role']> = new Set(['firstAid', 'church']);
+
+function maskParentPhone<T extends { parentPhone: string | null }>(dto: T, actor: Actor): T {
+  if (!PARENT_PHONE_MASKED_ROLES.has(actor.role) || !dto.parentPhone) return dto;
   return { ...dto, parentPhone: maskPhone(dto.parentPhone) };
 }
 
@@ -44,7 +60,7 @@ export function makeCamperController(services: CamperControllerServices) {
         req.query['scope'] === 'all'
           ? await person.list(req.ctx.actor, opts)
           : await person.listCampers(req.ctx.actor, opts);
-      return people.map((p) => maskParentForFirstAid(toCamperDto(p), req.ctx!.actor));
+      return people.map((p) => maskParentPhone(toCamperDto(p), req.ctx!.actor));
     },
 
     async get(req: HttpRequest) {
@@ -54,7 +70,7 @@ export function makeCamperController(services: CamperControllerServices) {
       const profile = await person.getProfile(req.ctx.actor, id);
       // Detail dto: single access-checked fetch, so dateOfBirth may ride along.
       // medicareNumber never does — only the audited reveal below returns it.
-      const dto = maskParentForFirstAid(toCamperDetailDto(profile), req.ctx.actor);
+      const dto = maskParentPhone(toCamperDetailDto(profile), req.ctx.actor);
       return { ...dto, age: profile.age, lastSignOut: profile.lastSignOut };
     },
 

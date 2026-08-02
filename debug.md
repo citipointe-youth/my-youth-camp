@@ -290,7 +290,12 @@ check "expected vs actual" before touching code.
 >   The amount owed only renders when `classroomPrice` is set; the paid/unpaid split has a
 >   price-independent fallback (paid more than their own ticket cost) so the card still works without it.
 
-## Frontend — `public/index.html` (single ~2,920-line SPA)
+## Frontend — `public/index.html` (single ~8,570-line SPA as of 2026-08-03)
+
+> **`node --check` extract range: derive it, never cache it.** As of 2026-08-03 the script body
+> is lines **956–8564**, but that moves on almost every batch. The naive `<script>…</script>`
+> regex fails because the file contains the literal `</script>`. One-liner:
+> `S=$(grep -n '^<script>$' public/index.html|head -1|cut -d: -f1); E=$(grep -n '^</script>$' public/index.html|tail -1|cut -d: -f1); sed -n "$((S+1)),$((E-1))p" public/index.html > /tmp/spa.js && node --check /tmp/spa.js`
 
 This one file is the only real navigation cost in the repo. Map below (line numbers are a
 2026-06-26 snapshot); **grep the name to confirm the line** — they drift on every edit.
@@ -491,6 +496,34 @@ tolerate absence via `?? false`.
 ---
 
 ## Symptom router (fastest path)
+
+### 2026-08-03 — 16-item owner batch (push latency, parent masking, check-in status export, Android)
+
+| Symptom | Go to |
+|---|---|
+| **An urgent notice or incident alert still takes minutes to arrive** | Two delays, two fixes — check which one. (1) `push.sendNow()` should fire at creation from `notification.service.send` / `incident.service.log`; it returns `null` and logs `[push] immediate send failed` if the users/settings repos were not injected (check both `makePushService({...})` blocks in `container.ts` still pass `users` + `settings`, and that `push` is still built BEFORE those two services). (2) `PUSH_JITTER_MIN_SENDS` (20) should be skipping the jitter for a small fan-out. If neither fired, the notice waits for the `*/5` `pg_cron` tick, which is the OLD behaviour and still correct-but-slow. |
+| **A notice pushed TWICE** | Should be impossible: `sendNow` goes through the same atomic `claimForPush` as the tick. Check nobody replaced it with a direct `sendOne` loop. The claim is permanent, so a duplicate is not self-correcting. |
+| **A SCHEDULED notice never pushes at all** | `send()` gates on `publishesNow` before calling `sendNow`. If that gate were removed, the notice is claimed at COMPOSE time, burns its one permanent claim against an empty audience, and can never push when it publishes. `pushSentAt` will be non-null on a notice nobody received. |
+| **A normal-priority notice buzzed a phone** | `isPushable` is checked in BOTH `sendNow` and `sendForNotifications`. It should be unreachable. Note an unpushable notice is deliberately left UNCLAIMED. |
+| Lock screen says **"Incident logged"** | Should read **"High priority incident" / "Open app to view"** — a FIXED string in `buildPushPayload`'s `leadersOnly` branch, not `n.title`. The in-app notice keeps `Incident logged · <Zone> Zone`; that is correct and intentional. |
+| **Android: notification badge is a solid blob in the status bar** | `sw.js` `badge` must be `/icons/badge-mono.png` (transparent glyph), never `icon-192.png` (opaque tile). Android masks `badge` on the ALPHA channel only. iOS ignores `badge`, so this is invisible on an iPhone. |
+| **Android: a second incident alert arrives silently** | `renotify: true` in `sw.js`'s `showNotification` options. Without it, replacing a notification that shares a `tag` is silent on Android. |
+| **A church login sees a parent number in cleartext** (or can't reveal one) | `PARENT_PHONE_MASKED_ROLES` in `camper.controller.ts` = `{firstAid, church}`. The mask is server-side on purpose — client-side hiding writes no audit row. SPA side: `_parentPhoneCell` decides by looking for `*` in the value, NOT by role. |
+| **A parent reveal isn't in the compliance workbook** | `search.service.revealContact` records kind `parent-contact` via `revealAudit.record`, which **never throws** — a failure is logged, not surfaced. Check the "Sensitive Reveals" sheet and the runtime logs. Church holds `camper:read:sensitive`, so a 403 here means something else changed. |
+| **"Randomise & export passwords" locked the admin out / skipped an account** | `randomizeChurchPasswords` now rotates every `status==='active'` account except `findOriginalAdmin(allUsers)`. Inactive accounts are skipped by design. If the ORIGINAL admin's password changed, that exclusion has been broken — it is the recovery account. |
+| **Can't find the randomise button** | Moved 2026-08-03 to its own card at the TOP of Accounts & churches ("All login passwords"). It is no longer in the Churches card header. |
+| **Check-in status PNG numbers disagree with the check-in screen** | `_csGather` counts `!r.checkedIn` over the ROSTER from `GET /checkin/sessions/:id/status` — same population and same last-entry-wins rule as the screen. If they disagree, something re-derived the population from `/registrants`. Do not do that. |
+| **Check-in status export says "No check-in sessions on that day"** | Sessions are read from `GET /checkin/sessions` and filtered on `s.day`. Under AC-1 day 1 is PM-only and the last day AM-only — one session that day is CORRECT, zero is not. |
+| **Registration lists / Check-in status cards are expanded** | Both are `<details class="setg">` with **no `open`** attribute, deliberately. Do not add one. |
+| **The screen stays scrolled up after the keyboard closes** | `_kbRestore` (2026-08-03), NOT `_fixViewportGap` — they fix different halves (position vs layout) and both are needed. Restore is cancelled by any scroll outside `_KB_SETTLE` (350ms) and only fires on a genuine `visualViewport` shrink-then-grow. If it over-fires (page jumps when tapping a dropdown), check the `INPUT\|TEXTAREA`-only guard is intact — `SELECT` must never arm it. |
+| **Testimonies & Notes: type badge in the wrong place / name overflowing** | `drawNotes`'s card header row — badge is top-right beside the grade; the name has `min-width:0` + ellipsis so it truncates instead of pushing the badge out. |
+| **Records filter shows nothing / "0 selected"** | An EMPTY `NOTE_CATS` means **ALL** — unchanged from the chip version. The label must read "All records". `_ntCatLabel()` updates it; `.msel` open/close is `_mselToggle` plus one document-level click listener. |
+| **Day filter on Notes hides records logged today** | Matching is `localDateISO(n.createdAt)` (Brisbane). A raw `createdAt.slice(0,10)` is UTC and files anything before 10am local under the previous day. Records outside `checkInDays` live under "Before camp". |
+| **Schedule opens on the wrong day** | `_schedDefaultDay()` — today if today is in `checkInDays`, else day 1. `SCHED_DAY` is sticky once set and is cleared on login/settings resync. |
+| **Leader contacts card missing from a church home** | Intentional at camp — `_contactsCardHtml` returns `''` when `CAMP_MODE==='at-camp'` (2026-08-03). `RENDER.mycontacts` is still reachable and is NOT mode-gated. |
+| **A download does nothing / produces a 0-byte file (esp. Android, esp. installed PWA)** | Every download must go through **`_rlSaveBlob`** (blob) or **`_saveTextFile`** (text/CSV): append the anchor, click, remove, revoke after 20s. A hand-rolled anchor that skips the append or revokes synchronously is the bug — `exportBudget` did both until 2026-08-03. |
+| **Android: schedule editor time field won't open its picker** | `::-webkit-calendar-picker-indicator{display:none}` is now inside a Safari-only `@media not all and (min-resolution:.001dpcm)` + `@supports(-webkit-appearance:none)` block. On Android that indicator IS the picker's click target — do not hide it globally. |
+
 
 ### 2026-08-02 — owner batch (Unallocate button, budget redraw, discount tag conflict, overrides moved)
 

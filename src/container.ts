@@ -216,8 +216,18 @@ export async function buildContainer(): Promise<Container> {
     const personSvc = makePersonService(people);
     const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
     const checkIn = makeCheckInService(people, settingsRepo);
-    const notification = makeNotificationService(notifications);
-    const incident = makeIncidentService(incidents, notifications);
+    // ⚠ `push` is constructed BEFORE notification/incident (moved 2026-08-03). Both of those
+    // now take it so an urgent notice / high-severity incident alert is pushed the moment it
+    // is created rather than waiting up to 5 minutes for the cron tick. `push` has no
+    // dependency on either service, so the ordering is free.
+    const push = makePushService({
+      subscriptions: pushSubscriptions,
+      notifications,
+      users,
+      settings: settingsRepo,
+    });
+    const notification = makeNotificationService(notifications, push);
+    const incident = makeIncidentService(incidents, notifications, push);
     const revealAuditSvc = makeRevealAuditService(revealAudit, users);
     const search = makeSearchService(people, churches, revealAuditSvc);
     const note = makeNoteService(notes, people);
@@ -238,7 +248,6 @@ export async function buildContainer(): Promise<Container> {
       notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
       incidents, pushSubscriptions, revealAudit,
     );
-    const push = makePushService({ subscriptions: pushSubscriptions, notifications });
   const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
 
     const services: Services = {
@@ -362,8 +371,16 @@ export async function buildContainer(): Promise<Container> {
   const personSvc = makePersonService(people);
   const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
   const checkIn = makeCheckInService(people, settingsRepo);
-  const notification = makeNotificationService(notifications);
-  const incident = makeIncidentService(incidents, notifications);
+  // ⚠ See the note in the other composition block above — `push` is built first so an urgent
+  // notice / high-severity incident alert can be pushed at creation time, not on the tick.
+  const push = makePushService({
+    subscriptions: pushSubscriptions,
+    notifications,
+    users,
+    settings: settingsRepo,
+  });
+  const notification = makeNotificationService(notifications, push);
+  const incident = makeIncidentService(incidents, notifications, push);
   const revealAuditSvc = makeRevealAuditService(revealAudit, users);
   const search = makeSearchService(people, churches, revealAuditSvc);
   const note = makeNoteService(notes, people);
@@ -401,7 +418,6 @@ export async function buildContainer(): Promise<Container> {
     pushSubscriptions,
     revealAudit,
   );
-  const push = makePushService({ subscriptions: pushSubscriptions, notifications });
   const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
 
   const services: Services = {

@@ -1,4 +1,4 @@
-const CACHE = 'camp-v82';
+const CACHE = 'camp-v83';
 const APP_SHELL = ['/'];
 
 // API paths that must NEVER be served from cache. GOTCHA (from connection-made-simple):
@@ -80,10 +80,24 @@ self.addEventListener('push', (e) => {
   e.waitUntil(self.registration.showNotification(d.title || 'Youth Camp', {
     body: d.body || 'Open the app for details.',
     icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
+    /* ⚠ ANDROID (2026-08-03). `badge` is the small STATUS-BAR icon and Android masks it to a
+       flat silhouette using the ALPHA channel alone — every opaque pixel becomes solid white.
+       This pointed at icon-192.png, which is a full-colour tile with an OPAQUE gradient
+       background, so every pixel is opaque and it silhouetted to a featureless blob. iOS
+       ignores `badge` entirely, which is why iOS-only testing never showed it.
+       badge-mono.png is the tent+cross glyph on a TRANSPARENT background. Keep it that way:
+       anything with a filled background reintroduces the blob. `icon` correctly stays the
+       full-colour tile — that one is rendered in colour, not masked. */
+    badge: '/icons/badge-mono.png',
     // Collapses repeats of the same kind of alert rather than stacking them. Generic
     // strings only — never a person or session id.
     tag: d.tag || 'camp',
+    /* ⚠ REQUIRED alongside `tag` on Android (2026-08-03). Replacing a notification that
+       shares a tag is SILENT by default — no sound, no vibration, no heads-up. So a second
+       high-severity incident would quietly overwrite the first one sitting in the tray and
+       nobody would be alerted to it. Collapsing is still what we want (one incident line, not
+       twelve); being silent about it is not. */
+    renotify: true,
     data: { screen: d.screen || 'home' },
   }));
 });

@@ -465,7 +465,20 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
   text-align:center;width:100%;
 }
 .sched-row .sr-t::-webkit-date-and-time-value{text-align:center;margin:0;}
-.sched-row .sr-t::-webkit-calendar-picker-indicator{display:none;}
+/* ⚠ ANDROID (2026-08-03, Android review). Everything above was tuned across three device
+   cycles against iOS Safari's native time control, where tapping ANYWHERE in the field opens
+   the wheel picker — so hiding the picker indicator costs nothing there. On Android Chrome
+   that indicator IS the element that opens the picker, so `display:none` can leave the field
+   with no way to open it: typable, but the picker unreachable. Hide it only where it is
+   decorative. `-webkit-min-device-pixel-ratio:0` + `not all and (min-resolution:.001dpcm)` is
+   the long-standing Safari-only media query hack; Chrome (incl. Android) fails it and keeps
+   the indicator. If the indicator ever crowds the 64px column on Android, widen the column —
+   do NOT re-hide it globally. */
+@media not all and (min-resolution:.001dpcm){
+  @supports (-webkit-appearance:none){
+    .sched-row .sr-t::-webkit-calendar-picker-indicator{display:none;}
+  }
+}
 /* ── Schedule plan view (bug 2, 2026-07-28) ────────────────────────────────
    Colour-coded, proportionally-sized timeline. Each category sets --sch (accent) and
    --sch-bg (surface) once; the shared `.sch-item` rule consumes both, so adding a
@@ -544,10 +557,26 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .setg-savepad{height:96px;}
 /* Item 13: multi-select record chips on Testimonies & Notes. Sized as real tap targets
    (min-height 34px) because this is used one-handed on a phone at camp. */
-.ntcats{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;}
-.ntchip{min-height:34px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--ink-2);font:inherit;font-size:var(--t-xs);font-weight:600;cursor:pointer;}
-.ntchip.on{background:#ede9fe;border-color:var(--blue);color:var(--blue);}
-.ntcats-wrap{flex:1 1 100%;}
+/* Multi-select that LOOKS like the plain <select>s beside it (2026-08-03).
+   Replaces the wrapping row of pill chips on Testimonies & Notes. The chips were correct in
+   behaviour but sized themselves to their labels, so on a phone they broke into a ragged
+   two-line block that lined up with nothing — and with a fourth filter (Day) added, the
+   screen needed four controls that tile as an even 2x2.
+   ⚠ NOT a native <select multiple>: that needs ctrl/cmd-click on desktop and renders as a
+   cramped scrolling box on iOS. This is a button + panel that borrows the .fld/select box
+   styling so the four controls read as one row of dropdowns. */
+.msel{position:relative;}
+.msel-btn{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:11px 13px;font-size:var(--t-body);font-family:inherit;background:#fff;color:var(--ink);text-align:left;cursor:pointer;display:flex;align-items:center;gap:6px;}
+.msel-btn:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,70,229,.1);outline:none;}
+.msel-btn .msel-v{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msel-btn .msel-c{flex:0 0 auto;opacity:.55;font-size:var(--t-xs);}
+/* z-index sits above cards but well under the nav (100) — see the overlay ladder note. */
+.msel-pop{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:60;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.14);padding:4px;max-height:260px;overflow-y:auto;}
+.msel.open .msel-pop{display:block;}
+.msel-opt{display:flex;align-items:center;gap:9px;width:100%;background:none;border:none;font:inherit;font-size:var(--t-sm);color:var(--ink);text-align:left;padding:9px 10px;border-radius:8px;cursor:pointer;}
+.msel-opt:hover{background:var(--chip);}
+.msel-box{flex:0 0 auto;width:17px;height:17px;border-radius:5px;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;line-height:1;}
+.msel-opt.on .msel-box{background:var(--blue);border-color:var(--blue);}
 /* Item 8: four-row internal scroll on the Data Import people lists. The height is derived from
    ALLOC_VISIBLE_ROWS in the JS — keep the two in step if either changes. A card row is ~78px
    with its padding; 4 rows plus a peek of the fifth signals "there is more here". */
@@ -1859,8 +1888,65 @@ function _scroller(el){return (_isWide()&&el)?el:(document.scrollingElement||doc
 function _fixViewportGap(){requestAnimationFrame(function(){window.scrollTo(0,window.scrollY);});}
 if(window.visualViewport)window.visualViewport.addEventListener('resize',_fixViewportGap);
 document.addEventListener('focusout',function(e){
-  if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))setTimeout(_fixViewportGap,60);
+  if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)){setTimeout(_fixViewportGap,60);_kbRestore();}
 });
+
+/* ── KEYBOARD SCROLL RESTORE (2026-08-03) ────────────────────────────────────────────────
+   Owner: "often when a keyboard is opened (e.g. update account info) the screen will slightly
+   scroll up and not return when the keyboard is minimised."
+
+   This is NOT the same thing as `_fixViewportGap` above, which is why that function did not
+   fix it. When an input is focused the browser scrolls it into view — a real, wanted scroll,
+   and on a short form it is only a few dozen pixels. When the keyboard is dismissed the
+   viewport grows back but NOTHING returns the document to where it was, because from the
+   browser's point of view that scroll was legitimate and is now just the current position.
+   `_fixViewportGap` re-scrolls to `window.scrollY`, i.e. to wherever the keyboard left it —
+   it repairs the LAYOUT against a stale viewport height, not the POSITION. Both are needed.
+
+   The fix is to remember the offset from before the browser moved us and go back to it.
+
+   ⚠ It must not fight a deliberate scroll. If the user scrolls while typing — reaching a
+   field further down, re-reading something — that new position is theirs and restoring the
+   pre-focus one would be the app yanking the page away. `_kbScroll` is therefore ARMED on
+   focusin and DISARMED by any scroll that is not the browser's own scroll-into-view. The
+   `_KB_SETTLE` window is what separates those two: the scroll-into-view lands within a couple
+   of frames of focus, a human scroll does not.
+
+   ⚠ Restores ONLY on a genuine shrink-then-grow. A `<select>` on Android opens a picker
+   without resizing the visual viewport at all, and a focusout with no keyboard involved must
+   be a no-op — otherwise merely tapping a dropdown would jump the page. */
+let _kbScroll=null;      // document scrollTop captured just before the keyboard opened
+let _kbArmedAt=0;        // when we armed it, for the settle window
+let _kbVH=0;             // visualViewport height at focus time — the shrink/grow reference
+const _KB_SETTLE=350;    // ms in which a scroll is assumed to be the browser's scroll-into-view
+function _kbVpH(){return (window.visualViewport&&window.visualViewport.height)||window.innerHeight||0;}
+document.addEventListener('focusin',function(e){
+  if(!e.target||!/^(INPUT|TEXTAREA)$/.test(e.target.tagName))return;   // SELECT never gets a keyboard
+  if(_isWide())return;                                                 // desktop: no software keyboard
+  _kbScroll=(document.scrollingElement||document.documentElement).scrollTop;
+  _kbArmedAt=Date.now();
+  _kbVH=_kbVpH();
+});
+// Any scroll outside the settle window is the user's, and cancels the restore.
+window.addEventListener('scroll',function(){
+  if(_kbScroll===null)return;
+  if(Date.now()-_kbArmedAt>_KB_SETTLE)_kbScroll=null;
+},{passive:true});
+function _kbRestore(){
+  if(_kbScroll===null)return;
+  const target=_kbScroll,hadVH=_kbVH;
+  _kbScroll=null;_kbVH=0;
+  // Wait for the viewport to finish growing back before measuring or scrolling — restoring
+  // mid-animation lands at the wrong offset and is visible as a second jump.
+  setTimeout(function(){
+    // Only if the viewport genuinely grew back, i.e. a keyboard really was up and is now gone.
+    if(_kbVpH()<=hadVH)return;
+    const el=document.scrollingElement||document.documentElement;
+    // Never scroll PAST the end of a page that shrank while we were away.
+    const max=Math.max(0,el.scrollHeight-window.innerHeight);
+    window.scrollTo(0,Math.min(target,max));
+  },220);
+}
 /* SHORT-LAYOUT-VIEWPORT COMPENSATION (2026-07-31) — the seventh and, unlike Follow-ups 3-7, a
    MEASURED fix for the bottom nav not reaching the bottom of the screen.
 
@@ -2681,12 +2767,21 @@ async function renderHomeAtCamp(){
    Deliberately NOT changed: a genuine human-sent urgent notice still pops the modal — that is a
    director choosing to interrupt everyone, which is the point. Only incident auto-alerts moved. */
 /* Item 11 (2026-07-31): a church login's route to setting its own four ministry leader
-   contacts. Rendered on BOTH home variants — the numbers matter most at camp but they need to
-   be entered BEFORE camp, so a pre-camp-only entry point would be useless and an at-camp-only
-   one would be too late. Church logins only; every other role reaches the same data through
-   Admin -> Ministry contacts, which is unchanged. */
+   contacts. Church logins only; every other role reaches the same data through
+   Admin -> Ministry contacts, which is unchanged.
+
+   ⚠ PRE-CAMP ONLY (2026-08-03, owner request). It used to render on both home variants. The
+   reasoning for that was "the numbers matter most at camp", which is true of READING them and
+   false of EDITING them: once camp is running, these four numbers are what first aid and the
+   camp office dial about a student, and the moment to change them is not while an incident is
+   in progress. Leaving an edit entry point on the at-camp home screen invites exactly that.
+   The data is unchanged and still read at camp by first aid — this hides the church's own
+   edit shortcut, nothing else. `RENDER.mycontacts` itself is deliberately NOT hard-gated:
+   admin/director reach the same screen and a hard mode gate has stranded real records on this
+   codebase before (see the 2026-07-17 incidents revert). This is the nav entry point only. */
 function _contactsCardHtml(){
   if(!ACTOR||ACTOR.role!=='church'||!ACTOR.churchId)return '';
+  if(CAMP_MODE==='at-camp')return '';
   return `<div class="card tap" onclick="go('mycontacts')"><div class="rowsb">
     <div><div style="font-weight:600">Leader contacts</div>
     <div class="sub">Set your primary &amp; secondary leaders for guys and girls</div></div>
@@ -3487,9 +3582,16 @@ async function openStudentInfo(id){
     ? `<div class="fa-alert"><div class="ah">${icSm('medical')} Medical alert</div>
         ${alertRows.map(r=>`<div class="row"><span class="tag">${esc(r.tag)}</span><span class="b">${esc(r.b)}</span></div>`).join('')}</div>`
     : `<div class="fa-neutral"><div class="ah">${icSm('check')} No medical conditions recorded</div><div class="fa-calm">Nothing flagged for this student.</div></div>`;
+  /* The exact wording of the consent the parent/guardian agreed to at registration
+     (2026-08-03, owner request). It sits behind a tooltip rather than on the card because a
+     first-aider standing over an injured student needs "Granted / Not granted" in one glance
+     — but when the question is what was actually agreed to, the answer has to be the real
+     clause, not a paraphrase. Shown on BOTH states: the same text is what has NOT been agreed
+     to when consent is missing. */
+  const consentTip=helpTip('The consent a parent/guardian gives at registration reads: “I give permission for Citipointe Church to obtain emergency medical, hospital or ambulance service at any time they consider necessary. I acknowledge that I will be liable for any medical, hospital or ambulance expenses incurred in the treatment for my highschooler. Citipointe is released from any and all liability in the event of any accident or misfortune, damage or loss that may occur to the highschooler.”');
   const consent=c.consentMedical
-    ? `<div class="fa-consent yes">${ic('check')}<div>Medical consent — Granted<div class="sub">OK to administer first aid</div></div></div>`
-    : `<div class="fa-consent no">${ic('alert')}<div>Medical consent — Not granted<div class="sub">Reach the leader / parent before treating</div></div></div>`;
+    ? `<div class="fa-consent yes">${ic('check')}<div>Medical consent — Granted ${consentTip}<div class="sub">OK to administer first aid</div></div></div>`
+    : `<div class="fa-consent no">${ic('alert')}<div>Medical consent — Not granted ${consentTip}<div class="sub">Reach the leader / parent before treating</div></div></div>`;
   const leadBtn=(ct,cls)=>ct?`<div class="who"><span class="nm">${esc(ct.name)}</span><span class="ptag${cls==='sec'?' sec':''}">${cls==='sec'?'Secondary':'Primary'}</span></div>
       <div class="sub">${esc(c.churchName)} · ${ct.gender==='female'?'Female':'Male'} ${ct.type==='backup'?'backup':'leader'}</div>
       <a class="btn fa-call" href="tel:${esc(ct.phone)}">${icSm('phone')} ${esc(fmtPhone(ct.phone))}</a>`:'';
@@ -3520,6 +3622,25 @@ async function openStudentInfo(id){
 // Generic masked-contact reveal for the Student Info card. Despite the name (kept for grep
 // continuity with debug.md), it now reveals the PARENT contact ('parent' role) — the leader
 // contacts are shown plainly since the Bug 1 mask/audit swap (2026-07-17).
+/* The parent/guardian phone cell on a student profile (2026-08-03, owner request).
+   For a CHURCH login the number now arrives masked from the server (see
+   PARENT_PHONE_MASKED_ROLES in camper.controller.ts) and has to be tapped to reveal — the
+   same treatment first aid has had since 2026-07-17, and for the same reason: a parent's
+   number is the most sensitive contact detail on the screen, and a reveal is an auditable
+   event. The server writes a `parent-contact` row to `reveal_audit`, which surfaces as the
+   "Sensitive Reveals" sheet in the compliance workbook.
+   ⚠ Detect the mask by LOOKING FOR THE MASK CHARACTER, not by testing the role. If the
+   server's masking rule changes, a role test here silently starts offering a Reveal button
+   for a number that is already in cleartext (or hiding one that is masked). The rendered
+   value is the source of truth for whether it needs revealing.
+   Once revealed, `faRevealLeader` swaps the button for a `tel:` link, so it is one tap to
+   reveal and one to call — same as first aid. */
+function _parentPhoneCell(p,id){
+  const raw=p.parentPhone||'';
+  if(!raw)return '—';
+  if(raw.indexOf('*')<0)return `<a href="tel:${esc(raw)}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(raw))}</a>`;
+  return `<button type="button" class="btn ghost sm" style="width:auto;margin:0" onclick="faRevealLeader('${esc(jsq(id))}','parent',this)">${icSm('phone')} ${esc(fmtPhone(raw))} · Reveal</button>`;
+}
 async function faRevealLeader(id,role,btn){
   try{const ct=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));
     /* Item 6 (2026-07-31): the revealed number is now DIALLABLE, not just readable. This is the
@@ -3622,9 +3743,7 @@ function exportFaRecords(){
   const rows=recs.map(n=>{const p=_faParse(n.body);const name=(cmap[n.camperId]||'').split(' · ')[0]||'Student';
     return [name,p.problem,p.treatment,p.firstAider||n.authorName||'',p.broughtBy,n.authorName||'',n.createdAt||''];});
   const csv='﻿'+[header,...rows].map(r=>r.map(q).join(',')).join('\r\n');
-  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  const a=document.createElement('a');a.href=url;a.download=_exportName('first-aid-records','csv');
-  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  _saveTextFile(csv,_exportName('first-aid-records','csv'));
   toast('First-aid records exported');
 }
 function faRecSeg(f){_faRecFilter=f;const a=document.getElementById('faSegToday'),b=document.getElementById('faSegAll');if(a)a.classList.toggle('on',f==='today');if(b)b.classList.toggle('on',f==='all');drawFaRecords();}
@@ -4444,8 +4563,11 @@ function exportBudget(){
   rep.churches.forEach(c=>{emit(c.churchName,'Camper',c.campers);emit(c.churchName,'Leader',c.leaders);
     lines.push([esc2(c.churchName),'Total','',c.camperCount+c.leaderCount,'',c.total].join(','));});
   lines.push(['ALL CHURCHES','Grand Total','',rep.camperCount+rep.leaderCount,'',rep.grandTotal].join(','));
-  const blob=new Blob([lines.join('\n')],{type:'text/csv'});const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;a.download='budget-by-church.csv';a.click();URL.revokeObjectURL(url);
+  // ⚠ This was the ONE export in the file that never appended its anchor to the document
+  // before clicking it — a detached-anchor click is unreliable on mobile Chromium, so on an
+  // Android phone this button could silently do nothing. Routed through the shared helper
+  // (2026-08-03, Android review) so it cannot drift again.
+  _saveTextFile(lines.join('\n'),'budget-by-church.csv');
   toast('Budget CSV downloaded');
 }
 
@@ -5015,7 +5137,7 @@ async function openCamper(id,push=true){
     ${camp}
     ${lead?'':`<div class="card"><div class="h3" style="margin-top:0">Parent / guardian</div>
       <div class="kv"><span class="k">Name</span><span class="v">${esc(p.parentGuardianName||'—')}${p.parentRelation?' ('+esc(p.parentRelation)+')':''}</span></div>
-      <div class="kv"><span class="k">Phone</span><span class="v"><a href="tel:${esc(p.parentPhone||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(p.parentPhone)||'—')}</a></span></div></div>`}
+      <div class="kv"><span class="k">Phone</span><span class="v">${_parentPhoneCell(p,id)}</span></div></div>`}
     ${notesHtml}
     ${canReadCamperNotes()&&['arrived','checked_out','departed'].includes(p.lifecycle)?`<button class="btn alt" style="margin-top:12px;width:100%" onclick="notePrompt('${id}','${esc(jsq(fullName))}')">${icSm('note')} Add a note</button>`:''}`;
   const camperEl=document.getElementById('camper');
@@ -5131,8 +5253,23 @@ function _schedMinutes(a,b){
 function _schedHeight(mins){return Math.round(Math.min(133,Math.max(38,28+mins*0.27)));}
 function _schedDur(mins){const h=Math.floor(mins/60),m=mins%60;return h&&m?h+'h '+m+'m':h?h+'h':m+'m';}
 let SCHED_DAY=null;
+/* Which day the Schedule screen opens on (2026-08-03, owner request).
+   It used to always open on day 1, so from day 2 of camp every single visit began with the
+   wrong day and a tap to correct it — and day 1 is the one day nobody needs to look up.
+   TODAY when today is a camp day, otherwise the FIRST day. `localDateISO()` is the
+   Brisbane-anchored "today" (a raw toISOString().slice(0,10) is UTC and reads as YESTERDAY
+   from midnight to 10am local — the bug this helper exists for; do not inline a UTC date
+   here). Outside the camp dates this deliberately falls back to day 1 rather than the
+   nearest day: before camp the whole schedule is being previewed from the start, and after
+   camp there is no "current" day to be on. `RENDER.devotional` already worked this way. */
+function _schedDefaultDay(){
+  const days=(SETTINGS&&SETTINGS.checkInDays)||[];
+  if(!days.length)return null;
+  const today=localDateISO();
+  return days.indexOf(today)>=0?today:days[0];
+}
 RENDER.schedule=async function(){
-  if(!SCHED_DAY)SCHED_DAY=(SETTINGS?.checkInDays&&SETTINGS.checkInDays[0])||null;
+  if(!SCHED_DAY)SCHED_DAY=_schedDefaultDay();
   if(!SCHED_DAY){paint('schedule','<p class="note-hint">No camp days configured.</p>','Schedule','');return;}
   const items=(await api('/schedule?day='+SCHED_DAY)).slice()
     .sort((a,b)=>String(a.startTime||'').localeCompare(String(b.startTime||'')));
@@ -5231,12 +5368,37 @@ const NOTE_CAT_OPTIONS=[
   {v:'incident',label:'Incidents'},
 ];
 let NOTE_CATS=new Set();
+/* The Records control is now a dropdown-style multi-select (2026-08-03) — see the .msel CSS.
+   The SEMANTICS are unchanged from the 2026-07-31 chips and the important one is unchanged
+   too: an EMPTY set means ALL. That is a normal state (deselect the last option) and showing
+   nothing there would look broken. The button label says "All records" for the empty set
+   rather than "0 selected", because "0 selected" reads as the opposite of what it does. */
 function _toggleNoteCat(v){
   if(NOTE_CATS.has(v))NOTE_CATS.delete(v);else NOTE_CATS.add(v);
-  const b=document.querySelector('#ntCats .ntchip[data-cat="'+v+'"]');
+  const b=document.querySelector('#ntCats .msel-opt[data-cat="'+v+'"]');
   if(b)b.classList.toggle('on',NOTE_CATS.has(v));
+  _ntCatLabel();
   drawNotes();
 }
+function _ntCatLabel(){
+  const el=document.getElementById('ntCatVal');if(!el)return;
+  const n=NOTE_CATS.size;
+  if(n===0){el.textContent='All records';return;}
+  if(n===1){const v=[...NOTE_CATS][0];const o=NOTE_CAT_OPTIONS.find(x=>x.v===v);el.textContent=o?o.label:'1 selected';return;}
+  el.textContent=n+' selected';
+}
+/* Open/close for any .msel. Closes every OTHER one first, so two panels can never overlap. */
+function _mselToggle(e,id){
+  if(e)e.stopPropagation();
+  const w=document.getElementById(id);if(!w)return;
+  const wasOpen=w.classList.contains('open');
+  document.querySelectorAll('.msel.open').forEach(x=>x.classList.remove('open'));
+  if(!wasOpen)w.classList.add('open');
+}
+// A tap anywhere else closes it. Registered once, at the document level, because the panel is
+// rendered inside a screen that gets rebuilt on every draw — a per-instance listener would
+// leak one handler per render.
+document.addEventListener('click',()=>{document.querySelectorAll('.msel.open').forEach(x=>x.classList.remove('open'));});
 RENDER.notes=async function(presetFilter){
   // /notes/recent returns bare notes (no camper details) — join /campers for name/church/zone/gender/grade.
   const [notes,page,incidents,churchRows]=await Promise.all([api('/notes/recent'),api(_scoped('/campers?pageSize=300')).catch(()=>[]),api('/incidents').catch(()=>[]),api('/accounts/churches').catch(()=>[])]);
@@ -5274,28 +5436,50 @@ RENDER.notes=async function(presetFilter){
      digest card's first-aid figure) still works: it seeds the set with that one type. */
   const pf=presetFilter||'all';
   NOTE_CATS=pf==='all'?new Set():new Set([pf]);
-  const recSel=`<div class="ntcats-wrap"><label>Records ${helpTip('Tap to include a record type. With none selected you see everything.')}</label>
-    <div class="ntcats" id="ntCats">${NOTE_CAT_OPTIONS.map(o=>
-      `<button type="button" class="ntchip${NOTE_CATS.has(o.v)?' on':''}" data-cat="${o.v}" onclick="_toggleNoteCat('${o.v}')">${esc(o.label)}</button>`).join('')}</div></div>`;
+  const recLabel=NOTE_CATS.size===0?'All records'
+    :NOTE_CATS.size===1?(NOTE_CAT_OPTIONS.find(x=>NOTE_CATS.has(x.v))||{}).label||'1 selected'
+    :NOTE_CATS.size+' selected';
+  const recSel=`<div><label>Records ${helpTip('Pick one or more record types. With none ticked you see everything.')}</label>
+    <div class="msel" id="ntCatsWrap"><button type="button" class="msel-btn" onclick="_mselToggle(event,'ntCatsWrap')" aria-haspopup="listbox">
+      <span class="msel-v" id="ntCatVal">${esc(recLabel)}</span><span class="msel-c">▾</span></button>
+      <div class="msel-pop" id="ntCats" role="listbox" aria-multiselectable="true" onclick="event.stopPropagation()">${NOTE_CAT_OPTIONS.map(o=>
+        `<button type="button" role="option" aria-selected="${NOTE_CATS.has(o.v)}" class="msel-opt${NOTE_CATS.has(o.v)?' on':''}" data-cat="${o.v}" onclick="_toggleNoteCat('${o.v}')"><span class="msel-box">✓</span>${esc(o.label)}</button>`).join('')}</div></div></div>`;
   const minSel=`<div><label>Ministry</label><select id="ntChurch" onchange="drawNotes()"><option value="all">All ministries</option>${churches.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></div>`;
   const zoneSel=`<div><label>Zone</label><select id="ntZone" onchange="drawNotes()"><option value="all">All zones</option>${zonesPresent.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select></div>`;
+  /* Day of camp (2026-08-03, owner request). Matched on the record's own createdAt converted
+     to a BRISBANE date (`localDateISO(instant)`) against `settings.checkInDays`. A raw
+     `createdAt.slice(0,10)` is the UTC date and would file everything logged before 10am
+     local under the previous day — the exact bug `localDateISO` exists to prevent.
+     "Before camp" is a real option, not padding: incidents and notes genuinely get logged
+     ahead of camp (prod holds several), and without it those records would be unreachable
+     the moment anyone picked a day. */
+  const campDays=(SETTINGS&&SETTINGS.checkInDays)||[];
+  const daySel=`<div><label>Day</label><select id="ntDay" onchange="drawNotes()"><option value="all">All days</option>${campDays.map((d,i)=>
+    `<option value="${d}">Day ${i+1} · ${new Date(d+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'})}</option>`).join('')}${campDays.length?'<option value="__pre">Before camp</option>':''}</select></div>`;
   // AC-7: swap Zone and Ministry positions — Zone first, then Ministry.
   // Item 7c: the "All zones · whole camp" subtitle was never true for a zoneLeader — their
   // /notes/recent read is already zone-scoped server-side. director/admin genuinely see the
   // whole camp, so their subtitle is unchanged.
   const notesSubtitle=ACTOR.role==='zoneLeader'?`Your zone: ${esc(ACTOR.zone||'')}`:'All zones · whole camp';
   paint('notes',`<button class="btn alt" onclick="exportNotes()">${icSm('download')} Export (CSV)</button>
-    <div class="selrow">${recSel}${zoneSel}</div><div class="selrow">${minSel}</div>
+    <div class="selrow">${recSel}${daySel}</div><div class="selrow">${zoneSel}${minSel}</div>
     <div id="notesList"></div>`,'Testimonies & Notes',notesSubtitle);
   drawNotes();
 };
 function drawNotes(){
   let list=window._notesAll||[];
-  const ch=sel('ntChurch')||'all',z=sel('ntZone')||'all';
-  // Empty set = no filter (see the chip note in RENDER.notes) — NOT "show nothing".
+  const ch=sel('ntChurch')||'all',z=sel('ntZone')||'all',day=sel('ntDay')||'all';
+  // Empty set = no filter (see the note on _toggleNoteCat) — NOT "show nothing".
   if(NOTE_CATS.size)list=list.filter(n=>NOTE_CATS.has(n.cat||'note'));
   if(ch!=='all')list=list.filter(n=>n.church===ch);
   if(z!=='all')list=list.filter(n=>n.zone===z);
+  if(day!=='all'){
+    const campDays=(SETTINGS&&SETTINGS.checkInDays)||[];
+    // Brisbane date, not the UTC slice — see the daySel comment in RENDER.notes.
+    list=day==='__pre'
+      ? list.filter(n=>campDays.indexOf(localDateISO(n.createdAt))<0)
+      : list.filter(n=>localDateISO(n.createdAt)===day);
+  }
   const box=document.getElementById('notesList');if(!box)return;
   // Incidents carry their own low/high severity — surface it in the badge instead of a flat
   // "Incident" label (high stays the alarming red pill; low reads as a calmer amber).
@@ -5317,14 +5501,23 @@ function drawNotes(){
         ${p.treatment?`<div><b style="color:var(--consent-ok-ink)">Treatment:</b> ${esc(p.treatment)}</div>`:''}
         ${p.firstAider?`<div class="sub" style="color:var(--ink-2)">First-aider: ${esc(p.firstAider)}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div>`:''}</div>`;
     }else{bodyHtml=`<div style="font-size:.86rem;color:#475569;margin:4px 0">${esc(n.body)}</div>`;}
-    return `<div class="card" style="${zoneAccentStyle(n.zone)}"><div class="rowsb" style="align-items:center"><div class="nm">${esc(n.camperName||'—')}</div>${right}</div>
+    /* 2026-08-03 (owner request): the record TYPE badge moved from the end of the footer line
+       to the top-right of the tile, beside the year level. It used to be the last thing on a
+       run-on grey line ("Sam T · 2 Oct 14:03 · Victory Church · Testimony"), so the single
+       fact that decides whether a tile is worth reading at all — is this a testimony or a
+       first-aid record? — was the hardest thing on the card to find, and moved horizontally
+       depending on how long the church name was. Now it is in a fixed position on every tile.
+       `min-width:0` on the name lets a long student name ellipsis rather than shoving the
+       badge off the row; the badge block is `flex:0 0 auto` so it never shrinks. */
+    return `<div class="card" style="${zoneAccentStyle(n.zone)}"><div class="rowsb" style="align-items:center;gap:8px">
+      <div class="nm" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.camperName||'—')}</div>
+      <div style="flex:0 0 auto;display:flex;align-items:center;gap:6px">${right}${badge(n)}</div></div>
     ${bodyHtml}
-    <div class="sub">${esc(n.authorName)} · ${dtFmt(n.createdAt)}${n.church?' · '+esc(n.church):''} · ${badge(n)}</div></div>`;}).join(''):emptyState('note','No records match these filters.');
+    <div class="sub">${esc(n.authorName)} · ${dtFmt(n.createdAt)}${n.church?' · '+esc(n.church):''}</div></div>`;}).join(''):emptyState('note','No records match these filters.');
 }
 async function exportNotes(){
   try{const csv=await api('/notes/export');if(!csv||typeof csv!=='string'){toast('Nothing to export');return;}
-    const blob=new Blob([csv],{type:'text/csv'});const url=URL.createObjectURL(blob);const a=document.createElement('a');
-    a.href=url;a.download='testimonies-and-notes-'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    _saveTextFile(csv,'testimonies-and-notes-'+new Date().toISOString().slice(0,10)+'.csv');
     toast('Exported');
   }catch(e){toast(e.message);}}
 
@@ -5547,11 +5740,18 @@ RENDER.adminAccounts=async function(){
   // everything including creating further admins; the only thing it can never do is remove,
   // deactivate or demote the original.
   const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option><option value="admin">Admin</option>`;
+  /* 2026-08-03: "Randomise & export passwords" moved to its OWN card at the top of the
+     screen (owner request). It used to sit in the Churches card header, below the leadership
+     list — which was the right place when it only touched church logins. It now rotates every
+     account except the original admin, so a control buried inside the Churches card was
+     describing itself wrongly as much as it was hard to find. */
   paint('adminAccounts',`
+    <div class="card"><div class="lbl" style="margin-top:0">All login passwords</div>
+      <p class="note-hint" style="margin:2px 0 8px">Issues a fresh memorable password to every church login and every leadership login, and downloads the full list as a CSV. The original admin account (this one) is never changed.</p>
+      <button class="btn ghost" onclick="randomizeChurchPasswords()" style="width:100%">${icSm('key')} Randomise &amp; export passwords</button></div>
     <div class="card"><div class="lbl" style="margin-top:0">Leadership accounts</div>${lr}</div>
     <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('Churches named in a registration upload are auto-created, with the zone defaulting to Yellow — set the zone and login via Account Info. Accommodation overrides live on the Accommodation allocations screen.')}</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" onclick="randomizeChurchPasswords()">${icSm('key')} Randomise &amp; export passwords</button>
-      <button class="btn ghost sm" onclick="bulkChurchUpdate()">${icSm('key')} Bulk Church Update</button></div></div>${cr}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" onclick="bulkChurchUpdate()">${icSm('key')} Bulk Church Update</button></div></div>${cr}</div>
     <div class="card"><div class="lbl" style="margin-top:0">Add leadership account</div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Name</label><input class="fld" id="aName" placeholder="Full name" style="flex:1"></div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Username</label><input class="fld" id="aE" placeholder="e.g. yr10leaders" style="flex:1" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
@@ -5565,7 +5765,7 @@ RENDER.adminAccounts=async function(){
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Church name</label><input class="fld" id="ncName" placeholder="e.g. Northside" style="flex:1"></div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Zone</label><div style="flex:1">${zoneSel('ncZone')}</div></div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Username</label><input class="fld" id="ncUser" placeholder="e.g. northside (letters, numbers, . _ -)" style="flex:1" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off"></div>
-      <p class="note-hint" style="margin:6px 0 0">Two logins are created — <b>b-username</b> (boys) and <b>g-username</b> (girls). Passwords are auto-generated; use “Randomise &amp; export passwords” above to retrieve them.</p>
+      <p class="note-hint" style="margin:6px 0 0">Two logins are created — <b>b-username</b> (boys) and <b>g-username</b> (girls). Passwords are auto-generated; use “Randomise &amp; export passwords” at the top of this screen to retrieve them.</p>
       <button class="btn" onclick="addChurch()" style="margin-top:10px;width:100%">Create church + accounts</button></div>`,'Accounts & churches','Admin');
 };
 function aRoleChange(){
@@ -5675,7 +5875,7 @@ async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter churc
    (username, church, gender, password). Also creates any missing b-/g- account and retires the
    old combined login, so one click both migrates and re-issues. Passwords are memorable (Word.##). */
 async function randomizeChurchPasswords(){
-  if(!await confirmSheet({title:'Re-randomise ALL church login passwords and download the list?',body:'Every church’s current password will stop working — hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
+  if(!await confirmSheet({title:'Re-randomise ALL login passwords and download the list?',body:'Every church login AND every leadership login (director, zone leader, first aid, any extra admin) gets a new password. The only account left alone is the original admin — this one. Every other current password stops working immediately, so hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
   // The POST does the whole split+randomise server-side and RETURNS the new passwords. That
   // response IS the only copy — so once it succeeds we must download the CSV before anything
   // else can fail. The accounts-list refresh afterwards is cosmetic; a hiccup there must NOT
@@ -5686,12 +5886,17 @@ async function randomizeChurchPasswords(){
   catch(e){ toast(e.message||'Could not randomise passwords'); return; }
   if(!rows||!rows.length){ toast('No church accounts to export'); try{await _rAccts();}catch(_){} return; }
   const q=v=>{v=String(v==null?'':v);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
-  const header=['Username','Church','Gender','Password'];
-  const body=rows.map(r=>[r.username,r.church,r.gender==='male'?'Boys':r.gender==='female'?'Girls':r.gender,r.password]);
+  /* 2026-08-03: the export now covers leadership accounts too, so two columns changed.
+     `Gender` is BLANK for a leadership login rather than echoing something — only church
+     logins are gender-scoped, and printing a gender there would invent a split that does not
+     exist. `Role` is new, because with directors and zone leaders in the same file the
+     username alone no longer says what an account is. The server sends the role label in
+     `church` for a leadership row, which is why that column reads "Director" not a church. */
+  const header=['Username','Church / Role','Gender','Role','Password'];
+  const roleLabel={admin:'Admin',director:'Director',zoneLeader:'Zone leader',firstAid:'First aid',church:'Church'};
+  const body=rows.map(r=>[r.username,r.church,r.gender==='male'?'Boys':r.gender==='female'?'Girls':'',roleLabel[r.role]||(r.gender?'Church':''),r.password]);
   const csv='﻿'+[header,...body].map(r=>r.map(q).join(',')).join('\r\n');
-  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  const a=document.createElement('a');a.href=url;a.download=_exportName('church-passwords','csv');
-  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  _saveTextFile(csv,_exportName('camp-passwords','csv'));
   toast('Passwords randomised & exported ('+rows.length+' logins)');
   try{await _rAccts();}catch(_){/* UI refresh only — export already succeeded */}
 }
@@ -5858,8 +6063,7 @@ async function downloadAuditExport(){
     const resp=await fetch('/export/audit',{headers:{Authorization:'Bearer '+TOKEN}});
     if(!resp.ok){const e=await resp.json().catch(()=>({}));toast(e.message||'Export failed');return;}
     const blob=await resp.blob();
-    const url=URL.createObjectURL(blob);const a=document.createElement('a');
-    a.href=url;a.download=_exportName('audit-workbook','xlsx');document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    _rlSaveBlob(blob,_exportName('audit-workbook','xlsx'));
     toast('Audit workbook downloaded');
   }catch(e){toast(e.message||'Export failed');}
 }
@@ -5868,8 +6072,7 @@ async function downloadCsvExport(path,filename){
     const resp=await fetch(path,{headers:{Authorization:'Bearer '+TOKEN}});
     if(!resp.ok){toast('Export failed');return;}
     const blob=await resp.blob();
-    const url=URL.createObjectURL(blob);const a=document.createElement('a');
-    a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    _rlSaveBlob(blob,filename);
     toast('Downloaded');
   }catch(e){toast(e.message||'Export failed');}
 }
@@ -6475,11 +6678,17 @@ RENDER.adminData=async function(){
   // Item B (2026-07-28): a route to Budget & Costings from here (admin + director both hold
   // `budget:manage`, and this screen is a director's main landing point for records).
   const budgetCard=`<div class="card tap" onclick="go('budget')"><div class="rowsb"><div><div style="font-weight:600">Budget &amp; Costings</div><div class="sub">Registration fee totals by church, with discount-code breakdown</div></div><span class="pill info">View ›</span></div></div>`;
-  // Registration lists (PNG) — 2026-07-31. Church list is filled in after paint by
-  // _loadRegListChurches() so this screen doesn't block on another fetch.
-  const regListsCard=`<div class="card">
-    <div class="lbl" style="margin-top:0">Registration lists (PNG)</div>
-    <p class="note-hint" style="text-align:left">Images of who is registered, to send to grade leaders in the lead-up to camp. Guys on the left, girls on the right, longest-registered first. Names only — no payment, medical or contact details.</p>
+  /* Registration lists (PNG) — 2026-07-31. Church list is filled in after paint by
+     _loadRegListChurches() so this screen doesn't block on another fetch.
+     2026-08-03: wrapped in a DEFAULT-COLLAPSED <details> (owner request), alongside the new
+     Check-in status card below it. Both are occasional-use export tools sitting on a screen
+     whose primary jobs are the compliance export and the close-out flow, and expanded they
+     pushed those below the fold. ⚠ Do NOT add an `open` attribute to either — same standing
+     rule as the three Data Import cards. The <select>s stay in the DOM while collapsed, so
+     `sel('rlChurch')` and `_loadRegListChurches()` work regardless of open state. */
+  const regListsCard=`<details class="setg"><summary>${icSm('download')} Registration lists (PNG)</summary>
+    <div class="card">
+    <p class="note-hint" style="text-align:left;margin-top:0">Images of who is registered, to send to grade leaders in the lead-up to camp. Guys on the left, girls on the right, longest-registered first. Names only — no payment, medical or contact details.</p>
     <label>Church</label><select id="rlChurch"><option value="">Loading…</option></select>
     <label>Split</label><select id="rlSplit">
       <option value="auto" selected>Automatic</option>
@@ -6491,11 +6700,28 @@ RENDER.adminData=async function(){
     <button class="btn" style="width:100%;margin-top:8px" onclick="exportRegistrationPngs()">${icSm('download')} Download images</button>
     <button class="btn ghost" style="width:100%;margin-top:8px" onclick="exportRegistrationZip()">${icSm('download')} Download as .zip</button>
     <div id="rlStatus" class="note-hint" style="text-align:left;display:none"></div>
-  </div>`;
+  </div></details>`;
+  /* Check-in status (PNG) — 2026-08-03, owner request. Sits directly below Registration
+     lists and is built the same way: pick a parameter, get a shareable image.
+     Days come from settings.checkInDays, so the picker can't offer a day that has no
+     sessions. Defaults to today when today is a camp day (same rule as the Schedule screen),
+     else the first day — chasing missed check-ins is a same-day activity. */
+  const ciDays=(SETTINGS&&SETTINGS.checkInDays)||[];
+  const ciToday=localDateISO();
+  const ciDefault=ciDays.indexOf(ciToday)>=0?ciToday:(ciDays[0]||'');
+  const checkinStatusCard=`<details class="setg"><summary>${icSm('download')} Check-in status (PNG)</summary>
+    <div class="card">
+    <p class="note-hint" style="text-align:left;margin-top:0">An image of how many check-ins each church missed on a given day, worst first. Morning and afternoon are added together. Counts only — no student names.</p>
+    ${ciDays.length?`<label>Day</label><select id="csDay">${ciDays.map((d,i)=>
+      `<option value="${d}"${d===ciDefault?' selected':''}>Day ${i+1} · ${new Date(d+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'})}</option>`).join('')}</select>
+    <button class="btn" style="width:100%;margin-top:8px" onclick="exportCheckinStatusPng()">${icSm('download')} Download image</button>`
+    :'<p class="note-hint" style="text-align:left">Set the camp dates first — there are no check-in days configured.</p>'}
+    <div id="csStatus" class="note-hint" style="text-align:left;display:none"></div>
+  </div></details>`;
   // PC-1 order, updated: 1. Data table, 2. Budget, 3. Save Defaults, 4. Compliance Export,
-  // 5. Close-Out, 6. Data reset. Registration lists sits with the other export tools.
+  // 5. Close-Out, 6. Data reset. The two image exports sit with the other export tools.
   paint('adminData',
-    `${dataTableCard}${budgetCard}${regListsCard}${saveDefaultsCard}${complianceCard}${closeOutCard}${dataResetCard}`,
+    `${dataTableCard}${budgetCard}${regListsCard}${checkinStatusCard}${saveDefaultsCard}${complianceCard}${closeOutCard}${dataResetCard}`,
     'Data Export/Reset','Export & reset');
   _loadRegListChurches();
 };
@@ -6669,6 +6895,16 @@ async function _rlGenerate(say){
   return {churchName,day,tier,files};
 }
 
+/* THE ONE download path for the whole app (generalised 2026-08-03 — Android review).
+   It was written for the registration-list PNGs and carried the two mobile-safety rules
+   nobody else had: append the anchor to the document before clicking it, and DELAY the
+   revoke. Every other export in this file was still doing `a.click(); URL.revokeObjectURL(url)`
+   in the same tick — and one (`exportBudget`) never appended the anchor at all.
+   Both matter on Android Chrome, and most on an INSTALLED PWA, where a silently-failed
+   download has no browser downloads tray to fall back to: the browser resolves a download
+   URL asynchronously, so revoking it synchronously can cancel or truncate the file, and the
+   code reports success either way because `.click()` never throws.
+   ⚠ Route every new download through here. Do not hand-roll the anchor dance again. */
 function _rlSaveBlob(blob,name){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
@@ -6676,6 +6912,11 @@ function _rlSaveBlob(blob,name){
   document.body.appendChild(a);a.click();a.remove();
   // Revoking immediately can cancel the download on some mobile browsers.
   setTimeout(()=>URL.revokeObjectURL(url),20000);
+}
+/* Text/CSV convenience wrapper over _rlSaveBlob. Defaults to text/csv because every current
+   caller is a CSV; pass a mime for anything else. */
+function _saveTextFile(text,name,mime){
+  _rlSaveBlob(new Blob([text],{type:mime||'text/csv'}),name);
 }
 
 async function exportRegistrationPngs(){
@@ -6692,6 +6933,135 @@ async function exportRegistrationPngs(){
   }
   say(n+' image'+(n===1?'':'s')+' downloaded ('+out.tier+' split).');
   toast(n+' image'+(n===1?'':'s')+' downloaded');
+}
+
+/* ===== CHECK-IN STATUS (PNG) — 2026-08-03 =================================================
+   Owner request: for a chosen camp day, an image showing how many check-ins each church
+   MISSED, worst first, with morning and afternoon summed.
+
+   WHAT "MISSED" MEANS HERE, and why it is the roster's definition and not a second one:
+   a church's miss count for a session is the number of people ON THAT SESSION'S ROSTER who
+   are not checked in. The roster is already exactly the right population — the backend builds
+   it from people with `atCamp === true` and excludes leaders — so someone who never arrived
+   at camp is not counted as a miss, and neither is a leader who has no check-in obligation.
+   Re-deriving that population here from /registrants would produce a different, larger number
+   than the one the leader was looking at on the check-in screen, which is the fastest way to
+   make an accountability report nobody trusts.
+
+   `checkedIn` is LAST-ENTRY-WINS on the DTO (`toRosterEntry`), so someone checked in and then
+   out reads as not checked in. That is deliberate and consistent with the check-in screen and
+   with `churchesBehind` in the push warning — one definition across all three.
+
+   ⚠ Sessions are resolved from the SERVER's session list, never assumed to be `day~am` +
+   `day~pm`. Under AC-1 the first camp day is PM-only and the last is AM-only, so constructing
+   both ids by hand would 404 on exactly the two days most likely to be checked. Summing
+   "morning + afternoon" over whatever sessions that day actually has is the same answer on an
+   ordinary day and the correct one on those two.
+
+   Rows are grouped by CHURCH, with the b-/g- logins summed (owner's choice) — that is who
+   gets chased, and a church appears once. */
+async function _csGather(say){
+  const day=sel('csDay');
+  if(!day){toast('Pick a day first');return null;}
+  say('Loading check-in sessions…');
+  let sessions;
+  try{sessions=await api('/checkin/sessions');}
+  catch(e){say('');toast(e.message);return null;}
+  const daySessions=(sessions||[]).filter(s=>s.day===day);
+  if(!daySessions.length){say('');toast('No check-in sessions on that day');return null;}
+  say('Loading check-in status…');
+  // Per church: {missed, total}. `total` is the roster size summed over the day's sessions —
+  // it is what makes "9 missed" readable as 9 out of how many.
+  const byChurch=new Map();
+  for(const s of daySessions){
+    let st;
+    try{st=await api('/checkin/sessions/'+encodeURIComponent(s.id)+'/status');}
+    catch(e){say('');toast('Could not load '+(s.label||s.id)+': '+e.message);return null;}
+    for(const r of (st&&st.roster)||[]){
+      const name=r.church||'—';
+      const cur=byChurch.get(name)||{church:name,missed:0,total:0};
+      cur.total+=1;
+      if(!r.checkedIn)cur.missed+=1;
+      byChurch.set(name,cur);
+    }
+  }
+  const rows=[...byChurch.values()];
+  if(!rows.length){say('');toast('Nobody was on the roster that day');return null;}
+  // Most missed first; ties broken by name so the image is stable between runs.
+  rows.sort((a,b)=>b.missed-a.missed||a.church.localeCompare(b.church));
+  const dayIdx=((SETTINGS&&SETTINGS.checkInDays)||[]).indexOf(day);
+  return {
+    day,rows,
+    sessionLabels:daySessions.map(s=>s.label||s.id),
+    dayLabel:(dayIdx>=0?'Day '+(dayIdx+1)+' · ':'')+new Date(day+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'}),
+  };
+}
+
+/* Draw the check-in status sheet. Same canvas conventions as _rlDraw (RL_W width, violet top
+   rule, camp name footer) so the two images read as a set when they land in the same chat. */
+function _csDraw(data){
+  const rows=data.rows;
+  const headH=210, colHeadH=52, footH=64;
+  const H=headH+colHeadH+rows.length*RL_ROW+footH;
+  const cv=document.createElement('canvas');
+  cv.width=RL_W;cv.height=H;
+  const x=cv.getContext('2d');
+  const FONT='system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif';
+
+  x.fillStyle='#ffffff';x.fillRect(0,0,RL_W,H);
+  x.fillStyle='#5b21b6';x.fillRect(0,0,RL_W,10);
+
+  const totalMissed=rows.reduce((a,r)=>a+r.missed,0);
+  const totalExpected=rows.reduce((a,r)=>a+r.total,0);
+  x.fillStyle='#1e1a3a';x.font='700 46px '+FONT;x.textBaseline='alphabetic';
+  x.fillText('Missed check-ins',RL_PAD,96);
+  x.fillStyle='#5b21b6';x.font='700 34px '+FONT;
+  x.fillText(data.dayLabel,RL_PAD,142);
+  x.fillStyle='#6b7280';x.font='600 22px '+FONT;
+  x.fillText(totalMissed+' of '+totalExpected+' missed  ·  '+data.sessionLabels.join(' + '),RL_PAD,176);
+  x.fillStyle='#e4e2f5';x.fillRect(RL_PAD,headH-12,RL_W-RL_PAD*2,2);
+
+  const missX=RL_W-RL_PAD-260, ofX=RL_W-RL_PAD;
+  x.fillStyle='#6b7280';x.font='800 22px '+FONT;
+  x.fillText('CHURCH',RL_PAD,headH+30);
+  x.textAlign='right';
+  x.fillText('MISSED',missX,headH+30);
+  x.fillText('OF',ofX,headH+30);
+  x.textAlign='left';
+
+  let y=headH+colHeadH;
+  for(const r of rows){
+    // Zero missed is a GOOD result and is coloured accordingly — a list where every number is
+    // alarm-red trains people to ignore the colour.
+    x.fillStyle='#1e1a3a';x.font='500 30px '+FONT;
+    x.fillText(_rlFit(x,r.church,missX-RL_PAD-90),RL_PAD,y+32);
+    x.textAlign='right';
+    x.fillStyle=r.missed>0?'#b91c1c':'#15803d';x.font='700 30px '+FONT;
+    x.fillText(String(r.missed),missX,y+32);
+    x.fillStyle='#9ca3af';x.font='500 26px '+FONT;
+    x.fillText(String(r.total),ofX,y+32);
+    x.textAlign='left';
+    y+=RL_ROW;
+  }
+
+  x.fillStyle='#9ca3af';x.font='500 20px '+FONT;
+  x.fillText((SETTINGS&&SETTINGS.campName)||'Youth Camp',RL_PAD,H-26);
+  return new Promise(res=>cv.toBlob(res,'image/png'));
+}
+
+async function exportCheckinStatusPng(){
+  const st=document.getElementById('csStatus');
+  const say=m=>{if(st){st.style.display=m?'block':'none';st.textContent=m;}};
+  const data=await _csGather(say);
+  if(!data)return;
+  say('Drawing image…');
+  try{
+    const blob=await _csDraw(data);
+    if(!blob){say('');toast('Could not create the image');return;}
+    _rlSaveBlob(blob,'missed-checkins-'+data.day+'.png');
+    say('');
+    toast('Check-in status image downloaded');
+  }catch(e){say('');toast(e.message||'Could not create the image');}
 }
 
 async function exportRegistrationZip(){
@@ -7957,12 +8327,21 @@ async function _renderPushCard(){
    device" bug on an installed iPhone. */
 function _pushOn(){
   if(_pushBusy)return;
-  // Raw HTML (not esc'd) so the three paragraphs render as paragraphs. Every fragment
-  // below is a hardcoded literal, so there is no untrusted input to escape here.
+  /* Raw HTML (not esc'd) so the lines render as lines. Every fragment below is a hardcoded
+     literal, so there is no untrusted input to escape here.
+
+     2026-08-03: CUT from three dense paragraphs to three short lines (owner: "too long").
+     The old copy was ~90 words on a phone modal standing between a leader and a feature they
+     had already decided to turn on — which is how consent text gets scrolled past rather than
+     read. Nothing was dropped that changes what someone is agreeing to: what alerts you get,
+     that they carry no student detail, that they show on a lock screen, and that a device
+     registration is stored until you turn it off. Only the wording is shorter.
+     ⚠ Do NOT cut the lock-screen line or the "no names" line to shorten this further — those
+     two are the actual substance of the consent, not decoration. */
   modal(`<h3>Alerts on this device</h3>
-    <p class="sub" style="margin:8px 0 14px">We&rsquo;ll notify this device when an urgent incident is logged (leadership accounts only), when an <b>urgent</b> camp notice goes out, and about an hour before your check-in window closes if students are still unchecked. Ordinary notices don&rsquo;t alert you &mdash; they just appear in the app.
-      <br><br>Alerts <b>never contain a student&rsquo;s name</b> or any medical or incident detail &mdash; just a prompt to open the app. They may appear on your lock screen, so keep this device locked and don&rsquo;t leave it with students.
-      <br><br>We store a device registration for this account until you turn alerts off here.</p>
+    <p class="sub" style="margin:8px 0 14px">You&rsquo;ll be alerted for <b>urgent</b> notices, urgent incidents (leadership only), and when your check-in window is closing. Ordinary notices don&rsquo;t buzz.
+      <br><br>Alerts <b>never include a student&rsquo;s name</b> or any detail &mdash; just &ldquo;open the app&rdquo;. They can show on your lock screen.
+      <br><br>Turning this off here removes the device registration.</p>
     <button class="btn" onclick="_pushConsentGo()">Turn on alerts</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }

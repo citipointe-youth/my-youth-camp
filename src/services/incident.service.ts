@@ -8,6 +8,7 @@ import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
 import { invalidateDashboardCache } from './dashboard-cache';
+import type { PushService } from './push.service';
 
 /**
  * How long a high-severity incident's `leadersOnly` alert stays in the feed (2026-07-30).
@@ -29,6 +30,12 @@ export interface IncidentService {
 export function makeIncidentService(
   incidentRepo: IIncidentRepository,
   notifRepo: INotificationRepository,
+  /**
+   * Optional (2026-08-03) so every existing test constructs this service unchanged. Absent
+   * = the old behaviour exactly: the alert row is written and the 5-minute cron tick pushes
+   * it. Present = the same alert also goes out immediately.
+   */
+  push?: Pick<PushService, 'sendNow'>,
 ): IncidentService {
   return {
     async log(actor, input) {
@@ -76,6 +83,15 @@ export function makeIncidentService(
           createdAt,
         };
         await notifRepo.save(notif);
+        /* Push it NOW rather than waiting up to 5 minutes for the cron tick (2026-08-03).
+           This is the single most time-critical notification the system sends — a
+           high-severity incident is a safeguarding event and the leaders who need to act on
+           it were, before this, waiting an average of 2.5 minutes on a polling interval.
+           `sendNow` claims atomically, so the tick cannot then send it a second time, and it
+           NEVER throws: the notice row above is already committed and is the guaranteed
+           channel, with the tick still there as the safety net. Awaited, not fired and
+           forgotten — see the contract on `sendNow` for why that matters on serverless. */
+        if (push) await push.sendNow(notif);
       }
       invalidateDashboardCache(); // a 'high' incident changes AtCampDashboard.latestNotification
       return saved;

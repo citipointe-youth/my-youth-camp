@@ -8,6 +8,7 @@ import { nowISO } from '../utils/date';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
 import { invalidateDashboardCache } from './dashboard-cache';
 import { canSeeNotification, byPublishedDesc } from './notification-visibility';
+import type { PushService } from './push.service';
 
 export interface NotificationService {
   send(actor: Actor, input: unknown): Promise<Notification>;
@@ -68,6 +69,11 @@ export function defaultNoticeExpiry(
 
 export function makeNotificationService(
   notifRepo: INotificationRepository,
+  /**
+   * Optional (2026-08-03) so every existing test constructs this service unchanged. Absent
+   * = the old behaviour exactly: the row is written and the 5-minute cron tick pushes it.
+   */
+  push?: Pick<PushService, 'sendNow'>,
 ): NotificationService {
   async function getActorFeed(actor: Actor): Promise<Notification[]> {
     const active = await notifRepo.findActive();
@@ -108,6 +114,18 @@ export function makeNotificationService(
       };
       const saved = await notifRepo.save(notif);
       invalidateDashboardCache(); // affects AtCampDashboard.latestNotification
+      /* Push urgent notices NOW instead of waiting up to 5 minutes for the cron tick
+         (2026-08-03, owner request). `sendNow` claims atomically so the tick cannot then
+         double-send, re-checks `isPushable` (so a NORMAL-priority notice still never buzzes
+         a phone through this door), and never throws — the saved row above is the guaranteed
+         channel and the tick is still the safety net.
+         ⚠ A SCHEDULED notice must not be pushed here. `isPushable` does not know about
+         `scheduledFor`; the audience resolver's `canSeeNotification` does, and would resolve
+         an empty audience — but relying on that would mean CLAIMING the notice now and
+         burning its one permanent claim, so it could never be pushed when it actually
+         published. Gate explicitly instead. */
+      const publishesNow = !notif.scheduledFor || notif.scheduledFor <= createdAt;
+      if (push && publishesNow) await push.sendNow(saved);
       return saved;
     },
 
