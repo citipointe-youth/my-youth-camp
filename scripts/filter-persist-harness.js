@@ -47,7 +47,7 @@ ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext([
   'function _filtKey()' , 'function _saveFilters()', 'function _restoreFilters()',
-  'function _filterActive(f)', 'function _filterBanner(which,hidden)',
+  'function _filterActive(f)', 'function _filterBanner(which,shown,total)',
 ].map(extract).join('\n'), ctx);
 
 let failures = 0;
@@ -75,8 +75,12 @@ check('check-in grade restored', ctx.FILTER.grade, '8');
 check('my-students gender restored', ctx.MY_FILTER.gender, 'male');
 check('untouched keys stay default', ctx.FILTER.zone, 'all');
 
-// ── 2. ⚠ THE ONE THAT MATTERS ON A SHARED PHONE: no leak between the b-/g- pair ────────────
-console.log('\n2. The b-/g- logins of one church do NOT share a filter');
+/* ── 2. Two accounts on ONE phone keep separate views ──────────────────────────────────────
+   NOT the main case — the real model is one shared account across ~20 personal phones, and
+   `localStorage` already separates those by device. This covers the rarer overlap: a leader
+   who signs into the other gender's login to help out, or an admin borrowing a handset. The
+   account in the storage key is what stops that inheriting a view that is not theirs. */
+console.log('\n2. Two accounts on ONE phone do NOT share a saved view');
 login('g-victory');
 check('girls login starts clean', [ctx.FILTER.grade, ctx.MY_FILTER.gender], ['all', 'all']);
 ctx.FILTER.grade = '11'; ctx._saveFilters();
@@ -126,20 +130,28 @@ checkTrue('restore + save both swallowed the failure', threw === null, threw && 
 check('and left usable defaults', ctx.FILTER, DEFAULT_CHECKIN);
 ctx.localStorage = good;
 
-// ── 5. The banner only appears when something is actually filtered ─────────────────────────
-console.log('\n5. Banner visibility and content');
+// ── 5. The saved-view strip: only when filtered, and NEVER as a warning ────────────────────
+console.log('\n5. Saved-view strip visibility and content');
+ctx.icSm = () => '<svg></svg>';
 login('b-victory2');
-check('no banner when nothing is filtered', ctx._filterBanner('checkin', 0), '');
+check('nothing rendered when no filter is set', ctx._filterBanner('checkin', 10, 10), '');
 ctx.FILTER.grade = '8'; ctx.FILTER.gender = 'male';
-const b = ctx._filterBanner('checkin', 12);
-checkTrue('banner appears', b.indexOf('filtban') >= 0);
-checkTrue('names the active filters', b.indexOf('Guys') >= 0 && b.indexOf('Yr 8') >= 0, b);
-checkTrue('states how many are hidden', b.indexOf('>12<') >= 0 && b.indexOf('people hidden') >= 0, b);
+const b = ctx._filterBanner('checkin', 12, 47);
+checkTrue('strip appears', b.indexOf('filtban') >= 0);
+checkTrue('names the saved view', b.indexOf('Guys') >= 0 && b.indexOf('Yr 8') >= 0, b);
+checkTrue('states shown-of-total', b.indexOf('12 of 47') >= 0, b);
+checkTrue('offers a way back to everyone', b.indexOf('Show all') >= 0, b);
+/* ⚠ THE POINT OF THE 2026-08-04 REWORK. A leader whose standing job is Yr 7 boys sees this on
+   every launch, forever. It must not read as an alarm — no warn/danger class, and no language
+   implying something is wrong or missing. */
+checkTrue('is NOT styled as a warning', !/warn|danger|alert/i.test(b), b);
+checkTrue('does not accuse the leader of hiding anyone', !/hidden|hiding/i.test(b), b);
 ctx.MY_FILTER.grade = 'leaders';
 checkTrue('the leaders option reads as "Leaders", not "Yr leaders"',
-  ctx._filterBanner('my', 3).indexOf('Leaders') >= 0
-  && ctx._filterBanner('my', 3).indexOf('Yr leaders') < 0);
-checkTrue('singular for one hidden person', ctx._filterBanner('my', 1).indexOf('person hidden') >= 0);
+  ctx._filterBanner('my', 3, 20).indexOf('Leaders') >= 0
+  && ctx._filterBanner('my', 3, 20).indexOf('Yr leaders') < 0);
+checkTrue('omits the count when totals are unknown',
+  ctx._filterBanner('my').indexOf(' of ') < 0, ctx._filterBanner('my'));
 
 console.log('\n' + (failures ? failures + ' CHECK(S) FAILED' : 'All checks passed.'));
 process.exit(failures ? 1 : 0);

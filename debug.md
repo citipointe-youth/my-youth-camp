@@ -497,7 +497,36 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-08-04 — saved-view rework (wrong premise) + budget CSV
+
+> ⚠️ **DEPLOYMENT MODEL, because two of the rows below only make sense with it and it is not
+> derivable from the code: ONE ACCOUNT, MANY PHONES.** A church login like
+> `b-citipointe-brisbane` is shared by ~20 leaders, each on their OWN phone. Devices are
+> personal; accounts are shared. The 2026-08-03 filter work assumed the opposite and built a
+> warning banner on top of it. **The rows about a "hidden count" or an amber banner in the
+> 2026-08-03 section below are superseded by this one.**
+
+| Symptom | Go to |
+|---|---|
+| **"Why am I being warned every time I open the app?"** | You are not, since 2026-08-04. `_filterBanner` is a QUIET neutral strip (`.filtban`, violet tint) stating the saved view, not a warning. If it is amber or uses a warn/danger class, that is the regression — the leader's filter is a standing preference ("I look after Yr 7 boys"), not a mistake. Two harness checks pin this. |
+| **A leader signs in and sees only part of their group** | Expected, and it is the feature — the saved view is restored. The `.filtban` strip above the list names it and "Show all" clears it. If the roster is short and there is NO strip, THAT is the bug. |
+| **The saved view says the wrong shown/total** | `_filterBanner(which, shown, total)`. Check-in passes `list.length, roster.length`; My-students passes `all.length, (window._myYouthAll||[]).length`. The leaders block is deliberately outside that count — it is filtered by zone/gender but never grade. |
+| **Two leaders on different phones share one account and got each other's filter** | Impossible — `localStorage` is per-device. If it happened, something moved the store to the server. The account in `ycp_filters_<username>` only separates two ACCOUNTS on ONE phone. |
+| **A roster renders completely empty after login** | `_restoreFilters` resets to defaults BEFORE overlaying and type-checks every value, precisely so a corrupt blob cannot leave a key `undefined` (which compares false against everything). Clear `localStorage['ycp_filters_*']` to confirm. Harness section 3. |
+| Verify the saved view | `node scripts/filter-persist-harness.js` — 22 checks. |
+| **🔴 "Weird symbols" / `â€"` / `Ã©` in an exported CSV** | **A MISSING UTF-8 BOM, essentially always.** Excel on Windows reads a `.csv` as the system ANSI codepage unless the file starts with `﻿`. The em dash in `Tent — paid in person` is the usual trigger. `src/utils/csv.ts`'s `toCsvString` already adds it, so every SERVER-built CSV is fine; a CLIENT-built one must add it itself. The budget CSV was the only one missing it (fixed 2026-08-04). ⚠ The BOM is INVISIBLE in an editor — this regresses by someone tidying a concatenation. |
+| **A budget CSV column is blank that should not be** | `Accommodation` / `Payment type` come from `_budAccom(r.key)` / `_budPayment(r.key)` — derived from the class KEY, never parsed out of the display label. A new `TicketClass` added to `budget.ts` + `_BUD_CLASSES` without a matching key shape shows up here; the harness walks every class and asserts both map to a known value. |
+| **Summing the budget CSV gives roughly double the real total** | Filter to `Row type = Detail` first. Subtotal and total rows are in the same column by design; the `Row type` column (new 2026-08-04) is what makes them separable. Before it, `Audience` mixed Camper/Leader with Total/Grand Total and this trap was invisible. |
+| **Budget CSV unit price is empty on some rows** | Correct and deliberate — a mixed-value row has no single unit price, and a `0` there would read as "free" while the line total says otherwise. Same rule as `budgetToCsv` in `budget.ts`. |
+| Verify the budget CSV | `node scripts/budget-csv-harness.js` — 30 checks incl. the BOM as raw `EF BB BF`, no em dash in the payload, a comma-containing church name, and the whole class-key mapping. |
+
+
 ### 2026-08-03 (2nd) — accommodation export + persistent roster filters
+
+> ⚠️ **The four FILTER rows in this section are SUPERSEDED by the 2026-08-04 section above** —
+> they describe an amber warning banner and a "hidden" count that were built on the wrong
+> deployment model and have been reworked. The accommodation-export rows are unaffected and
+> still current.
 
 | Symptom | Go to |
 |---|---|

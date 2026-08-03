@@ -577,13 +577,16 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .msel-opt:hover{background:var(--chip);}
 .msel-box{flex:0 0 auto;width:17px;height:17px;border-radius:5px;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;line-height:1;}
 .msel-opt.on .msel-box{background:var(--blue);border-color:var(--blue);}
-/* Saved-filter banner (2026-08-03). Amber, not red: a remembered filter is a normal state the
-   leader chose, not an error — but it MUST be noticeable, because on a check-in roster an
-   unnoticed filter reads as "these are all my students". Sits directly above the list on both
-   the check-in and My-students screens. */
-.filtban{display:flex;align-items:center;gap:10px;background:#fffaf0;border:1px solid var(--warn);
-  border-left-width:4px;border-radius:12px;padding:10px 12px;margin:10px 0;font-size:var(--t-sm);color:#7c2d12;}
-.filtban .sub{font-size:var(--t-2xs);color:#9a3412;opacity:.85;}
+/* Saved-view strip (2026-08-03; recoloured 2026-08-04). ⚠ NEUTRAL ON PURPOSE — violet tint,
+   the app's "informational" register, NOT amber and NOT `.warnbox`. It was amber in the first
+   version, which meant a leader whose standing job is Yr 7 boys got a warning every single
+   launch about a choice that was correct. See the premise note on `_filterBanner`. Sits
+   directly above the list on both the check-in and My-students screens. */
+.filtban{display:flex;align-items:center;gap:10px;background:var(--tint);border:1px solid var(--line);
+  border-left:4px solid var(--violet);border-radius:12px;padding:10px 12px;margin:10px 0;
+  font-size:var(--t-sm);color:var(--ink);}
+.filtban .sub{font-size:var(--t-2xs);color:var(--muted);}
+.filtban .fb-eye{color:var(--violet);vertical-align:-2px;margin-right:2px;}
 /* Item 8: four-row internal scroll on the Data Import people lists. The height is derived from
    ALLOC_VISIBLE_ROWS in the JS — keep the two in step if either changes. A card row is ~78px
    with its padding; 4 rows plus a peek of the fifth signals "there is more here". */
@@ -1148,24 +1151,40 @@ let SESSIONS=[],SEL_SESSION=null,FILTER={gender:'all',grade:'all',church:'all',z
    a real object so it can be persisted and restored like the check-in one. */
 let MY_FILTER={zone:'all',gender:'all',grade:'all'};
 
-/* ── FILTER PERSISTENCE ACROSS LOGINS (2026-08-03, owner request) ────────────────────────
+/* ── SAVED ROSTER VIEW (2026-08-03, owner request; premise corrected 2026-08-04) ──────────
    Both roster filters are remembered on the device and restored at next sign-in.
 
-   ⚠ KEYED PER ACCOUNT, like `ycp_initials_<username>` and `ycp_ciq_<username>`. A shared
-   device is the normal case at camp, and the `b-`/`g-` pair of one church are two different
-   logins — a single device-wide key would have the boys' login inherit the girls' leader's
-   year-level filter, which is precisely the confusion this must not create.
+   ⚠⚠ READ THE DEPLOYMENT MODEL BEFORE CHANGING ANYTHING HERE — the first version of this got
+   it backwards and built the wrong UI on top of it.
+
+       ONE ACCOUNT, MANY PHONES. A church login like `b-citipointe-brisbane` is shared by
+       ~20 leaders, each signed in on their OWN phone. Devices are personal; ACCOUNTS are
+       shared. It is NOT a pool of shared devices.
+
+   Everything follows from that:
+
+   - **The filter is a STANDING PREFERENCE, not a transient state.** A leader who looks after
+     Yr 7 boys wants Yr 7 boys every time they open the app, permanently. Re-applying it on
+     every launch was the complaint this feature exists to fix.
+   - **Therefore it must NOT be warned about.** The first version rendered an amber warning
+     banner on every launch, on the theory that a forgotten filter could mislead someone into
+     thinking their group was fully checked in. Under the real model that alarm fires on a
+     deliberate, permanent, correct choice — every launch, forever — which is how a camp
+     learns to swipe past banners, including the ones that matter. `_filterBanner` is now a
+     QUIET, NEUTRAL statement of which view is saved, with a one-tap way out. **Do not make
+     it amber, red, or a `.warnbox` again.**
+   - The residual risk is real but small and is handled where it actually bites: the check-in
+     screen's "All checked in" banner already qualifies itself with `(filtered)`, and the
+     saved-view strip sits directly above it saying which slice that was.
+
+   ⚠ Keyed per ACCOUNT (`ycp_filters_<username>`) like `ycp_initials_<username>` and
+   `ycp_ciq_<username>`. `localStorage` is already per-device, so on the real model the key is
+   really "this leader's phone" — the account in the key costs nothing and keeps the rare
+   second login on one phone (a leader helping with the other gender, an admin borrowing a
+   handset) from inheriting a view that is not theirs.
 
    ⚠ EVERY READ AND WRITE IS try/caught. `localStorage` throws outright in some privacy modes,
-   and this runs on the check-in screen — the one screen that must never fail to render.
-
-   ⚠⚠ A REMEMBERED FILTER IS A SAFETY RISK ON A CHECK-IN ROSTER, and that is why
-   `_filterBanner()` exists and is not optional. A leader who filtered to "Yr 8" on Friday and
-   signs in on Saturday sees a short roster with no memory of having filtered it — and the
-   conclusion "everyone here is checked in" is then wrong about every student the filter hid.
-   The banner states the hidden count and clears in one tap. **Do not remove it, and do not
-   demote it to the quiet `· filtered` hint that was already there** — that hint was on screen
-   throughout, and it is not what the owner's report was about. */
+   and this runs on the check-in screen — the one screen that must never fail to render. */
 function _filtKey(){return 'ycp_filters_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
 function _saveFilters(){
   try{localStorage.setItem(_filtKey(),JSON.stringify({checkin:FILTER,my:MY_FILTER}));}catch(_){}
@@ -1197,9 +1216,12 @@ function _clearFilters(which){
   }else RENDER.checkin();
 }
 function _filterActive(f){return Object.keys(f).some(k=>f[k]!=='all');}
-/* The banner. `hidden` is how many rows the filter is removing RIGHT NOW — a count is what
-   makes this actionable, where a bare "filters applied" is just another thing to scroll past. */
-function _filterBanner(which,hidden){
+/* The saved-view strip. Deliberately QUIET — it states which slice is being shown and offers
+   the way out, and that is all. See the premise note above for why this is not a warning.
+   `shown`/`total` rather than a "hidden" count: a leader whose whole job is Yr 7 boys is not
+   hiding anyone, they are looking at their group. "12 of 47" is the same information without
+   implying something is wrong. */
+function _filterBanner(which,shown,total){
   const f=which==='my'?MY_FILTER:FILTER;
   if(!_filterActive(f))return '';
   const bits=[];
@@ -1207,10 +1229,11 @@ function _filterBanner(which,hidden){
   if(f.church&&f.church!=='all')bits.push(f.church);
   if(f.gender&&f.gender!=='all')bits.push(f.gender==='male'?'Guys':'Girls');
   if(f.grade&&f.grade!=='all')bits.push(f.grade==='leaders'?'Leaders':'Yr '+f.grade);
+  const count=(typeof shown==='number'&&typeof total==='number'&&total>0)?` · ${shown} of ${total}`:'';
   return `<div class="filtban"><div style="flex:1;min-width:0">
-    <b>Filtered</b> — ${esc(bits.join(' · '))}${hidden>0?` · <b>${hidden}</b> ${hidden===1?'person':'people'} hidden`:''}
-    <div class="sub" style="margin-top:1px">Saved on this device from your last visit.</div></div>
-    <button class="btn ghost sm" style="width:auto;margin:0;flex:0 0 auto" onclick="_clearFilters('${which}')">Clear</button></div>`;
+    <span class="fb-eye">${icSm('preview')}</span> Showing <b>${esc(bits.join(' · '))}</b>${count}
+    <div class="sub" style="margin-top:1px">Your saved view on this phone.</div></div>
+    <button class="btn ghost sm" style="width:auto;margin:0;flex:0 0 auto" onclick="_clearFilters('${which}')">Show all</button></div>`;
 }
 let LAST_LEADER='';
 // Feature 4 (2026-07-17): per-account leader initials. Church accounts (incl. the gender-scoped
@@ -3429,7 +3452,7 @@ async function _renderDailyCheckin(){
       <select onchange="setFilter('grade',this.value)">${gradeOpts}</select>
     </div>
     ${syncBanner}
-    ${_filterBanner('checkin',roster.length-list.length)}
+    ${_filterBanner('checkin',list.length,roster.length)}
     <div class="card" style="display:flex;justify-content:space-between;align-items:center">
       <div><div class="nm">${esc(label)} check-in ${helpTip('Tap a name to mark that person present for this session; tap again to undo. Pick a different session with the buttons up top.')}</div><div class="sub">Still need ${dueShown}${list.length!==roster.length?' · filtered':''}</div></div>
       ${dueShown>0?`<div style="text-align:right"><div style="font-weight:800;font-size:var(--t-h1);line-height:1;color:var(--warn)">${dueShown}</div><div class="sub" style="font-size:var(--t-2xs)">not yet in</div></div>`:''}
@@ -4004,6 +4027,21 @@ const _BUD_CLASSES=[
   ['unknown','Accommodation not recorded'],
 ];
 const _BUD_CLASS_LABEL=Object.fromEntries(_BUD_CLASSES);
+/* A TicketClass is two facts glued together — where they sleep and how they paid — and the CSV
+   splits it back into two columns (2026-08-04). Derived from the KEY, never parsed out of the
+   display label: the label carries an em dash and a price and is written for a phone screen,
+   not a spreadsheet. Keys are the stable contract with budget.ts. */
+function _budAccom(cls){
+  if(cls==='unknown')return 'Not recorded';
+  return String(cls).indexOf('tent')===0?'Tent':'Classroom';
+}
+function _budPayment(cls){
+  if(cls==='unknown')return '';
+  const i=String(cls).indexOf('-');
+  if(i<0)return 'Full price';
+  const tag=String(cls).slice(i+1);
+  return tag==='inperson'?'Paid in person':tag==='sponsor'?'Full sponsor':tag==='discount'?'Discounted':tag;
+}
 /** The three tags an admin can put on a discount code, and how they read in the dropdown. */
 const _BUD_TAGS=[['inperson','Paid in person'],['sponsor','Full sponsor'],['discount','Discounted']];
 function _budRowLabel(cls,amount){
@@ -4639,22 +4677,54 @@ async function _saveDiscountTag(code,tag){
     _budRedraw();
   }catch(e){toast(e.message||'Could not save');}
 }
+/* Budget CSV — rebuilt 2026-08-04 after the owner reported "weird symbols in the category
+   column and not very reader-friendly". Two separate causes, both fixed here:
+
+   1. 🔴 **NO BYTE-ORDER MARK.** Excel on Windows opens a .csv as the system ANSI codepage
+      unless the file starts with a UTF-8 BOM. Several category labels contain an EM DASH
+      (`Tent — paid in person`, and `labelForRow` appends `— $150`), which is 3 UTF-8 bytes and
+      renders as `â€"` in Windows-1252. That is the "weird symbols" exactly. The first-aid and
+      password CSVs in this file already carried the BOM; the budget one never did — and it is
+      the only one whose DATA contains non-ASCII, which is why it was the only visible failure.
+      ⚠ Any new CSV must start with `﻿`. It is invisible in a text editor, so the way this
+      regresses is somebody "tidying up" a string concatenation.
+
+   2. **One column carried three facts.** `Category` was the display label built for a phone
+      screen: accommodation type + payment class + unit price, e.g.
+      `Classroom — paid in person — $190`. The price was already in its own `UnitPrice` column,
+      so it was duplicated, and neither of the other two facts could be sorted, filtered or
+      pivoted on. They are now real columns — Accommodation and Payment type — derived from the
+      class KEY, never string-parsed out of the label.
+
+   Also: `Audience` used to mix a dimension (Camper/Leader) with row kinds (Total/Grand Total),
+   so a naive SUM over a column double-counted every subtotal. There is now an explicit
+   `Row type` column, and a reader (or a pivot) can filter to `Detail` and trust the maths.
+
+   ⚠ `Unit price` stays BLANK, never 0, on a mixed-value row — a 0 reads as "free" while the
+   line total says otherwise. Same rule as `budgetToCsv` in budget.ts. */
 function exportBudget(){
   const scope=sel('budChurch')||'all';
   const rep=computeBudgetClient(window._budgetRegs,scope);
-  const esc2=s=>{const str=String(s);return /[",\n]/.test(str)?'"'+str.replace(/"/g,'""')+'"':str;};
-  const lines=[['Church','Audience','Category','Count','UnitPrice','LineTotal'].join(',')];
-  // UnitPrice is left BLANK (not 0) for a mixed-value row — mirrors budgetToCsv in budget.ts;
-  // a 0 there reads as "free" in a spreadsheet while the LineTotal says otherwise.
-  const emit=(church,aud,rows)=>rows.forEach(r=>lines.push([esc2(church),aud,esc2(r.label),r.count,r.amount==null?'':r.amount,r.lineTotal].join(',')));
-  rep.churches.forEach(c=>{emit(c.churchName,'Camper',c.campers);emit(c.churchName,'Leader',c.leaders);
-    lines.push([esc2(c.churchName),'Total','',c.camperCount+c.leaderCount,'',c.total].join(','));});
-  lines.push(['ALL CHURCHES','Grand Total','',rep.camperCount+rep.leaderCount,'',rep.grandTotal].join(','));
+  const esc2=s=>{const str=String(s==null?'':s);return /[",\n\r]/.test(str)?'"'+str.replace(/"/g,'""')+'"':str;};
+  const header=['Church','Row type','Audience','Accommodation','Payment type','Discount code','People','Unit price','Line total'];
+  const lines=[header.map(esc2).join(',')];
+  const emit=(church,aud,rows)=>(rows||[]).forEach(r=>lines.push([
+    esc2(church),'Detail',aud,esc2(_budAccom(r.key)),esc2(_budPayment(r.key)),esc2(r.codeHint||''),
+    r.count,r.amount==null?'':r.amount,r.lineTotal,
+  ].join(',')));
+  rep.churches.forEach(c=>{
+    emit(c.churchName,'Camper',c.campers);
+    emit(c.churchName,'Leader',c.leaders);
+    lines.push([esc2(c.churchName),'Church total','','','','',c.camperCount+c.leaderCount,'',c.total].join(','));
+  });
+  lines.push([esc2(scope==='all'?'ALL CHURCHES':'SELECTED'),'Camp total','','','','',
+    rep.camperCount+rep.leaderCount,'',rep.grandTotal].join(','));
   // ⚠ This was the ONE export in the file that never appended its anchor to the document
   // before clicking it — a detached-anchor click is unreliable on mobile Chromium, so on an
   // Android phone this button could silently do nothing. Routed through the shared helper
   // (2026-08-03, Android review) so it cannot drift again.
-  _saveTextFile(lines.join('\n'),'budget-by-church.csv');
+  // \r\n line endings + the BOM: what Excel expects from a .csv on Windows.
+  _saveTextFile('﻿'+lines.join('\r\n'),_exportName('budget-by-church','csv'));
   toast('Budget CSV downloaded');
 }
 
@@ -5349,12 +5419,11 @@ function filterMyYouth(){
     html+=`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${label} · ${leaders.length}</summary>${leaders.map(leaderRow).join('')}</details>`;
   }
   if(!html)html='<p class="note-hint" style="margin-top:24px;text-align:center">No one matches these filters.</p>';
-  /* The filter banner goes ABOVE the list and reports how many people it is hiding. On this
-     screen a remembered filter is how "half my group has vanished" happens after a re-login —
-     see the block comment on `_filterBanner`. `_myYouthAll` is the unfiltered population; the
-     leaders block is excluded from the count because it is filtered on different rules. */
-  const hidden=Math.max(0,(window._myYouthAll||[]).length-(window._myYouthAll||[]).filter(matchF).length);
-  el.innerHTML=_filterBanner('my',hidden)+html;
+  /* The saved-view strip goes ABOVE the list. `_myYouthAll` is the unfiltered population; the
+     leaders block is deliberately excluded from the count because it is filtered on different
+     rules (zone/gender but never grade — a leader has no year level). */
+  const totalAll=(window._myYouthAll||[]).length;
+  el.innerHTML=_filterBanner('my',all.length,totalAll)+html;
 }
 async function openCamper(id,push=true){
   const p=await api('/campers/'+id);let notesHtml='';const lead=p.kind==='leader';

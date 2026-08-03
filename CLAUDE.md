@@ -4,6 +4,88 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Saved-view rework (wrong premise) + budget CSV rebuilt — 2026-08-04
+
+Two owner corrections to the 2026-08-03 work. SPA-only. `npm run typecheck` clean, `npx vitest
+run` **894 pass / 57 files** (unchanged — browser-only), `node --check` OK on the SPA body
+(range **966–8902**, re-derived) and `sw.js`. `sw.js` `camp-v85`→**`camp-v86`**. **No schema or
+migration change.**
+
+### 1 — 🟠 THE FILTER-PERSISTENCE FEATURE WAS BUILT ON THE WRONG DEPLOYMENT MODEL
+The behaviour shipped on 2026-08-03 was right; the UI wrapped around it was not, because the
+premise was inverted. **Record this, because it is not derivable from the code:**
+
+> **ONE ACCOUNT, MANY PHONES.** A church login like `b-citipointe-brisbane` is shared by ~20
+> leaders, **each signed in on their own phone**. Devices are personal; ACCOUNTS are shared. It
+> is **not** a pool of shared devices, which is what the first version assumed.
+
+Everything follows from that, and the consequences are the opposite of what was built:
+
+| | First version (wrong premise) | Corrected |
+|---|---|---|
+| What a saved filter *is* | a transient state someone may have forgotten | a **standing preference** — "I look after Yr 7 boys", forever |
+| Therefore the UI | an **amber warning** banner, every launch | a **quiet neutral** saved-view strip |
+| Wording | "Filtered — N people **hidden** · Clear" | "Showing Yr 7 · Guys — 12 of 47 · Show all" |
+
+> ⚠️ **DO NOT MAKE THAT STRIP AMBER, RED OR A `.warnbox` AGAIN.** Under the real model it
+> renders on every launch for a leader whose whole job is one year level — an alarm fired
+> forever at a correct choice is how a camp learns to swipe past banners, including the ones
+> that matter. There are two harness assertions pinning this: the markup must contain no
+> `warn`/`danger`/`alert` class, and must not use the words "hidden"/"hiding".
+
+`shown of total` replaced the hidden count for the same reason: a Yr 7 leader is not hiding
+anyone, they are looking at their group. Same information, no implication of a problem.
+
+The residual risk is real but small and is already handled where it actually bites — the
+check-in screen's "All checked in" banner qualifies itself with `(filtered)`, and the saved-view
+strip sits directly above it naming the slice.
+
+**The per-account storage key survived the correction**, but its justification changed: it is
+not about shared devices (`localStorage` is per-device anyway), it is about the rare second
+login on one handset — a leader covering the other gender, an admin borrowing a phone.
+
+### 2 — 🟠 THE BUDGET CSV: TWO CAUSES, ONE OF THEM AN INVISIBLE CHARACTER
+Owner: *"the category column has weird symbols in it and isn't very reader-friendly."*
+
+**Cause 1 — no UTF-8 BOM.** Excel on Windows opens a `.csv` as the system ANSI codepage unless
+the file begins with a BOM. Several category labels contain an **em dash** — `Tent — paid in
+person`, and `labelForRow` appends `— $150` — which is three UTF-8 bytes and renders as `â€"` in
+Windows-1252. That is the reported "weird symbols", exactly.
+
+> ⚠️ **An audit of every export settled which files were affected, rather than guessing.**
+> `src/utils/csv.ts`'s `toCsvString` **already** prefixes the BOM, so every SERVER-built CSV
+> (registrants, sign-in/out, notes) was always fine. Of the client-built ones, the first-aid and
+> password CSVs carried a literal BOM; **the budget CSV was the only one that did not — and it
+> is also the only one whose data contains non-ASCII.** That is why it was the single visible
+> failure. **Any new client-built CSV must start with `﻿`.** It is invisible in an editor, so
+> the way this regresses is somebody tidying a string concatenation and seeing no difference.
+
+**Cause 2 — one column carried three facts.** `Category` was the on-screen display label:
+accommodation type + payment class + unit price (`Classroom — paid in person — $190`). The price
+was **already** in its own `UnitPrice` column, so it was duplicated, and neither of the other two
+facts could be sorted, filtered or pivoted on.
+
+New columns: **Church · Row type · Audience · Accommodation · Payment type · Discount code ·
+People · Unit price · Line total**.
+
+- **Accommodation and Payment type are derived from the class KEY** (`_budAccom` / `_budPayment`),
+  never string-parsed out of the display label. The label is written for a phone screen and
+  carries the em dash; the keys are the stable contract with `budget.ts`. A harness check walks
+  **every** entry in `_BUD_CLASSES` and asserts both map to a known value, so adding a tenth
+  ticket class cannot silently produce a blank column.
+- **`Row type` is new and fixes a real arithmetic trap.** `Audience` used to hold
+  `Camper`/`Leader`/`Total`/`Grand Total` together, so a naive SUM over the amount column
+  **double-counted every subtotal**. A reader (or a pivot) can now filter to `Detail` and trust
+  the total. There is a harness check asserting detail rows alone sum to the grand total *and*
+  that summing every row does not — the trap has to stay visible.
+- ⚠️ **`Unit price` stays BLANK, never 0, on a mixed-value row** — a 0 reads as "free" while the
+  line total says otherwise. Unchanged rule, same as `budgetToCsv` in `budget.ts`.
+- Also now CRLF line endings and a dated filename via `_exportName`, matching every other export.
+- **`scripts/budget-csv-harness.js`** — 30 checks over the real extracted `exportBudget`,
+  including the BOM as raw `EF BB BF` bytes, "no em dash anywhere in the payload", a church name
+  containing a comma, and the full class-key mapping table.
+
+
 ## Accommodation export + roster filters persist across logins — 2026-08-03 (2nd)
 
 Two owner follow-ups. SPA-only. `npm run typecheck` clean, `npx vitest run` **894 pass / 57
@@ -58,18 +140,21 @@ ministry**, **Classrooms by room**, **Tents**.
 Remembered per device and restored at next sign-in. `_filtKey` / `_saveFilters` /
 `_restoreFilters` / `_clearFilters` / `_filterActive` / `_filterBanner`.
 
-> ⚠️⚠️ **A REMEMBERED FILTER IS A SAFETY RISK ON A CHECK-IN ROSTER, AND `_filterBanner` IS THE
-> MITIGATION — IT IS NOT DECORATION.** A leader who filtered to "Yr 8" on Friday signs in on
-> Saturday to a short roster with no memory of having filtered it, and the conclusion "everyone
-> here is checked in" is then wrong about every student the filter hid. The banner names the
-> active filters, **states how many people are hidden**, and clears in one tap. **Do not remove
-> it and do not demote it back to the quiet `· filtered` hint** — that hint already existed
-> throughout and is not what the owner asked for.
+> ⚠️⚠️ **THE PREMISE BELOW WAS WRONG WHEN FIRST WRITTEN AND WAS CORRECTED BY THE OWNER ON
+> 2026-08-04 — see the 2026-08-04 section at the top of this file.** The original version
+> assumed shared devices and shipped an amber WARNING banner as a safety mitigation. The real
+> deployment model is the opposite: **one shared account across ~20 personal phones** (a church
+> login like `b-citipointe-brisbane` is used by every boys' leader, each on their own handset).
+> So a saved filter is a **standing preference** ("I look after Yr 7 boys"), not a transient
+> state anyone forgets — and warning about it on every launch alarms a leader about a choice
+> that is correct. The banner is now a quiet, neutral saved-view strip. Everything else in this
+> section still stands.
 
 - ⚠️ **Keyed PER ACCOUNT** (`ycp_filters_<username>`), matching `ycp_initials_<username>` /
-  `ycp_ciq_<username>`. A shared device is the normal case at camp and the `b-`/`g-` pair of one
-  church are two different logins — a device-wide key would have the boys' login inherit the
-  girls' leader's year filter. There is a harness check for exactly this.
+  `ycp_ciq_<username>`. `localStorage` is already per-device, so on the real model this key is
+  effectively "this leader's phone" — the account in it costs nothing and keeps the rare second
+  login on one handset (a leader covering the other gender, an admin borrowing a phone) from
+  inheriting a view that is not theirs. There is a harness check for that case.
 - ⚠️ **`_restoreFilters` resets to defaults FIRST, then overlays**, and type-checks every value.
   A corrupt or partial blob must never leave a key `undefined`: an undefined filter compares
   false against everything and **silently empties the roster** with no error. A numeric `grade`
