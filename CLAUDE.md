@@ -4,6 +4,91 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Accommodation export + roster filters persist across logins — 2026-08-03 (2nd)
+
+Two owner follow-ups. SPA-only. `npm run typecheck` clean, `npx vitest run` **894 pass / 57
+files** (unchanged — both are browser-only), `node --check` OK on the SPA body (range
+**963–8833**, re-derived) and `sw.js`. `sw.js` `camp-v83`→**`camp-v85`** (v84 the export, v85 the
+filters). **No schema or migration change.**
+
+### 1 — Accommodation allocations: a 4-sheet Excel export
+Closes the one real gap the 2026-08-03 export audit found — accommodation had no export of any
+kind. Button sits at the top of the allocations screen; sheets are **Summary**, **Classrooms by
+ministry**, **Classrooms by room**, **Tents**.
+
+> ⚠️ **BUILT CLIENT-SIDE FROM THE DATA THE SCREEN IS ALREADY RENDERING**
+> (`window._accomRegs` / `_accomRooms` / `_accomAlloc` → `accomGroups` / `accomChurches` /
+> `tentDist`), and that is the whole reason it is not a server endpoint. Those SPA helpers
+> **mirror** `src/services/accommodation-allocation.ts`; a server-generated workbook would be
+> computed from the *other* copy of the rules. If the two ever drift, the spreadsheet would
+> quietly disagree with the map the director is reading — and a director reconciling a room list
+> against a screen has no way to tell which one is lying. Same reasoning as the check-in status
+> PNG. **Do not move this server-side.**
+
+- **Cohorts now carry `stu` and `ld` alongside `n`**, computed in `_accomGenderGroups` /
+  `_accomYearGroups` at the same moment `n` is, with `n === stu + ld` always. The export needs
+  the student/leader split per cohort and re-deriving it there would have been a **fourth** copy
+  of that arithmetic. Additive — nothing on screen reads them yet and `n` is unchanged.
+- ⚠️ **"Capacity of those classrooms" is the capacity of the rooms a cohort OCCUPIES, not
+  capacity reserved for it.** A room shared between two cohorts contributes its full capacity to
+  both, so that column is **not additive** down the page. The per-room sheet is the one that
+  answers capacity questions without double counting; the header wording is deliberate.
+- Written with the **already-vendored SheetJS** (`public/vendor/xlsx.full.min.js`, 0.18.5, lazy
+  loaded by `_ensureXlsx`). **Verified it can WRITE, not just read** — the repo had only ever
+  used it to convert xlsx→CSV on import — by round-tripping a real workbook through
+  `XLSX.write` → `XLSX.read`. No new dependency. xlsx rather than CSV because four sheets was
+  the request and CSV cannot carry them.
+- ⚠️ Sheet names are capped at 31 chars and must avoid `: \ / ? * [ ]`. A bad one **throws on
+  append** — that is exactly how the compliance workbook 500'd for weeks on
+  `'Sign-in/Sign-out Log'`.
+- **`_ensureXlsx`'s error message no longer says "try exporting as CSV instead"** — it now backs
+  an export with no CSV alternative, so that was advice which could not be followed.
+- The button is rendered **outside `#accomBody`**, like the overrides card: `drawAccom()` rewrites
+  that div on every allocation change and would otherwise wipe the button's disabled state
+  mid-export. It reads `window._accom*` at click time, so it always exports the current state
+  without needing a re-render.
+- **`scripts/accom-export-harness.js`** — 10 scenarios over the REAL extracted functions (never a
+  reimplementation): the 50-person split threshold, `n === stu + ld` reconciliation, a shared
+  room, a partially-placed cohort, tent ceil-to-7 with students and leaders counted **separately**
+  (pooling 15 + 8 would give 4 tents, not 5), the under-75% fold-in, cancelled rows, people with
+  no accommodation type, the empty camp, and a stale allocation entry pointing at a group that no
+  longer exists. `node scripts/accom-export-harness.js`.
+
+### 2 — Check-in and My-students filters persist across logins (owner request)
+Remembered per device and restored at next sign-in. `_filtKey` / `_saveFilters` /
+`_restoreFilters` / `_clearFilters` / `_filterActive` / `_filterBanner`.
+
+> ⚠️⚠️ **A REMEMBERED FILTER IS A SAFETY RISK ON A CHECK-IN ROSTER, AND `_filterBanner` IS THE
+> MITIGATION — IT IS NOT DECORATION.** A leader who filtered to "Yr 8" on Friday signs in on
+> Saturday to a short roster with no memory of having filtered it, and the conclusion "everyone
+> here is checked in" is then wrong about every student the filter hid. The banner names the
+> active filters, **states how many people are hidden**, and clears in one tap. **Do not remove
+> it and do not demote it back to the quiet `· filtered` hint** — that hint already existed
+> throughout and is not what the owner asked for.
+
+- ⚠️ **Keyed PER ACCOUNT** (`ycp_filters_<username>`), matching `ycp_initials_<username>` /
+  `ycp_ciq_<username>`. A shared device is the normal case at camp and the `b-`/`g-` pair of one
+  church are two different logins — a device-wide key would have the boys' login inherit the
+  girls' leader's year filter. There is a harness check for exactly this.
+- ⚠️ **`_restoreFilters` resets to defaults FIRST, then overlays**, and type-checks every value.
+  A corrupt or partial blob must never leave a key `undefined`: an undefined filter compares
+  false against everything and **silently empties the roster** with no error. A numeric `grade`
+  is rejected rather than coerced, because filters compare as strings.
+- **Every read and write is `try`/`catch`ed** — `localStorage` throws outright in some privacy
+  modes, and this runs on the check-in screen, which must never fail to render.
+- **`MY_FILTER` is new state.** The My-students filter previously lived ONLY in the DOM
+  (`filterMyYouth` read `sel('myZoneF')` directly), so it did not survive a tab change, let alone
+  a login. The selects are now the input and `MY_FILTER` is the state, via `setMyFilter()`.
+- Restored at all **three** session-start paths (`doLogin`, `submitChangePassword`,
+  `_tryRestoreSession`) **before the first paint**, so neither screen renders unfiltered and then
+  jumps — and on **both** account-preview swaps, so an admin's own filter does not silently narrow
+  the roster of the account they are inspecting.
+- **`scripts/filter-persist-harness.js`** — 22 checks over the real functions against a stub
+  `localStorage`: round trip, the b-/g- isolation case, five malformed-blob shapes, a throwing
+  `localStorage`, and banner content (including "Leaders" not rendering as "Yr leaders", and the
+  singular/plural of the hidden count).
+
+
 ## 16-item owner batch — push latency, parent masking, Android review — 2026-08-03
 
 Owner list of 20 items; one was withdrawn during clarification (a check-in-screen button,

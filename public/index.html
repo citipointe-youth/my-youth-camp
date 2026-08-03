@@ -577,6 +577,13 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .msel-opt:hover{background:var(--chip);}
 .msel-box{flex:0 0 auto;width:17px;height:17px;border-radius:5px;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;line-height:1;}
 .msel-opt.on .msel-box{background:var(--blue);border-color:var(--blue);}
+/* Saved-filter banner (2026-08-03). Amber, not red: a remembered filter is a normal state the
+   leader chose, not an error — but it MUST be noticeable, because on a check-in roster an
+   unnoticed filter reads as "these are all my students". Sits directly above the list on both
+   the check-in and My-students screens. */
+.filtban{display:flex;align-items:center;gap:10px;background:#fffaf0;border:1px solid var(--warn);
+  border-left-width:4px;border-radius:12px;padding:10px 12px;margin:10px 0;font-size:var(--t-sm);color:#7c2d12;}
+.filtban .sub{font-size:var(--t-2xs);color:#9a3412;opacity:.85;}
 /* Item 8: four-row internal scroll on the Data Import people lists. The height is derived from
    ALLOC_VISIBLE_ROWS in the JS — keep the two in step if either changes. A card row is ~78px
    with its padding; 4 rows plus a peek of the fifth signals "there is more here". */
@@ -1136,6 +1143,75 @@ let TOKEN=null,ACTOR=null,SETTINGS=null,CAMP_MODE='pre-camp',STACK=['home'],PREV
 let ACCOUNT_PREVIEW=false;
 let _previewStash=null; // { token, actor } — the admin's own session while account-previewing
 let SESSIONS=[],SEL_SESSION=null,FILTER={gender:'all',grade:'all',church:'all',zone:'all'};
+/* My-students filter (2026-08-03). It used to live ONLY in the DOM — `filterMyYouth` read
+   `sel('myZoneF')` directly — so it did not survive a navigation, let alone a login. Hoisted to
+   a real object so it can be persisted and restored like the check-in one. */
+let MY_FILTER={zone:'all',gender:'all',grade:'all'};
+
+/* ── FILTER PERSISTENCE ACROSS LOGINS (2026-08-03, owner request) ────────────────────────
+   Both roster filters are remembered on the device and restored at next sign-in.
+
+   ⚠ KEYED PER ACCOUNT, like `ycp_initials_<username>` and `ycp_ciq_<username>`. A shared
+   device is the normal case at camp, and the `b-`/`g-` pair of one church are two different
+   logins — a single device-wide key would have the boys' login inherit the girls' leader's
+   year-level filter, which is precisely the confusion this must not create.
+
+   ⚠ EVERY READ AND WRITE IS try/caught. `localStorage` throws outright in some privacy modes,
+   and this runs on the check-in screen — the one screen that must never fail to render.
+
+   ⚠⚠ A REMEMBERED FILTER IS A SAFETY RISK ON A CHECK-IN ROSTER, and that is why
+   `_filterBanner()` exists and is not optional. A leader who filtered to "Yr 8" on Friday and
+   signs in on Saturday sees a short roster with no memory of having filtered it — and the
+   conclusion "everyone here is checked in" is then wrong about every student the filter hid.
+   The banner states the hidden count and clears in one tap. **Do not remove it, and do not
+   demote it to the quiet `· filtered` hint that was already there** — that hint was on screen
+   throughout, and it is not what the owner's report was about. */
+function _filtKey(){return 'ycp_filters_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
+function _saveFilters(){
+  try{localStorage.setItem(_filtKey(),JSON.stringify({checkin:FILTER,my:MY_FILTER}));}catch(_){}
+}
+function _restoreFilters(){
+  // Defaults first, so a corrupt or partial blob can never leave a filter undefined (which
+  // would compare false against everything and silently empty the roster).
+  FILTER={gender:'all',grade:'all',church:'all',zone:'all'};
+  MY_FILTER={zone:'all',gender:'all',grade:'all'};
+  try{
+    const raw=localStorage.getItem(_filtKey());if(!raw)return;
+    const v=JSON.parse(raw)||{};
+    if(v.checkin&&typeof v.checkin==='object')Object.keys(FILTER).forEach(k=>{if(typeof v.checkin[k]==='string')FILTER[k]=v.checkin[k];});
+    if(v.my&&typeof v.my==='object')Object.keys(MY_FILTER).forEach(k=>{if(typeof v.my[k]==='string')MY_FILTER[k]=v.my[k];});
+  }catch(_){}
+}
+function _clearFilters(which){
+  if(which!=='my')FILTER={gender:'all',grade:'all',church:'all',zone:'all'};
+  if(which!=='checkin')MY_FILTER={zone:'all',gender:'all',grade:'all'};
+  _saveFilters();
+  if(which==='my'){
+    /* Reset the three <select>s in place and re-run the list, rather than re-entering the
+       screen. A full re-render would refetch and bounce the scroll to the top, and the selects
+       are the only DOM that reflects this state. */
+    [['myZoneF','all'],['myGenderF','all'],['myGradeF','all']].forEach(([id,v])=>{
+      const el=document.getElementById(id);if(el)el.value=v;
+    });
+    filterMyYouth();
+  }else RENDER.checkin();
+}
+function _filterActive(f){return Object.keys(f).some(k=>f[k]!=='all');}
+/* The banner. `hidden` is how many rows the filter is removing RIGHT NOW — a count is what
+   makes this actionable, where a bare "filters applied" is just another thing to scroll past. */
+function _filterBanner(which,hidden){
+  const f=which==='my'?MY_FILTER:FILTER;
+  if(!_filterActive(f))return '';
+  const bits=[];
+  if(f.zone&&f.zone!=='all')bits.push(f.zone+' Zone');
+  if(f.church&&f.church!=='all')bits.push(f.church);
+  if(f.gender&&f.gender!=='all')bits.push(f.gender==='male'?'Guys':'Girls');
+  if(f.grade&&f.grade!=='all')bits.push(f.grade==='leaders'?'Leaders':'Yr '+f.grade);
+  return `<div class="filtban"><div style="flex:1;min-width:0">
+    <b>Filtered</b> — ${esc(bits.join(' · '))}${hidden>0?` · <b>${hidden}</b> ${hidden===1?'person':'people'} hidden`:''}
+    <div class="sub" style="margin-top:1px">Saved on this device from your last visit.</div></div>
+    <button class="btn ghost sm" style="width:auto;margin:0;flex:0 0 auto" onclick="_clearFilters('${which}')">Clear</button></div>`;
+}
 let LAST_LEADER='';
 // Feature 4 (2026-07-17): per-account leader initials. Church accounts (incl. the gender-scoped
 // b-/g- logins) are prompted for these after login; they pre-fill the sign-in / sign-out / note
@@ -1560,6 +1636,9 @@ async function doLogin(){
     document.getElementById('bar').style.display='flex';
     document.getElementById('stage').style.display='block';
     document.getElementById('tabs').style.display='';  // let CSS media query control visibility
+    // Restore this account's saved roster filters BEFORE the first paint, so the
+    // check-in / My-students screens never render once unfiltered and then jump.
+    _restoreFilters();
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
     // Item 7: church accounts must set initials once per login (enforced, no skip).
     _loadLeaderInitials();
@@ -1609,6 +1688,9 @@ async function submitChangePassword(){
     document.getElementById('bar').style.display='flex';
     document.getElementById('stage').style.display='block';
     document.getElementById('tabs').style.display='';
+    // Restore this account's saved roster filters BEFORE the first paint, so the
+    // check-in / My-students screens never render once unfiltered and then jump.
+    _restoreFilters();
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
     _loadLeaderInitials();
     enforceInitials();
@@ -1747,6 +1829,9 @@ async function enterAccountPreview(id){
   localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
   Cache.clear(); // never let admin-scoped cached reads leak into the scoped preview
   SESSIONS=[];SEL_SESSION=null;
+  // Filters are keyed per account, so swap to the previewed account's saved set — otherwise
+  // the admin's own year-level filter silently narrows the roster they are inspecting.
+  _restoreFilters();
   ACCOUNT_PREVIEW=true;PREVIEW_MODE=false;
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
   document.getElementById('previewBanner').classList.add('show');
@@ -1759,6 +1844,7 @@ function exitAccountPreview(){
   _previewStash=null;localStorage.removeItem('ycp_preview_stash');
   ACCOUNT_PREVIEW=false;PREVIEW_MODE=false;
   Cache.clear();SESSIONS=[];SEL_SESSION=null;
+  _restoreFilters();   // back to the admin's own saved filters
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
   document.getElementById('previewBanner').classList.remove('show');
   updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
@@ -3343,6 +3429,7 @@ async function _renderDailyCheckin(){
       <select onchange="setFilter('grade',this.value)">${gradeOpts}</select>
     </div>
     ${syncBanner}
+    ${_filterBanner('checkin',roster.length-list.length)}
     <div class="card" style="display:flex;justify-content:space-between;align-items:center">
       <div><div class="nm">${esc(label)} check-in ${helpTip('Tap a name to mark that person present for this session; tap again to undo. Pick a different session with the buttons up top.')}</div><div class="sub">Still need ${dueShown}${list.length!==roster.length?' · filtered':''}</div></div>
       ${dueShown>0?`<div style="text-align:right"><div style="font-weight:800;font-size:var(--t-h1);line-height:1;color:var(--warn)">${dueShown}</div><div class="sub" style="font-size:var(--t-2xs)">not yet in</div></div>`:''}
@@ -3356,7 +3443,7 @@ async function _renderDailyCheckin(){
   if(_undoCamperId)_showUndoToast(_undoType);
 };
 function selDay(id){SEL_SESSION=id;RENDER.checkin();}
-function setFilter(k,v){FILTER[k]=v;if(k==='zone')FILTER.church='all';RENDER.checkin();}
+function setFilter(k,v){FILTER[k]=v;if(k==='zone')FILTER.church='all';_saveFilters();RENDER.checkin();}
 
 // Re-render the check-in screen WITHOUT jumping back to the top of a long roster. paint() keeps the
 // scroll on a clean same-screen repaint, but a check-in/out reflow (a row moving into the collapsed
@@ -3803,9 +3890,9 @@ async function _renderStudentsBody(){
   window._myLeaders=await _loadMyLeaders(items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
-  const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
+  const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="setMyFilter()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}" ${MY_FILTER.zone===z?'selected':''}>${z} Zone</option>`).join('')}</select>`:'';
   window._myYouthAll=items;
-  host.innerHTML=`<div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="filterMyYouth()"><option value="all">All genders</option><option value="female">Girls</option><option value="male">Guys</option></select><select id="myGradeF" onchange="filterMyYouth()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}<option value="leaders">Leaders</option></select></div><div id="myYouthList"></div>`;
+  host.innerHTML=`<div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div><div id="myYouthList"></div>`;
   filterMyYouth();
 }
 function switchStudentsTab(sub){
@@ -5134,9 +5221,9 @@ async function _renderMyGroup(screenId){
   window._myLeaders=await _loadMyLeaders(items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zones=[...new Set(items.map(c=>c.zone))].sort();
-  const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="filterMyYouth()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}">${z} Zone</option>`).join('')}</select>`:'';
+  const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="setMyFilter()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}" ${MY_FILTER.zone===z?'selected':''}>${z} Zone</option>`).join('')}</select>`:'';
   window._myYouthAll=items;
-  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not signed in. Tap a name to see their details and contacts.')}</div><div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="filterMyYouth()"><option value="all">All genders</option><option value="female">Girls</option><option value="male">Guys</option></select><select id="myGradeF" onchange="filterMyYouth()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Yr ${g}</option>`).join('')}<option value="leaders">Leaders</option></select></div><div id="myYouthList"></div>`;
+  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not signed in. Tap a name to see their details and contacts.')}</div><div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div><div id="myYouthList"></div>`;
   document.getElementById(screenId).innerHTML=base;
   filterMyYouth();
 }
@@ -5180,8 +5267,16 @@ function _sortLeaders(rows){
     || String(a.firstName||'').localeCompare(String(b.firstName||''))
     || String(a.lastName||'').localeCompare(String(b.lastName||'')));
 }
+/* Called by the three <select>s. Reads the DOM ONCE, into `MY_FILTER`, then persists — the
+   selects are the input, `MY_FILTER` is the state. Before 2026-08-03 the DOM WAS the state,
+   which is why this filter did not survive so much as a tab change. */
+function setMyFilter(){
+  MY_FILTER={zone:sel('myZoneF')||'all',gender:sel('myGenderF')||'all',grade:sel('myGradeF')||'all'};
+  _saveFilters();
+  filterMyYouth();
+}
 function filterMyYouth(){
-  const zone=sel('myZoneF')||'all',gen=sel('myGenderF')||'all',gr=sel('myGradeF')||'all';
+  const zone=MY_FILTER.zone,gen=MY_FILTER.gender,gr=MY_FILTER.grade;
   const matchF=c=>(zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)&&(gr==='all'||(gr==='leaders'?c.kind==='leader':String(c.grade)===gr));
   const all=(window._myYouthAll||[]).filter(matchF);
   const signedOut=all.filter(c=>!c.atCamp&&c.signOutHistory&&c.signOutHistory.length>0);
@@ -5254,7 +5349,12 @@ function filterMyYouth(){
     html+=`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${label} · ${leaders.length}</summary>${leaders.map(leaderRow).join('')}</details>`;
   }
   if(!html)html='<p class="note-hint" style="margin-top:24px;text-align:center">No one matches these filters.</p>';
-  el.innerHTML=html;
+  /* The filter banner goes ABOVE the list and reports how many people it is hiding. On this
+     screen a remembered filter is how "half my group has vanished" happens after a re-login —
+     see the block comment on `_filterBanner`. `_myYouthAll` is the unfiltered population; the
+     leaders block is excluded from the count because it is filtered on different rules. */
+  const hidden=Math.max(0,(window._myYouthAll||[]).length-(window._myYouthAll||[]).filter(matchF).length);
+  el.innerHTML=_filterBanner('my',hidden)+html;
 }
 async function openCamper(id,push=true){
   const p=await api('/campers/'+id);let notesHtml='';const lead=p.kind==='leader';
@@ -8330,6 +8430,9 @@ async function _tryRestoreSession(){
     document.getElementById('bar').style.display='flex';
     document.getElementById('stage').style.display='block';
     document.getElementById('tabs').style.display='';  // let CSS media query control visibility
+    // Restore this account's saved roster filters BEFORE the first paint, so the
+    // check-in / My-students screens never render once unfiltered and then jump.
+    _restoreFilters();
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
     _loadLeaderInitials(); // restore the badge/prefill
     enforceInitials();     // item 7: a restored church session with no initials is still gated

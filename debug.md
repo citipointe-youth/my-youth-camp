@@ -497,6 +497,26 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-08-03 (2nd) — accommodation export + persistent roster filters
+
+| Symptom | Go to |
+|---|---|
+| **The accommodation workbook disagrees with the allocations screen** | It should be structurally impossible — `_accomExportRows()` reads `window._accomRegs` / `_accomRooms` / `_accomAlloc`, the same in-memory data `drawAccom()` renders, through the same `accomGroups` / `accomChurches` / `tentDist`. If they disagree, something moved the export server-side or gave it its own copy of the grouping rules. Do neither. |
+| **A cohort's student/leader split looks wrong** | `stu`/`ld` are set in `_accomGenderGroups` / `_accomYearGroups` at the same moment `n` is, and `n === stu + ld` always (harness check 2). Do NOT re-derive the split in the export — that is a fourth copy of the arithmetic. |
+| **"Capacity of those classrooms" doesn't add up down the column** | Correct and documented: it is the capacity of the rooms a cohort OCCUPIES, and a room shared by two cohorts contributes its FULL capacity to both. Use the "Classrooms by room" sheet for capacity questions. |
+| **The export button does nothing / "Could not load the spreadsheet engine"** | `_ensureXlsx()` lazy-loads `public/vendor/xlsx.full.min.js` (SheetJS 0.18.5, same-origin so CSP `script-src 'self'` allows it). It is a full build and CAN write, not just read — verified by round-trip. There is no CSV fallback for this export, which is why that error message no longer suggests one. |
+| **The workbook fails to open / throws on export** | Almost always a SHEET NAME: max 31 chars, none of `: \ / ? * [ ]`. `book_append_sheet` throws on a bad one — the same failure that 500'd the compliance workbook for weeks on `'Sign-in/Sign-out Log'`. |
+| **Tent counts look low/high in the sheet** | Tents are `ceil(n/7)` with students and leaders counted **separately** — 15 students + 8 leaders is 3 + 2 = 5 tents, not `ceil(23/7)` = 4. Same rule as the on-screen Tent City table. Harness check 5. |
+| **A room shows people allocated to a group that no longer exists** | Entries whose `key` is not in `gByKey` are filtered out of the export (harness check 10) — a group disappears when a re-import changes a church's eligibility or bracket split. The screen filters the same way. |
+| Verify the export end-to-end | `node scripts/accom-export-harness.js` — 10 scenarios against the REAL extracted functions. |
+| **A leader signs in and half their group is missing** | ⚠️ **CHECK FOR A SAVED FILTER FIRST.** Since 2026-08-03 both roster filters persist per account on the device (`ycp_filters_<username>`). `_filterBanner` should be showing above the list with the hidden count and a Clear button — if the roster is short and there is NO banner, that is the bug, not the filter. |
+| **One login inherited another's filter** | The key is per ACCOUNT, not per device — this specifically must not happen between the `b-`/`g-` pair on a shared phone (harness check 2). Check `_filtKey()` still reads `ACTOR.username`. |
+| **A roster renders completely empty after a login** | `_restoreFilters` resets to defaults BEFORE overlaying stored values and type-checks each one, precisely so a corrupt blob cannot leave a key `undefined` — an undefined filter compares false against everything and empties the list with no error. Harness check 3. Clear `localStorage['ycp_filters_*']` to confirm. |
+| **The My-students filter resets when I change tabs** | It should not, since 2026-08-03 — the state is `MY_FILTER`, not the DOM. The `<select>`s call `setMyFilter()`, which reads them into `MY_FILTER` and persists. If it reset, something reverted `filterMyYouth` to reading `sel('myZoneF')` directly. |
+| **Filters do not survive a login** | `_restoreFilters()` must be called at all THREE session-start paths (`doLogin`, `submitChangePassword`, `_tryRestoreSession`) BEFORE the first paint, and on both account-preview swaps. Grep for the call count. |
+| Verify filter persistence | `node scripts/filter-persist-harness.js` — 22 checks incl. cross-login isolation, malformed blobs and a throwing `localStorage`. |
+
+
 ### 2026-08-03 — 16-item owner batch (push latency, parent masking, check-in status export, Android)
 
 | Symptom | Go to |
