@@ -4584,7 +4584,12 @@ RENDER.accom=async function(){
   /* The overrides card sits OUTSIDE `#accomBody` on purpose — `drawAccom()` rewrites that div on
      every allocation change, and rebuilding the card there would slam the <details> shut (and drop
      a half-changed <select>) every time someone placed a group in a room. */
-  paint('accom',`<div id="accomBody"></div>${_accomOverrideCard(churches)}`,'Accommodation allocations','Classrooms by ministry & gender');
+  /* The export button sits OUTSIDE `#accomBody` for the same reason the overrides card does —
+     `drawAccom()` rewrites that div on every allocation change, and a button rebuilt there
+     would lose its disabled state mid-export. It reads `window._accom*` at click time, so it
+     always exports the CURRENT allocation without needing to be re-rendered. */
+  paint('accom',`<button class="btn alt" id="accomExportBtn" onclick="exportAccommodation()">${icSm('download')} Export (Excel)</button>
+    <div id="accomBody"></div>${_accomOverrideCard(churches)}`,'Accommodation allocations','Classrooms by ministry & gender');
   drawAccom();
 };
 /* Moved here from Admin → Accommodation setup (2026-08-02, owner request). An override is a
@@ -4637,23 +4642,29 @@ function _accomYearGroups(c,gender,g,bracket,leaders,extraYouth,lbl){
   const years=_ACCOM_YEARS[bracket].filter((y,i)=>(g.byYear[y]||0)>0||(i===0&&extraYouth>0));
   if(!years.length)return [];
   const ld=_spreadLeaders(leaders,years.length);const out=[];
-  years.forEach((y,i)=>{const n=(g.byYear[y]||0)+(i===0?extraYouth:0)+ld[i];
-    if(n>0)out.push({key:c.id+'|'+gender+'|Y'+y,church:c.name,gender,label:lbl+' Yr '+y,n,bracket:'Y'+y});});
+  years.forEach((y,i)=>{const stu=(g.byYear[y]||0)+(i===0?extraYouth:0),n=stu+ld[i];
+    if(n>0)out.push({key:c.id+'|'+gender+'|Y'+y,church:c.name,gender,label:lbl+' Yr '+y,n,stu,ld:ld[i],bracket:'Y'+y});});
   return out;
 }
+/* ⚠ Every group carries `stu` + `ld` alongside `n` (2026-08-03), and `n === stu + ld` ALWAYS.
+   The accommodation export needs the student/leader split per cohort, and re-deriving it there
+   would be a fourth copy of this arithmetic — the drift trap this file has been bitten by
+   repeatedly. The split is computed HERE, once, at the same moment `n` is, so the two cannot
+   disagree. Nothing on screen reads them yet; they are additive and `n` is unchanged. */
 function _accomGenderGroups(c,gender,g){
   if(g.cls===0)return [];
   const lbl=gender==='male'?'Guys':'Girls';
-  if(g.cls<=ACCOM_SPLIT_THRESHOLD)return [{key:c.id+'|'+gender,church:c.name,gender,label:lbl,n:g.cls}];
+  if(g.cls<=ACCOM_SPLIT_THRESHOLD)return [{key:c.id+'|'+gender,church:c.name,gender,label:lbl,n:g.cls,stu:g.cls-g.ld,ld:g.ld}];
   const ld79=Math.ceil(g.ld/2),ld1012=g.ld-ld79;
-  const n79=g.y79+g.yOther+ld79,n1012=g.y1012+ld1012;const out=[];
+  const stu79=g.y79+g.yOther,stu1012=g.y1012;
+  const n79=stu79+ld79,n1012=stu1012+ld1012;const out=[];
   if(n79>0){
     if(n79>ACCOM_SPLIT_THRESHOLD)out.push(..._accomYearGroups(c,gender,g,'7-9',ld79,g.yOther,lbl));
-    else out.push({key:c.id+'|'+gender+'|7-9',church:c.name,gender,label:lbl+' Yr 7–9',n:n79,bracket:'7-9'});
+    else out.push({key:c.id+'|'+gender+'|7-9',church:c.name,gender,label:lbl+' Yr 7–9',n:n79,stu:stu79,ld:ld79,bracket:'7-9'});
   }
   if(n1012>0){
     if(n1012>ACCOM_SPLIT_THRESHOLD)out.push(..._accomYearGroups(c,gender,g,'10-12',ld1012,0,lbl));
-    else out.push({key:c.id+'|'+gender+'|10-12',church:c.name,gender,label:lbl+' Yr 10–12',n:n1012,bracket:'10-12'});
+    else out.push({key:c.id+'|'+gender+'|10-12',church:c.name,gender,label:lbl+' Yr 10–12',n:n1012,stu:stu1012,ld:ld1012,bracket:'10-12'});
   }
   return out;
 }
@@ -4691,6 +4702,157 @@ function tentDist(regs){const by={},churches=accomChurches(regs);
     const c=by[r.churchId]||(by[r.churchId]={name:r.churchName,m:{stu:0,ld:0},f:{stu:0,ld:0}});
     const g=r.gender==='male'?c.m:c.f;if(r.kind==='leader')g.ld++;else g.stu++;});
   return by;}
+/* ===== ACCOMMODATION EXPORT (.xlsx, 4 sheets) — 2026-08-03 ================================
+   Owner request. Closes the one real gap the 2026-08-03 export audit found: accommodation
+   allocations had no export of any kind.
+
+   ⚠ BUILT FROM THE SAME IN-MEMORY DATA THE SCREEN RENDERS (`window._accomRegs` / `_accomRooms`
+   / `_accomAlloc`, through `accomGroups` / `accomChurches` / `tentDist`). That is deliberate
+   and it is the whole reason this is client-side rather than a server endpoint: those SPA
+   helpers MIRROR `src/services/accommodation-allocation.ts`, and a server-generated workbook
+   would be computed from the other copy. If the two ever drift, the spreadsheet would quietly
+   disagree with the map the director is looking at — and a director reconciling a room list
+   against a screen has no way to tell which one is lying. Exporting what is on screen makes
+   that class of bug impossible here. (Same reasoning as the check-in status PNG.)
+
+   Written with the VENDORED SheetJS (`public/vendor/xlsx.full.min.js`, 0.18.5, lazy-loaded by
+   `_ensureXlsx`). Verified it can WRITE, not just read: a two-sheet workbook round-trips
+   through `XLSX.write` → `XLSX.read` with cells intact. No new dependency, no server work.
+   xlsx rather than CSV because the owner asked for four sheets, and CSV cannot carry them. */
+function _accomExportRows(){
+  const regs=window._accomRegs||[],rooms=window._accomRooms||[],alloc=window._accomAlloc||{};
+  const groups=accomGroups(regs);
+  const gByKey=Object.fromEntries(groups.map(g=>[g.key,g]));
+  const by=accomChurches(regs);
+  const td=tentDist(regs);
+  const gLabel=x=>x==='male'?'Guys':'Girls';
+
+  // roomsForKey: which rooms a cohort sits in, and how many of it are in each.
+  const roomsForKey={};
+  rooms.forEach(rm=>{
+    (alloc[rm.id]||[]).forEach(e=>{
+      if(!gByKey[e.key])return;                       // stale entry for a group that no longer exists
+      (roomsForKey[e.key]=roomsForKey[e.key]||[]).push({room:rm,n:e.n});
+    });
+  });
+
+  /* ── Sheet 2: one row per cohort (church × gender × year band) ── */
+  const cohortRows=[['Ministry','Gender','Cohort','Students','Leaders','Total','Placed','Unplaced','Classrooms assigned','Capacity of those classrooms']];
+  const sortedGroups=groups.slice().sort((a,b)=>a.church.localeCompare(b.church)||a.gender.localeCompare(b.gender)||a.label.localeCompare(b.label));
+  sortedGroups.forEach(g=>{
+    const rs=roomsForKey[g.key]||[];
+    const placed=rs.reduce((s,r)=>s+r.n,0);
+    /* ⚠ This is the capacity of the rooms this cohort OCCUPIES, not capacity reserved for it.
+       A room shared with another cohort contributes its FULL capacity here, so these figures
+       are not additive down the column — the header says "Capacity of those classrooms" rather
+       than anything that reads like a per-cohort entitlement. The per-classroom sheet is the
+       one that answers capacity questions without double counting. */
+    const cap=rs.reduce((s,r)=>s+r.room.capacity,0);
+    cohortRows.push([g.church,gLabel(g.gender),g.label,g.stu,g.ld,g.n,placed,g.n-placed,
+      rs.map(r=>r.room.name).join('; ')||'—',cap]);
+  });
+
+  /* ── Sheet 3: one row per classroom ── */
+  const roomRows=[['Classroom','Capacity','Allocated','Remaining','Gender','Cohorts allocated']];
+  rooms.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(rm=>{
+    const entries=(alloc[rm.id]||[]).filter(e=>gByKey[e.key]);
+    const used=entries.reduce((s,e)=>s+e.n,0);
+    const rg=entries.length?gByKey[entries[0].key].gender:null;
+    roomRows.push([rm.name,rm.capacity,used,rm.capacity-used,rg?gLabel(rg):'—',
+      entries.map(e=>{const g=gByKey[e.key];return g.church+' — '+g.label+' ('+e.n+')';}).join('; ')||'Unallocated']);
+  });
+
+  /* ── Sheet 4: tents ── */
+  const tentRows=[['Ministry','Gender','Students','Leaders','Student tents','Leader tents','Total tents']];
+  let tStu=0,tLd=0,tSt=0,tLt=0;
+  Object.values(td).slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(c=>{
+    [['m','male'],['f','female']].forEach(([gk,gv])=>{
+      const g=c[gk];
+      if(g.stu+g.ld===0)return;
+      // Tents of up to 7, students and leaders SEPARATELY — same rule as the on-screen table.
+      const st=Math.ceil(g.stu/7),lt=Math.ceil(g.ld/7);
+      tStu+=g.stu;tLd+=g.ld;tSt+=st;tLt+=lt;
+      tentRows.push([c.name,gLabel(gv),g.stu,g.ld,st,lt,st+lt]);
+    });
+  });
+  tentRows.push(['TOTAL','',tStu,tLd,tSt,tLt,tSt+tLt]);
+
+  /* ── Sheet 1: summary ── */
+  const totalCap=rooms.reduce((s,r)=>s+r.capacity,0);
+  const totalPlaced=Object.values(alloc).reduce((s,arr)=>s+(arr||[]).filter(e=>gByKey[e.key]).reduce((a,e)=>a+e.n,0),0);
+  const clsTotal=groups.reduce((s,g)=>s+g.n,0);
+  const clsStu=groups.reduce((s,g)=>s+g.stu,0);
+  const clsLd=groups.reduce((s,g)=>s+g.ld,0);
+  const noPref=Object.values(by).reduce((s,c)=>s+c.none,0);
+  // Ministries under the 75% bar: their classroom-preference people are counted in tents.
+  const underThreshold=Object.values(by).filter(c=>c.total>0&&c.classroom/c.total<0.75&&c.classroom>0);
+  const active=(regs||[]).filter(r=>r.status!=='cancelled');
+  const sumRows=[
+    ['Accommodation allocations',''],
+    ['Camp',(SETTINGS&&SETTINGS.campName)||'Youth Camp'],
+    ['Exported',new Date().toLocaleString()],
+    ['',''],
+    ['PEOPLE',''],
+    ['Registrations (excluding cancelled)',active.length],
+    ['In a classroom cohort',clsTotal],
+    ['  of which students',clsStu],
+    ['  of which leaders',clsLd],
+    ['In tents',tStu+tLd],
+    ['  of which students',tStu],
+    ['  of which leaders',tLd],
+    ['No accommodation type recorded',noPref],
+    ['',''],
+    ['CLASSROOMS',''],
+    ['Classrooms set up',rooms.length],
+    ['Total capacity',totalCap],
+    ['Placed in a classroom',totalPlaced],
+    ['Spare capacity',totalCap-totalPlaced],
+    ['Still to place',clsTotal-totalPlaced],
+    ['',''],
+    ['TENTS',''],
+    ['Student tents',tSt],
+    ['Leader tents',tLt],
+    ['Total tents',tSt+tLt],
+    ['',''],
+    ['NOTES',''],
+    ['Ministries under the 75% classroom threshold',underThreshold.length],
+    ['','Their classroom-preference people are counted in tents, not classrooms.'],
+    ['','Tents hold up to 7, students and leaders separately.'],
+  ];
+  underThreshold.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(c=>{
+    sumRows.push(['  '+c.name,c.classroom+' of '+c.total+' chose classroom']);
+  });
+
+  return {sumRows,cohortRows,roomRows,tentRows,
+    empty:!rooms.length&&!groups.length&&tentRows.length<=2};
+}
+
+async function exportAccommodation(){
+  const btn=document.getElementById('accomExportBtn');
+  if(btn)btn.disabled=true;
+  try{
+    const d=_accomExportRows();
+    if(d.empty){toast('Nothing to export yet — no rooms, cohorts or tents');return;}
+    await _ensureXlsx();
+    const wb=XLSX.utils.book_new();
+    const add=(rows,name)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),name);
+    // ⚠ Sheet names: max 31 chars and none of : \ / ? * [ ] — a bad name throws on append,
+    // which is exactly how the compliance workbook 500'd for weeks on 'Sign-in/Sign-out Log'.
+    add(d.sumRows,'Summary');
+    add(d.cohortRows,'Classrooms by ministry');
+    add(d.roomRows,'Classrooms by room');
+    add(d.tentRows,'Tents');
+    const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+    _rlSaveBlob(new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),
+      _exportName('accommodation','xlsx'));
+    toast('Accommodation workbook downloaded');
+  }catch(e){
+    toast(e.message||'Could not build the workbook');
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+
 function drawAccom(){
   const regs=window._accomRegs||[],rooms=window._accomRooms||[],alloc=window._accomAlloc||{};
   const groups=accomGroups(regs);
@@ -6547,8 +6709,12 @@ function _ensureXlsx(){
   _xlsxLoading=new Promise((resolve,reject)=>{
     const s=document.createElement('script');
     s.src='vendor/xlsx.full.min.js';
-    s.onload=()=>window.XLSX?resolve():reject(new Error('Excel reader failed to initialise'));
-    s.onerror=()=>{_xlsxLoading=null;reject(new Error('Could not load the Excel reader — try exporting as CSV instead.'));};
+    /* Message stays NEUTRAL about reading vs writing: since 2026-08-03 this also backs the
+       accommodation .xlsx EXPORT, which has no CSV alternative to fall back to, so the old
+       "try exporting as CSV instead" was advice that could not be followed. The import screen
+       offers a visible CSV upload of its own. */
+    s.onload=()=>window.XLSX?resolve():reject(new Error('The spreadsheet engine failed to initialise'));
+    s.onerror=()=>{_xlsxLoading=null;reject(new Error('Could not load the spreadsheet engine — check your connection and try again.'));};
     document.head.appendChild(s);
   });
   return _xlsxLoading;
