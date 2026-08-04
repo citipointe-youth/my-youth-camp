@@ -203,13 +203,34 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
         opts.minAccommodationMajorityRatio,
       );
 
-      /* What each ticket type costs, learned from everyone who already has an invoice. Built ONCE
-         from the pre-run state: a shared invoice is split using prices derived from single-person
-         invoices, which is why the two must not be interleaved. */
-      const priceTable = buildTicketPriceTable(allPeople);
-      /* The distinct figures a shared invoice may be decomposed against. Same source as
-         `priceTable`, and built once from the same pre-run state for the same reason. */
-      const priceCatalogue = ticketPriceCatalogue(priceTable);
+      /* ⚠️ SHARED INVOICES ARE PROCESSED IN A SECOND PASS, AFTER THE SINGLES — 2026-08-04.
+         A shared invoice is split using prices learned from SINGLE-person invoices, and this
+         table used to be built once from the pre-run state and never rebuilt. That is correct
+         for a top-up import into an established camp, and completely wrong for the first import
+         into an empty one:
+
+             after the 2026-08-04 rollover, `registrationCost` was null on all 287 people
+             (only the Invoice import sets it), so the table was EMPTY when the run started,
+             so NOTHING had a price, so all 41 shared invoices fell to the equal split and
+             all 92 people on them were flagged for review.
+
+         That is what the owner reported as "the review is too sensitive", and it is not
+         sensitivity — the importer simply had not read the prices yet, though they were sitting
+         in the very file it was processing. Running the same import twice fixed it, which is a
+         workaround nobody should have to know. So the singles are applied first, the table is
+         rebuilt from what they just wrote, and the shared invoices are resolved against it.
+         **Do not fold this back into one pass.** */
+      const deferredGroups: Array<{
+        rowNum: number;
+        invoiceNumber: string | null;
+        matchedPeople: Person[];
+        ticketTotal: number | null;
+        amountPaid: number | null;
+        discountAmount: number | null;
+        feesAmount: number | null;
+        taxAmount: number | null;
+        discountCode: string | null;
+      }> = [];
 
       const byInvoiceNumber = new Map<string, Person[]>();
       for (const p of allPeople) {
@@ -356,73 +377,12 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
              a per-person round() would drift the camp total by cents per invoice. */
           if (viaGroup) {
             ambiguousGroupInvoices++;
-            const split = resolveInvoiceSplit(
-              matchedPeople.map((p) => ({
-                ticketPrice: priceForTicket(priceTable, p.registrationType),
-                // ⚠️ CONFIRMED ONLY. A `guessed` kind was itself inferred from an invoice total
-                // by `buildAccommodationPriceLookup`, so passing it here lets a guess confirm
-                // itself and silently un-flags an invoice we never actually resolved.
-                accommodationKind:
-                  p.accommodationKindConfidence === 'confirmed' ? p.accommodationKind ?? null : null,
-              })),
-              ticketTotal,
-              priceCatalogue,
-              priceLookup,
-            );
-            const resolved = split.costs;
-            const weights = resolved ?? matchedPeople.map(() => 1);
-            const weightSum = weights.reduce((s, w) => s + w, 0);
-            const share = (total: number | null): (number | null)[] =>
-              total === null
-                ? matchedPeople.map(() => null)
-                : splitExact(total, weights, weightSum);
-
-            const paidParts = share(amountPaid);
-            const costParts = resolved ?? share(ticketTotal);
-            const discountParts = share(discountAmount);
-            const feeParts = share(feesAmount);
-            const taxParts = share(taxAmount);
-
-            const who = (): string =>
-              matchedPeople
-                .map((p, i) => `${p.firstName} ${p.lastName} ${formatMoney(paidParts[i] ?? null)}`)
-                .join(', ');
-            warnings.push({
-              row: rowNum,
-              message:
-                split.method === 'ticket-price'
-                  ? `Invoice ${invoiceNumber} covers ${matchedPeople.length} people — split by ticket price (${who()})`
-                  : split.method === 'residual'
-                    ? `Invoice ${invoiceNumber} covers ${matchedPeople.length} people, not all ticket types priced — the total resolves to known ticket prices one way only, so it was split on those (${
-                        matchedPeople.map((p, i) => `${p.firstName} ${p.lastName} ${formatMoney(costParts[i] ?? null)}`).join(', ')
-                      })`
-                    : `Invoice ${invoiceNumber} covers ${matchedPeople.length} people and the total cannot be resolved to known ticket prices — split EQUALLY and flagged for review`,
+            deferredGroups.push({
+              rowNum, invoiceNumber, matchedPeople,
+              ticketTotal, amountPaid, discountAmount, feesAmount, taxAmount, discountCode,
             });
-
-            for (let m = 0; m < matchedPeople.length; m++) {
-              const person = matchedPeople[m]!;
-              const incoming: Partial<Person> = {};
-              if (costParts[m] != null) incoming.registrationCost = costParts[m]!;
-              if (paidParts[m] != null) incoming.amountPaid = paidParts[m]!;
-              if (discountParts[m] != null) incoming.discountAmount = discountParts[m]!;
-              if (feeParts[m] != null) incoming.feesAmount = feeParts[m]!;
-              if (taxParts[m] != null) incoming.taxAmount = taxParts[m]!;
-              if (discountCode) incoming.discountCode = discountCode;
-              if (split.needsReview) {
-                incoming.needsReview = true;
-                incoming.needsReviewReason =
-                  `Shared invoice ${invoiceNumber ?? ''} split equally between ${matchedPeople.length} people — ticket price unknown`.trim();
-              }
-              if (Object.keys(incoming).length === 0) continue;
-              const merged = mergeOwnedFields(person, incoming, OWNED_KEYS);
-              merged.updatedAt = nowISO();
-              const firstTouch = !touched.has(merged.id);
-              touched.set(merged.id, merged);
-              if (firstTouch) updated++;
-            }
             continue;
           }
-
           // Single match.
           const person = matchedPeople[0]!;
           const incoming: Partial<Person> = {};
@@ -494,6 +454,90 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
         } catch (err) {
           errors.push({ row: rowNum, message: err instanceof Error ? err.message : String(err) });
           skipped++;
+        }
+      }
+
+      /* ── SECOND PASS: the shared invoices ──────────────────────────────────────────────
+         The price table is rebuilt from the pre-run people OVERLAID with everything the
+         first pass just wrote, so a single-person invoice in this very file prices the
+         ticket type for a family invoice further down it. See the note at `deferredGroups`.
+         ⚠️ Only `touched` is overlaid, never the deferred groups' own equal-split output —
+         that would let a guess teach the table a price and then be validated by it. */
+      if (deferredGroups.length > 0) {
+        const pricedPeople = [...allPeople.filter((p) => !touched.has(p.id)), ...touched.values()];
+        const priceTable = buildTicketPriceTable(pricedPeople);
+        const priceCatalogue = ticketPriceCatalogue(priceTable);
+
+        for (const g of deferredGroups) {
+          const { rowNum, invoiceNumber, matchedPeople, ticketTotal, amountPaid,
+            discountAmount, feesAmount, taxAmount, discountCode } = g;
+          try {
+            const split = resolveInvoiceSplit(
+              matchedPeople.map((p) => ({
+                ticketPrice: priceForTicket(priceTable, p.registrationType),
+                // ⚠️ CONFIRMED ONLY. A `guessed` kind was itself inferred from an invoice total
+                // by `buildAccommodationPriceLookup`, so passing it here lets a guess confirm
+                // itself and silently un-flags an invoice we never actually resolved.
+                accommodationKind:
+                  p.accommodationKindConfidence === 'confirmed' ? p.accommodationKind ?? null : null,
+              })),
+              ticketTotal,
+              priceCatalogue,
+              priceLookup,
+            );
+            const resolved = split.costs;
+            const weights = resolved ?? matchedPeople.map(() => 1);
+            const weightSum = weights.reduce((s, w) => s + w, 0);
+            const share = (total: number | null): (number | null)[] =>
+              total === null
+                ? matchedPeople.map(() => null)
+                : splitExact(total, weights, weightSum);
+
+            const paidParts = share(amountPaid);
+            const costParts = resolved ?? share(ticketTotal);
+            const discountParts = share(discountAmount);
+            const feeParts = share(feesAmount);
+            const taxParts = share(taxAmount);
+
+            const names = (parts: (number | null)[]): string =>
+              matchedPeople
+                .map((p, i) => `${p.firstName} ${p.lastName} ${formatMoney(parts[i] ?? null)}`)
+                .join(', ');
+            warnings.push({
+              row: rowNum,
+              message:
+                split.method === 'ticket-price'
+                  ? `Invoice ${invoiceNumber} covers ${matchedPeople.length} people — split by ticket price (${names(paidParts)})`
+                  : split.method === 'residual'
+                    ? `Invoice ${invoiceNumber} covers ${matchedPeople.length} people, not all ticket types priced — the total resolves to known ticket prices one way only, so it was split on those (${names(costParts)})`
+                    : `Invoice ${invoiceNumber} covers ${matchedPeople.length} people and the total cannot be resolved to known ticket prices — split EQUALLY and flagged for review`,
+            });
+
+            for (let m = 0; m < matchedPeople.length; m++) {
+              const person = touched.get(matchedPeople[m]!.id) ?? matchedPeople[m]!;
+              const incoming: Partial<Person> = {};
+              if (costParts[m] != null) incoming.registrationCost = costParts[m]!;
+              if (paidParts[m] != null) incoming.amountPaid = paidParts[m]!;
+              if (discountParts[m] != null) incoming.discountAmount = discountParts[m]!;
+              if (feeParts[m] != null) incoming.feesAmount = feeParts[m]!;
+              if (taxParts[m] != null) incoming.taxAmount = taxParts[m]!;
+              if (discountCode) incoming.discountCode = discountCode;
+              if (split.needsReview) {
+                incoming.needsReview = true;
+                incoming.needsReviewReason =
+                  `Shared invoice ${invoiceNumber ?? ''} split equally between ${matchedPeople.length} people — ticket price unknown`.trim();
+              }
+              if (Object.keys(incoming).length === 0) continue;
+              const merged = mergeOwnedFields(person, incoming, OWNED_KEYS);
+              merged.updatedAt = nowISO();
+              const firstTouch = !touched.has(merged.id);
+              touched.set(merged.id, merged);
+              if (firstTouch) updated++;
+            }
+          } catch (err) {
+            errors.push({ row: rowNum, message: err instanceof Error ? err.message : String(err) });
+            skipped++;
+          }
         }
       }
 

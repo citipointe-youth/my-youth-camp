@@ -75,6 +75,36 @@ One way is a fact; more than one is a real ambiguity and the flag is earned.
   types at $150 are one candidate figure, and offering it twice would make one decomposition look
   like two.
 
+### 2b — 🔴 …AND THE REAL CAUSE WAS ORDERING, NOT SENSITIVITY. SHARED INVOICES NOW RUN SECOND.
+Follow-up the same day, from the owner asking whether a re-import was needed. Measured against
+prod: **287 people, 41 shared invoices, and all 92 people on them flagged. Not one resolved** —
+which no amount of loosened rules explains.
+
+> **Only the Invoice import writes `registrationCost`.** So on the first import into a
+> freshly-wiped camp every cost is null, `buildTicketPriceTable` returns an **EMPTY** table, and
+> every shared invoice falls to the equal split. **The prices were sitting in the very CSV the
+> importer was reading.** The old comment said the table is built "ONCE from the pre-run state…
+> which is why the two must not be interleaved" — correct for a top-up into an established camp,
+> exactly wrong for the first import into an empty one. Running the import twice fixed it, and
+> nobody should have to know that.
+
+Shared invoices are now **deferred to a second pass**: every single-person row is applied first,
+the price table is rebuilt from the pre-run people **overlaid with what the first pass just
+wrote**, and the groups are resolved against that. **Do not fold this back into one pass.**
+
+- ⚠️ **Only `touched` is overlaid — never the groups' own equal-split output.** Otherwise a guess
+  teaches the table a price and is then validated by it. There is a test: two `Mystery`-ticket
+  groups at $500 each stay flagged rather than the first one's $250 becoming "the price".
+- **Verified by reverting, not asserted.** Pointing the second pass back at the pre-run state
+  makes the new test fail with `expected 170 to be 190` — the equal split, i.e. the exact prod
+  symptom.
+- ⚠️ **This does not repair stored rows.** `needsReview` and the money live on the person; a
+  deploy cannot rewrite them. The 92 flags clear on the next **Billing Contacts** import, which
+  is idempotent (accumulation starts from the rows in the file, never the stored value).
+- Of the 92, 89 had the right money by luck — most family invoices are siblings on the SAME
+  ticket type, so an equal split lands on the true price. The 3 exceptions are one mixed 3-person
+  invoice recorded as $176.67/$176.67/$176.66 instead of $190/$190/$150.
+
 ### 3 — The By-ministry table lists every church, including the ones with nothing
 Owner: *"the home page for admin/director should show all churches with accounts (even when they
 have 0 regos)."* It was aggregated from `/registrants` alone, so **a church could only appear once

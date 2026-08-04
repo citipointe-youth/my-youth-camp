@@ -157,6 +157,59 @@ describe('InvoiceImportService.importInvoicesCsv — shared family invoices', ()
     expect(res.updated).toBe(2);
   });
 
+  /* 🔴 2026-08-04 — THE ACTUAL CAUSE OF "the review is too sensitive".
+     Measured against prod after the rollover: 287 people, 41 shared invoices, and ALL 92 people
+     on them flagged. Not one resolved. The reason was ordering, not the split rules: only the
+     Invoice import writes `registrationCost`, so on the first import into a freshly-wiped camp
+     the price table was built from a table where every cost was null — EMPTY — and every shared
+     invoice fell to the equal split. The prices were sitting in the same CSV the importer was
+     reading. Running the import twice fixed it, which is a workaround nobody should need. */
+  it('🔴 prices a shared invoice from SINGLE invoices in the SAME FILE, on a camp with no costs yet', async () => {
+    // Nobody has a cost — exactly the state after a new-year rollover + Form/Ticket import.
+    const solo = person({ id: 'solo', invoiceNumber: 'INV-300',
+      registrationType: 'Classroom Accommodation' });
+    const a = person({ id: 'p1', invoiceNumber: 'INV-301', registrationType: 'Classroom Accommodation' });
+    const b = person({ id: 'p2', invoiceNumber: 'INV-301', registrationType: 'EARLY BIRD | Tent Accomodation' });
+    const soloTent = person({ id: 'soloT', invoiceNumber: 'INV-302',
+      registrationType: 'EARLY BIRD | Tent Accomodation' });
+    const { svc, personRepo } = await build([solo, a, b, soloTent]);
+
+    // The shared invoice sits BETWEEN the two singles that price its ticket types, so this only
+    // passes if the group is deferred until after every single row has been applied.
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: `${HDR}\nINV-300,,,,190,,190,,,\nINV-301,,,,340,,340,,,\nINV-302,,,,150,,150,,,`,
+    });
+
+    const all = await personRepo.findAll();
+    const pa = all.find((x) => x.id === 'p1')!;
+    const pb = all.find((x) => x.id === 'p2')!;
+    expect(pa.registrationCost).toBe(190);
+    expect(pb.registrationCost).toBe(150);
+    // Before the two-pass fix these were $170 each and both flagged.
+    expect(pa.amountPaid).toBe(190);
+    expect(pb.amountPaid).toBe(150);
+    for (const p of [pa, pb]) expect(p.needsReview ?? false).toBe(false);
+    expect(res.warnings.some((w) => w.message.includes('EQUALLY'))).toBe(false);
+    expect(res.ambiguousGroupInvoices).toBe(1);
+    expect(res.updated).toBe(4);
+  });
+
+  it('does not let a group\'s own equal split teach the price table', async () => {
+    // Two 'Mystery' people on one $500 invoice and nothing else priced. The equal split writes
+    // $250 each — if that fed back into the table, a second group on the same ticket type would
+    // "resolve" against a number this importer invented. Nothing is priced, so both stay flagged.
+    const g1 = ['p1', 'p2'].map((id) => person({ id, invoiceNumber: 'INV-310', registrationType: 'Mystery' }));
+    const g2 = ['p3', 'p4'].map((id) => person({ id, invoiceNumber: 'INV-311', registrationType: 'Mystery' }));
+    const { svc, personRepo } = await build([...g1, ...g2]);
+    await svc.importInvoicesCsv(actor('admin'), {
+      csvData: `${HDR}\nINV-310,,,,500,,500,,,\nINV-311,,,,500,,500,,,`,
+    });
+    const all = await personRepo.findAll();
+    for (const id of ['p1', 'p2', 'p3', 'p4']) {
+      expect(all.find((x) => x.id === id)!.needsReview).toBe(true);
+    }
+  });
+
   /* 2026-08-04 — the owner's "review is too sensitive" report. An unpriced ticket TYPE used to
      be the only question asked; now the invoice TOTAL is evidence too. See invoice-split.ts. */
   it('resolves an unpriced ticket from the invoice total and does NOT flag for review', async () => {
