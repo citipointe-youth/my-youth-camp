@@ -4945,22 +4945,22 @@ async function exportBudget(){
       [_xc('Item',XS.HEAD),_xc('People',XS.HEAD),_xc('Amount',XS.HEAD)],
       [_xc('Students',XS.TEXT),_xn(rep.camperCount,XS.NUM),_xn(null,XS.MONEY)],
       [_xc('Leaders',XS.TEXT),_xn(rep.leaderCount,XS.NUM),_xn(null,XS.MONEY)],
-      [_xc('Ministries',XS.TEXT),_xn(rep.churchCount,XS.NUM),_xn(null,XS.MONEY)],
       [_xc('Total received',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(rep.grandTotal,XS.GRAND_M)],
       [],
     ];
     if(spon.count){
+      /* No PLACES column here (owner, 2026-08-04 5th-b). A sponsorship headcount answers a
+         different question from the ask, and sitting in the same table it invited the reading
+         "$830 ÷ 6 places" — which is the per-place average the band split exists to avoid.
+         The count still drives the unpriced warning below, it is just not presented as a figure. */
       sum.push([_xc('Sponsorship still needed',XS.SECTION)]);
-      sum.push([_xc('Item',XS.HEAD),_xc('Places',XS.HEAD),_xc('Amount',XS.HEAD)]);
-      sum.push([_xc('Full sponsorship',XS.TEXT),_xn(null,XS.NUM),_xn(spon.fullTotal,XS.MONEY)]);
-      sum.push([_xc('Part sponsored',XS.TEXT),_xn(null,XS.NUM),_xn(spon.partialTotal,XS.MONEY)]);
-      sum.push([_xc('Total still needed',XS.TOT_T),_xn(spon.count,XS.TOT_N),_xn(spon.total,XS.TOT_M)]);
+      sum.push([_xc('Item',XS.HEAD),_xc('',XS.HEAD),_xc('Amount',XS.HEAD)]);
+      sum.push([_xc('Full sponsorship',XS.TEXT),_xc('',XS.TEXT),_xn(spon.fullTotal,XS.MONEY)]);
+      sum.push([_xc('Part sponsored',XS.TEXT),_xc('',XS.TEXT),_xn(spon.partialTotal,XS.MONEY)]);
+      sum.push([_xc('Total still needed',XS.TOT_T),_xc('',XS.TOT_T),_xn(spon.total,XS.TOT_M)]);
       /* ⚠ An unpriceable place is COUNTED AND FLAGGED, never totalled as $0 — a $0 ask reads as
          "already covered", which is the opposite of "we don't know what this one is worth". */
       if(spon.unpricedCount)sum.push([_xc(spon.unpricedCount+' sponsored place(s) have no ticket price on record, so the total above UNDER-reads. Set a ticket price or record the invoice to close the gap.',XS.NOTE)]);
-      sum.push([]);
-      sum.push([_xc('Reconciliation',XS.SECTION)]);
-      sum.push([_xc('Value of every place (received + still needed)',XS.TOT_T),_xn(null,XS.TOT_N),_xn(rep.grandTotal+spon.total,XS.TOT_M)]);
     }
     sum.push([]);
     sum.push([_xc('"Money received" counts what has actually come in: a full-sponsor code contributes $0 and a place paid in person is valued at its ticket price. Sponsorship is the gap that must arrive from elsewhere for the camp to be whole.',XS.NOTE)]);
@@ -4976,42 +4976,54 @@ async function exportBudget(){
       _xc(_budAccom(r.key),XS.TEXT),_xc(_budPayment(r.key),XS.TEXT),_xc(r.codeHint||'',XS.TEXT),
       _xn(r.count,XS.NUM),_xn(r.amount==null?null:r.amount,XS.MONEY),_xn(r.lineTotal,XS.MONEY),
     ]));
+    /* ⚠ THE CHURCH TOTAL LEADS ITS BLOCK, DETAIL SITS UNDER IT (owner, 2026-08-04 5th-b).
+       A spreadsheet subtotal conventionally FOLLOWS its rows, which is why it was written that
+       way — but the question this sheet is opened to answer is "what did each ministry owe",
+       and a total that arrives last has to be hunted for at the bottom of a block whose length
+       varies by ministry. Leading with it means scrolling the sheet reads as a list of totals,
+       with the working underneath for anyone who wants it. The row keeps its top border, which
+       now separates one ministry's block from the previous one. */
     rep.churches.forEach((c)=>{
-      detail(c.churchName,'Student',c.campers);
-      detail(c.churchName,'Leader',c.leaders);
       rows.push([_xc(c.churchName,XS.TOT_T),_xc('Church total',XS.TOT_T),_xc('',XS.TOT_T),_xc('',XS.TOT_T),
         _xc('',XS.TOT_T),_xc('',XS.TOT_T),_xn(c.camperCount+c.leaderCount,XS.TOT_N),_xn(null,XS.TOT_M),_xn(c.total,XS.TOT_M)]);
+      detail(c.churchName,'Student',c.campers);
+      detail(c.churchName,'Leader',c.leaders);
     });
     rows.push([_xc(scopeLabel,XS.GRAND_T),_xc('Camp total',XS.GRAND_T),_xc('',XS.GRAND_T),_xc('',XS.GRAND_T),
       _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(rep.grandTotal,XS.GRAND_M)]);
+    // The filter covers the RECEIVED table only — see the sponsorship block below.
+    const receivedRows=rows.length;
+
+    /* ── Sponsorship, appended below the received table after a gap (owner, 2026-08-04 5th-b;
+       it was its own sheet for a few hours) ───────────────────────────────────────────────
+       Per ministry per code only. The BAND rows are gone at the owner's request: a band is one
+       asking PRICE, so dropping them is what removes the early-bird/full-price differential
+       from the EXPORT. ⚠ It is NOT gone from the product — the Sponsorship card on the Budget
+       screen still opens each code into its bands, and `computeSponsorSummaryClient` still
+       computes them (there is a test asserting $170 never appears). Do not delete `bands` on the
+       strength of this export no longer printing it.
+
+       ⚠ AND SPONSORSHIP IS STILL NOT `Detail`. On its own sheet that separation was structural;
+       back on this one it rests on three things, all of which must hold: the blank spacer row,
+       the distinct `Row type` values, and the autofilter stopping at `receivedRows` so
+       "filter to Detail" cannot pull this block into the same table. This is money that has NOT
+       arrived — summing it into the received column is the exact double-count the `Row type`
+       column was added to prevent. */
+    if(spon.count){
+      rows.push([]);
+      rows.push([_xc('Sponsorship still needed — money that has NOT arrived. Do not add these rows to the totals above.',XS.SECTION)]);
+      spon.churches.forEach((c)=>c.codes.forEach((x)=>rows.push([
+        _xc(c.name,XS.MUTED),_xc('Sponsor by ministry',XS.MUTED),_xc('',XS.TEXT),_xc('',XS.TEXT),
+        _xc(_SPONSOR_TAG_LABEL[x.tag]||x.tag,XS.TEXT),_xc(x.code,XS.TEXT),
+        _xn(x.count,XS.NUM),_xn(null,XS.MONEY),_xn(x.total,XS.MONEY)])));
+      rows.push([_xc(scopeLabel,XS.GRAND_T),_xc('Sponsor total',XS.GRAND_T),_xc('',XS.GRAND_T),_xc('',XS.GRAND_T),
+        _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(spon.count,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(spon.total,XS.GRAND_M)]);
+    }
 
     const sheets=[
       {name:'Summary',cols:[46,10,14],rows:sum},
-      {name:'By ministry',cols:[26,13,10,16,15,16,9,12,13],rows:rows,freeze:1,filter:'A1:I'+rows.length},
+      {name:'By ministry',cols:[26,20,10,16,18,16,9,12,13],rows:rows,freeze:1,filter:'A1:I'+receivedRows},
     ];
-
-    /* ── Sheet 3: Sponsorship ─────────────────────────────────────────────────────────────
-       ⚠ A band row is one asking PRICE, not one person — that is what carries the early-bird /
-       full-price differential into the spreadsheet, instead of an average that describes nobody
-       and that no sponsor can be invoiced for. */
-    if(spon.count){
-      const sh=[['Scope','Row type','Discount code','Sponsorship type','Ticket type(s)','People','Unit ask','Total ask'].map((h)=>_xc(h,XS.HEAD))];
-      spon.codes.forEach((r)=>{
-        const tag=_SPONSOR_TAG_LABEL[r.tag]||r.tag;
-        r.bands.forEach((b)=>sh.push([_xc(scopeLabel,XS.MUTED),_xc('Sponsor band',XS.MUTED),_xc(r.code,XS.TEXT),
-          _xc(tag,XS.TEXT),_xc(b.ticketTypes.join(' / '),XS.TEXT),_xn(b.count,XS.NUM),_xn(b.amount,XS.MONEY),_xn(b.total,XS.MONEY)]));
-        if(r.unpricedCount)sh.push([_xc(scopeLabel,XS.MUTED),_xc('Sponsor unpriced',XS.MUTED),_xc(r.code,XS.TEXT),
-          _xc(tag,XS.TEXT),_xc('No ticket price on record',XS.TEXT),_xn(r.unpricedCount,XS.NUM),_xn(null,XS.MONEY),_xn(null,XS.MONEY)]);
-      });
-      spon.churches.forEach((c)=>c.codes.forEach((x)=>sh.push([_xc(c.name,XS.MUTED),_xc('Sponsor by ministry',XS.MUTED),
-        _xc(x.code,XS.TEXT),_xc(_SPONSOR_TAG_LABEL[x.tag]||x.tag,XS.TEXT),_xc('',XS.TEXT),
-        _xn(x.count,XS.NUM),_xn(null,XS.MONEY),_xn(x.total,XS.MONEY)])));
-      sh.push([_xc(scopeLabel,XS.GRAND_T),_xc('Sponsor total',XS.GRAND_T),_xc('',XS.GRAND_T),_xc('',XS.GRAND_T),
-        _xc('',XS.GRAND_T),_xn(spon.count,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(spon.total,XS.GRAND_M)]);
-      sh.push([]);
-      sh.push([_xc('This sheet is money that has NOT arrived. It is deliberately kept off "By ministry" so it can never be summed into what the camp has received. Band rows and by-ministry rows are the same money counted two ways — do not add them together.',XS.NOTE)]);
-      sheets.push({name:'Sponsorship',cols:[26,20,16,18,34,9,12,13],rows:sh,freeze:1});
-    }
 
     const blob=await _xlsxBlob(sheets);
     // Routed through the shared saver: append → click → remove → revoke after 20s. This was the

@@ -9,8 +9,9 @@
 Two owner items. **SPA-only** (`public/index.html`) — no backend, DTO, schema or migration change.
 `npm run typecheck` clean, `npx vitest run` **950 pass / 60 files** (unchanged — both changes are
 browser-only), `node --check` OK on the SPA body (range **966–9361**, re-derived) and `sw.js`.
-`sw.js` `camp-v88`→**`camp-v89`**. `scripts/budget-csv-harness.js` is **replaced** by
-`scripts/budget-xlsx-harness.js` (87 checks); the accom-export and filter-persist harnesses pass.
+`sw.js` `camp-v88`→**`camp-v90`** (v89 the two items, v90 the owner's layout corrections in 2b).
+`scripts/budget-csv-harness.js` is **replaced** by `scripts/budget-xlsx-harness.js` (**98 checks**);
+the accom-export and filter-persist harnesses pass.
 
 ### 1 — Medical consent is back on the student profile, for the church that brought them
 Owner: *"medical consent status should be visible to the church they attend when their profile is
@@ -70,11 +71,10 @@ archive with Windows' own Expand-Archive). An xlsx is a zip of six small XML par
   part and one fewer index to keep consistent, for a few hundred rows.
 - ⚠️ **A styled BLANK cell is still emitted** (`<c r="C5" s="8"/>`). Skip it and the fill stops
   halfway across a total row — which is the exact visual cue this change exists to add.
-- **Three sheets: Summary · By ministry · Sponsorship.** Summary carries the two figures a director
-  quotes plus the reconciliation (`sponsor total + grand total = the value of every place`, the
-  invariant `budget.sponsor.test.ts` already asserts). **The Sponsorship sheet is omitted entirely
-  when there is nothing to ask for** — an empty sheet with that name sends the reader looking for a
-  number that does not exist.
+- **Two sheets: Summary · By ministry** (three for a few hours — see the follow-up below). Summary
+  carries the figures a director quotes; sponsorship is appended to the bottom of By ministry.
+  **The sponsorship block is omitted entirely when there is nothing to ask for** — a heading over
+  an empty block sends the reader looking for a number that does not exist.
 - **The hierarchy IS the answer to the complaint.** The repeated church name is still on every row,
   because the sheet has to stay filterable and pivotable — but it recedes to **muted grey**, a
   church total is **bold on lavender with a rule above it**, and the camp total is **white on
@@ -85,8 +85,7 @@ archive with Windows' own Expand-Archive). An xlsx is a zip of six small XML par
 still a real column (summing every row still double-counts, and that trap must stay visible —
 filter to `Detail` and the maths is trustworthy); Accommodation/Payment type are still derived from
 the class KEY, never parsed out of the display label; `Unit price` is still **blank, never 0**, on a
-mixed-value row. **Sponsorship is now separated STRUCTURALLY rather than by convention** — its own
-sheet, so nothing on the received sheet can sum in money that has not arrived.
+mixed-value row; sponsorship is never typed `Detail`.
 The **BOM rule is the one thing that does not carry over, and only because it cannot apply**: xlsx
 stores text as UTF-8 XML, so the em dash that started the whole "weird symbols" thread is simply
 correct. (⚠️ The rule still binds every *CSV* in this file.)
@@ -111,6 +110,41 @@ correct. (⚠️ The rule still binds every *CSV* in this file.)
 - **`computeBudget`/`budgetToCsv` in `src/services/budget.ts` remain DEAD CODE** — nothing routes
   to them, the live budget is entirely the SPA mirror. Left alone (they are the canonical, tested
   algorithm), but do not assume the server CSV is what anyone downloads: **it never was**.
+
+### 2b — Owner's layout corrections, same day (the workbook shipped twice)
+Four changes after seeing the first build. `scripts/budget-xlsx-harness.js` is now **98 checks**,
+and each correction is pinned so a later "tidy-up" cannot quietly reverse it.
+
+- **The church total LEADS its block; the detail sits under it.** A spreadsheet subtotal
+  conventionally follows its rows, which is why it was built that way — but the question this
+  sheet is opened to answer is *what did each ministry owe*, and a total that arrives last has to
+  be hunted for at the bottom of a block whose length varies by ministry. Scrolling now reads as a
+  list of ministry totals with the working underneath. The row keeps its top border, which now
+  separates one ministry from the previous one.
+- **Summary lost the `Ministries` row and the whole Reconciliation section.**
+- **The sponsorship section lost its `Places` column.** A headcount beside an ask invites
+  "$830 ÷ 6 places", which is the per-place average the band split exists to avoid. The count is
+  still computed and still drives the unpriced warning — it is just no longer presented as a
+  figure.
+- **🟠 SPONSORSHIP MOVED OFF ITS OWN SHEET, BACK ONTO "BY MINISTRY"** (after a blank row and a
+  heading), and **the band rows are gone** — per ministry, per code only.
+
+> ⚠️ **THAT MOVE COST THE STRUCTURAL GUARANTEE, SO THREE THINGS NOW CARRY IT AND ALL THREE ARE
+> TESTED.** On its own sheet, money-not-yet-arrived simply could not be summed into money-received.
+> Sharing a sheet, that separation rests on: **(1)** the blank spacer row, **(2)** the distinct
+> `Row type` values (`Sponsor by ministry` / `Sponsor total`, never `Detail`), and **(3)** the
+> autofilter range stopping at the camp total, so "filter to Detail" cannot pull the block into the
+> same table. The harness checks each one individually and names which failed.
+
+> ⚠️ **DROPPING THE BAND ROWS REMOVED THE EARLY-BIRD / FULL-PRICE DIFFERENTIAL FROM THE EXPORT —
+> NOT FROM THE PRODUCT.** `computeSponsorSummaryClient` still computes `bands`, the Sponsorship
+> card on the Budget screen still opens each code into them, and the "$170 appears nowhere" test
+> still passes. **Do not delete `bands` on the strength of this export no longer printing it**;
+> there is a harness check asserting the bands are still computed while no band row is written.
+
+✅ Re-verified in real Excel after these changes: church totals at rows 2 and 6 bold on `#EDE9FE`
+with their detail beneath, camp total row 8 on `#4F46E5`, blank row 9, heading row 10, sponsorship
+rows 11–13, sponsor total row 14 on `#4F46E5`.
 
 ## Owner batch — invoice review sensitivity, the By-ministry table, a label — 2026-08-04 (4th)
 

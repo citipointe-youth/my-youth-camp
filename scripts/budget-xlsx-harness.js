@@ -211,19 +211,25 @@ const SPONSOR_REGS = [
 ];
 
 (async function run() {
-  console.log('\n0. With nothing to ask for, there is no Sponsorship sheet');
-  /* An empty sheet headed "Sponsorship" invites the reader to go looking for a number that does
-     not exist. The card on the Budget screen hides itself the same way. */
+  console.log('\n0. With nothing to ask for, there is no sponsorship block at all');
+  /* A heading over an empty block invites the reader to go looking for a number that does not
+     exist. The card on the Budget screen hides itself the same way. */
   await ctx.exportBudget();
   checkTrue('the export produced a file', !!savedBlob, 'nothing reached _rlSaveBlob');
   check('filename extension', savedName, 'budget-by-church.xlsx');
   check('blob mime type', savedBlob.type,
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   const bare = unzip(Buffer.from(await savedBlob.arrayBuffer()));
-  check('two sheets only', [...parts0(bare)], ['Summary', 'By ministry']);
-  checkTrue('no third worksheet part is written', !bare['xl/worksheets/sheet3.xml']);
-  checkTrue('and nothing references one',
-    bare['[Content_Types].xml'].indexOf('sheet3.xml') < 0);
+  const bareRows = parseSheet(bare['xl/worksheets/sheet2.xml']);
+  checkTrue('the sheet ends at the camp total',
+    (cellAt(bareRows[bareRows.length - 1], 'B') || {}).text === 'Camp total');
+  checkTrue('the word "Sponsor" appears nowhere',
+    bare['xl/worksheets/sheet2.xml'].indexOf('Sponsor') < 0);
+  /* The heading specifically — the closing explanatory note always mentions sponsorship, and
+     should, since "money received" is only meaningful against the gap it leaves. */
+  checkTrue('and the summary carries no sponsorship SECTION',
+    parseSheet(bare['xl/worksheets/sheet1.xml'])
+      .every((r) => ((cellAt(r, 'A') || {}).text || '') !== 'Sponsorship still needed'));
 
   ctx.SETTINGS.discountCodeTags = { YC26SPON: 'sponsor', YC26HALF: 'discount', YC26CASH: 'inperson' };
   ctx.window._budgetRegs = SPONSOR_REGS;
@@ -233,10 +239,11 @@ const SPONSOR_REGS = [
 
   console.log('\n1. It is a structurally valid xlsx package');
   ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels',
-    'xl/styles.xml', 'xl/worksheets/sheet1.xml', 'xl/worksheets/sheet2.xml',
-    'xl/worksheets/sheet3.xml'].forEach((p) => checkTrue('contains ' + p, !!parts[p]));
+    'xl/styles.xml', 'xl/worksheets/sheet1.xml',
+    'xl/worksheets/sheet2.xml'].forEach((p) => checkTrue('contains ' + p, !!parts[p]));
   const wbNames = parts0(parts);
-  check('three sheets, summary first', wbNames, ['Summary', 'By ministry', 'Sponsorship']);
+  check('two sheets, summary first', wbNames, ['Summary', 'By ministry']);
+  checkTrue('no stray third worksheet', !parts['xl/worksheets/sheet3.xml']);
   // Every sheet the workbook declares must have a relationship AND a content-type override, or
   // Excel repairs the file by silently dropping the sheet.
   wbNames.forEach((n, i) => {
@@ -278,21 +285,32 @@ const SPONSOR_REGS = [
   checkTrue('the header row is frozen', /<pane ySplit="1"/.test(s2));
   checkTrue('the data range is filterable', /<autoFilter ref="A1:I8"\/>/.test(s2), s2.slice(-200));
 
+  /* ⚠ THE CHURCH TOTAL LEADS ITS BLOCK (owner, 2026-08-04 5th-b) — scrolling the sheet reads as
+     a list of ministry totals with the working underneath, rather than a total that has to be
+     hunted for at the bottom of a block whose length varies. The row indices below ARE the
+     layout, deliberately: if someone flips the order back, these fail rather than drift. */
+  check('the church total comes FIRST in the block',
+    g[1].map((c) => c.text != null ? c.text : c.num),
+    ['Citipointe, Carindale', 'Church total', null, null, null, null, 15, null, 2350]);
   // `null` below means an EMPTY cell — a styled blank carries neither text nor a <v>.
-  check('a full-price classroom student row', g[1].map((c) => c.text != null ? c.text : c.num),
+  check('then its detail, a full-price classroom student row',
+    g[2].map((c) => c.text != null ? c.text : c.num),
     ['Citipointe, Carindale', 'Detail', 'Student', 'Classroom', 'Full price', null, 10, 190, 1900]);
-  check('an in-person tent row carries its code', g[2].map((c) => c.text != null ? c.text : c.num),
+  check('an in-person tent row carries its code', g[3].map((c) => c.text != null ? c.text : c.num),
     ['Citipointe, Carindale', 'Detail', 'Student', 'Tent', 'Paid in person', 'YC26CASH', 3, 150, 450]);
-  check('a sponsored leader row', g[3].map((c) => c.text != null ? c.text : c.num),
+  check('a sponsored leader row', g[4].map((c) => c.text != null ? c.text : c.num),
     ['Citipointe, Carindale', 'Detail', 'Leader', 'Classroom', 'Full sponsor', 'YC26LDR', 2, 0, 0]);
+  check('the next ministry starts with its own total',
+    g[5].map((c) => c.text != null ? c.text : c.num),
+    ['Grace Point', 'Church total', null, null, null, null, 4, null, 0]);
   /* The owner's actual complaint: the repeated church label competing with the numbers. It is
      still THERE (the sheet has to stay filterable) but it recedes to the muted style. */
   checkTrue('the repeated church name is muted, not deleted',
-    cellAt(g[1], 'A').text === 'Citipointe, Carindale' && cellAt(g[1], 'A').s === ctx.XS.MUTED);
+    cellAt(g[2], 'A').text === 'Citipointe, Carindale' && cellAt(g[2], 'A').s === ctx.XS.MUTED);
   checkTrue('detail figures use the plain number/money styles',
-    cellAt(g[1], 'G').s === ctx.XS.NUM && cellAt(g[1], 'I').s === ctx.XS.MONEY);
+    cellAt(g[2], 'G').s === ctx.XS.NUM && cellAt(g[2], 'I').s === ctx.XS.MONEY);
 
-  const churchTot = g[4];
+  const churchTot = g[1];
   check('church subtotal is labelled, not disguised as a detail row',
     [cellAt(churchTot, 'B').text, cellAt(churchTot, 'G').num, cellAt(churchTot, 'I').num],
     ['Church total', 15, 2350]);
@@ -307,10 +325,10 @@ const SPONSOR_REGS = [
   /* "Accommodation not recorded" has no payment class, and its unit price is UNKNOWN — a 0 there
      would read as "free" while the line total said otherwise. */
   check('unrecorded accommodation, blank unit price (NOT 0)',
-    g[5].map((c) => c.text != null ? c.text : c.num),
+    g[6].map((c) => c.text != null ? c.text : c.num),
     ['Grace Point', 'Detail', 'Student', 'Not recorded', null, null, 4, null, 0]);
   checkTrue('the blank unit price carries no <v> element at all',
-    !/<c r="H6"[^>]*>/.test(s2) || /<c r="H6" s="\d+"\/>/.test(s2));
+    !/<c r="H7"[^>]*>/.test(s2) || /<c r="H7" s="\d+"\/>/.test(s2));
 
   const campTot = g[7];
   check('camp total row', [cellAt(campTot, 'B').text, cellAt(campTot, 'G').num, cellAt(campTot, 'I').num],
@@ -360,51 +378,61 @@ const SPONSOR_REGS = [
   check('the unpriceable place is counted and flagged, never totalled as $0',
     [s.count, s.unpricedCount], [7, 1]);
 
-  const parts2 = parts;
-  const sp = parseSheet(parts2['xl/worksheets/sheet3.xml']);
+  /* ⚠ The bands are NOT printed any more (owner, 2026-08-04 5th-b) — the export carries the
+     per-ministry, per-code breakdown only. The differential still EXISTS, as the checks above
+     prove; it is visible on the Budget screen's Sponsorship card. This assertion is what stops
+     someone concluding from the export that `bands` is dead and deleting it. */
   const val = (r) => r.map((c) => c.text != null ? c.text : c.num);
   const kind = (r) => (cellAt(r, 'B') || {}).text;
-  check('sponsorship header', val(sp[0]),
-    ['Scope', 'Row type', 'Discount code', 'Sponsorship type', 'Ticket type(s)', 'People',
-      'Unit ask', 'Total ask']);
-  check('each band is its own row, priced per place',
-    sp.filter((r) => kind(r) === 'Sponsor band').map(val), [
-      ['All ministries', 'Sponsor band', 'YC26SPON', 'Full sponsorship', 'Tent Accomodation', 2, 190, 380],
-      ['All ministries', 'Sponsor band', 'YC26SPON', 'Full sponsorship', 'EARLY BIRD | Tent Accomodation', 3, 150, 450],
-      ['All ministries', 'Sponsor band', 'YC26HALF', 'Part sponsored', 'Tent Accomodation', 1, 95, 95],
-    ]);
-  check('the unpriced places get their own row rather than a $0 line',
-    sp.filter((r) => kind(r) === 'Sponsor unpriced').map(val),
-    [['All ministries', 'Sponsor unpriced', 'YC26SPON', 'Full sponsorship',
-      'No ticket price on record', 1, null, null]]);
+  checkTrue('no band row is printed', g.filter((r) => kind(r) === 'Sponsor band').length === 0);
   /* Biggest ask first, not alphabetical — Victory's 545 outranks Grace Point's 380. This is the
      order a director works down when deciding who to chase. */
-  check('per-ministry rows, biggest ask first',
-    sp.filter((r) => kind(r) === 'Sponsor by ministry').map(val), [
-      ['Victory', 'Sponsor by ministry', 'YC26SPON', 'Full sponsorship', null, 4, null, 450],
-      ['Victory', 'Sponsor by ministry', 'YC26HALF', 'Part sponsored', null, 1, null, 95],
-      ['Grace Point', 'Sponsor by ministry', 'YC26SPON', 'Full sponsorship', null, 2, null, 380],
+  check('per-ministry rows, biggest ask first, on the By ministry sheet',
+    g.filter((r) => kind(r) === 'Sponsor by ministry').map(val), [
+      ['Victory', 'Sponsor by ministry', null, null, 'Full sponsorship', 'YC26SPON', 4, null, 450],
+      ['Victory', 'Sponsor by ministry', null, null, 'Part sponsored', 'YC26HALF', 1, null, 95],
+      ['Grace Point', 'Sponsor by ministry', null, null, 'Full sponsorship', 'YC26SPON', 2, null, 380],
     ]);
-  const spTot = sp.find((r) => kind(r) === 'Sponsor total');
-  check('camp sponsor total', [cellAt(spTot, 'F').num, cellAt(spTot, 'H').num], [7, 925]);
+  const spTot = g.find((r) => kind(r) === 'Sponsor total');
+  check('camp sponsor total', [cellAt(spTot, 'G').num, cellAt(spTot, 'I').num], [7, 925]);
 
-  /* Load-bearing, and now STRUCTURAL rather than a convention: sponsorship is money that has NOT
-     arrived, so it lives on its own sheet where nothing on the received sheet can sum it in. */
+  /* 🔴 THE LOAD-BEARING ONE. Sponsorship shared a sheet with the received money again from
+     2026-08-04 (5th-b), so the separation is no longer structural — it now rests on the three
+     things checked here. If any one of them goes, a reader summing the Line total column adds
+     money that has not arrived to money that has. */
   console.log('\n7. Sponsorship cannot leak into "money received"');
-  const s2b = parts2['xl/worksheets/sheet2.xml'];
-  checkTrue('no sponsorship row appears on the By ministry sheet', s2b.indexOf('Sponsor') < 0);
-  check('no sponsor row is typed as Detail',
-    sp.filter((r) => kind(r) === 'Detail').length, 0);
-  const g2 = parseSheet(s2b);
+  check('1/3 — no sponsor row is typed as Detail',
+    g.filter((r) => kind(r) === 'Detail' && /Sponsor/.test(JSON.stringify(val(r)))).length, 0);
+  const campTotIdx = g.findIndex((r) => kind(r) === 'Camp total');
+  const firstSponIdx = g.findIndex((r) => /Sponsor/.test(((cellAt(r, 'A') || {}).text || '') + ((cellAt(r, 'B') || {}).text || '')));
+  checkTrue('2/3 — a blank spacer row separates the two tables',
+    (g[campTotIdx + 1] || []).length === 0 && firstSponIdx > campTotIdx + 1,
+    'campTotal@' + campTotIdx + ' firstSponsor@' + firstSponIdx);
+  checkTrue('    …and the block is introduced by a heading, not left to be inferred',
+    /Sponsorship still needed/.test((cellAt(g[campTotIdx + 2], 'A') || {}).text || ''));
+  checkTrue('3/3 — the autofilter stops at the received table',
+    new RegExp('<autoFilter ref="A1:I' + (campTotIdx + 1) + '"').test(s2),
+    'filter must not span the sponsorship block');
   check('detail rows still sum to the camp total, sponsorship excluded',
-    g2.slice(1).filter((r) => (cellAt(r, 'B') || {}).text === 'Detail')
+    g.slice(1).filter((r) => kind(r) === 'Detail')
       .reduce((t, r) => t + ((cellAt(r, 'I') || {}).num || 0), 0), 2350);
-  /* The reconciliation invariant from budget.sponsor.test.ts, restated on the Summary sheet:
-     sponsor total + grand total = the value of every place. */
-  const sm = parseSheet(parts2['xl/worksheets/sheet1.xml']);
-  const recon = sm.find((r) => r && (cellAt(r, 'A') || {}).text === 'Value of every place (received + still needed)');
-  checkTrue('the summary states the reconciliation', !!recon);
-  check('received + still needed', (cellAt(recon, 'C') || {}).num, 2350 + 925);
+
+  console.log('\n7b. Summary — the rows the owner asked to be removed stay removed');
+  const sm = parseSheet(parts['xl/worksheets/sheet1.xml']);
+  const smText = sm.map((r) => (cellAt(r, 'A') || {}).text || '');
+  checkTrue('no "Ministries" row', smText.every((t) => t !== 'Ministries'));
+  checkTrue('no Reconciliation section', smText.every((t) => !/Reconciliation/.test(t)));
+  checkTrue('no "Value of every place" row', smText.every((t) => !/Value of every place/.test(t)));
+  /* A headcount beside an ask invites "$830 ÷ 6 places" — the per-place average the band split
+     exists to avoid. The count still drives the unpriced warning; it is just not a figure. */
+  const sponHead = sm[smText.findIndex((t) => t === 'Sponsorship still needed') + 1];
+  check('the sponsorship table has no Places column', val(sponHead), ['Item', null, 'Amount']);
+  sm.forEach((r, i) => {
+    if (!/sponsorship|sponsored|still needed/i.test(smText[i] || '')) return;
+    checkTrue('"' + smText[i] + '" carries no headcount', (cellAt(r, 'B') || {}).num == null);
+  });
+  check('the received table still reports both audiences',
+    smText.filter((t) => t === 'Students' || t === 'Leaders'), ['Students', 'Leaders']);
 
   console.log('\n8. An independent parser can read it back');
   /* The vendored SheetJS cannot WRITE the styles, but it is a completely separate implementation
@@ -415,12 +443,14 @@ const SPONSOR_REGS = [
   vm.createContext(sjCtx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'vendor', 'xlsx.full.min.js'), 'utf8'), sjCtx);
   const wb = sjCtx.XLSX.read(Buffer.from(await savedBlob.arrayBuffer()), { type: 'buffer' });
-  check('SheetJS sees the same three sheets', wb.SheetNames, ['Summary', 'By ministry', 'Sponsorship']);
+  check('SheetJS sees the same two sheets', wb.SheetNames, ['Summary', 'By ministry']);
   const ws = wb.Sheets['By ministry'];
   check('SheetJS reads the header', ws['A1'].v, 'Church');
-  check('SheetJS reads a detail line total as a NUMBER', [ws['I2'].v, ws['I2'].t], [1900, 'n']);
+  check('SheetJS reads the leading church total', ws['I2'].v, 2350);
+  check('SheetJS reads a detail line total as a NUMBER', [ws['I3'].v, ws['I3'].t], [1900, 'n']);
   check('SheetJS reads the camp total', ws['I8'].v, 2350);
   check('SheetJS reads the comma-containing church name intact', ws['A2'].v, 'Citipointe, Carindale');
+  check('SheetJS reads the appended sponsorship total', ws['I14'].v, 925);
 
   /* Everything above proves the bytes are what we intended. Only Excel itself proves Excel is
      happy with them, and that cannot run in CI — so it is an opt-in dump rather than a check:
