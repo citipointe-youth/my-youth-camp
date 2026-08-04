@@ -33,12 +33,86 @@ export const ELVANTO_HEADERS = [
   "Today's Date",
 ] as const;
 
-const JUNK = new Set(['', 'na', 'n/a', 'no', 'none', 'nil', '-', '.']);
+/**
+ * Whole-value placeholders in a care-text column, keyed on the value with case,
+ * punctuation and spacing stripped — so `N/A`, `n.a.`, `n.a`, `N.A. ` and `na` are
+ * one entry, not five, and a spelling this list has never seen still lands on the
+ * right token more often than not.
+ *
+ * ⚠️ WHY THE PUNCTUATION-INSENSITIVE FORM MATTERS. The original set matched the raw
+ * lowercased string, so it caught `n/a` and `none` but not `n.a.`, `n.a` or
+ * `not applicable` — all three of which are in the real Elvanto exports. A person whose
+ * only "condition" is the word *not applicable* gets `medicalFlag: true` on the check-in
+ * roster and a red **Medical alert** card on the first-aid screen reading
+ * `Meds: not applicable`. **An alert that cries wolf is worse than no alert**, because it
+ * teaches a first-aider that the box is noise — and this is the one screen in the app
+ * where that costs something real.
+ *
+ * ⚠️ ADDING TO THIS LIST IS A ONE-WAY DOOR FOR THE DATA: a value matched here is DROPPED,
+ * so anything ambiguous must stay out. `unknown` is deliberately absent — in a medical
+ * field "unknown" is a statement, not a blank. Only add tokens that unambiguously mean
+ * "nothing to record".
+ */
+const JUNK = new Set([
+  '', 'n', 'na', 'no', 'nil', 'nill', 'none', 'nan', 'nada', 'nope', 'nothing',
+  'notapplicable', 'noneapplicable', 'noneknown', 'noneatpresent',
+  'noallergies', 'nomedication', 'nomedications',
+  'nomedicalconditions', 'nodietaryrequirements',
+]);
 
-/** Care-text columns: preserve verbatim, but treat whole-value placeholders as empty. */
+/** Case-, punctuation- and spacing-insensitive form used for placeholder matching only. */
+function junkKey(v: string): string {
+  return v.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * True when a care-text value carries no information — `nil`, `N/A`, `not applicable`.
+ * Exported so the same judgement is available anywhere care text is handled, rather than
+ * being re-guessed with a different list.
+ */
+export function isPlaceholderCareText(raw?: string | null): boolean {
+  return JUNK.has(junkKey((raw ?? '').trim()));
+}
+
+/**
+ * Care-text columns: preserve verbatim, but treat whole-value placeholders as empty.
+ *
+ * ⚠️ WHOLE-VALUE ONLY, BY DESIGN. `"none of the above except asthma"` is real information
+ * and must survive. Do not extend this to substring matching.
+ */
 export function cleanCareText(raw?: string | null): string {
   const v = (raw ?? '').trim();
-  return JUNK.has(v.toLowerCase()) ? '' : v;
+  return isPlaceholderCareText(v) ? '' : v;
+}
+
+/**
+ * The care-text columns the Form import reads, for the header-presence check below.
+ * These are the columns whose SILENT absence is dangerous rather than merely untidy.
+ */
+export const CARE_COLUMNS = [
+  'Medical Conditions',
+  'Dietary Requirements',
+  'List Other Medical Conditions or Medication Taken',
+] as const;
+
+/**
+ * Which of `expected` are absent from a parsed row's headers, compared the same
+ * normalised way `field()` matches them.
+ *
+ * ⚠️ WHY THIS EXISTS. `field()` returns `''` for a column it cannot find, which is
+ * indistinguishable from a column that is present and empty. So if Elvanto ever renames
+ * `Medical Conditions` to, say, `Medical Conditions (if any)`, **every registrant imports
+ * with no medical data and the import reports complete success** — the same silent-success
+ * shape as the 2026-08-04 snapshot wipe. A missing care column has to be said out loud.
+ */
+export function missingColumns(
+  row: Record<string, string> | undefined,
+  expected: readonly string[],
+): string[] {
+  if (!row) return [];
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const present = new Set(Object.keys(row).map(norm));
+  return expected.filter((e) => !present.has(norm(e)));
 }
 
 /** DD/MM/YYYY (or D/M/YYYY, '/' or '-') → ISO; ISO passes through; else null. */

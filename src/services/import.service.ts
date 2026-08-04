@@ -14,8 +14,8 @@ import { parseCsv } from '../utils/csv';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import {
-  cleanCareText, field, isBlankRow, normalizeDate, parseGradeOrLeader, submissionSortKey,
-  titleCaseName, yesToConsent,
+  CARE_COLUMNS, cleanCareText, field, isBlankRow, missingColumns, normalizeDate,
+  parseGradeOrLeader, submissionSortKey, titleCaseName, yesToConsent,
 } from './elvanto-mapping';
 import { invalidateDashboardCache } from './dashboard-cache';
 import { z } from 'zod';
@@ -117,6 +117,17 @@ export function makeImportService(
       const warnings: ImportResult['warnings'] = [];
       const churchesCreated: string[] = [];
       const phantomChurches: string[] = [];
+
+      /* A care column that is ABSENT is not the same as a care column that is EMPTY, and
+         `field()` returns '' for both. Renaming `Medical Conditions` upstream would import
+         every registrant with no medical data and report complete success. Row 1 = the
+         header row the admin is looking at in their spreadsheet. */
+      for (const missing of missingColumns(rawRows[0], CARE_COLUMNS)) {
+        warnings.push({
+          row: 1,
+          message: `Column "${missing}" is not in this file — every registrant will import with that field BLANK. Check the Elvanto export includes it before confirming.`,
+        });
+      }
 
       const churches = await churchRepo.findAll();
       const churchIdByName = new Map<string, string>();

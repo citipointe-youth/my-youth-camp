@@ -105,6 +105,55 @@ wrote**, and the groups are resolved against that. **Do not fold this back into 
   ticket type, so an equal split lands on the true price. The 3 exceptions are one mixed 3-person
   invoice recorded as $176.67/$176.67/$176.66 instead of $190/$190/$150.
 
+### 2c — 🟠 CARE-TEXT AUDIT: PLACEHOLDERS WERE REACHING THE MEDICAL ALERT
+Owner: *"check if all medical and dietary conditions are parsed effectively and flexible for
+other future things."* Audited by running the **real exports** (`Camp data/27.7` and `21.7`)
+through the parser and reporting structure only — never dumping a minor's care text.
+
+**What the real data looks like** (2026-07-27 export, 203 rows): medical 29 non-empty / 0 junk;
+dietary 48 non-empty / **33 junk**; other-meds 39 / **17 junk**. So roughly two-thirds of the
+dietary column is people typing "nil". The junk stripping is load-bearing, not cosmetic.
+
+> ⚠️ **AND IT WAS MISSING THE REAL SPELLINGS.** `JUNK` matched the raw lowercased value, so it
+> caught `n/a` and `none` but **not `n.a.`, `n.a` or `not applicable`** — all three verbatim in
+> those exports. `medicalFlag` is `medicalConditions.length > 0 || otherMedications != null`, so
+> a person whose only "condition" is the words *not applicable* gets a **medical flag on the
+> check-in roster** and a red **Medical alert** card on the first-aid screen reading
+> `Meds: not applicable`. **An alert that cries wolf is worse than no alert** — this is the one
+> screen where teaching a first-aider to skim costs something real.
+
+`isPlaceholderCareText` now matches on a **case-, punctuation- and spacing-stripped** key, so
+`N/A` / `n.a.` / `N.A. ` / `na` are one entry. Verified against the real values: exactly the
+three placeholders dropped, **all 12 genuine ones preserved** (`asthmatic`, `anaphylaxis`,
+`type1 diabetic`, `epipen`, `fluoxetine`, …).
+
+- ⚠️ **WHOLE-VALUE ONLY. Never extend this to substring matching** — `none of the above except
+  asthma`, `No nuts` and `Nil by mouth after 8pm` all survive, and there are tests for them.
+- ⚠️ **Adding a token is a one-way door for the data** — a match is DELETED. `unknown` and
+  `not sure` are deliberately kept: in a medical field those are statements, not blanks.
+
+### 2d — A RENAMED CARE COLUMN WOULD HAVE IMPORTED BLANK AND REPORTED SUCCESS
+`field()` returns `''` both for a column that is empty and for one it cannot find. So if Elvanto
+ever renames `Medical Conditions` to `Medical Conditions (if any)`, **every registrant imports
+with no medical data and the import reports complete success** — the same silent-success shape as
+the snapshot wipe higher up this file. New `missingColumns()` + `CARE_COLUMNS`; the Form import
+now raises a row-1 warning naming any absent care column, visible in the **dry-run preview**
+before anything is confirmed. It normalises headers exactly as `field()` does, so ordinary case
+and spacing drift still does not warn.
+
+**Reported, deliberately NOT changed — `medicalConditions`/`dietaryRequirements` are typed
+`string[]` but the importer only ever writes 0 or 1 element** (`medical ? [medical] : []`). In the
+real export 6 medical and 3 dietary values contain commas, and 3 other-meds values contain
+newlines. Consequences: the first-aid alert renders one run-on `Condition: Asthmatic, Nut Allergy,
+Hay fever` row instead of three, and `_ALLERGY_RE` classifies the **whole** dietary cell, so
+`Vegetarian, nut allergy` moves entirely into the clinical alert.
+
+> ⚠️ **DO NOT "just split on commas" without deciding this properly.** It cuts both ways:
+> splitting turns `Nut, egg and dairy allergy` into `Nut` + `egg and dairy allergy`, and the
+> first fragment then fails `_ALLERGY_RE` and drops out of the medical alert into the quiet
+> Dietary card. Today's behaviour over-alerts; naive splitting would under-alert on a real
+> allergy. Over-alerting is the safe direction, so it stays until the owner picks a rule.
+
 ### 3 — The By-ministry table lists every church, including the ones with nothing
 Owner: *"the home page for admin/director should show all churches with accounts (even when they
 have 0 regos)."* It was aggregated from `/registrants` alone, so **a church could only appear once

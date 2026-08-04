@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ELVANTO_HEADERS, cleanCareText, normalizeDate, formatDateAU,
   parseGradeOrLeader, yesToConsent, field, titleCaseName, submissionSortKey,
+  isPlaceholderCareText, missingColumns, CARE_COLUMNS,
 } from './elvanto-mapping';
 
 describe('elvanto-mapping', () => {
@@ -20,6 +21,76 @@ describe('elvanto-mapping', () => {
     expect(cleanCareText('Ritalin\nFluexotine')).toBe('Ritalin\nFluexotine');
   });
 
+  /* 2026-08-04 — audited against the real exports (Camp data/27.7 and 21.7). The three
+     spellings below are verbatim from those files and were all being KEPT, so the people
+     carrying them got `medicalFlag: true` on the check-in roster and a red "Medical alert"
+     card reading `Meds: not applicable`. An alert that cries wolf is worse than no alert. */
+  it('🔴 strips the placeholder spellings the real Elvanto exports actually contain', () => {
+    for (const v of ['n.a.', 'n.a', 'not applicable']) {
+      expect(cleanCareText(v)).toBe('');
+    }
+  });
+
+  it('is insensitive to case, spacing and punctuation in a placeholder', () => {
+    for (const v of ['N/A', ' N.A. ', 'NIL', 'None.', 'nothing', 'Nope', '.', '  ']) {
+      expect(cleanCareText(v)).toBe('');
+    }
+    expect(isPlaceholderCareText('none')).toBe(true);
+    expect(isPlaceholderCareText('Asthmatic')).toBe(false);
+  });
+
+  it('⚠ matches the WHOLE value only — a placeholder word inside real text is not junk', () => {
+    // Dropping either of these would delete a genuine medical instruction.
+    expect(cleanCareText('none of the above except asthma')).toBe('none of the above except asthma');
+    expect(cleanCareText('No nuts')).toBe('No nuts');
+    expect(cleanCareText('Nil by mouth after 8pm')).toBe('Nil by mouth after 8pm');
+  });
+
+  it('⚠ keeps ambiguous answers — "unknown" is a statement in a medical field, not a blank', () => {
+    expect(cleanCareText('unknown')).toBe('unknown');
+    expect(cleanCareText('not sure')).toBe('not sure');
+  });
+
+  it('preserves every real value seen in the 2026-07-27 export', () => {
+    for (const v of ['asthmatic', 'skin allergy', 'anaphylaxis', 'nut allergy',
+      'gluten free', 'raw eggs', 'type1 diabetic', 'fluoxetine', 'adhd, asd', 'eczema', 'epipen']) {
+      expect(cleanCareText(v)).toBe(v);
+    }
+  });
+});
+
+/* A care column that is ABSENT and one that is EMPTY both read as '' through `field()`.
+   Renaming `Medical Conditions` upstream would import every registrant with no medical
+   data and report complete success — the same silent-success shape as the snapshot wipe. */
+describe('missingColumns', () => {
+  const row = (keys: string[]): Record<string, string> =>
+    Object.fromEntries(keys.map((k) => [k, '']));
+
+  it('reports nothing when every care column is present', () => {
+    expect(missingColumns(row([...CARE_COLUMNS]), CARE_COLUMNS)).toEqual([]);
+  });
+
+  it('🔴 names a care column that the export has renamed away', () => {
+    const missing = missingColumns(
+      row(['Medical Conditions (if any)', 'Dietary Requirements',
+        'List Other Medical Conditions or Medication Taken']),
+      CARE_COLUMNS,
+    );
+    expect(missing).toEqual(['Medical Conditions']);
+  });
+
+  it('matches headers the same normalised way field() does', () => {
+    // Case and spacing drift is already handled by field(), so it must not warn here either.
+    expect(missingColumns(row(['MEDICAL  CONDITIONS', 'dietary requirements',
+      'List Other Medical Conditions or Medication Taken']), CARE_COLUMNS)).toEqual([]);
+  });
+
+  it('handles an empty file without throwing', () => {
+    expect(missingColumns(undefined, CARE_COLUMNS)).toEqual([]);
+  });
+});
+
+describe('elvanto-mapping — dates, grades, consent, names', () => {
   it('normalizes DD/MM/YYYY to ISO and round-trips back to AU', () => {
     expect(normalizeDate('30/09/2009')).toBe('2009-09-30');
     expect(normalizeDate('2009-09-30')).toBe('2009-09-30');
