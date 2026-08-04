@@ -497,6 +497,16 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-08-04 (3rd) — new-year rollover / defaults snapshot
+
+| Symptom | Where it lives |
+|---|---|
+| **"I rolled over and everything is gone — churches, accounts, rooms, schedule"** | `supabase.defaults.ts`. Until 2026-08-04 the snapshot was written double-encoded (`JSON.stringify` + `::jsonb` → postgres.js encodes the string AGAIN), so the column held a jsonb **string**; `toDefaults` cast it `as Record<…>`, every key read `undefined`, and the `?? []` fallbacks handed `newYear` six empty arrays to `replaceAll` over the live camp. **First check `select jsonb_typeof(snapshot) from defaults` — it must be `object`.** `toDefaults` now throws on anything else. |
+| **"Where is the button to restore the baseline?"** | There isn't one, and there never was. The restore is the second half of **`admin.service.newYear`** (`src/services/admin.service.ts`, ~line 270) — purge, then `replaceAll` each scaffold collection from the snapshot. `saveDefaults` (the "Save Defaults" card on Records & Export) writes that snapshot; `RENDER.adminCloseOut` → `doNewYear()` runs the rollover. |
+| **Rollover reported 0 temp passwords** | It generates one per non-admin user IN THE SNAPSHOT. Zero means the snapshot's `users` array read empty — the corruption above, not a password bug. Recovered accounts come back **passwordless** by design (the snapshot strips `passwordHash`); use "Randomise & export passwords" on Accounts & churches. |
+| **A restored account is missing / an account created after the last Save Defaults is gone** | Expected. The snapshot is a point-in-time baseline (`settings.defaults_saved_at`); anything created after it was never in it. Re-run **Save Defaults** whenever the scaffold changes. |
+| **`created_at` on the defaults row looks far too old** | Fixed 2026-08-04 — the upsert only set `created_at` on INSERT, so it stayed pinned to the first save ever. `settings.defaults_saved_at` was always the accurate one. |
+
 ### 2026-08-04 (2nd) — sponsorship, the code differential, "camper" → "student"
 
 | Symptom | Go to |

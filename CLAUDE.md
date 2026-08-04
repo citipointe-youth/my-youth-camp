@@ -4,6 +4,64 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## 🔴 THE NEW-YEAR ROLLOVER EMPTIED PRODUCTION — a double-encoded snapshot — 2026-08-04 (3rd)
+
+Owner: *"I just saved then rolled over to a new year but can't find out how to restore the
+baseline."* There is nothing to find — **the restore is not a button, it is the second half of
+`newYear`** — and it had already run, restoring **nothing** over the live camp.
+`npm run typecheck` clean, `npx vitest run` **915 pass / 59 files** (was 911/58; **+4**).
+**No schema or migration change.** Backend repo only — no SPA change, `sw.js` NOT bumped.
+
+### What it cost
+Measured against prod, not inferred. The rollover ran `2026-08-04 11:18:04Z`, ten seconds after
+the compliance export (so the historical record is safe). Immediately after: **0 churches, 1 user,
+0 classrooms, 0 FAQs, 0 schedule items, 0 devotionals, 0 temp passwords.** The snapshot held
+**29 churches, 32 accounts, 34 classrooms, 6 FAQs, 48 schedule items, 1 devotional** the whole
+time.
+
+### 🟠 THE PAYLOAD WAS JSON-ENCODED TWICE AND EVERY LAYER AGREED IT WAS FINE
+`saveDefaults` wrote `JSON.stringify(obj)` and cast it `::jsonb`. **The cast declares the
+parameter type as jsonb, so postgres.js runs its own jsonb serializer over the string it is
+handed** — a second encoding. The column ended up holding a jsonb **string**
+(`jsonb_typeof(snapshot) = 'string'`), not an object.
+
+> ⚠️ **THE READ SIDE THEN CONVERTED THAT INTO SIX EMPTY ARRAYS, SILENTLY.** `toDefaults` cast the
+> string `as Record<string, unknown>` — which compiles clean — so every `snap['churches']` read
+> `undefined` and every `?? []` fallback fired. `newYear`'s `if (!defaults)` guard passed, because
+> the ROW existed. `replaceAll(churchRepo, [])` is a delete-everything, and that is exactly what
+> it did, six times, plus `userRepo.deleteAll()` keeping only admins.
+>
+> **The `?? []` was the whole failure.** A missing collection and an unreadable snapshot are not
+> the same event, and defaulting the second one to "empty" turns a corrupt read into a wipe.
+
+- **`toDefaults` now THROWS** on a non-object snapshot, naming the type it got. **Do not soften
+  this back into a cast.** An unreadable baseline must stop the rollover before a single delete,
+  never empty it.
+- **The write uses `sql.json()`** and lets postgres.js serialize. **Never `JSON.stringify` +
+  `::jsonb` again.** Every other repo in that folder already passed objects through
+  `this.sql(cols)`; this file was the only one hand-rolling the cast — **and the only Supabase
+  repo with no mapper test**, which is the whole reason it survived.
+- The `as unknown as JSONValue` cast is what the stringify was really working around
+  (`CampDefaults` collections are `unknown[]`, which postgres.js's `JSONValue` rejects). Reaching
+  for `JSON.stringify` to satisfy the type-checker is what produced the double encoding.
+- `created_at` is now updated on conflict too — it had been pinned to the FIRST save ever
+  (2026-07-27), so a snapshot re-saved on 08-02 still read as a week old.
+- **`supabase.defaults.mapper.test.ts` — 4 tests.** ⚠️ **The malformed fixture MUST be the
+  double-encoded STRING form.** An object fixture passes against the broken mapper and proves
+  nothing; that is precisely how this shipped. Verified the old mapper body against the real
+  production row: it returns `{churches:[],users:[]}`.
+
+### Recovery
+The snapshot text was intact, so the scaffold was recoverable in full. **This year's people are
+NOT recoverable from it and are not meant to be** — `newYear` purges them by design; they
+re-import from the Elvanto CSVs. The snapshot is also from **08-02**, so anything created on
+08-03/04 was not in it, and it strips password hashes by design (the rollover's temp-password
+list generated 0 entries because it saw 0 users).
+
+> **Standing lesson: `saveDefaults` and `newYear` are one mechanism and must be tested as one.**
+> A snapshot that cannot be read is indistinguishable, at the call site, from a camp with nothing
+> in it.
+
 ## Sponsorship: the differential, the ask, and "camper" → "student" — 2026-08-04 (2nd)
 
 Three owner items. Backend (`budget.ts`) + SPA + docs. `npm run typecheck` clean, `npx vitest run`
