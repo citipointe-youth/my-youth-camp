@@ -157,6 +157,64 @@ describe('InvoiceImportService.importInvoicesCsv — shared family invoices', ()
     expect(res.updated).toBe(2);
   });
 
+  /* 2026-08-04 — the owner's "review is too sensitive" report. An unpriced ticket TYPE used to
+     be the only question asked; now the invoice TOTAL is evidence too. See invoice-split.ts. */
+  it('resolves an unpriced ticket from the invoice total and does NOT flag for review', async () => {
+    // $340 covering a known $190 classroom and a ticket type nobody has an invoice for.
+    // The residual is $150, which is a real ticket price — nothing here needs a human.
+    const a = person({ id: 'p1', invoiceNumber: 'INV-210', registrationType: 'Classroom Accommodation' });
+    const b = person({ id: 'p2', invoiceNumber: 'INV-210', registrationType: 'Mystery Ticket' });
+    const { svc, personRepo } = await build([...priced(), a, b]);
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: `${HDR}\nINV-210,,,,340,,340,,,`,
+    });
+    const all = await personRepo.findAll();
+    const pa = all.find((x) => x.id === 'p1')!;
+    const pb = all.find((x) => x.id === 'p2')!;
+    expect(pa.registrationCost).toBe(190);
+    expect(pb.registrationCost).toBe(150);
+    // NOT the $170/$170 equal split it would have been before, and NOT flagged.
+    expect(pa.amountPaid).toBe(190);
+    expect(pb.amountPaid).toBe(150);
+    for (const p of [pa, pb]) expect(p.needsReview ?? false).toBe(false);
+    expect(res.warnings.some((w) => w.message.includes('EQUALLY'))).toBe(false);
+  });
+
+  it('keeps flagging one tent + one classroom when nothing says which sibling is which', async () => {
+    // Both ticket types unpriced, $340 = 150 + 190 — one multiset, two assignments. Putting
+    // the tent price on the classroom camper reconciles to the cent and is still wrong.
+    const a = person({ id: 'p1', invoiceNumber: 'INV-211', registrationType: 'Mystery A' });
+    const b = person({ id: 'p2', invoiceNumber: 'INV-211', registrationType: 'Mystery B' });
+    const { svc, personRepo } = await build([...priced(), a, b]);
+    await svc.importInvoicesCsv(actor('admin'), { csvData: `${HDR}\nINV-211,,,,340,,340,,,` });
+    const all = await personRepo.findAll();
+    for (const id of ['p1', 'p2']) expect(all.find((x) => x.id === id)!.needsReview).toBe(true);
+  });
+
+  it('resolves that same invoice once a CONFIRMED accommodation kind picks the assignment', async () => {
+    // The price->kind lookup needs >=3 confirmed samples at a price before it is trusted, so
+    // seed enough of each. Then the siblings' own confirmed kinds settle who paid what.
+    const seeds: Person[] = [];
+    for (let i = 0; i < 3; i++) {
+      seeds.push(person({ registrationType: 'Classroom Accommodation', registrationCost: 190,
+        accommodationKind: 'classroom', accommodationKindConfidence: 'confirmed' }));
+      seeds.push(person({ registrationType: 'EARLY BIRD | Tent Accomodation', registrationCost: 150,
+        accommodationKind: 'tent', accommodationKindConfidence: 'confirmed' }));
+    }
+    const a = person({ id: 'p1', invoiceNumber: 'INV-212', registrationType: 'Mystery A',
+      accommodationKind: 'classroom', accommodationKindConfidence: 'confirmed' });
+    const b = person({ id: 'p2', invoiceNumber: 'INV-212', registrationType: 'Mystery B',
+      accommodationKind: 'tent', accommodationKindConfidence: 'confirmed' });
+    const { svc, personRepo } = await build([...seeds, a, b]);
+    await svc.importInvoicesCsv(actor('admin'), { csvData: `${HDR}\nINV-212,,,,340,,340,,,` });
+    const all = await personRepo.findAll();
+    const pa = all.find((x) => x.id === 'p1')!;
+    const pb = all.find((x) => x.id === 'p2')!;
+    expect(pa.registrationCost).toBe(190);
+    expect(pb.registrationCost).toBe(150);
+    for (const p of [pa, pb]) expect(p.needsReview ?? false).toBe(false);
+  });
+
   it('splits equally and flags for review when a ticket type has no known price', async () => {
     const a = person({ id: 'p1', invoiceNumber: 'INV-201', registrationType: 'Mystery Ticket' });
     const b = person({ id: 'p2', invoiceNumber: 'INV-201', registrationType: 'Mystery Ticket' });

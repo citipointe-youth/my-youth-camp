@@ -17,7 +17,7 @@ import { buildTicketPriceTable, priceForTicket, type TicketPrice } from './ticke
 // accommodation kind was never recorded.
 //
 //   (no code / untagged code) → "Tent"                    / "Classroom"
-//   tag 'inperson'            → "Tent — paid in person"   / "Classroom — paid in person"
+//   tag 'inperson'            → "Tent in person"          / "Classroom in person"
 //   tag 'sponsor'             → "Tent full sponsor"       / "Classroom full sponsor"
 //   tag 'discount'            → "Discounted tent"         / "Discounted classroom"
 //   accommodationKind == null → "Accommodation not recorded"   (flagged, never dropped)
@@ -75,11 +75,11 @@ const CLASS_ORDER: readonly TicketClass[] = [
 
 const CLASS_LABEL: Record<TicketClass, string> = {
   tent: 'Tent',
-  'tent-inperson': 'Tent — paid in person',
+  'tent-inperson': 'Tent in person',
   'tent-discount': 'Discounted tent',
   'tent-sponsor': 'Tent full sponsor',
   classroom: 'Classroom',
-  'classroom-inperson': 'Classroom — paid in person',
+  'classroom-inperson': 'Classroom in person',
   'classroom-discount': 'Discounted classroom',
   'classroom-sponsor': 'Classroom full sponsor',
   unknown: 'Accommodation not recorded',

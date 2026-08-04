@@ -116,6 +116,16 @@ export function priceForTicket(
   return table.get(key)?.price ?? null;
 }
 
+/**
+ * The distinct prices the camp is known to charge, ascending — the "catalogue" a
+ * shared invoice is decomposed against (see `invoice-split.ts`). Distinct PRICES,
+ * not types: two ticket types at $150 are one candidate figure, and offering the
+ * same number twice would make a single decomposition look like two.
+ */
+export function ticketPriceCatalogue(table: Map<string, TicketPrice>): number[] {
+  return [...new Set([...table.values()].map((t) => t.price))].sort((a, b) => a - b);
+}
+
 /** The table as a display list, most-used type first. */
 export function ticketPriceRows(table: Map<string, TicketPrice>): TicketPrice[] {
   return [...table.values()].sort((a, b) => b.sample - a.sample || a.label.localeCompare(b.label));

@@ -45,11 +45,11 @@ function sumOfAllLines(r: BudgetReport): number {
 describe('labelForClass', () => {
   it('labels every ticket class', () => {
     expect(labelForClass('tent')).toBe('Tent');
-    expect(labelForClass('tent-inperson')).toBe('Tent — paid in person');
+    expect(labelForClass('tent-inperson')).toBe('Tent in person');
     expect(labelForClass('tent-discount')).toBe('Discounted tent');
     expect(labelForClass('tent-sponsor')).toBe('Tent full sponsor');
     expect(labelForClass('classroom')).toBe('Classroom');
-    expect(labelForClass('classroom-inperson')).toBe('Classroom — paid in person');
+    expect(labelForClass('classroom-inperson')).toBe('Classroom in person');
     expect(labelForClass('classroom-discount')).toBe('Discounted classroom');
     expect(labelForClass('classroom-sponsor')).toBe('Classroom full sponsor');
     expect(labelForClass('unknown')).toBe('Accommodation not recorded');

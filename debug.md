@@ -497,6 +497,17 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-08-04 (4th) — schedule "lost", invoice review sensitivity, By-ministry table
+
+| Symptom | Where it lives |
+|---|---|
+| **"The schedule/devotionals are gone"** (blank Schedule screen, rows still in the DB) | They are almost certainly **stranded on old dates**, not deleted. `select distinct day from schedule_items` and compare to `settings.check_in_days` — the screen looks up by date and a mismatch renders empty. Cause is always the same: camp dates changed **by SQL instead of through the admin UI**, so `remapDays()`/`applyDayMoves()` never ran and could not re-key them by position. Fix = the positional remap (old day 1 → new day 1). ⚠️ A plain `UPDATE` is only safe when the source and target date sets are **disjoint**; otherwise delete-then-reinsert, which is why `remapDays` does. Re-run **Save Defaults** afterwards or the snapshot keeps the wrong dates. |
+| **"Too many shared invoices are flagged for review"** | `src/services/invoice-split.ts` — `resolveInvoiceSplit`. Since 2026-08-04 an invoice is only flagged when its total canNOT be decomposed into known ticket prices in exactly one way. If one is still flagged, the total has zero or ≥2 decompositions: check the price catalogue (`ticketPriceCatalogue(buildTicketPriceTable(people))`) actually contains the price you expect. |
+| **A tent+classroom sibling invoice is still flagged** | Deliberate when neither has a **confirmed** `accommodationKind`. $340 = 150+190 is one multiset but two assignments, and putting the tent price on the classroom camper reconciles perfectly while being wrong. Give them a confirmed kind (the Ticket List import sets it) and it resolves. A `guessed` kind is ignored on purpose — it came from the price lookup, so trusting it is circular. |
+| **A shared invoice split unevenly and wasn't flagged** | Correct if every ticket type is priced: costs are each person's own ticket, and a shared discount is apportioned in proportion. Only an unresolvable total flags. |
+| **A church is missing from the home "By ministry" table** | Before 2026-08-04 the table was built from `/registrants` alone, so a church with 0 registrants never appeared. `RENDER.home` now seeds every church from `/accounts/churches` first. If one is still absent, it is not in `churchRepo` — check Accounts & churches, not the home screen. |
+| **A "By ministry" row named something odd with people in it** | Probably the `__unallocated__` sentinel (`Attendee's Church` was blank or `OTHER - please specify below`). Allocate them on **Data Import → Unallocated registrants**. |
+
 ### 2026-08-04 (3rd) — new-year rollover / defaults snapshot
 
 | Symptom | Where it lives |

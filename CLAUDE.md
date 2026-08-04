@@ -4,6 +4,101 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Owner batch — invoice review sensitivity, the By-ministry table, a label — 2026-08-04 (4th)
+
+Four owner items. Backend + SPA + one **prod data repair** (no schema or migration change).
+`npm run typecheck` clean, `npx vitest run` **939 pass / 60 files** (was 915/59; **+24**),
+`node --check` OK on the SPA body (range **967–9112**, re-derived) and `sw.js`. All three
+harnesses pass. `sw.js` `camp-v87`→**`camp-v88`**.
+
+### 1 — 🟠 THE SCHEDULE WAS NEVER LOST. IT WAS ON THE WRONG DATES, AND HAD BEEN FOR DAYS.
+Owner, after the wipe: *"the schedule data was lost — can it be restored?"* All 48 rows and the
+devotional were sitting in the table the whole time, keyed to **2026-07-31 → 08-03** while
+`check_in_days` read **2026-09-28 → 10-01**. The Schedule screen looks up by date, found nothing,
+and rendered blank — which is indistinguishable from deleted.
+
+> ⚠️ **THIS WAS THE 2026-07-31 CRON TEST, AND THIS FILE PREDICTED IT IN WRITING.** That session
+> temporarily moved the camp dates to that day to get inside a check-in lead window, then
+> **reverted them by SQL**. `remapDays()`/`applyDayMoves()` re-key schedule and devotionals by
+> POSITION, so only a change made through the admin UI carries them across — a direct SQL revert
+> strands every row on the old dates. The note saying exactly that is still in the 2026-07-31
+> section. **The rollover is innocent here**; Save Defaults then snapshotted the stranded state
+> and the restore reproduced it faithfully.
+
+Repaired with the positional remap by hand (`07-31→09-28 … 08-03→10-01`, one `update … case`).
+A plain UPDATE was safe **only because the source and target date sets are disjoint** — that is
+the whole reason `remapDays` deletes-then-reinserts, since an overlapping shift collides on day 2.
+Verified after: 10/16/16/6 items on the four camp days, devotional on day 1. **The day shapes
+corroborate the mapping** — day 1 starts 14:00 with a site briefing, day 4 ends 11:30 with pack
+bags, exactly the AC-1 PM-only/AM-only camp shape. ⚠️ **Save Defaults must be re-run**, or the
+snapshot keeps carrying the stranded dates into the next rollover.
+
+### 2 — 🟠 A SHARED INVOICE'S REVIEW FLAG ASKED ONLY ONE QUESTION, AND IT WAS THE WRONG ONE
+Owner: *"the data import review is slightly too sensitive — when it auto-splits an invoice, if
+the numbers cleanly match a ticket price then don't flag for review. Also consider the use case
+where the two tickets might be one tent, one classroom."*
+
+The 2026-08-02 split had exactly two outcomes: every person's ticket **TYPE** has a learned price
+→ split by price; otherwise → equal split **and flag everyone**. But the ticket type is not the
+only evidence on the row — **the invoice TOTAL is evidence too**:
+
+```
+$340, one known $190 classroom + one unpriced ticket → the residual is $150,
+and $150 is a real ticket price. There is nothing here to adjudicate.
+```
+
+New **`src/services/invoice-split.ts`** (`resolveInvoiceSplit`, pure, 21 tests). The rule is now:
+state per-person costs whenever the total decomposes into catalogue prices **in exactly one way**.
+One way is a fact; more than one is a real ambiguity and the flag is earned.
+
+- ⚠️ **THE TENT/CLASSROOM CASE STILL FLAGS, AND THAT IS THE POINT OF IT.** Two unpriced tickets
+  totalling $340 against a {$150,$190} catalogue give one multiset but **two assignments** — we
+  do not know which sibling is which. **Recording the tent price against the classroom camper is
+  a wrong number that reconciles to the cent**, the worst kind. So the resolver enumerates
+  assignment VECTORS, not multisets: `{150,190}` and `{190,150}` are two answers, not one.
+- **A CONFIRMED `accommodationKind` is what breaks that tie.** If $150 is known to mean tent and
+  one sibling is confirmed tent, only one assignment survives and it resolves cleanly. ⚠️ **Only
+  `confirmed` may be passed in** — a `guessed` kind was itself inferred from an invoice total by
+  `buildAccommodationPriceLookup`, so feeding it back lets a guess confirm itself.
+- ⚠️ **THE RESOLVED AND GIVE-UP PATHS CAN PRODUCE IDENTICAL NUMBERS AND MUST STILL DIFFER ON THE
+  FLAG.** $300 over two unpriced tickets resolves to $150+$150 — the same figures as the equal
+  split, but derived rather than assumed. "Provably even" is not "we gave up". There is a test
+  asserting exactly that pair.
+- Unchanged: all-types-priced never flagged, **including when a shared discount means the tickets
+  exceed the total** — apportioning it in proportion to what each ticket cost is how a shared
+  discount works. `splitExact`'s largest-remainder rounding is untouched.
+- `MAX_UNPRICED_SLOTS = 4` bails rather than searching wide: prod's largest shared invoice is
+  three people, and a wide search is likelier to find a coincidental second decomposition (which
+  flags anyway) than a real answer. The search also stops at the second solution — nobody ever
+  asks how many there are, only whether there is one.
+- `ticketPriceCatalogue()` (new, `ticket-prices.ts`) returns distinct **prices**, not types — two
+  types at $150 are one candidate figure, and offering it twice would make one decomposition look
+  like two.
+
+### 3 — The By-ministry table lists every church, including the ones with nothing
+Owner: *"the home page for admin/director should show all churches with accounts (even when they
+have 0 regos)."* It was aggregated from `/registrants` alone, so **a church could only appear once
+it had registered somebody** — the ministries a director most needs to chase were precisely the
+rows that were missing. `RENDER.home` now also fetches `/accounts/churches` (oversight roles only,
+already warmed by `_prefetch`, `.catch(()=>[])` so an empty list is just the old behaviour) and
+seeds every church at zero before counting registrants over the top.
+
+- ⚠️ **REGISTRANTS STILL CREATE THEIR OWN ROW when no church record matches.** That is how the
+  `__unallocated__` sentinel bucket keeps appearing. Do not "tidy" this into a lookup against the
+  church list only — unallocated people would silently vanish from the totals.
+- Rows are **alphabetical**, and a zero row is **muted with an em dash rather than five 0s** —
+  five zeros read as five measurements. "Who has sent nothing in" is answered by scanning for grey.
+- Interpreted as *all churches*, not *only churches that have a login*: after the restore 15 of
+  the 29 have no `b-`/`g-` account yet, and those are the rows most worth seeing. Say so if the
+  narrower reading was meant.
+
+### 4 — "Classroom — paid in person" → "Classroom in person"
+Owner request; same for the tent class. Changed in **both** copies — `CLASS_LABEL` in
+`src/services/budget.ts` and the `_BUD_CLASSES` mirror in the SPA — which is the standing rule for
+anything in that table. Display only: the `TicketClass` KEYS (`classroom-inperson`) are untouched,
+and they are what the CSV's Accommodation/Payment columns are derived from, so the export is
+unaffected.
+
 ## 🔴 THE NEW-YEAR ROLLOVER EMPTIED PRODUCTION — a double-encoded snapshot — 2026-08-04 (3rd)
 
 Owner: *"I just saved then rolled over to a new year but can't find out how to restore the

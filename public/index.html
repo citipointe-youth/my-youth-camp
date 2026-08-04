@@ -2626,13 +2626,18 @@ RENDER.home=async function renderHome(skipModeSync){
   // (switchover time passed, admin pinned the phase, preview toggle flipped). No-op otherwise.
   _syncNavPhase();
   if(CAMP_MODE==='at-camp'){await renderHomeAtCamp();return;}
-  // Parallel-load the three independent home datasets (was three sequential awaits).
-  const [h,regs,feed]=await Promise.all([
+  const s=SETTINGS,isWide=['director','admin'].includes(ACTOR.role);
+  // Parallel-load the independent home datasets (was three sequential awaits).
+  // `churchRows` is oversight-only: it is what makes the By-ministry table list a church that
+  // has registered NOBODY yet (owner request 2026-08-04) — see the table below. Already warmed
+  // by `_prefetch` for these two roles, so in practice this is a client-cache hit, not a 4th
+  // round trip. Fails soft: an empty list just returns the old registrants-only behaviour.
+  const [h,regs,feed,churchRows]=await Promise.all([
     api('/home'),
     api(_scoped('/registrants')).catch(()=>[]),
     api('/notifications').catch(()=>[]),
+    isWide?api('/accounts/churches').catch(()=>[]):Promise.resolve([]),
   ]);
-  const s=SETTINGS,isWide=['director','admin'].includes(ACTOR.role);
   // Unacknowledged urgent notices (incident auto-alerts + human-sent) render on BOTH home
   // variants — incidents can be, and have been, logged pre-camp. 2026-07-27: the banner moved
   // off the top of the screen to just above the "Notices" heading, matching the at-camp home.
@@ -2666,14 +2671,37 @@ RENDER.home=async function renderHome(skipModeSync){
   // `regs` (/registrants) loaded in parallel above — used by both the wide by-ministry table and the church accommodation summary.
   if(isWide){
     // By-ministry M/F split — aggregate from /registrants (the /home + /breakdown DTOs carry no gender split)
-    const by={};(regs||[]).forEach(r=>{const c=by[r.churchId]||(by[r.churchId]={name:r.churchName,maleStudents:0,femaleStudents:0,maleLeaders:0,femaleLeaders:0,total:0});c.total++;
+    const _blank=n=>({name:n,maleStudents:0,femaleStudents:0,maleLeaders:0,femaleLeaders:0,total:0});
+    const by={};
+    /* ⚠ SEED EVERY CHURCH AT ZERO FIRST (owner request 2026-08-04). Built from /registrants
+       alone, this table could only ever list churches that had already registered somebody —
+       so the ministries a director most needs to see, the ones who have sent nothing in, were
+       the exact rows that were missing. A church with no registrants is not absent from the
+       camp, it is a chase-up. */
+    (churchRows||[]).forEach(ch=>{by[ch.id]=_blank(ch.name);});
+    /* Registrants still create their own row when there is no matching church record — that is
+       how the `__unallocated__` sentinel bucket keeps appearing. Do not "tidy" this into a
+       lookup against churchRows only; unallocated people would silently vanish from the totals. */
+    (regs||[]).forEach(r=>{const c=by[r.churchId]||(by[r.churchId]=_blank(r.churchName));c.total++;
       const ld=r.kind==='leader';if(r.gender==='male'){ld?c.maleLeaders++:c.maleStudents++;}else{ld?c.femaleLeaders++:c.femaleStudents++;}});
-    const churches=Object.values(by);
+    // Alphabetical, so the row a director is looking for is where they left it. Zero rows are
+    // muted rather than sorted to the bottom — "who has sent nothing" is answered by scanning
+    // for grey, and the list stays in one predictable order.
+    const churches=Object.values(by).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
     if(churches.length){
       body+=`<h3 class="sec">By ministry</h3>`;
       const gcols='grid-template-columns:1fr 58px 20px 58px 20px 34px';
       const hdr=`<div style="display:grid;${gcols};align-items:end;font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:700;padding-bottom:6px;border-bottom:1px solid var(--line)"><span></span><span style="text-align:center">Student</span><span></span><span style="text-align:center">Leader</span><span></span><span style="text-align:center">Total</span></div>`;
-      const rows=churches.map(c=>`<div style="display:grid;${gcols};align-items:center;padding:7px 0;border-top:1px solid var(--line)">
+      // A church that has registered nobody renders muted with a single em dash rather than a
+      // row of five zeros — five 0s read as five measurements, and the row it matters to a
+      // director is the one saying "nothing has arrived from here yet".
+      const rows=churches.map(c=>c.total===0
+        ?`<div style="display:grid;${gcols};align-items:center;padding:7px 0;border-top:1px solid var(--line);color:var(--muted)">
+        <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</span>
+        <span style="text-align:center">—</span><span></span><span style="text-align:center">—</span><span></span>
+        <span style="text-align:center;font-weight:700">0</span>
+      </div>`
+        :`<div style="display:grid;${gcols};align-items:center;padding:7px 0;border-top:1px solid var(--line)">
         <span style="font-weight:600;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</span>
         <span style="text-align:center;white-space:nowrap"><b style="color:var(--male)">${c.maleStudents}</b><b style="color:var(--female);margin-left:9px">${c.femaleStudents}</b></span><span></span>
         <span style="text-align:center;white-space:nowrap"><b style="color:var(--male)">${c.maleLeaders}</b><b style="color:var(--female);margin-left:9px">${c.femaleLeaders}</b></span><span></span>
@@ -4017,11 +4045,11 @@ function _money(n){return '$'+Number(n||0).toLocaleString('en-AU',{maximumFracti
    the same way every time. Adding a class = one entry here + one in budget.ts. */
 const _BUD_CLASSES=[
   ['tent','Tent'],
-  ['tent-inperson','Tent — paid in person'],
+  ['tent-inperson','Tent in person'],
   ['tent-discount','Discounted tent'],
   ['tent-sponsor','Tent full sponsor'],
   ['classroom','Classroom'],
-  ['classroom-inperson','Classroom — paid in person'],
+  ['classroom-inperson','Classroom in person'],
   ['classroom-discount','Discounted classroom'],
   ['classroom-sponsor','Classroom full sponsor'],
   ['unknown','Accommodation not recorded'],

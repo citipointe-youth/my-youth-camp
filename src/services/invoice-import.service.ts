@@ -11,7 +11,8 @@ import {
   buildNameIndex, findPersonMatch, mergeOwnedFields,
 } from './person-matching';
 import { invalidateDashboardCache } from './dashboard-cache';
-import { buildTicketPriceTable, priceForTicket } from './ticket-prices';
+import { buildTicketPriceTable, priceForTicket, ticketPriceCatalogue } from './ticket-prices';
+import { resolveInvoiceSplit } from './invoice-split';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
@@ -206,6 +207,9 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
          from the pre-run state: a shared invoice is split using prices derived from single-person
          invoices, which is why the two must not be interleaved. */
       const priceTable = buildTicketPriceTable(allPeople);
+      /* The distinct figures a shared invoice may be decomposed against. Same source as
+         `priceTable`, and built once from the same pre-run state for the same reason. */
+      const priceCatalogue = ticketPriceCatalogue(priceTable);
 
       const byInvoiceNumber = new Map<string, Person[]>();
       for (const p of allPeople) {
@@ -333,22 +337,40 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
              we know each person's TICKET, and the ticket has a price (see ticket-prices.ts).
              A $340 invoice covering a $190 classroom and a $150 tent is not ambiguous at all.
 
-             Split rules, in order:
+             Split rules, in order (the decision itself lives in `invoice-split.ts`):
                1. every person's ticket price is known → weight by price. When the invoice total
                   equals the sum of the tickets (the normal case) this is EXACT, not an estimate;
                   when a discount was applied it apportions it in proportion to what each ticket
                   cost, which is how a shared discount actually works.
-               2. otherwise → equal split, and everyone is flagged `needsReview`, because that
+               2. some ticket type is unpriced, but the invoice total decomposes into known ticket
+                  prices in EXACTLY ONE way → use that. Added 2026-08-04 on the owner's report that
+                  review was firing too often: a $340 invoice covering one known $190 classroom and
+                  one unknown ticket leaves $150, and $150 is a real price — there is nothing there
+                  for a human to adjudicate. A confirmed `accommodationKind` breaks the one-tent-
+                  one-classroom tie; see that module's header.
+               3. otherwise → equal split, and everyone is flagged `needsReview`, because that
                   IS a guess and a human should look before the budget is trusted.
+             ⚠️ 2 and 3 can produce the SAME NUMBERS and must still differ on the flag: "the equal
+             split is provably right" is not "we gave up and split equally".
              Rounding uses largest-remainder so the parts always sum to the invoice EXACTLY —
              a per-person round() would drift the camp total by cents per invoice. */
           if (viaGroup) {
             ambiguousGroupInvoices++;
-            const ticketPrices = matchedPeople.map((p) => priceForTicket(priceTable, p.registrationType));
-            const allPriced = ticketPrices.every((v) => v != null && v > 0);
-            const weights = allPriced
-              ? (ticketPrices as number[])
-              : matchedPeople.map(() => 1);
+            const split = resolveInvoiceSplit(
+              matchedPeople.map((p) => ({
+                ticketPrice: priceForTicket(priceTable, p.registrationType),
+                // ⚠️ CONFIRMED ONLY. A `guessed` kind was itself inferred from an invoice total
+                // by `buildAccommodationPriceLookup`, so passing it here lets a guess confirm
+                // itself and silently un-flags an invoice we never actually resolved.
+                accommodationKind:
+                  p.accommodationKindConfidence === 'confirmed' ? p.accommodationKind ?? null : null,
+              })),
+              ticketTotal,
+              priceCatalogue,
+              priceLookup,
+            );
+            const resolved = split.costs;
+            const weights = resolved ?? matchedPeople.map(() => 1);
             const weightSum = weights.reduce((s, w) => s + w, 0);
             const share = (total: number | null): (number | null)[] =>
               total === null
@@ -356,18 +378,25 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
                 : splitExact(total, weights, weightSum);
 
             const paidParts = share(amountPaid);
-            const costParts = allPriced ? (ticketPrices as number[]) : share(ticketTotal);
+            const costParts = resolved ?? share(ticketTotal);
             const discountParts = share(discountAmount);
             const feeParts = share(feesAmount);
             const taxParts = share(taxAmount);
 
+            const who = (): string =>
+              matchedPeople
+                .map((p, i) => `${p.firstName} ${p.lastName} ${formatMoney(paidParts[i] ?? null)}`)
+                .join(', ');
             warnings.push({
               row: rowNum,
-              message: allPriced
-                ? `Invoice ${invoiceNumber} covers ${matchedPeople.length} people — split by ticket price (${
-                    matchedPeople.map((p, i) => `${p.firstName} ${p.lastName} ${formatMoney(paidParts[i] ?? null)}`).join(', ')
-                  })`
-                : `Invoice ${invoiceNumber} covers ${matchedPeople.length} people and at least one ticket type has no known price — split EQUALLY and flagged for review`,
+              message:
+                split.method === 'ticket-price'
+                  ? `Invoice ${invoiceNumber} covers ${matchedPeople.length} people — split by ticket price (${who()})`
+                  : split.method === 'residual'
+                    ? `Invoice ${invoiceNumber} covers ${matchedPeople.length} people, not all ticket types priced — the total resolves to known ticket prices one way only, so it was split on those (${
+                        matchedPeople.map((p, i) => `${p.firstName} ${p.lastName} ${formatMoney(costParts[i] ?? null)}`).join(', ')
+                      })`
+                    : `Invoice ${invoiceNumber} covers ${matchedPeople.length} people and the total cannot be resolved to known ticket prices — split EQUALLY and flagged for review`,
             });
 
             for (let m = 0; m < matchedPeople.length; m++) {
@@ -379,7 +408,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
               if (feeParts[m] != null) incoming.feesAmount = feeParts[m]!;
               if (taxParts[m] != null) incoming.taxAmount = taxParts[m]!;
               if (discountCode) incoming.discountCode = discountCode;
-              if (!allPriced) {
+              if (split.needsReview) {
                 incoming.needsReview = true;
                 incoming.needsReviewReason =
                   `Shared invoice ${invoiceNumber ?? ''} split equally between ${matchedPeople.length} people — ticket price unknown`.trim();
