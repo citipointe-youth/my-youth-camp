@@ -497,6 +497,26 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-08-04 (5th) — medical consent on the profile + the budget export became a workbook
+
+| Symptom | Go to |
+|---|---|
+| **"A church leader can't see whether medical consent was given"** | `_medConsentRow(p)` — rendered by BOTH `_paintPerson` (pre-camp, `/registrants`) and `openCamper` (at-camp, `/campers`). If it is missing from one screen only, that screen dropped the call; the DATA is always there (`consentMedical` is on both DTOs and always has been). |
+| **The consent row is missing on a LEADER's profile** | Correct and deliberate. The Elvanto field is *"I give medical consent for my child"* — a parent answering about a minor. A leader consents for themselves, so the row is meaningless and a red "Not granted" pill would be a false alarm. Same `isL?'':…` guard as the Medical/Dietary/Parent rows. |
+| **The consent wording differs between first aid and the profile** | It cannot, since 2026-08-04: both read `_MED_CONSENT_CLAUSE`. If they differ, someone re-inlined the text into `openStudentInfo`. |
+| **"Can a church now see another church's consent?"** | No. Nothing about scope changed — `GET /campers/:id` and `/registrants/:id` are both gated by `canAccessPerson`, and a redacted cross-church search hit still cannot be drilled into. The field was already being sent and thrown away. |
+| **🔴 The budget workbook opens with "we found a problem with some content"** | Hand-built OOXML, and Excel names nothing. **Two causes, in this order:** (1) `fills[0]`/`fills[1]` in `_XL_STYLES` are RESERVED (`none`, `gray125`) — inserting a colour at the front shifts every fill; (2) `<worksheet>` child order is schema-fixed: `sheetViews` → `cols` → `sheetData` → `autoFilter`. Both are asserted by the harness, so **run it first** — it will name the one that broke. |
+| **The workbook opens but everything is plain / unstyled** | Almost certainly someone routed it back through `XLSX.write`. The vendored SheetJS is the **Community** build: it ACCEPTS `cell.s` and silently discards bold and fills on write (measured — a bold red `A1` came back with `<fonts count="1">`). It keeps `!cols`, `!merges` and number formats, which is why this looks like it should work. The styled writer is `_xlsxBlob` / `_xlSheetXml`. |
+| **A total row's fill stops halfway across** | A styled BLANK must still be emitted (`<c r="C5" s="8"/>`). `_xlSheetXml` does this for `_xc('',style)`; returning `''` for an empty cell instead drops it and the fill ends there. |
+| **A whole sheet vanished when opened in Excel** | Every declared sheet needs a relationship in `xl/_rels/workbook.xml.rels` AND an Override in `[Content_Types].xml`. Miss either and Excel "repairs" the file by dropping the sheet. Harness section 1. |
+| **There is no Sponsorship sheet** | It renders only when `spon.count > 0`, same rule as the Sponsorship card. No tagged sponsor/discount codes = nothing to ask for = no sheet, deliberately (an empty sheet with that name sends the reader looking for a number that does not exist). |
+| **"Where did the budget CSV go?"** | Replaced, not broken. One export now, `.xlsx`, from the same button (`#budExportBtn`). Two exports of the same figures drift. `exportBudget` is now **async**. |
+| **Summing the workbook over-counts** | Unchanged answer: filter `Row type = Detail`. Sponsorship can no longer contaminate it at all — it is on its own SHEET now, not merely a non-`Detail` row type. |
+| **Unit price is blank on some rows** | Correct and deliberate — a mixed-value row has no single unit price, and a `0` would read as "free" while the line total says otherwise. |
+| **The church name repeats on every row and is hard to read** | It is meant to be there (the sheet must stay filterable/pivotable) but renders in the MUTED style so it recedes. ⚠ Do not "fix" the repetition by blanking the cell — that breaks filtering, and muting is what the owner actually asked for. |
+| Verify the budget workbook | `node scripts/budget-xlsx-harness.js` — 87 checks over the real extracted writers, incl. both corruption rules, the style of every row kind, the detail-sums-to-total trap, the $150/$190 sponsor differential, and a read-back through the vendored SheetJS. |
+| Verify it in **real Excel** | `BUDGET_XLSX_OUT=C:/tmp/b.xlsx node scripts/budget-xlsx-harness.js`, then open it (or drive Excel over COM and read `Font.Bold` / `Interior.Color` / `NumberFormat` back). Done 2026-08-04: no repair prompt, header bold on `#1E1B4B`, church total bold on `#EDE9FE`, camp total on `#4F46E5`, `FreezePanes=True`, `AutoFilterMode=True`. |
+
 ### 2026-08-04 (4th) — schedule "lost", invoice review sensitivity, By-ministry table
 
 | Symptom | Where it lives |
@@ -534,9 +554,9 @@ tolerate absence via `?? false`.
 | **The Sponsorship card is missing entirely** | It renders only when `spon.count > 0` — i.e. at least one person is on a code tagged `sponsor` or `discount`. No tagged codes = nothing to ask for = no card. |
 | **The By code / By ministry toggle keeps resetting** | It should not: `_sponsorView` is module-level precisely so it survives `_budRedraw()` (which fires on every tag save). If it resets, someone moved the state into the DOM. |
 | **Summing the budget CSV now over-counts by the sponsorship** | Filter to `Row type = Detail`, as before. Sponsorship rows (`Sponsor band` / `Sponsor unpriced` / `Sponsor by ministry` / `Sponsor total`) are money that has **not** arrived and are deliberately outside `Detail`. A harness check asserts no sponsor row is ever typed `Detail`. |
-| Verify the sponsorship maths | `npx vitest run src/services/budget.sponsor.test.ts` (17 tests) — the canonical algorithm. `node scripts/budget-csv-harness.js` section 5 runs the REAL SPA mirror and proves the differential survives into the CSV. |
+| Verify the sponsorship maths | `npx vitest run src/services/budget.sponsor.test.ts` (17 tests) — the canonical algorithm. `node scripts/budget-xlsx-harness.js` section 6 runs the REAL SPA mirror and proves the differential survives into the export (renamed from `budget-csv-harness.js` on 2026-08-04 when the export became a workbook). |
 | **🟠 A budget/roster screen went empty after a "camper → student" rename** | Someone rewrote a **data** value, not a label. `BudgetPerson.kind` is `'camper' \| 'leader'` and `RegistrantDto.kind` maps to `'camper'`; `r.kind === 'camper'` is matched on in several places in the SPA. The 2026-08-04 pass changed display strings ONLY. Search for `kind==='camper'` before assuming a rename is safe. |
-| **An export still says "Camper"** | The budget CSV's audience column is `Student` in BOTH `budgetToCsv` (server) and `exportBudget` (SPA) — they had drifted to different labels before this. A harness check asserts the word appears nowhere in the export. |
+| **An export still says "Camper"** | The budget export's Audience column is `Student` in BOTH `budgetToCsv` (server, and note it is **dead code** — nothing routes to it) and `exportBudget` (SPA, a workbook since 2026-08-04) — they had drifted to different labels before this. A harness check asserts the word appears nowhere in **any part** of the workbook. |
 
 ### 2026-08-04 — saved-view rework (wrong premise) + budget CSV
 
@@ -559,7 +579,7 @@ tolerate absence via `?? false`.
 | **A budget CSV column is blank that should not be** | `Accommodation` / `Payment type` come from `_budAccom(r.key)` / `_budPayment(r.key)` — derived from the class KEY, never parsed out of the display label. A new `TicketClass` added to `budget.ts` + `_BUD_CLASSES` without a matching key shape shows up here; the harness walks every class and asserts both map to a known value. |
 | **Summing the budget CSV gives roughly double the real total** | Filter to `Row type = Detail` first. Subtotal and total rows are in the same column by design; the `Row type` column (new 2026-08-04) is what makes them separable. Before it, `Audience` mixed Camper/Leader with Total/Grand Total and this trap was invisible. |
 | **Budget CSV unit price is empty on some rows** | Correct and deliberate — a mixed-value row has no single unit price, and a `0` there would read as "free" while the line total says otherwise. Same rule as `budgetToCsv` in `budget.ts`. |
-| Verify the budget CSV | `node scripts/budget-csv-harness.js` — 30 checks incl. the BOM as raw `EF BB BF`, no em dash in the payload, a comma-containing church name, and the whole class-key mapping. |
+| Verify the budget export | ⚠️ **The rows above describe the CSV, which was replaced by a styled .xlsx on 2026-08-04 (5th) — see that section at the top of this router.** The `Row type`, class-key and blank-unit-price rows still apply; **the BOM rows do not**, because an xlsx is UTF-8 XML and there is nothing to mis-decode. Command is now `node scripts/budget-xlsx-harness.js` (87 checks). ⚠ The BOM rule still binds every OTHER client-built CSV. |
 
 
 ### 2026-08-03 (2nd) — accommodation export + persistent roster filters

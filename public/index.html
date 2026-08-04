@@ -3137,6 +3137,33 @@ function openPerson(id){
   api('/registrants/'+id).then(p=>{(ALLREG=ALLREG||[]).push(p);_paintPerson(p);}).catch(e=>toast(e.message));
 }
 const _BLUE_CARD_HELP='A Blue Card (Working With Children Check) is the clearance every adult leader must hold. "Outstanding" means it isn\'t recorded yet — collect it before camp.';
+/* The exact wording a parent/guardian agrees to at registration. ONE copy, read by the first-aid
+   Student Info card and by the student profile below — they are answering the same question and a
+   paraphrase drifting between them is how two screens end up disagreeing about what was consented
+   to. Shown on BOTH the granted and not-granted states: this same text is what has NOT been agreed
+   to when consent is missing. */
+const _MED_CONSENT_CLAUSE='The consent a parent/guardian gives at registration reads: “I give permission for Citipointe Church to obtain emergency medical, hospital or ambulance service at any time they consider necessary. I acknowledge that I will be liable for any medical, hospital or ambulance expenses incurred in the treatment for my highschooler. Citipointe is released from any and all liability in the event of any accident or misfortune, damage or loss that may occur to the highschooler.”';
+/* Medical consent on a STUDENT profile (2026-08-04, owner request: "medical consent status should
+   be visible to the church they attend when their profile is opened up by their church's leader").
+
+   It had been on the profile and was removed by AC-6, which left first aid as the only role that
+   could see it — but the church leader is the person who physically takes a student to a doctor,
+   and the one who has to ring a parent first when consent is missing. Reading it off the roster
+   should not require a first-aid login.
+
+   ⚠ STUDENTS ONLY. The Elvanto field is "I give medical consent for my child as listed above" —
+   a parent answering about a minor. A leader is an adult who consents for themselves, so the row
+   is meaningless there and a red "Not granted" pill against a leader would be a false alarm.
+   No new data crosses the wire: `consentMedical` is already on both RegistrantDto and CamperDto,
+   and both single-person fetches are gated by `canAccessPerson`, so scope is unchanged. */
+function _medConsentRow(p,kvCls){
+  const tip=helpTip(_MED_CONSENT_CLAUSE);
+  const pill=p.consentMedical
+    ? `<span class="pill ok">${icSm('check')} Granted</span>`
+    : `<span class="pill warn">Not granted</span>`;
+  return `<div class="${kvCls||'kv'}"><span class="k">Medical consent ${tip}</span><span class="v">${pill}</span></div>`
+    +(p.consentMedical?'':`<p class="note-hint" style="text-align:left;margin:2px 0 0">No medical consent on file — contact the parent/guardian before any treatment.</p>`);
+}
 // Item 7a: registrationCost is the ticket price, not what was actually paid — an Invoice
 // import can record a real amountPaid (partial payment/discount cases where the two differ).
 // Show the real figure labelled "Paid" when there's invoice data on record; otherwise fall back
@@ -3156,6 +3183,7 @@ function _paintPerson(s){
       ${isL?'':`<div class="kv2"><span class="k">Dietary</span><span class="v">${esc((s.dietaryRequirements||[]).join(', ')||'—')}</span></div>
       <div class="kv2"><span class="k">Medical</span><span class="v">${esc((s.medicalConditions||[]).join(', ')||'—')}</span></div>
       <div class="kv2"><span class="k">Parent</span><span class="v">${esc(s.parentGuardianName||'—')}</span></div>
+      ${_medConsentRow(s,'kv2')}
       ${s.registrationType?`<div class="kv2"><span class="k">Reg type</span><span class="v">${esc(s.registrationType)}</span></div>`:''}
       ${_paidOrCostRow(s)}`}
       ${isL?`<div class="kv2"><span class="k">Blue card (WWC) ${helpTip(_BLUE_CARD_HELP)}</span><span class="v">${s.blueCardCollected?`<span class="pill ok">${icSm('check')} Collected</span>`:'<span class="pill warn">Outstanding</span>'}</span></div>`:''}
@@ -3720,13 +3748,11 @@ async function openStudentInfo(id){
     ? `<div class="fa-alert"><div class="ah">${icSm('medical')} Medical alert</div>
         ${alertRows.map(r=>`<div class="row"><span class="tag">${esc(r.tag)}</span><span class="b">${esc(r.b)}</span></div>`).join('')}</div>`
     : `<div class="fa-neutral"><div class="ah">${icSm('check')} No medical conditions recorded</div><div class="fa-calm">Nothing flagged for this student.</div></div>`;
-  /* The exact wording of the consent the parent/guardian agreed to at registration
-     (2026-08-03, owner request). It sits behind a tooltip rather than on the card because a
-     first-aider standing over an injured student needs "Granted / Not granted" in one glance
-     — but when the question is what was actually agreed to, the answer has to be the real
-     clause, not a paraphrase. Shown on BOTH states: the same text is what has NOT been agreed
-     to when consent is missing. */
-  const consentTip=helpTip('The consent a parent/guardian gives at registration reads: “I give permission for Citipointe Church to obtain emergency medical, hospital or ambulance service at any time they consider necessary. I acknowledge that I will be liable for any medical, hospital or ambulance expenses incurred in the treatment for my highschooler. Citipointe is released from any and all liability in the event of any accident or misfortune, damage or loss that may occur to the highschooler.”');
+  /* The clause sits behind a tooltip rather than on the card because a first-aider standing over
+     an injured student needs "Granted / Not granted" in one glance — but when the question is what
+     was actually agreed to, the answer has to be the real wording, not a paraphrase. The text is
+     `_MED_CONSENT_CLAUSE`, shared with the student profile (2026-08-04) so the two cannot drift. */
+  const consentTip=helpTip(_MED_CONSENT_CLAUSE);
   const consent=c.consentMedical
     ? `<div class="fa-consent yes">${ic('check')}<div>Medical consent — Granted ${consentTip}<div class="sub">OK to administer first aid</div></div></div>`
     : `<div class="fa-consent no">${ic('alert')}<div>Medical consent — Not granted ${consentTip}<div class="sub">Reach the leader / parent before treating</div></div></div>`;
@@ -4539,7 +4565,7 @@ RENDER.budget=async function(){
   const churches=[...new Map((regs||[]).map(r=>[r.churchId,r.churchName])).entries()].map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name));
   const selHtml=`<div class="rowsb" style="gap:8px;margin-bottom:12px">
     <select id="budChurch" onchange="drawBudget()" style="flex:1"><option value="all">All ministries</option>${churches.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>
-    <button class="btn alt sm" style="flex:none" onclick="exportBudget()">${icSm('download')} Export CSV</button></div>`;
+    <button class="btn alt sm" id="budExportBtn" style="flex:none" onclick="exportBudget()">${icSm('download')} Export (Excel)</button></div>`;
   paint('budget',`${selHtml}<div id="budgetBody"></div>`,'Budget & Costings','Registration fees by ticket type');
   drawBudget();
 };
@@ -4868,75 +4894,136 @@ async function _saveDiscountTag(code,tag){
     _budRedraw();
   }catch(e){toast(e.message||'Could not save');}
 }
-/* Budget CSV — rebuilt 2026-08-04 after the owner reported "weird symbols in the category
-   column and not very reader-friendly". Two separate causes, both fixed here:
+/* The budget export — a formatted THREE-SHEET WORKBOOK since 2026-08-04 (owner: "the budget
+   export should be an excel sheet so that excel formatting/styles can be used to make it more
+   clear what is the 'total' and what is the 'lower level detail' — currently it is hard to read
+   when there are several rows labelled for each church").
 
-   1. 🔴 **NO BYTE-ORDER MARK.** Excel on Windows opens a .csv as the system ANSI codepage
-      unless the file starts with a UTF-8 BOM. Several category labels contain an EM DASH
-      (`Tent — paid in person`, and `labelForRow` appends `— $150`), which is 3 UTF-8 bytes and
-      renders as `â€"` in Windows-1252. That is the "weird symbols" exactly. The first-aid and
-      password CSVs in this file already carried the BOM; the budget one never did — and it is
-      the only one whose DATA contains non-ASCII, which is why it was the only visible failure.
-      ⚠ Any new CSV must start with `﻿`. It is invisible in a text editor, so the way this
-      regresses is somebody "tidying up" a string concatenation.
+   It replaces the CSV rather than sitting beside it. Two exports of the same figures drift, and
+   the CSV's one advantage — "opens anywhere" — is not an advantage over a workbook that Excel,
+   Numbers, Sheets and LibreOffice all open natively.
 
-   2. **One column carried three facts.** `Category` was the display label built for a phone
-      screen: accommodation type + payment class + unit price, e.g.
-      `Classroom — paid in person — $190`. The price was already in its own `UnitPrice` column,
-      so it was duplicated, and neither of the other two facts could be sorted, filtered or
-      pivoted on. They are now real columns — Accommodation and Payment type — derived from the
-      class KEY, never string-parsed out of the label.
+   ⚠️ **EVERY HARD-WON PROPERTY OF THE CSV IS CARRIED OVER, NOT DISCARDED:**
+   · `Row type` still exists as a real column. It was added because `Audience` used to mix a
+     dimension (Student/Leader) with row KINDS (Total/Grand total), so a naive SUM double-counted
+     every subtotal. Filter to `Detail` and the maths is still trustworthy — there is a harness
+     check asserting detail rows alone reach the grand total AND that summing every row does not.
+   · Accommodation and Payment type are still derived from the class KEY (`_budAccom`/`_budPayment`),
+     never string-parsed out of the display label.
+   · `Unit price` is still BLANK, never 0, on a mixed-value row — a 0 reads as "free" while the
+     line total says otherwise.
+   · Sponsorship is still money that has NOT arrived, so it is not typed `Detail`. It now gets its
+     own SHEET, which makes that separation structural rather than a convention a reader has to
+     know about: nothing on the received sheet can accidentally sum it in.
+   The BOM rule is the one thing that does NOT carry over, and only because it cannot apply — an
+   xlsx stores text as UTF-8 XML, so the em dash that started this whole thread is simply correct.
 
-   Also: `Audience` used to mix a dimension (Camper/Leader) with row kinds (Total/Grand Total),
-   so a naive SUM over a column double-counted every subtotal. There is now an explicit
-   `Row type` column, and a reader (or a pivot) can filter to `Detail` and trust the maths.
+   What the owner actually asked for is the STYLING, and it lives in the row-style choices below:
+   a repeated church name recedes to muted grey, a church total is bold on lavender with a rule
+   above it, and the camp total is white on indigo. The hierarchy is visible at arm's length
+   instead of having to be read column by column. */
+async function exportBudget(){
+  const btn=document.getElementById('budExportBtn');
+  if(btn)btn.disabled=true;
+  try{
+    const scope=sel('budChurch')||'all';
+    const rep=computeBudgetClient(window._budgetRegs,scope);
+    const spon=computeSponsorSummaryClient(window._budgetRegs,scope);
+    const scopeLabel=scope==='all'?'All ministries':((rep.churches[0]&&rep.churches[0].churchName)||'Selected ministry');
+    const year=(SETTINGS&&SETTINGS.year)||'';
 
-   ⚠ `Unit price` stays BLANK, never 0, on a mixed-value row — a 0 reads as "free" while the
-   line total says otherwise. Same rule as `budgetToCsv` in budget.ts. */
-function exportBudget(){
-  const scope=sel('budChurch')||'all';
-  const rep=computeBudgetClient(window._budgetRegs,scope);
-  const esc2=s=>{const str=String(s==null?'':s);return /[",\n\r]/.test(str)?'"'+str.replace(/"/g,'""')+'"':str;};
-  const header=['Church','Row type','Audience','Accommodation','Payment type','Discount code','People','Unit price','Line total'];
-  const lines=[header.map(esc2).join(',')];
-  const emit=(church,aud,rows)=>(rows||[]).forEach(r=>lines.push([
-    esc2(church),'Detail',aud,esc2(_budAccom(r.key)),esc2(_budPayment(r.key)),esc2(r.codeHint||''),
-    r.count,r.amount==null?'':r.amount,r.lineTotal,
-  ].join(',')));
-  rep.churches.forEach(c=>{
-    emit(c.churchName,'Student',c.campers);
-    emit(c.churchName,'Leader',c.leaders);
-    lines.push([esc2(c.churchName),'Church total','','','','',c.camperCount+c.leaderCount,'',c.total].join(','));
-  });
-  const scopeLabel=scope==='all'?'ALL CHURCHES':'SELECTED';
-  lines.push([esc2(scopeLabel),'Camp total','','','','',
-    rep.camperCount+rep.leaderCount,'',rep.grandTotal].join(','));
-  /* Sponsorship rows (2026-08-04). Kept BELOW the camp total and out of the `Detail` row type, so
-     the "filter to Detail and the maths is trustworthy" rule still holds — this is money that has
-     NOT arrived, and adding it to the received column would be exactly the double-count the
-     `Row type` column exists to prevent.
+    /* ── Sheet 1: Summary ──────────────────────────────────────────────────────────────────
+       The two figures a director carries into a conversation, and the one line that ties them
+       together. The reconciliation is an invariant of the model, not a nicety:
+       sponsor total + grand total = the value of every place (asserted in budget.sponsor.test.ts). */
+    const sum=[
+      [_xc('Youth camp '+year+' — Budget',XS.TITLE)],
+      [_xc('Scope: '+scopeLabel,XS.SUB)],
+      [_xc('Exported '+new Date().toLocaleDateString('en-AU')+' · amounts are MONEY RECEIVED, not the value of every place',XS.SUB)],
+      [],
+      [_xc('Money received',XS.SECTION)],
+      [_xc('Item',XS.HEAD),_xc('People',XS.HEAD),_xc('Amount',XS.HEAD)],
+      [_xc('Students',XS.TEXT),_xn(rep.camperCount,XS.NUM),_xn(null,XS.MONEY)],
+      [_xc('Leaders',XS.TEXT),_xn(rep.leaderCount,XS.NUM),_xn(null,XS.MONEY)],
+      [_xc('Ministries',XS.TEXT),_xn(rep.churchCount,XS.NUM),_xn(null,XS.MONEY)],
+      [_xc('Total received',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(rep.grandTotal,XS.GRAND_M)],
+      [],
+    ];
+    if(spon.count){
+      sum.push([_xc('Sponsorship still needed',XS.SECTION)]);
+      sum.push([_xc('Item',XS.HEAD),_xc('Places',XS.HEAD),_xc('Amount',XS.HEAD)]);
+      sum.push([_xc('Full sponsorship',XS.TEXT),_xn(null,XS.NUM),_xn(spon.fullTotal,XS.MONEY)]);
+      sum.push([_xc('Part sponsored',XS.TEXT),_xn(null,XS.NUM),_xn(spon.partialTotal,XS.MONEY)]);
+      sum.push([_xc('Total still needed',XS.TOT_T),_xn(spon.count,XS.TOT_N),_xn(spon.total,XS.TOT_M)]);
+      /* ⚠ An unpriceable place is COUNTED AND FLAGGED, never totalled as $0 — a $0 ask reads as
+         "already covered", which is the opposite of "we don't know what this one is worth". */
+      if(spon.unpricedCount)sum.push([_xc(spon.unpricedCount+' sponsored place(s) have no ticket price on record, so the total above UNDER-reads. Set a ticket price or record the invoice to close the gap.',XS.NOTE)]);
+      sum.push([]);
+      sum.push([_xc('Reconciliation',XS.SECTION)]);
+      sum.push([_xc('Value of every place (received + still needed)',XS.TOT_T),_xn(null,XS.TOT_N),_xn(rep.grandTotal+spon.total,XS.TOT_M)]);
+    }
+    sum.push([]);
+    sum.push([_xc('"Money received" counts what has actually come in: a full-sponsor code contributes $0 and a place paid in person is valued at its ticket price. Sponsorship is the gap that must arrive from elsewhere for the camp to be whole.',XS.NOTE)]);
 
-     ⚠ A `Sponsor band` row is one asking PRICE, not one person's ticket — that is what carries the
-     early-bird / full-price differential into the spreadsheet. `Unit price` is the per-place ask;
-     summing the band rows for one code gives that code's total. */
-  const spon=computeSponsorSummaryClient(window._budgetRegs,scope);
-  spon.codes.forEach(r=>{
-    const tagLabel=_SPONSOR_TAG_LABEL[r.tag]||r.tag;
-    r.bands.forEach(b=>lines.push([esc2(scopeLabel),'Sponsor band','',esc2(b.ticketTypes.join(' / ')),
-      esc2(tagLabel),esc2(r.code),b.count,b.amount,b.total].join(',')));
-    if(r.unpricedCount)lines.push([esc2(scopeLabel),'Sponsor unpriced','','',esc2(tagLabel),
-      esc2(r.code),r.unpricedCount,'',''].join(','));
-  });
-  spon.churches.forEach(c=>c.codes.forEach(x=>lines.push([esc2(c.name),'Sponsor by ministry','','',
-    esc2(_SPONSOR_TAG_LABEL[x.tag]||x.tag),esc2(x.code),x.count,'',x.total].join(','))));
-  if(spon.count)lines.push([esc2(scopeLabel),'Sponsor total','','','','',spon.count,'',spon.total].join(','));
-  // ⚠ This was the ONE export in the file that never appended its anchor to the document
-  // before clicking it — a detached-anchor click is unreliable on mobile Chromium, so on an
-  // Android phone this button could silently do nothing. Routed through the shared helper
-  // (2026-08-03, Android review) so it cannot drift again.
-  // \r\n line endings + the BOM: what Excel expects from a .csv on Windows.
-  _saveTextFile('﻿'+lines.join('\r\n'),_exportName('budget-by-church','csv'));
-  toast('Budget CSV downloaded');
+    /* ── Sheet 2: By ministry ─────────────────────────────────────────────────────────────── */
+    const HEAD=['Church','Row type','Audience','Accommodation','Payment type','Discount code','People','Unit price','Line total'];
+    const rows=[HEAD.map((h)=>_xc(h,XS.HEAD))];
+    const detail=(church,aud,list)=>(list||[]).forEach((r)=>rows.push([
+      /* The church name repeats on every row so the sheet stays filterable and pivotable — the
+         owner's complaint was that the repetition is what makes it hard to read, and MUTED grey
+         answers that without deleting the fact. Do not blank it instead. */
+      _xc(church,XS.MUTED),_xc('Detail',XS.MUTED),_xc(aud,XS.TEXT),
+      _xc(_budAccom(r.key),XS.TEXT),_xc(_budPayment(r.key),XS.TEXT),_xc(r.codeHint||'',XS.TEXT),
+      _xn(r.count,XS.NUM),_xn(r.amount==null?null:r.amount,XS.MONEY),_xn(r.lineTotal,XS.MONEY),
+    ]));
+    rep.churches.forEach((c)=>{
+      detail(c.churchName,'Student',c.campers);
+      detail(c.churchName,'Leader',c.leaders);
+      rows.push([_xc(c.churchName,XS.TOT_T),_xc('Church total',XS.TOT_T),_xc('',XS.TOT_T),_xc('',XS.TOT_T),
+        _xc('',XS.TOT_T),_xc('',XS.TOT_T),_xn(c.camperCount+c.leaderCount,XS.TOT_N),_xn(null,XS.TOT_M),_xn(c.total,XS.TOT_M)]);
+    });
+    rows.push([_xc(scopeLabel,XS.GRAND_T),_xc('Camp total',XS.GRAND_T),_xc('',XS.GRAND_T),_xc('',XS.GRAND_T),
+      _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(rep.grandTotal,XS.GRAND_M)]);
+
+    const sheets=[
+      {name:'Summary',cols:[46,10,14],rows:sum},
+      {name:'By ministry',cols:[26,13,10,16,15,16,9,12,13],rows:rows,freeze:1,filter:'A1:I'+rows.length},
+    ];
+
+    /* ── Sheet 3: Sponsorship ─────────────────────────────────────────────────────────────
+       ⚠ A band row is one asking PRICE, not one person — that is what carries the early-bird /
+       full-price differential into the spreadsheet, instead of an average that describes nobody
+       and that no sponsor can be invoiced for. */
+    if(spon.count){
+      const sh=[['Scope','Row type','Discount code','Sponsorship type','Ticket type(s)','People','Unit ask','Total ask'].map((h)=>_xc(h,XS.HEAD))];
+      spon.codes.forEach((r)=>{
+        const tag=_SPONSOR_TAG_LABEL[r.tag]||r.tag;
+        r.bands.forEach((b)=>sh.push([_xc(scopeLabel,XS.MUTED),_xc('Sponsor band',XS.MUTED),_xc(r.code,XS.TEXT),
+          _xc(tag,XS.TEXT),_xc(b.ticketTypes.join(' / '),XS.TEXT),_xn(b.count,XS.NUM),_xn(b.amount,XS.MONEY),_xn(b.total,XS.MONEY)]));
+        if(r.unpricedCount)sh.push([_xc(scopeLabel,XS.MUTED),_xc('Sponsor unpriced',XS.MUTED),_xc(r.code,XS.TEXT),
+          _xc(tag,XS.TEXT),_xc('No ticket price on record',XS.TEXT),_xn(r.unpricedCount,XS.NUM),_xn(null,XS.MONEY),_xn(null,XS.MONEY)]);
+      });
+      spon.churches.forEach((c)=>c.codes.forEach((x)=>sh.push([_xc(c.name,XS.MUTED),_xc('Sponsor by ministry',XS.MUTED),
+        _xc(x.code,XS.TEXT),_xc(_SPONSOR_TAG_LABEL[x.tag]||x.tag,XS.TEXT),_xc('',XS.TEXT),
+        _xn(x.count,XS.NUM),_xn(null,XS.MONEY),_xn(x.total,XS.MONEY)])));
+      sh.push([_xc(scopeLabel,XS.GRAND_T),_xc('Sponsor total',XS.GRAND_T),_xc('',XS.GRAND_T),_xc('',XS.GRAND_T),
+        _xc('',XS.GRAND_T),_xn(spon.count,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(spon.total,XS.GRAND_M)]);
+      sh.push([]);
+      sh.push([_xc('This sheet is money that has NOT arrived. It is deliberately kept off "By ministry" so it can never be summed into what the camp has received. Band rows and by-ministry rows are the same money counted two ways — do not add them together.',XS.NOTE)]);
+      sheets.push({name:'Sponsorship',cols:[26,20,16,18,34,9,12,13],rows:sh,freeze:1});
+    }
+
+    const blob=await _xlsxBlob(sheets);
+    // Routed through the shared saver: append → click → remove → revoke after 20s. This was the
+    // one export in the file that never appended its anchor at all, which made it a silent no-op
+    // on mobile Chromium (2026-08-03 Android review).
+    _rlSaveBlob(blob,_exportName('budget-by-church','xlsx'));
+    toast('Budget workbook downloaded');
+  }catch(e){
+    toast('Could not build the budget workbook: '+(e.message||e));
+  }finally{
+    if(btn)btn.disabled=false;
+  }
 }
 
 /* ===== ACCOMMODATION ALLOCATIONS (director/admin) =====
@@ -5673,8 +5760,11 @@ async function openCamper(id,push=true){
       <div class="kv"><span class="k">${lead?'Mobile':'Student mobile'}</span><span class="v"><a href="tel:${esc(p.mobile||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(p.mobile)||'—')}</a></span></div>
       ${lead?'':`<div class="kv"><span class="k">Medical</span><span class="v">${esc((p.medicalConditions||[]).join(', ')||'—')}</span></div>
       <div class="kv"><span class="k">Dietary</span><span class="v">${esc((p.dietaryRequirements||[]).join(', ')||'—')}</span></div>
-      ${p.otherMedications?`<div class="kv"><span class="k">Medication</span><span class="v">${esc(p.otherMedications)}</span></div>`:''}`}
-      <!-- AC-6: consents line removed from the profile UI (consent data is kept in the model/DTO). -->
+      ${p.otherMedications?`<div class="kv"><span class="k">Medication</span><span class="v">${esc(p.otherMedications)}</span></div>`:''}
+      ${_medConsentRow(p)}`}
+      <!-- AC-6 removed the whole consents line from this card; MEDICAL consent came back on
+           2026-08-04 (see _medConsentRow). Media and supervision consent stay off — they are
+           paperwork questions for the office, not something a leader acts on at camp. -->
     </div>
     ${camp}
     ${lead?'':`<div class="card"><div class="h3" style="margin-top:0">Parent / guardian</div>
@@ -7693,6 +7783,164 @@ async function _zipBlob(entries){
   ev.setUint16(8,entries.length,true);ev.setUint16(10,entries.length,true);
   ev.setUint32(12,cdSize,true);ev.setUint32(16,offset,true);ev.setUint16(20,0,true);
   return new Blob(parts.concat(central,[eo]),{type:'application/zip'});
+}
+
+/* ===== Minimal STYLED XLSX writer (2026-08-04) =============================================
+   Owner: "the budget export should be an excel sheet so that excel formatting/styles can be used
+   to make it more clear what is the 'total' and what is the 'lower level detail' — currently it is
+   hard to read when there are several rows labelled for each church."
+
+   ⚠️ THE VENDORED SHEETJS CANNOT DO THIS, AND FAILS SILENTLY AT IT. `xlsx.full.min.js` is the
+   Community build: cell styling is a Pro feature, so `cell.s = {font:{bold:true}}` is accepted,
+   ignored, and written out as an ordinary cell. Verified rather than assumed — a probe workbook
+   with a bold, red-filled A1 came back with `<fonts count="1">` and `<fills count="2">`, i.e. the
+   defaults and nothing else. It DOES write `!cols`, `!merges` and number formats (`z`), which is
+   why the accommodation export is fine on it; bold and fills are the two things this request is
+   entirely about. **Do not "simplify" this back onto XLSX.write — the bold will vanish and the
+   file will still open, which is the worst way to lose a feature.**
+
+   So the workbook is written by hand. That is far less work than it sounds because the hard part
+   already exists: `_zipBlob` above (hand-rolled for the registration-list .zip, and verified by
+   extracting a real archive with Windows' own Expand-Archive). An xlsx IS a zip of a handful of
+   small XML parts, and only the six below are required.
+
+   Strings are written INLINE (`t="inlineStr"`) rather than through a shared-string table — one
+   less part, one less index to keep consistent, and a budget sheet is a few hundred rows.
+
+   ⚠️ TWO THINGS THAT CORRUPT THE FILE IF TOUCHED CARELESSLY, both of which open as
+   "we found a problem with some content" with no clue as to which:
+     1. **fills[0] MUST be `none` and fills[1] MUST be `gray125`.** Excel reserves those two slots.
+        Insert a colour at the front of the fills list and every fill in the book shifts by one.
+     2. **Child order inside `<worksheet>` is fixed by the schema**: sheetViews → cols → sheetData →
+        autoFilter. Emitting autoFilter before sheetData validates as nothing.
+   `scripts/budget-xlsx-harness.js` unzips the real output and asserts both, plus the styling. */
+function _xmlEsc(s){
+  return String(s==null?'':s)
+    .replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]))
+    // Control characters are not representable in XML 1.0 at all — a stray one from pasted data
+    // would make the whole part unparseable, so they are dropped rather than escaped.
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'');
+}
+function _xlCol(i){let s='',n=i;while(n>=0){s=String.fromCharCode(65+(n%26))+s;n=Math.floor(n/26)-1;}return s;}
+/* The fixed style table. Indices are referenced by name below so a reordering here can't silently
+   turn every total row into body text. Colours are the app's own tokens (--blue / --violet tint /
+   --navy) so a printed budget still looks like the screen it came from. */
+const XS={BODY:0,TITLE:1,SUB:2,HEAD:3,TEXT:4,MUTED:5,NUM:6,MONEY:7,
+  TOT_T:8,TOT_N:9,TOT_M:10,GRAND_T:11,GRAND_N:12,GRAND_M:13,SECTION:14,NOTE:15};
+const _XL_STYLES=
+'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+
+  '<numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00"/></numFmts>'+
+  '<fonts count="6">'+
+    '<font><sz val="11"/><name val="Calibri"/></font>'+                                   /* 0 body */
+    '<font><b/><sz val="11"/><name val="Calibri"/></font>'+                               /* 1 bold */
+    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'+        /* 2 bold white */
+    '<font><b/><sz val="16"/><color rgb="FF1E1B4B"/><name val="Calibri"/></font>'+        /* 3 title */
+    '<font><i/><sz val="10"/><color rgb="FF6B7280"/><name val="Calibri"/></font>'+        /* 4 muted */
+    '<font><b/><sz val="12"/><color rgb="FF1E1B4B"/><name val="Calibri"/></font>'+        /* 5 section */
+  '</fonts>'+
+  /* 0 and 1 are RESERVED by Excel — see the warning above. Real colours start at 2. */
+  '<fills count="5">'+
+    '<fill><patternFill patternType="none"/></fill>'+
+    '<fill><patternFill patternType="gray125"/></fill>'+
+    '<fill><patternFill patternType="solid"><fgColor rgb="FF1E1B4B"/><bgColor indexed="64"/></patternFill></fill>'+  /* 2 navy header */
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFEDE9FE"/><bgColor indexed="64"/></patternFill></fill>'+  /* 3 lavender subtotal */
+    '<fill><patternFill patternType="solid"><fgColor rgb="FF4F46E5"/><bgColor indexed="64"/></patternFill></fill>'+  /* 4 indigo grand total */
+  '</fills>'+
+  '<borders count="2">'+
+    '<border><left/><right/><top/><bottom/><diagonal/></border>'+
+    '<border><left/><right/><top style="thin"><color rgb="FFB4B0D8"/></top><bottom/><diagonal/></border>'+
+  '</borders>'+
+  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'+
+  '<cellXfs count="16">'+
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'+                                                        /* 0 BODY */
+    '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>'+                                          /* 1 TITLE */
+    '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>'+                                          /* 2 SUB */
+    '<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf>'+ /* 3 HEAD */
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'+                                                        /* 4 TEXT */
+    '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>'+                                          /* 5 MUTED */
+    '<xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'+                                  /* 6 NUM */
+    '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'+                                /* 7 MONEY */
+    '<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'+            /* 8 TOT_T */
+    '<xf numFmtId="3" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>'+   /* 9 TOT_N */
+    '<xf numFmtId="164" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>'+ /* 10 TOT_M */
+    '<xf numFmtId="0" fontId="2" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'+                            /* 11 GRAND_T */
+    '<xf numFmtId="3" fontId="2" fillId="4" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>'+      /* 12 GRAND_N */
+    '<xf numFmtId="164" fontId="2" fillId="4" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>'+    /* 13 GRAND_M */
+    '<xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyFont="1"/>'+                                          /* 14 SECTION */
+    '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment wrapText="1"/></xf>'+ /* 15 NOTE */
+  '</cellXfs>'+
+  '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'+
+'</styleSheet>';
+/* A cell is `{v,s,n}` — value, style index, and `n:true` for "this is a number". A bare string or
+   number is shorthand for the default style; `null` leaves the cell absent entirely. */
+function _xc(v,s){return {v:v,s:s};}
+function _xn(v,s){return {v:v,s:s,n:true};}
+function _xlSheetXml(sheet){
+  const rows=(sheet.rows||[]).map((cells,ri)=>{
+    const r=ri+1;
+    const out=(cells||[]).map((cell,ci)=>{
+      if(cell==null)return '';
+      const c=(typeof cell==='object')?cell:{v:cell};
+      const ref=_xlCol(ci)+r,st=c.s?' s="'+c.s+'"':'';
+      if(c.n){
+        const num=Number(c.v);
+        if(c.v==null||c.v===''||!isFinite(num))return '<c r="'+ref+'"'+st+'/>';
+        return '<c r="'+ref+'"'+st+'><v>'+num+'</v></c>';
+      }
+      // A styled blank still has to be emitted, or the fill stops halfway across a total row.
+      if(c.v==null||c.v==='')return c.s?'<c r="'+ref+'"'+st+'/>':'';
+      return '<c r="'+ref+'"'+st+' t="inlineStr"><is><t xml:space="preserve">'+_xmlEsc(c.v)+'</t></is></c>';
+    }).join('');
+    return '<row r="'+r+'">'+out+'</row>';
+  }).join('');
+  const cols=(sheet.cols||[]).map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('');
+  const fz=sheet.freeze
+    ? '<pane ySplit="'+sheet.freeze+'" topLeftCell="A'+(sheet.freeze+1)+'" activePane="bottomLeft" state="frozen"/>'
+      +'<selection pane="bottomLeft" activeCell="A'+(sheet.freeze+1)+'" sqref="A'+(sheet.freeze+1)+'"/>'
+    : '';
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+
+    '<sheetViews><sheetView workbookViewId="0">'+fz+'</sheetView></sheetViews>'+
+    (cols?'<cols>'+cols+'</cols>':'')+
+    '<sheetData>'+rows+'</sheetData>'+
+    (sheet.filter?'<autoFilter ref="'+sheet.filter+'"/>':'')+
+    '</worksheet>';
+}
+/* Same rule the compliance workbook learned the hard way: a sheet name over 31 chars or carrying
+   one of `: \ / ? * [ ]` is rejected by Excel, and `'Sign-in/Sign-out Log'` 500'd that download
+   for weeks. Sanitised here so a caller cannot reintroduce it. */
+function _xlSheetName(n){return String(n||'Sheet').replace(/[:\\\/?*\[\]]/g,'-').slice(0,31)||'Sheet';}
+async function _xlsxBlob(sheets){
+  const enc=new TextEncoder(),E=(name,str)=>({name:name,data:enc.encode(str)});
+  const names=sheets.map((s)=>_xlSheetName(s.name));
+  const files=[
+    E('[Content_Types].xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+      '<Default Extension="xml" ContentType="application/xml"/>'+
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'+
+      sheets.map((s,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+
+      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+
+      '</Types>'),
+    E('_rels/.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'+
+      '</Relationships>'),
+    E('xl/workbook.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'+
+      '<sheets>'+names.map((n,i)=>'<sheet name="'+_xmlEsc(n)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('')+'</sheets>'+
+      '</workbook>'),
+    E('xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+      sheets.map((s,i)=>'<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>').join('')+
+      '<Relationship Id="rId'+(sheets.length+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'+
+      '</Relationships>'),
+    E('xl/styles.xml',_XL_STYLES),
+  ];
+  sheets.forEach((s,i)=>files.push(E('xl/worksheets/sheet'+(i+1)+'.xml',_xlSheetXml(s))));
+  const zip=await _zipBlob(files);
+  return new Blob([zip],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 }
 /* Standalone import screen (its own "Data Import" admin console tile / nav entry) — also
    gives director (who has import:run but not the Admin tab) a way to import. Reuses

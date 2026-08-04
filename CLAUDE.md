@@ -4,6 +4,114 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Medical consent on the profile + the budget export is a styled workbook — 2026-08-04 (5th)
+
+Two owner items. **SPA-only** (`public/index.html`) — no backend, DTO, schema or migration change.
+`npm run typecheck` clean, `npx vitest run` **950 pass / 60 files** (unchanged — both changes are
+browser-only), `node --check` OK on the SPA body (range **966–9361**, re-derived) and `sw.js`.
+`sw.js` `camp-v88`→**`camp-v89`**. `scripts/budget-csv-harness.js` is **replaced** by
+`scripts/budget-xlsx-harness.js` (87 checks); the accom-export and filter-persist harnesses pass.
+
+### 1 — Medical consent is back on the student profile, for the church that brought them
+Owner: *"medical consent status should be visible to the church they attend when their profile is
+opened up by their church's leader."*
+
+It had been there and **AC-6 removed the whole consents line**, which left `firstAid` as the only
+role that could see it. But the church leader is the person who physically takes a student to a
+doctor, and the one who has to ring a parent first when consent is missing — reading it should not
+require a first-aid login. New **`_medConsentRow(p)`**, rendered on **both** profile screens:
+`_paintPerson` (pre-camp `/registrants`) and `openCamper` (at-camp `/campers`).
+
+- **No new data crosses the wire and no scope widened.** `consentMedical` was already on
+  `RegistrantDto` **and** `CamperDto` — it was being sent and thrown away. Both single-person
+  fetches are gated by `canAccessPerson`, so a church still sees only its own students, and a
+  redacted cross-church search hit still cannot be drilled into.
+- ⚠️ **STUDENTS ONLY** (`isL?'':…`, matching the Medical/Dietary/Parent rows it sits with). The
+  Elvanto field is *"I give medical consent for my child as listed above"* — a parent answering
+  about a minor. A leader consents for themselves, so a red **Not granted** pill against a leader
+  would be a pure false alarm.
+- **Not-granted also prints a one-line instruction**, not just a pill: *"contact the
+  parent/guardian before any treatment."* A leader who has never hit this state should not have to
+  infer what the absence means.
+- **`_MED_CONSENT_CLAUSE` is now ONE const**, shared with the first-aid Student Info card, which
+  had the wording inline. Two screens answering "what was actually consented to" with two
+  paraphrases is how they end up disagreeing. Shown on both states, granted and not: the same text
+  is what has *not* been agreed to when consent is missing.
+- **Media and supervision consent stay off the profile.** Those are paperwork questions for the
+  office; medical consent is the only one a leader acts on at camp.
+
+### 2 — 🟠 THE BUDGET EXPORT IS A STYLED THREE-SHEET WORKBOOK, AND SHEETJS COULD NOT HAVE DONE IT
+Owner: *"the budget export should be an excel sheet so that excel formatting/styles can be used to
+make it more clear what is the 'total' and what is the 'lower level detail' — currently it is hard
+to read when there is several rows labelled for each church."*
+
+> ⚠️ **THE VENDORED SHEETJS ACCEPTS `cell.s` AND SILENTLY DISCARDS IT.** `xlsx.full.min.js` is the
+> **Community** build and cell styling is a Pro feature, so `{font:{bold:true},fill:{…}}` is taken,
+> ignored, and written as an ordinary cell — the file still opens, and the formatting is simply
+> gone. **Measured, not assumed:** a probe workbook with a bold red-filled `A1` came back with
+> `<fonts count="1">` and `<fills count="2">`, i.e. the defaults and nothing else. It *does* write
+> `!cols`, `!merges` and number formats (`z`), which is why the accommodation export is fine on it
+> — bold and fills are the two things this request is entirely about. **Do not "simplify" the
+> writer below back onto `XLSX.write`.**
+
+So the workbook is written by hand — which is far less work than it sounds, because **`_zipBlob`
+already existed** (hand-rolled for the registration-list `.zip`, verified by extracting a real
+archive with Windows' own Expand-Archive). An xlsx is a zip of six small XML parts. New:
+`_xmlEsc` / `_xlCol` / `XS` / `_XL_STYLES` / `_xc` / `_xn` / `_xlSheetXml` / `_xlSheetName` /
+`_xlsxBlob`.
+
+- ⚠️ **TWO THINGS CORRUPT THE FILE WITH NO USABLE ERROR** (Excel says "we found a problem with some
+  content" and names nothing). Both are asserted by the harness: **`fills[0]` must be `none` and
+  `fills[1]` must be `gray125`** — Excel reserves those slots, so inserting a colour at the front
+  shifts every fill in the book — and **the children of `<worksheet>` have a schema-fixed order**
+  (`sheetViews` → `cols` → `sheetData` → `autoFilter`). Emitting the filter before the data
+  validates as nothing.
+- **Strings are written INLINE** (`t="inlineStr"`), not through a shared-string table: one fewer
+  part and one fewer index to keep consistent, for a few hundred rows.
+- ⚠️ **A styled BLANK cell is still emitted** (`<c r="C5" s="8"/>`). Skip it and the fill stops
+  halfway across a total row — which is the exact visual cue this change exists to add.
+- **Three sheets: Summary · By ministry · Sponsorship.** Summary carries the two figures a director
+  quotes plus the reconciliation (`sponsor total + grand total = the value of every place`, the
+  invariant `budget.sponsor.test.ts` already asserts). **The Sponsorship sheet is omitted entirely
+  when there is nothing to ask for** — an empty sheet with that name sends the reader looking for a
+  number that does not exist.
+- **The hierarchy IS the answer to the complaint.** The repeated church name is still on every row,
+  because the sheet has to stay filterable and pivotable — but it recedes to **muted grey**, a
+  church total is **bold on lavender with a rule above it**, and the camp total is **white on
+  indigo**. ⚠️ **Do not "tidy" the repetition away by blanking the church cell**; that breaks the
+  filter, and the muting already answers what was actually reported.
+
+**Every hard-won property of the CSV carried over, and the harness pins each one:** `Row type` is
+still a real column (summing every row still double-counts, and that trap must stay visible —
+filter to `Detail` and the maths is trustworthy); Accommodation/Payment type are still derived from
+the class KEY, never parsed out of the display label; `Unit price` is still **blank, never 0**, on a
+mixed-value row. **Sponsorship is now separated STRUCTURALLY rather than by convention** — its own
+sheet, so nothing on the received sheet can sum in money that has not arrived.
+The **BOM rule is the one thing that does not carry over, and only because it cannot apply**: xlsx
+stores text as UTF-8 XML, so the em dash that started the whole "weird symbols" thread is simply
+correct. (⚠️ The rule still binds every *CSV* in this file.)
+
+- **It REPLACES the CSV; there is now one budget export.** Two exports of the same figures drift,
+  and "opens anywhere" is not an advantage over a workbook Excel, Numbers, Sheets and LibreOffice
+  all open natively. `exportBudget` is now **async** and disables its button while building.
+- **`scripts/budget-xlsx-harness.js` — 87 checks** over the real extracted functions: the package
+  structure (every declared sheet has both a relationship *and* a content-type override, or Excel
+  repairs the file by dropping it), both corruption rules, the style of every row kind, the
+  detail-rows-sum-to-total trap, the full class-key mapping, the owner's $150/$190 sponsor
+  differential with **$170 appearing nowhere**, and a read-back through the **vendored SheetJS** —
+  a completely separate implementation of the read side, so the package is not merely well-formed
+  XML but a real xlsx. ⚠️ Its extractor had to be rewritten to skip strings, comments and regex
+  literals: the writers contain `;` inside a string (`&quot;`), an IIFE whose closing brace is not
+  the end of its statement (`const _CRC_T=…`), and a regex holding a quote character.
+- ✅ **VERIFIED IN REAL EXCEL, not just in the harness** (`BUDGET_XLSX_OUT=… node
+  scripts/budget-xlsx-harness.js`, then opened over COM). It opened with **no repair prompt** and
+  read back: header **bold on `#1E1B4B`**, detail row not bold on white with `$#,##0.00`, church
+  total **bold on `#EDE9FE`**, camp total **bold on `#4F46E5`**, `FreezePanes=True SplitRow=1`,
+  `AutoFilterMode=True`, and the em dash intact in the title.
+- **`computeBudget`/`budgetToCsv` in `src/services/budget.ts` remain DEAD CODE** — nothing routes
+  to them, the live budget is entirely the SPA mirror. Left alone (they are the canonical, tested
+  algorithm), but do not assume the server CSV is what anyone downloads: **it never was**.
+
 ## Owner batch — invoice review sensitivity, the By-ministry table, a label — 2026-08-04 (4th)
 
 Four owner items. Backend + SPA + one **prod data repair** (no schema or migration change).
@@ -425,9 +533,14 @@ People · Unit price · Line total**.
 - ⚠️ **`Unit price` stays BLANK, never 0, on a mixed-value row** — a 0 reads as "free" while the
   line total says otherwise. Unchanged rule, same as `budgetToCsv` in `budget.ts`.
 - Also now CRLF line endings and a dated filename via `_exportName`, matching every other export.
-- **`scripts/budget-csv-harness.js`** — 30 checks over the real extracted `exportBudget`,
+- ~~**`scripts/budget-csv-harness.js`** — 30 checks over the real extracted `exportBudget`,
   including the BOM as raw `EF BB BF` bytes, "no em dash anywhere in the payload", a church name
-  containing a comma, and the full class-key mapping table.
+  containing a comma, and the full class-key mapping table.~~
+  **SUPERSEDED 2026-08-04 (5th) — the budget export is now a styled .xlsx** and this file is
+  deleted; `scripts/budget-xlsx-harness.js` replaces it and carries every assertion above that
+  still applies. **The BOM checks are gone because the BOM is gone**: an xlsx is UTF-8 XML, so
+  there is nothing to mis-decode. ⚠️ **The BOM rule still binds every other CSV in this file** —
+  see the section at the top.
 
 
 ## Accommodation export + roster filters persist across logins — 2026-08-03 (2nd)
