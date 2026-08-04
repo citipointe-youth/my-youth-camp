@@ -497,6 +497,21 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-08-04 (2nd) — sponsorship, the code differential, "camper" → "student"
+
+| Symptom | Go to |
+|---|---|
+| **"The sponsor total for this code looks wrong / too round"** | Check whether the code spans more than one ticket price. `SponsorCodeRow.bands` splits a code by distinct ask (`$190 × 2`, `$150 × 3`); a single blended number means somebody reintroduced an average. There is a test asserting **$170 — the average of a $150/$190 code — appears nowhere**. |
+| **🔴 "The sponsorship total and the budget total don't add up"** | They are designed to: **sponsor total + grand total = the value of every place**, because the ask is defined as `ticket value − what personValue counts as received`. If they stop reconciling, someone has recomputed the ask from `discountAmount` (or from `registrationCost` directly). `budget.sponsor.test.ts` → "RECONCILES". |
+| **A code shows $0 sponsorship although people used it** | Three legitimate causes, in likelihood order: (1) it is tagged **Paid in person** — excluded on purpose, that money arrived; (2) it is untagged, so it is a plain full-price ticket; (3) every holder has an `amountPaid` covering their ticket. Check the tag dropdown in the Discount codes card first. |
+| **The sponsorship total is lower than the camp knows it needs** | Look for the warnbox: places whose ticket has **no known price from any source** are counted in `count` but excluded from every total. They are never valued at $0 — a $0 ask reads as "already covered". Fix by importing an invoice for that ticket type, or set the scalar fallback in Camp settings → Ticket prices. |
+| **The Sponsorship card is missing entirely** | It renders only when `spon.count > 0` — i.e. at least one person is on a code tagged `sponsor` or `discount`. No tagged codes = nothing to ask for = no card. |
+| **The By code / By ministry toggle keeps resetting** | It should not: `_sponsorView` is module-level precisely so it survives `_budRedraw()` (which fires on every tag save). If it resets, someone moved the state into the DOM. |
+| **Summing the budget CSV now over-counts by the sponsorship** | Filter to `Row type = Detail`, as before. Sponsorship rows (`Sponsor band` / `Sponsor unpriced` / `Sponsor by ministry` / `Sponsor total`) are money that has **not** arrived and are deliberately outside `Detail`. A harness check asserts no sponsor row is ever typed `Detail`. |
+| Verify the sponsorship maths | `npx vitest run src/services/budget.sponsor.test.ts` (17 tests) — the canonical algorithm. `node scripts/budget-csv-harness.js` section 5 runs the REAL SPA mirror and proves the differential survives into the CSV. |
+| **🟠 A budget/roster screen went empty after a "camper → student" rename** | Someone rewrote a **data** value, not a label. `BudgetPerson.kind` is `'camper' \| 'leader'` and `RegistrantDto.kind` maps to `'camper'`; `r.kind === 'camper'` is matched on in several places in the SPA. The 2026-08-04 pass changed display strings ONLY. Search for `kind==='camper'` before assuming a rename is safe. |
+| **An export still says "Camper"** | The budget CSV's audience column is `Student` in BOTH `budgetToCsv` (server) and `exportBudget` (SPA) — they had drifted to different labels before this. A harness check asserts the word appears nowhere in the export. |
+
 ### 2026-08-04 — saved-view rework (wrong premise) + budget CSV
 
 > ⚠️ **DEPLOYMENT MODEL, because two of the rows below only make sense with it and it is not

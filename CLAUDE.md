@@ -4,6 +4,102 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Sponsorship: the differential, the ask, and "camper" → "student" — 2026-08-04 (2nd)
+
+Three owner items. Backend (`budget.ts`) + SPA + docs. `npm run typecheck` clean, `npx vitest run`
+**911 pass / 58 files** (was 894/57; **+17**), `node --check` OK on the SPA body (range
+**966–9085**, re-derived) and `sw.js`. All three harnesses pass. `sw.js` `camp-v86`→**`camp-v87`**.
+**No schema or migration change.**
+
+### 1 — 🟠 ONE SPONSOR CODE IS NOT ONE AMOUNT, AND EVERY VIEW OF A CODE SAID IT WAS
+Owner: *"a church may have a discount sponsor code that is used across both tent early bird and
+tent full price ticket prices. In this case the codes applied for early bird would be a lower value
+sponsor than the ones on the regular tickets. This differential should be able to be seen."*
+
+Nothing on the Budget screen could show it. Every existing view of a discount code — the `×N` count
+chip, the `purpose` pill, `avgPercent`, the tag dropdown — **collapses the code to a single
+figure**, and for this question an average is not merely imprecise, it is *unusable*:
+
+> A code covering five $150 early-bird tents and five $190 standard tents averages **$170** — a
+> number that describes nobody and that **no sponsor can be invoiced for**. There are two asks
+> here, not one, and the arithmetic that hides the difference is the arithmetic the owner needs.
+
+New **`computeSponsorSummary`** in `src/services/budget.ts` (+ SPA mirror
+`computeSponsorSummaryClient`). Its `SponsorCodeRow.bands` keeps each distinct amount separate:
+**more than one band IS the differential**, and each band names the ticket type(s) behind it, so a
+row reads `$190 each · Tent Accomodation · × 2 · $380` rather than a blended figure.
+
+> ⚠️ **THE ASK IS DEFINED AS THE GAP THE BUDGET ALREADY IMPLIES, not a second opinion:**
+>
+> ```
+> sponsor amount = the place's ticket value − what personValue counts as received
+> ```
+>
+> That is load-bearing. `personValue` is what makes the grand total read as MONEY RECEIVED (see its
+> doc comment), so this figure is exactly what must arrive from elsewhere for the camp to be whole —
+> **sponsor total + grand total = the value of every place**, and there is a test asserting it.
+> Recompute the ask from `discountAmount` instead and the two stop reconciling, which is how a
+> director ends up with three different answers to "what do we still need?".
+
+- **`sponsor` and `discount` tags are both in scope** (the owner's own phrase is "discount sponsor
+  code") but are reported under their own tag and **totalled separately** — `fullTotal` vs
+  `partialTotal`. A full place and a half place are not the same ask.
+- ⚠️ **`inperson` is deliberately EXCLUDED.** That money *was* received; it was just taken by hand
+  at the desk instead of by invoice. Counting it would invent a shortfall. There is a test.
+- ⚠️ **An unpriceable place is COUNTED AND FLAGGED, never totalled as $0.** A $0 ask reads as
+  "already covered", which is the opposite of "we don't know". `unpricedCount` drives a warnbox
+  saying the total under-reads.
+- **Ticket value uses the same cascade as the in-person branch of `personValue`** — their own
+  `registrationCost` → the learned price for their ticket TYPE (`ticket-prices.ts`) → the admin's
+  scalar setting. "What is this place worth" is the identical question in both places, and it is
+  what makes the early-bird/full-price split fall out for free. The price table is built from the
+  FULL set before scoping, same as `computeBudget`, so a filtered view still prices what the whole
+  camp knows.
+- **`src/services/budget.sponsor.test.ts` — 17 tests**, including the owner's exact 3×$150 +
+  2×$190 case, an explicit assertion that **$170 appears nowhere**, the reconciliation invariant,
+  and that the per-code and per-church breakdowns are two views of one figure.
+
+### 2 — The Sponsorship card, and where its total lives
+A new **"Sponsorship needed"** card on the Budget screen (right column, above Discount codes),
+answering the owner's *"a toggle button which reveals for each code, church and the total for the
+camp of required sponsor money"*.
+
+- **The camp total sits in the card HEADER, readable while collapsed.** It is the figure a director
+  carries into a conversation; putting it behind a disclosure repeats the 2026-08-02 mistake where
+  a correct-but-hidden warning cost real money. The card only renders when there is something to
+  ask for.
+- **Per-code and per-church are one `.seg` toggle apart, not side by side** — they are the same
+  money asked twice, and showing both at once doubles the page for no new information. Tapping a
+  row opens its bands (per code) or its codes (per church).
+- **`_sponsorView` is module-level, not read from the DOM**, so the choice survives `_budRedraw()`.
+  Classifying a code redraws the screen, and a director working down the code list would otherwise
+  be flipped back to the other view on every save — the same class of annoyance `_budRedraw` was
+  written to fix.
+- **CSV**: new `Sponsor band` / `Sponsor unpriced` / `Sponsor by ministry` / `Sponsor total` row
+  types. ⚠️ **None of them is `Detail`, and that is deliberate** — sponsorship is money that has
+  NOT arrived, so typing it as `Detail` would sum it into the received column and re-create exactly
+  the double-count the `Row type` column was added to prevent. A harness check asserts both halves.
+  A `Sponsor band` row is one asking PRICE, not one person, which is how the differential reaches
+  the spreadsheet.
+
+### 3 — "Camper" is gone from the interface; `kind: 'camper'` stays in the domain
+Owner: *"update wherever in the app 'camper' is labelled for students in the app as a 'student'
+label"*. The 2026-07-28 copy pass caught the detail-screen header and called it "the only
+user-facing use of that word" — it was not. Eighteen strings remained, mostly on Budget and Search.
+
+> ⚠️ **THE DOMAIN VALUE IS UNTOUCHED.** `BudgetPerson.kind` is `'camper' | 'leader'`,
+> `RegistrantDto.kind` maps to `'camper'`, and `r.kind === 'camper'` appears throughout the SPA.
+> **Those are data, not labels** — rewriting them silently changes what the code matches on and
+> would empty the budget's student rows. Only display strings changed.
+
+Changed: the Budget screen (`N students · N leaders`, the `Students` detail line, the church
+sub-line, the home nav card), the student search screen (heading, placeholder, both tooltips, the
+`paint()` subtitle), the accommodation 75% tooltip, the notice-title lock-screen warning, the
+reset confirmation, the wizard's At Camp Info summary, and the backend's `Camper not found` error
+(8 call sites across `note.service` / `search.service`). **The budget CSV's audience column is now
+`Student`** — in `budgetToCsv` *and* the SPA export, which had drifted to different labels anyway.
+A harness check asserts the word "Camper" appears nowhere in the export.
+
 ## Saved-view rework (wrong premise) + budget CSV rebuilt — 2026-08-04
 
 Two owner corrections to the 2026-08-03 work. SPA-only. `npm run typecheck` clean, `npx vitest

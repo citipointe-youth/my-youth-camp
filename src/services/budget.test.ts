@@ -393,7 +393,10 @@ describe('budgetToCsv', () => {
     ];
     const r = computeBudget(people);
     const csv = budgetToCsv(r);
-    const line = csv.split('\n').find((l) => l.includes('Victory,Camper,Tent,'))!;
+    /* "Student", not "Camper" (2026-08-04): the app says student everywhere on screen, and an
+       export column that disagrees with the screen is a small tax on every reader. `kind` in the
+       DOMAIN is still 'camper' — this is the display label only. */
+    const line = csv.split('\n').find((l) => l.includes('Victory,Student,Tent,'))!;
     expect(line).toBeDefined();
     // Church,Audience,Category,Count,UnitPrice,LineTotal — UnitPrice cell must be blank
     const cells = line.split(',');

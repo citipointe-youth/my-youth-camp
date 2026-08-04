@@ -2659,10 +2659,10 @@ RENDER.home=async function renderHome(skipModeSync){
       <div class="s"><b>${_acc('leader','classroom')}</b><span>Leader (Classroom)</span></div>
     </div>`;
   }
-  if(isWide)body+=`<div class="card tap" onclick="go('budget')"><div class="rowsb"><div><div style="font-weight:600">Budget &amp; costings</div><div class="sub">Camper fees by accommodation</div></div><span class="pill info">View ›</span></div></div>`;
+  if(isWide)body+=`<div class="card tap" onclick="go('budget')"><div class="rowsb"><div><div style="font-weight:600">Budget &amp; costings</div><div class="sub">Student fees by accommodation</div></div><span class="pill info">View ›</span></div></div>`;
   if(isWide)body+=`<div class="card tap" onclick="go('accom')"><div class="rowsb"><div><div style="font-weight:600">Accommodation allocations</div><div class="sub">Spaces &amp; per-church spot allocation</div></div><span class="pill info">View ›</span></div></div>`;
   body+=`<div class="card"><div class="rowsb"><div class="lbl" style="margin:0">${isWide?'Camp registrations':'Your registrations'}</div><b>${h.totalRegistrants||0}</b></div>
-    <div class="rowsb" style="margin-top:6px"><span class="sub" style="font-size:var(--t-xs)">${h.totalCampers||0} campers · ${h.totalLeaders||0} leaders</span></div></div>`;
+    <div class="rowsb" style="margin-top:6px"><span class="sub" style="font-size:var(--t-xs)">${h.totalCampers||0} students · ${h.totalLeaders||0} leaders</span></div></div>`;
   // `regs` (/registrants) loaded in parallel above — used by both the wide by-ministry table and the church accommodation summary.
   if(isWide){
     // By-ministry M/F split — aggregate from /registrants (the /home + /breakdown DTOs carry no gender split)
@@ -3058,7 +3058,7 @@ function buildPeopleSnap(regs){
   const al=accLabelOf(tent,cls);const wwc=leaders.filter(l=>!l.blueCardCollected).length;
   const cols=grades.map(x=>`<div class="gcol${x.n?'':' empty'}"><div class="gbar-col" style="height:${x.n?Math.round(x.n/maxG*64)+4:4}px"></div><span class="n">${x.n||''}</span><span class="g">${x.gr}</span></div>`).join('');
   return `<div class="card snap">
-    <div class="rowsb"><div><div class="lbl" style="margin:0">Campers</div><div class="bignum">${campers.length}</div></div>
+    <div class="rowsb"><div><div class="lbl" style="margin:0">Students</div><div class="bignum">${campers.length}</div></div>
     ${al.primary!=='none'?`<span class="accbadge ${al.primary}">${ACC_LABEL[al.primary]||al.primary}</span>`:''}
     </div>
     <div class="lbl" style="margin-top:12px">Student split</div>
@@ -3883,7 +3883,7 @@ RENDER.search=function(){
 };
 // Camp-wide contact lookup (masked leader phone reveal) rendered into `screenId`.
 function _renderOtherChurches(screenId){
-  paint(screenId,`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find any camper — all churches</span>${helpTip('Search any camper across every church by name. Tap a result to reveal masked contact details.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a camper's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any camper across all churches.</p></div>`,'Student Search','Find any camper');
+  paint(screenId,`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find any student — all churches</span>${helpTip('Search any student across every church by name. Tap a result to reveal masked contact details.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a student's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any student across all churches.</p></div>`,'Student Search','Find any student');
 }
 let STUDENTS_SUB='mygroup';
 RENDER.students=async function(){
@@ -3893,14 +3893,14 @@ RENDER.students=async function(){
       <button class="${STUDENTS_SUB==='others'?'on':''}" onclick="switchStudentsTab('others')">All churches</button>
     </div><div id="studentsBody"></div>`;
   // Paint the shell first so the seg is stable, then fill the body for the active sub-tab.
-  paint('students',seg,'Student Search',STUDENTS_SUB==='mygroup'?'Your group':'Find any camper');
+  paint('students',seg,'Student Search',STUDENTS_SUB==='mygroup'?'Your group':'Find any student');
   await _renderStudentsBody();
 };
 async function _renderStudentsBody(){
   const host=document.getElementById('studentsBody');
   if(!host)return;
   if(STUDENTS_SUB==='others'){
-    host.innerHTML=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find any camper — all churches</span>${helpTip('Search any camper across every church by name to reach their church leaders. Medical &amp; dietary details for other churches are hidden.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a camper's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any camper across all churches and reveal their leaders' contacts.</p></div>`;
+    host.innerHTML=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Find any student — all churches</span>${helpTip('Search any student across every church by name to reach their church leaders. Medical &amp; dietary details for other churches are hidden.')}</div><div class="search"><span>${ic('search')}</span><input id="q" placeholder="Type a student's name…" oninput="doSearch(this.value)"></div><div id="results"><p class="note-hint">Type a name to find any student across all churches and reveal their leaders' contacts.</p></div>`;
     return;
   }
   // My group: fetch + render the roster into #studentsBody.
@@ -4346,6 +4346,105 @@ function computeBudgetClient(regs,filterId){
   return {grandTotal:churches.reduce((s,c)=>s+c.total,0),camperCount:churches.reduce((s,c)=>s+c.camperCount,0),
     leaderCount:churches.reduce((s,c)=>s+c.leaderCount,0),churchCount:churches.length,churches,fullAmount:full};
 }
+/* ── SPONSORSHIP (2026-08-04) ──────────────────────────────────────────────────────────────────
+   Mirrors computeSponsorSummary / sponsorAmountFor in src/services/budget.ts, which carries the
+   full rationale and the unit tests. Change both together.
+
+   Owner: *"a church may have a discount sponsor code that is used across both tent early bird and
+   tent full price ticket prices … the codes applied for early bird would be a lower value sponsor
+   than the ones on the regular tickets. This differential should be able to be seen."*
+
+   ⚠️ ONE CODE IS NOT ONE AMOUNT, and an AVERAGE is the wrong summary. A code covering five $150
+   early-bird tents and five $190 standard tents averages $170 — a number describing nobody, that
+   no sponsor can be asked for. `bands` keeps them apart; MORE THAN ONE BAND IS THE DIFFERENTIAL.
+
+   ⚠️ The ask is defined as the gap the budget ALREADY implies:
+       sponsor amount = the place's ticket value − what `_personValue` counts as received
+   so sponsor total + grand total = the value of every place. Deriving it from `discountAmount`
+   instead would stop the two reconciling. `inperson` is excluded — that money arrived. */
+function _sponsorAmountFor(p,cls,prices,ticketPrice){
+  const kind=p.accommodationKind;
+  const fb=kind==='tent'?prices.tent:kind==='classroom'?prices.classroom:null;
+  const ticketValue=ticketPrice!=null?ticketPrice:fb;
+  if(ticketValue==null)return {ticketValue:null,amount:0};
+  const received=_personValue(p,cls,prices,ticketPrice);
+  // Never negative: someone who over-paid against their own ticket is not owed a sponsor.
+  return {ticketValue,amount:Math.max(0,ticketValue-(received==null?0:received))};
+}
+const _SPONSOR_TAGS=['sponsor','discount'];
+/** How each tag reads on screen. A full place and a half place are not the same ask. */
+const _SPONSOR_TAG_LABEL={sponsor:'Full sponsorship',discount:'Part sponsored'};
+function _sponsorBands(entries){
+  const by=new Map();
+  entries.forEach(e=>{
+    if(e.ticketValue==null)return;
+    const key=Math.round(e.amount*100);   // cents, so 150 and 150.00 are one band
+    let b=by.get(key);
+    if(!b){b={amount:e.amount,ticketValue:e.ticketValue,count:0,types:new Set()};by.set(key,b);}
+    b.count++;
+    if(e.ticketType)b.types.add(e.ticketType);
+  });
+  return [...by.values()].map(b=>({amount:b.amount,ticketValue:b.ticketValue,count:b.count,
+    total:b.amount*b.count,ticketTypes:[...b.types].sort((a,c)=>a.localeCompare(c))}))
+    .sort((a,b)=>b.amount-a.amount);
+}
+function computeSponsorSummaryClient(regs,filterId){
+  const tags=_budTags(),prices=_budPrices();
+  const num=v=>v==null?null:Number(v);
+  // Learned from the FULL set, same as computeBudgetClient — a type priced only at another
+  // church must still price this church's holders of it.
+  const ptable=_budTicketPrices(regs);
+  const people=(regs||[]).filter(r=>r.status!=='cancelled')
+    .filter(r=>!filterId||filterId==='all'||r.churchId===filterId);
+  const byCode=new Map();
+  people.forEach(r=>{
+    const code=(r.discountCode||'').trim();
+    if(!code)return;
+    const tag=tags[code];
+    if(!tag||_SPONSOR_TAGS.indexOf(tag)<0)return;
+    const p={churchId:r.churchId,churchName:r.churchName,
+      registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
+      accommodationKind:r.accommodationKind||null,discountCode:code,
+      registrationType:r.registrationType||null};
+    const cls=_classifyTicket(p,tags);
+    const v=_sponsorAmountFor(p,cls,prices,_resolveTicketPrice(p,ptable));
+    let bucket=byCode.get(code);
+    if(!bucket){bucket={tag,entries:[]};byCode.set(code,bucket);}
+    bucket.entries.push({churchId:r.churchId,churchName:r.churchName,amount:v.amount,
+      ticketValue:v.ticketValue,ticketType:(r.registrationType||'').trim()});
+  });
+  const churchAgg=new Map();
+  const codes=[];
+  let fullTotal=0,partialTotal=0,count=0,unpricedCount=0;
+  byCode.forEach((bucket,code)=>{
+    const bands=_sponsorBands(bucket.entries);
+    const total=bands.reduce((s,b)=>s+b.total,0);
+    const unpriced=bucket.entries.filter(e=>e.ticketValue==null).length;
+    count+=bucket.entries.length;unpricedCount+=unpriced;
+    if(bucket.tag==='sponsor')fullTotal+=total;else partialTotal+=total;
+    const perChurch=new Map();
+    bucket.entries.forEach(e=>{
+      const add=e.ticketValue==null?0:e.amount;
+      let row=perChurch.get(e.churchId);
+      if(!row){row={id:e.churchId,name:e.churchName,count:0,total:0};perChurch.set(e.churchId,row);}
+      row.count++;row.total+=add;
+      let ch=churchAgg.get(e.churchId);
+      if(!ch){ch={name:e.churchName,count:0,total:0,codes:new Map()};churchAgg.set(e.churchId,ch);}
+      ch.count++;ch.total+=add;
+      let cc=ch.codes.get(code);
+      if(!cc){cc={tag:bucket.tag,count:0,total:0};ch.codes.set(code,cc);}
+      cc.count++;cc.total+=add;
+    });
+    codes.push({code,tag:bucket.tag,count:bucket.entries.length,total,bands,unpricedCount:unpriced,
+      churches:[...perChurch.values()].sort(_sponsorByTotal)});
+  });
+  codes.sort((a,b)=>b.total-a.total||a.code.localeCompare(b.code));
+  const churches=[...churchAgg.entries()].map(([id,c])=>({id,name:c.name,count:c.count,total:c.total,
+    codes:[...c.codes.entries()].map(([code,v])=>({code,tag:v.tag,count:v.count,total:v.total}))
+      .sort((a,b)=>b.total-a.total||a.code.localeCompare(b.code))})).sort(_sponsorByTotal);
+  return {total:fullTotal+partialTotal,fullTotal,partialTotal,count,unpricedCount,codes,churches};
+}
+function _sponsorByTotal(a,b){return b.total-a.total||a.name.localeCompare(b.name);}
 /* Mirrors FULL_DISCOUNT_PERCENT in src/services/budget.ts — the point at which a discount covers
    the whole ticket. Used by BOTH the purpose label and the tag-conflict check below, which must
    agree with each other. */
@@ -4485,7 +4584,7 @@ function drawBudget(){
   const prices=_budPrices();
   const head=`<div class="hero" style="margin-bottom:14px"><div class="k">Total registration fees received</div>
     <div class="big" style="font-size:var(--t-xl);margin-top:6px">${_money(rep.grandTotal)}</div>
-    <div class="cd" style="margin-top:8px"><div class="meta">${rep.camperCount} campers · ${rep.leaderCount} leaders · ${rep.churchCount} ${rep.churchCount===1?'church':'churches'}</div></div></div>`;
+    <div class="cd" style="margin-top:8px"><div class="meta">${rep.camperCount} students · ${rep.leaderCount} leaders · ${rep.churchCount} ${rep.churchCount===1?'church':'churches'}</div></div></div>`;
   /* Item 1/2 (2026-08-01) — fixed 3-track row (label | qty | amount), no wrapping, and the
      old "N × —" placeholder for a mixed-value row is replaced by a real breakdown sub-line
      (item 2). `valueBreakdown` (mirrors budget.ts) always sums to `count`, so when there's
@@ -4515,7 +4614,7 @@ function drawBudget(){
     const open=split||mixed||!!r.codeHint;
     const det=[];
     if(split){
-      det.push(detLine('Campers',r.camper.count,r.camper.lineTotal));
+      det.push(detLine('Students',r.camper.count,r.camper.lineTotal));
       det.push(detLine('Leaders',r.leader.count,r.leader.lineTotal));
     }
     if(mixed){
@@ -4539,7 +4638,7 @@ function drawBudget(){
       <div class="rowsb budchurch-hd" ${single?'':`onclick="_budToggle('${esc(c.churchId)}')"`} style="cursor:${single?'default':'pointer'}">
         <div style="display:flex;align-items:center;gap:8px;min-width:0">${single?'':`<span class="budchev">${icSm('chevron')}</span>`}
           <div style="min-width:0"><div style="font-weight:700;overflow:hidden;text-overflow:ellipsis">${esc(c.churchName)}</div>
-          <div class="sub">${c.camperCount} ${c.camperCount===1?'camper':'campers'}${c.leaderCount?` · ${c.leaderCount} ${c.leaderCount===1?'leader':'leaders'}`:''}</div></div></div>
+          <div class="sub">${c.camperCount} ${c.camperCount===1?'student':'students'}${c.leaderCount?` · ${c.leaderCount} ${c.leaderCount===1?'leader':'leaders'}`:''}</div></div></div>
         <b style="font-size:var(--t-h3)">${_money(c.total)}</b></div>
       <div class="budchurch-body">
         ${(c.categories||[]).map(catRow).join('')}
@@ -4585,6 +4684,65 @@ function drawBudget(){
     <div class="budchurch-body">
       <p class="sub" style="padding:2px 0 8px">Classify each code so its tickets land in the right budget category. Tent/classroom comes from the student's ticket type.</p>
       ${discBody}</div></div>`;
+  /* ── Sponsorship (2026-08-04, owner request) ─────────────────────────────────────────────────
+     "A toggle button which reveals for each code, church and the total for the camp of required
+     sponsor money." The camp total sits in the card HEADER so it is readable without opening
+     anything — it is the figure a director carries into a conversation — and the two breakdowns
+     are one toggle apart, because per-code and per-church are the same money asked twice and
+     showing both at once doubles the page for no new information.
+
+     ⚠️ THE PER-CODE ROWS SHOW BANDS, NOT AN AVERAGE. That is the entire point (see
+     computeSponsorSummaryClient): a code spanning early-bird and full-price tickets is two
+     different asks, and averaging them produces a number no sponsor can be invoiced for. */
+  const spon=computeSponsorSummaryClient(window._budgetRegs,scope);
+  const sponTagPill=t=>`<span class="gradepill">${esc(_SPONSOR_TAG_LABEL[t]||t)}</span>`;
+  const sponBandLine=(b)=>`<div class="buddet"><span class="buddet-k">${_money(b.amount)} each${
+      b.ticketTypes.length?` <span class="sub">${esc(b.ticketTypes.join(' · '))}</span>`:''}</span>
+    <span class="buddet-n">× ${b.count}</span><b class="buddet-v">${_money(b.total)}</b></div>`;
+  const sponCodeRow=(r)=>{
+    const det=[];
+    // More than one band IS the differential — call it out in words, not just by row count.
+    if(r.bands.length>1)det.push(`<div class="buddet-note">${r.bands.length} different ticket prices on this code — each band is a separate ask.</div>`);
+    r.bands.forEach(b=>det.push(sponBandLine(b)));
+    if(r.churches.length>1||r.bands.length){
+      det.push('<div class="buddet-hd">By ministry</div>');
+      r.churches.forEach(c=>det.push(`<div class="buddet"><span class="buddet-k">${esc(c.name)}</span>
+        <span class="buddet-n">${c.count} ${c.count===1?'place':'places'}</span><b class="buddet-v">${_money(c.total)}</b></div>`));
+    }
+    if(r.unpricedCount)det.push(`<div class="buddet-note">${r.unpricedCount} on a ticket with no known price — not included above.</div>`);
+    return `<div class="budrow tap" onclick="this.classList.toggle('open')">
+      <span class="budrow-chev">${icSm('chevron')}</span>
+      <div class="budrow-label">${esc(r.code)} ${sponTagPill(r.tag)}</div>
+      <div class="budrow-qty">${r.count} ${r.count===1?'place':'places'}${r.bands.length>1?` · ${r.bands.length} prices`:''}</div>
+      <b class="budrow-amt">${_money(r.total)}</b>
+      <div class="budrow-det">${det.join('')}</div></div>`;
+  };
+  const sponChurchRow=(c)=>`<div class="budrow tap" onclick="this.classList.toggle('open')">
+    <span class="budrow-chev">${icSm('chevron')}</span>
+    <div class="budrow-label">${esc(c.name)}</div>
+    <div class="budrow-qty">${c.count} ${c.count===1?'place':'places'}</div>
+    <b class="budrow-amt">${_money(c.total)}</b>
+    <div class="budrow-det">${c.codes.map(x=>`<div class="buddet"><span class="buddet-k">${esc(x.code)} ${sponTagPill(x.tag)}</span>
+      <span class="buddet-n">× ${x.count}</span><b class="buddet-v">${_money(x.total)}</b></div>`).join('')}</div></div>`;
+  const sponSection=spon.count?`<div class="card budchurch" data-cid="sponsor" style="margin-top:14px">
+    <div class="rowsb budchurch-hd" onclick="_budToggle('sponsor')" style="cursor:pointer">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="budchev">${icSm('chevron')}</span>
+        <div style="min-width:0"><div style="font-weight:700">Sponsorship needed</div>
+        <div class="sub">${spon.count} ${spon.count===1?'place':'places'} across ${spon.codes.length} code${spon.codes.length===1?'':'s'}</div></div></div>
+      <b style="font-size:var(--t-h3)">${_money(spon.total)}</b></div>
+    <div class="budchurch-body">
+      <p class="sub" style="padding:2px 0 8px">What still has to be raised: each place's ticket value minus what the budget counts as received. ${
+        spon.partialTotal?`${_money(spon.fullTotal)} in full sponsorships, ${_money(spon.partialTotal)} part sponsored.`
+        :'Every one of these is a full sponsorship.'} Codes tagged <b>Paid in person</b> are not counted — that money arrived.</p>
+      ${spon.unpricedCount?`<div class="warnbox" style="margin:0 0 8px">${icSm('alert')} ${spon.unpricedCount} ${spon.unpricedCount===1?'place is':'places are'} on a ticket with no known price, so the total above under-reads.</div>`:''}
+      <div class="seg" style="margin:0 0 8px">
+        <button class="${_sponsorView==='code'?'on':''}" onclick="_setSponsorView('code')">By code</button>
+        <button class="${_sponsorView==='church'?'on':''}" onclick="_setSponsorView('church')">By ministry</button>
+      </div>
+      ${_sponsorView==='church'?spon.churches.map(sponChurchRow).join(''):spon.codes.map(sponCodeRow).join('')}
+      <div class="rowsb" style="padding-top:8px;border-top:1px solid var(--line);margin-top:6px">
+        <span class="lbl" style="margin:0">${scope==='all'?'Whole camp':'This ministry'}</span><b>${_money(spon.total)}</b></div>
+    </div></div>`:'';
   /* ⚠️ THE TICKET PRICES WERE NEVER SET, AND THE WARNING WAS HIDDEN (2026-08-02).
      `_personValue` has valued an in-person code at the base ticket price since 2026-07-29 — the
      logic was right all along. But prod had `tent_price` and `classroom_price` NULL, so every
@@ -4646,8 +4804,13 @@ function drawBudget(){
         <span class="lbl">Outstanding</span><b>${_money(upg.owedTotal)}</b></div>`:''}
     </div></div>`:'';
   const box=document.getElementById('budgetBody');
-  if(box)box.innerHTML=`${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${upgSection}${priceSection}${discSection}</div></div>`;
+  if(box)box.innerHTML=`${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${sponSection}${upgSection}${priceSection}${discSection}</div></div>`;
 }
+/* Which way the Sponsorship card is sliced. Module-level rather than a DOM read, so the choice
+   survives `_budRedraw()` (classifying a code redraws the screen, and a director working down
+   the code list would otherwise be flipped back to the other view on every save). */
+let _sponsorView='code';
+function _setSponsorView(v){if(v===_sponsorView)return;_sponsorView=v;_budRedraw();}
 function _budToggle(cid){const card=document.querySelector(`.budchurch[data-cid="${cid}"]`);if(card)card.classList.toggle('open');}
 /* Redraw the budget WITHOUT re-entering the screen (2026-08-02).
    `drawBudget()` recomputes from `window._budgetRegs`, which a tag change does not invalidate —
@@ -4713,12 +4876,32 @@ function exportBudget(){
     r.count,r.amount==null?'':r.amount,r.lineTotal,
   ].join(',')));
   rep.churches.forEach(c=>{
-    emit(c.churchName,'Camper',c.campers);
+    emit(c.churchName,'Student',c.campers);
     emit(c.churchName,'Leader',c.leaders);
     lines.push([esc2(c.churchName),'Church total','','','','',c.camperCount+c.leaderCount,'',c.total].join(','));
   });
-  lines.push([esc2(scope==='all'?'ALL CHURCHES':'SELECTED'),'Camp total','','','','',
+  const scopeLabel=scope==='all'?'ALL CHURCHES':'SELECTED';
+  lines.push([esc2(scopeLabel),'Camp total','','','','',
     rep.camperCount+rep.leaderCount,'',rep.grandTotal].join(','));
+  /* Sponsorship rows (2026-08-04). Kept BELOW the camp total and out of the `Detail` row type, so
+     the "filter to Detail and the maths is trustworthy" rule still holds — this is money that has
+     NOT arrived, and adding it to the received column would be exactly the double-count the
+     `Row type` column exists to prevent.
+
+     ⚠ A `Sponsor band` row is one asking PRICE, not one person's ticket — that is what carries the
+     early-bird / full-price differential into the spreadsheet. `Unit price` is the per-place ask;
+     summing the band rows for one code gives that code's total. */
+  const spon=computeSponsorSummaryClient(window._budgetRegs,scope);
+  spon.codes.forEach(r=>{
+    const tagLabel=_SPONSOR_TAG_LABEL[r.tag]||r.tag;
+    r.bands.forEach(b=>lines.push([esc2(scopeLabel),'Sponsor band','',esc2(b.ticketTypes.join(' / ')),
+      esc2(tagLabel),esc2(r.code),b.count,b.amount,b.total].join(',')));
+    if(r.unpricedCount)lines.push([esc2(scopeLabel),'Sponsor unpriced','','',esc2(tagLabel),
+      esc2(r.code),r.unpricedCount,'',''].join(','));
+  });
+  spon.churches.forEach(c=>c.codes.forEach(x=>lines.push([esc2(c.name),'Sponsor by ministry','','',
+    esc2(_SPONSOR_TAG_LABEL[x.tag]||x.tag),esc2(x.code),x.count,'',x.total].join(','))));
+  if(spon.count)lines.push([esc2(scopeLabel),'Sponsor total','','','','',spon.count,'',spon.total].join(','));
   // ⚠ This was the ONE export in the file that never appended its anchor to the document
   // before clicking it — a detached-anchor click is unreliable on mobile Chromium, so on an
   // Android phone this button could silently do nothing. Routed through the shared helper
@@ -5079,7 +5262,7 @@ function drawAccom(){
   // A7/PC-12: room cards reflow as wrapping narrow tiles (matches the accommodation-setup
   // tile pattern), 1→N columns by width, instead of a single fixed column.
   const roomGrid=rooms.length?`<div class="accom-rooms">${roomCards}</div>`:roomCards;
-  box.innerHTML=`<h3 class="sec" style="margin-top:2px">Classrooms ${helpTip('Sleeping rooms you set up, each with a capacity. Single-gender, auto-filled to capacity. A church qualifies only when 75%+ of its campers chose classroom.',{left:true})}</h3>${roomGrid}
+  box.innerHTML=`<h3 class="sec" style="margin-top:2px">Classrooms ${helpTip('Sleeping rooms you set up, each with a capacity. Single-gender, auto-filled to capacity. A church qualifies only when 75%+ of its students chose classroom.',{left:true})}</h3>${roomGrid}
     <h3 class="sec">Classrooms (Pending Allocation) ${helpTip('Groups that qualified for a classroom (75%+ of the ministry chose classroom) but haven\'t been placed in a room yet, plus anyone with no accommodation type recorded yet.',{left:true})}</h3>${table}
     <h3 class="sec" style="margin-top:20px">Under 75% — Moved to Tents ${helpTip('Fewer than 75% of this ministry chose classroom, so everyone from it is automatically counted in Tent City below instead of waiting on a room.',{left:true})}</h3>${tentedTable}
     ${tentHtml||'<p class="note-hint" style="margin-top:14px">Tent City auto-distribution appears once registrants have a tent accommodation kind set.</p>'}`;
@@ -5097,7 +5280,7 @@ RENDER.compose=function(){
     ${isDir?`<div id="zoneWrap" style="display:${isZoneEd?'block':'none'}"><label>Zone</label><select id="zoneSel">${ZONES.map(z=>`<option ${ed&&ed.zone===z?'selected':''}>${z}</option>`).join('')}</select></div>`:''}
     <label style="display:flex;align-items:center;gap:6px">Priority ${helpTip('Normal stays inside the app: it appears in the recipient’s Notices list and on their home screen, and nobody is alerted until they next open the app. Urgent does the same, is styled red and shows its full message — and also sends a phone notification to every leader who has turned alerts on for their device. Only the TITLE goes to the phone (it shows on a locked screen, so keep names out of it); the message itself is only visible once they open the app. A phone alert can still take a few minutes and only reaches leaders who opted in, so for something happening in the next few minutes, radio or find the person.')}</label><div class="seg" id="priSeg"><button class="${(!ed||ed.priority!=='urgent')?'on':''}" data-pri="normal" onclick="setPri(this)">${icSm('check')} Normal</button><button class="${ed&&ed.priority==='urgent'?'on':''}" data-pri="urgent" onclick="setPri(this)">${icSm('urgent')} Urgent</button></div>
     <label>Title</label><input class="fld" id="ntitle" value="${ed?esc(ed.title):''}">
-    <p class="note-hint" style="margin:4px 0 0">On an Urgent notice this title is what appears on leaders’ phones, including on a locked screen — keep camper names out of it.</p>
+    <p class="note-hint" style="margin:4px 0 0">On an Urgent notice this title is what appears on leaders’ phones, including on a locked screen — keep student names out of it.</p>
     <label>Message</label><textarea id="nbody">${ed?esc(ed.body):''}</textarea>
     <label>When</label><div class="seg" id="whenSeg"><button class="${when==='now'?'on':''}" data-when="now" onclick="setWhen(this)">Send now</button><button class="${when==='schedule'?'on':''}" data-when="schedule" onclick="setWhen(this)">${icSm('clock')} Schedule</button></div>
     <div id="schedWrap" style="display:${when==='schedule'?'block':'none'}"><label>Deliver at (Brisbane time)</label><input class="fld" type="datetime-local" id="schedAt" value="${schedVal}"></div>
@@ -8001,7 +8184,7 @@ const _CONFIRM_PHRASE='I understand this cannot be undone';
 const _confirmPhraseOk=v=>String(v||'').trim().toLowerCase()===_CONFIRM_PHRASE.toLowerCase();
 function adminReset(){
   modal(`<h3>FULL RESET — wipe to bare</h3>
-    <p class="sub" style="margin:8px 0 14px">This permanently deletes EVERY church, EVERY login account (except this admin), and ALL registrants, campers, notes, incidents, notifications, and the saved setup scaffold (accommodation, FAQ, schedule, devotionals). Only this admin account and the camp settings remain.<br><br>This is NOT the year rollover (that keeps your churches &amp; scaffold). It cannot be undone, and you will be signed out immediately.</p>
+    <p class="sub" style="margin:8px 0 14px">This permanently deletes EVERY church, EVERY login account (except this admin), and ALL registrants, students, notes, incidents, notifications, and the saved setup scaffold (accommodation, FAQ, schedule, devotionals). Only this admin account and the camp settings remain.<br><br>This is NOT the year rollover (that keeps your churches &amp; scaffold). It cannot be undone, and you will be signed out immediately.</p>
     <label>Type: ${esc(_CONFIRM_PHRASE)}</label>
     <input class="fld" id="resetConfirmText" oninput="onResetConfirmChange()" placeholder="${esc(_CONFIRM_PHRASE)}" autocomplete="off" autocapitalize="none">
     <button class="btn red" id="resetConfirmBtn" disabled style="margin-top:10px" onclick="_adminResetConfirmed()">Confirm full reset</button>
@@ -8215,7 +8398,7 @@ const WIZARD_STEPS=[
   {key:'accomAlloc',label:'Accommodation allocation',icon:'home',screen:'accom',summary:'Accommodation allocation — assign churches to rooms, auto-filled to capacity.',check:async()=>{try{const a=await api('/accommodation/allocations');return Object.values(a||{}).some(arr=>Array.isArray(arr)&&arr.some(e=>e&&Number(e.n)>0));}catch(e){return false;}}},
   // Feature 7 (2026-07-17): Schedule/FAQ/Devotionals merged into ONE step routing to the
   // already-merged RENDER.atCampInfo screen; done-check = ANY of the three has content.
-  {key:'atCampInfo',label:'At Camp Info',icon:'clock',screen:'atCampInfo',summary:'At Camp Info — schedule, devotionals and FAQ for families and campers.',check:async()=>{
+  {key:'atCampInfo',label:'At Camp Info',icon:'clock',screen:'atCampInfo',summary:'At Camp Info — schedule, devotionals and FAQ for families and students.',check:async()=>{
     try{
       const days=SETTINGS?.checkInDays||[];
       const [sched,faq,devos]=await Promise.all([

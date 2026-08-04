@@ -398,6 +398,279 @@ export function computeBudget(
   return { grandTotal, camperCount, leaderCount, churchCount: churches.length, churches, fullAmount };
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// SPONSORSHIP — how much money has to be RAISED, and how it differs per ticket.
+//
+// Owner, 2026-08-04: *"a church may have a discount sponsor code that is used across both
+// tent early bird and tent full price ticket prices. In this case the codes applied for
+// early bird would be a lower value sponsor than the ones on the regular tickets. This
+// differential should be able to be seen."*
+//
+// ⚠️ THE WHOLE POINT IS THAT ONE CODE IS NOT ONE AMOUNT. Every existing view of a discount
+// code — the count chip, the `purpose` pill, `avgPercent` — collapses the code to a single
+// figure, and an AVERAGE is precisely the wrong summary here: a code covering five $150
+// early-bird tents and five $190 standard tents averages $170, a number that describes
+// nobody and that no sponsor can be asked for. `SponsorCodeRow.bands` keeps the amounts
+// separate; **more than one band IS the differential.**
+//
+// ⚠️ SPONSOR MONEY IS DEFINED AS THE GAP THE BUDGET ALREADY IMPLIES, not a second opinion:
+//
+//     sponsor amount = the place's ticket value − what `personValue` counts as received
+//
+// That is deliberate. `personValue` is what makes the grand total read as MONEY RECEIVED
+// (see its doc comment), so this figure is exactly what has to arrive from somewhere else
+// for the camp to be whole. Sponsor total + grand total = the value of every place. Compute
+// it any other way — from `discountAmount` alone, say — and the two numbers stop
+// reconciling, which is how a director ends up with three different answers to "what do we
+// still need?".
+//
+// A `sponsor`-tagged code contributes the WHOLE ticket (personValue hard-codes it to $0); a
+// `discount`-tagged code contributes only the part that did not arrive. Both are in scope
+// because the owner's own phrase is "discount sponsor code", but they are reported under
+// their own tag and totalled separately — a full place and a half place are not the same ask.
+//
+// ⚠️ `inperson` IS DELIBERATELY EXCLUDED. That money WAS received; it was just taken by hand
+// at the desk instead of by invoice. Counting it as sponsorship would invent a shortfall.
+// ───────────────────────────────────────────────────────────────────────────────
+
+/** The two tags that mean money did not arrive. `inperson` is not one of them — see above. */
+export type SponsorTag = Extract<DiscountTag, 'sponsor' | 'discount'>;
+
+const SPONSOR_TAGS: readonly DiscountTag[] = ['sponsor', 'discount'];
+
+/** One distinct sponsor amount within a code — the unit a sponsor is actually asked for. */
+export interface SponsorBand {
+  /** What ONE place in this band costs a sponsor. */
+  amount: number;
+  /** The full ticket that place is worth. Equal to `amount` for a full sponsorship. */
+  ticketValue: number;
+  count: number;
+  /** `amount × count`. */
+  total: number;
+  /**
+   * The verbatim Elvanto ticket type(s) behind this band, so the band can be named rather
+   * than merely priced ("EARLY BIRD | Tent Accomodation" vs "Tent Accomodation"). Sorted,
+   * de-duplicated; empty when nobody in the band has a recorded ticket type.
+   */
+  ticketTypes: string[];
+}
+
+export interface SponsorCodeRow {
+  code: string;
+  tag: SponsorTag;
+  count: number;
+  total: number;
+  /** Descending by amount. **LENGTH > 1 IS THE DIFFERENTIAL.** */
+  bands: SponsorBand[];
+  /** People on this code whose ticket has no known price. Counted, never totalled. */
+  unpricedCount: number;
+  /** Which churches use this code, biggest ask first. */
+  churches: SponsorScopeRow[];
+}
+
+/** A code's or a church's contribution, used on both sides of the code↔church split. */
+export interface SponsorScopeRow {
+  id: string;
+  name: string;
+  count: number;
+  total: number;
+}
+
+export interface SponsorChurchRow extends SponsorScopeRow {
+  /** Which codes this church uses, biggest ask first. */
+  codes: { code: string; tag: SponsorTag; count: number; total: number }[];
+}
+
+export interface SponsorSummary {
+  /** The camp-wide ask: `fullTotal + partialTotal`. */
+  total: number;
+  /** From `sponsor`-tagged codes — whole places. */
+  fullTotal: number;
+  /** From `discount`-tagged codes — the part of a place that did not arrive. */
+  partialTotal: number;
+  /** People on any sponsor/discount code, INCLUDING the unpriced ones. */
+  count: number;
+  /**
+   * People whose ticket has no known price from any source, so their ask could not be
+   * worked out. They are in `count` and absent from every total — the number is surfaced
+   * so the UI can say the total under-reads rather than quietly under-reporting it.
+   */
+  unpricedCount: number;
+  codes: SponsorCodeRow[];
+  churches: SponsorChurchRow[];
+}
+
+/**
+ * What one sponsored/discounted place costs a sponsor.
+ *
+ * `ticketValue` is the same cascade `personValue` uses for an in-person ticket — their own
+ * `registrationCost`, then the learned price for their ticket TYPE, then the admin's scalar
+ * setting — because "what is this place worth" is the identical question in both places.
+ * A null `ticketValue` means no source knew, and the caller must count that person as
+ * unpriced rather than as $0 (a $0 ask reads as "already covered").
+ */
+export function sponsorAmountFor(
+  p: BudgetPerson,
+  cls: TicketClass,
+  prices: BasePrices,
+  ticketPrice?: number | null,
+): { ticketValue: number | null; amount: number } {
+  const kind = p.accommodationKind;
+  const fallback = kind === 'tent' ? prices.tent : kind === 'classroom' ? prices.classroom : null;
+  const ticketValue = ticketPrice ?? fallback;
+  if (ticketValue == null) return { ticketValue: null, amount: 0 };
+  const received = personValue(p, cls, prices, ticketPrice) ?? 0;
+  // Never negative: someone who over-paid against their ticket is not owed a sponsor.
+  return { ticketValue, amount: Math.max(0, ticketValue - received) };
+}
+
+interface SponsorEntry {
+  churchId: string;
+  churchName: string;
+  amount: number;
+  ticketValue: number | null;
+  ticketType: string;
+}
+
+function toBands(entries: readonly SponsorEntry[]): SponsorBand[] {
+  const byAmount = new Map<number, { amount: number; ticketValue: number; count: number; types: Set<string> }>();
+  for (const e of entries) {
+    if (e.ticketValue == null) continue;
+    // Bucket in cents so 150 and 150.00 are one band.
+    const key = Math.round(e.amount * 100);
+    let b = byAmount.get(key);
+    if (!b) {
+      b = { amount: e.amount, ticketValue: e.ticketValue, count: 0, types: new Set() };
+      byAmount.set(key, b);
+    }
+    b.count++;
+    if (e.ticketType) b.types.add(e.ticketType);
+  }
+  return [...byAmount.values()]
+    .map((b) => ({
+      amount: b.amount,
+      ticketValue: b.ticketValue,
+      count: b.count,
+      total: b.amount * b.count,
+      ticketTypes: [...b.types].sort((a, c) => a.localeCompare(c)),
+    }))
+    .sort((a, b) => b.amount - a.amount);
+}
+
+const byTotalThenName = (a: SponsorScopeRow, b: SponsorScopeRow): number =>
+  b.total - a.total || a.name.localeCompare(b.name);
+
+/**
+ * The camp's sponsorship ask, per code (with its differential), per church, and in total.
+ *
+ * Same options and same scoping as `computeBudget`, so the two are always talking about the
+ * same population. The price table is built from the FULL set for the same reason
+ * `computeBudget` does it: a ticket type priced only at another church must still price this
+ * church's holders of it.
+ */
+export function computeSponsorSummary(
+  people: readonly BudgetPerson[],
+  opts?: { tags?: DiscountTagMap; prices?: BasePrices; filterChurchId?: string | null },
+): SponsorSummary {
+  const tags = opts?.tags ?? {};
+  const prices = opts?.prices ?? { tent: null, classroom: null };
+  const priceTable = buildTicketPriceTable(people);
+  const scoped = opts?.filterChurchId
+    ? people.filter((p) => p.churchId === opts.filterChurchId)
+    : people;
+
+  const byCode = new Map<string, { tag: SponsorTag; entries: SponsorEntry[] }>();
+  for (const p of scoped) {
+    const code = (p.discountCode ?? '').trim();
+    if (!code) continue;
+    const tag = tags[code];
+    if (!tag || !SPONSOR_TAGS.includes(tag)) continue;
+    const cls = classifyTicket(p, tags);
+    const { ticketValue, amount } = sponsorAmountFor(p, cls, prices, resolveTicketPrice(p, priceTable));
+    let bucket = byCode.get(code);
+    if (!bucket) {
+      bucket = { tag: tag as SponsorTag, entries: [] };
+      byCode.set(code, bucket);
+    }
+    bucket.entries.push({
+      churchId: p.churchId,
+      churchName: p.churchName,
+      amount,
+      ticketValue,
+      ticketType: (p.registrationType ?? '').trim(),
+    });
+  }
+
+  const churchAgg = new Map<string, { name: string; count: number; total: number; codes: Map<string, { tag: SponsorTag; count: number; total: number }> }>();
+  const codes: SponsorCodeRow[] = [];
+  let fullTotal = 0;
+  let partialTotal = 0;
+  let count = 0;
+  let unpricedCount = 0;
+
+  for (const [code, bucket] of byCode) {
+    const bands = toBands(bucket.entries);
+    const total = bands.reduce((s, b) => s + b.total, 0);
+    const unpriced = bucket.entries.filter((e) => e.ticketValue == null).length;
+    count += bucket.entries.length;
+    unpricedCount += unpriced;
+    if (bucket.tag === 'sponsor') fullTotal += total;
+    else partialTotal += total;
+
+    const perChurch = new Map<string, SponsorScopeRow>();
+    for (const e of bucket.entries) {
+      let row = perChurch.get(e.churchId);
+      if (!row) {
+        row = { id: e.churchId, name: e.churchName, count: 0, total: 0 };
+        perChurch.set(e.churchId, row);
+      }
+      row.count++;
+      row.total += e.ticketValue == null ? 0 : e.amount;
+
+      let ch = churchAgg.get(e.churchId);
+      if (!ch) {
+        ch = { name: e.churchName, count: 0, total: 0, codes: new Map() };
+        churchAgg.set(e.churchId, ch);
+      }
+      ch.count++;
+      ch.total += e.ticketValue == null ? 0 : e.amount;
+      let chCode = ch.codes.get(code);
+      if (!chCode) {
+        chCode = { tag: bucket.tag, count: 0, total: 0 };
+        ch.codes.set(code, chCode);
+      }
+      chCode.count++;
+      chCode.total += e.ticketValue == null ? 0 : e.amount;
+    }
+
+    codes.push({
+      code,
+      tag: bucket.tag,
+      count: bucket.entries.length,
+      total,
+      bands,
+      unpricedCount: unpriced,
+      churches: [...perChurch.values()].sort(byTotalThenName),
+    });
+  }
+
+  codes.sort((a, b) => b.total - a.total || a.code.localeCompare(b.code));
+
+  const churches: SponsorChurchRow[] = [...churchAgg.entries()]
+    .map(([id, c]) => ({
+      id,
+      name: c.name,
+      count: c.count,
+      total: c.total,
+      codes: [...c.codes.entries()]
+        .map(([code, v]) => ({ code, tag: v.tag, count: v.count, total: v.total }))
+        .sort((a, b) => b.total - a.total || a.code.localeCompare(b.code)),
+    }))
+    .sort(byTotalThenName);
+
+  return { total: fullTotal + partialTotal, fullTotal, partialTotal, count, unpricedCount, codes, churches };
+}
+
 export interface DiscountCodeRow {
   code: string;
   count: number;
@@ -574,7 +847,7 @@ export function budgetToCsv(report: BudgetReport): string {
     }
   };
   for (const c of report.churches) {
-    emit(c.churchName, 'Camper', c.campers);
+    emit(c.churchName, 'Student', c.campers);
     emit(c.churchName, 'Leader', c.leaders);
     lines.push([esc(c.churchName), 'Total', '', c.camperCount + c.leaderCount, '', c.total].join(','));
   }

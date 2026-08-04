@@ -72,8 +72,8 @@ export function makeNoteService(
       if (isFirstAid && !camperId) throw new BadRequestError('A first-aid record requires a camper');
       if (camperId) {
         const camper = await personRepo.findById(camperId);
-        if (!camper || !firstAidEligible(actor, camper)) throw new NotFoundError('Camper not found');
-        if (!canAccessPerson(actor, camper)) throw new NotFoundError('Camper not found');
+        if (!camper || !firstAidEligible(actor, camper)) throw new NotFoundError('Student not found');
+        if (!canAccessPerson(actor, camper)) throw new NotFoundError('Student not found');
       }
 
       const note: StudentNote = {
@@ -94,8 +94,8 @@ export function makeNoteService(
     async forCamper(actor, camperId) {
       assertCan(actor, 'note:write');
       const camper = await personRepo.findById(camperId);
-      if (!camper || !isCamper(camper)) throw new NotFoundError('Camper not found');
-      if (!canAccessPerson(actor, camper)) throw new NotFoundError('Camper not found');
+      if (!camper || !isCamper(camper)) throw new NotFoundError('Student not found');
+      if (!canAccessPerson(actor, camper)) throw new NotFoundError('Student not found');
       const notes = await noteRepo.findByCamper(camperId);
       // A sensitive note is hidden from the individual student-profile view for church
       // logins only — zoneLeader/director/admin (who also reach this via openCamper) still

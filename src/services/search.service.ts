@@ -211,9 +211,9 @@ export function makeSearchService(
       const person = await personRepo.findById(camperId);
       // Any accessible registered person (not just arrived campers) — so the first-aid card can
       // show the ministry-leader contacts for someone who hasn't checked in yet.
-      if (!person) throw new NotFoundError('Camper not found');
+      if (!person) throw new NotFoundError('Student not found');
       if (!canAccessPerson(actor, person)) {
-        throw new NotFoundError('Camper not found');
+        throw new NotFoundError('Student not found');
       }
       const church = await churchRepo.findById(person.churchId);
       // Bug 1 (2026-07-17): the ministry-leader numbers are no longer masked here — this
@@ -238,9 +238,9 @@ export function makeSearchService(
       // happily render a masked parent number for a student who had not signed in yet, and
       // tapping it returned "Camper not found". The two must agree on who is resolvable; the
       // real access gate is `canAccessPerson` below, which is unchanged.
-      if (!person) throw new NotFoundError('Camper not found');
+      if (!person) throw new NotFoundError('Student not found');
       if (!canAccessPerson(actor, person)) {
-        throw new NotFoundError('Camper not found');
+        throw new NotFoundError('Student not found');
       }
       // Record AFTER every access check and AFTER the contact is known to exist, so a
       // NotFound never writes an audit row for a reveal that did not happen. A parent reveal
