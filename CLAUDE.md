@@ -51,8 +51,24 @@ handed** — a second encoding. The column ended up holding a jsonb **string**
   nothing; that is precisely how this shipped. Verified the old mapper body against the real
   production row: it returns `{churches:[],users:[]}`.
 
-### Recovery
-The snapshot text was intact, so the scaffold was recoverable in full. **This year's people are
+### Recovery — DONE, same day
+The snapshot text was intact. The row was repaired in place
+(`update defaults set snapshot = (snapshot #>> '{}')::jsonb`) and the scaffold re-inserted from
+it: **29 churches, 31 accounts** (snapshot admins skipped — the live admin is the recovery
+account, same rule as `newYear`), **34 classrooms, 6 FAQs, 48 schedule items, 1 devotional**.
+`users.church_name`/`zone` were backfilled from `churches` afterwards — a sibling CTE's inserts
+are not visible to another CTE in the same statement, so the join in the user insert saw an empty
+table.
+
+⚠️ **Two things the restore could NOT fix, both pre-existing in the baseline:**
+- **15 of the 29 churches have no login** — the snapshot only ever held **28 church accounts
+  (14 `b-`/`g-` pairs)**. Close it with **Split church accounts**, which regenerates a missing
+  sibling from `slugifyUsername(church.name)`.
+- **Every restored account is passwordless** (`password_hash` null, `must_change_password` true) —
+  the snapshot strips hashes by design, and the rollover's temp-password list generated 0 entries
+  because it saw 0 users. Fixed by **Randomise & export passwords**.
+
+ **This year's people are
 NOT recoverable from it and are not meant to be** — `newYear` purges them by design; they
 re-import from the Elvanto CSVs. The snapshot is also from **08-02**, so anything created on
 08-03/04 was not in it, and it strips password hashes by design (the rollover's temp-password
