@@ -277,6 +277,10 @@ check "expected vs actual" before touching code.
 >   kills every pre-existing token for that role. Intended.
 > - **`TOKEN_TTL_MS` is 48h** (was 24h). Anything reasoning about "the next day" — notably
 >   `_tryRestoreSession()` in the SPA — is now a two-day window.
+> - **"A LEADER CAN'T SEE THE *SEND A TEST* BUTTON."** Correct as of 2026-08-05 — it is gated on
+>   `ACTOR.role==='admin'` in the push card. `POST /push/test` itself is still open to any
+>   authenticated account (it only pushes to the caller's own devices), so an admin can still
+>   reach it; only the button is hidden.
 > - **⚠️ "THE UPTIME MONITOR SAID EVERYTHING WAS FINE DURING AN OUTAGE."** `/health` is
 >   **liveness only** — it never touches the DB, so it stays 200 through a total pooler failure.
 >   **`/ready` is the one that runs `select 1`** (5s timeout → 503). If the monitor is still

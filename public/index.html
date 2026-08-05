@@ -9254,8 +9254,17 @@ async function _renderPushCard(){
       const reg=await navigator.serviceWorker.ready;
       const sub=await reg.pushManager.getSubscription();
       if(sub&&perm==='granted'){
+        /* "Send a test" is ADMIN-ONLY from 2026-08-05 (owner request) — it was cluttering the
+           Notices screen for the ~100 church/leader logins who never need it. NOTE this is a
+           UI-only hide: POST /push/test stays open to any authenticated account and is safe
+           that way, because `sendTestToUser(actor.id, …)` only ever pushes to the CALLER'S OWN
+           devices — there is nothing to escalate. Do not "harden" the endpoint to admin-only
+           without reading the 2026-07-31 push section in CLAUDE.md first: the route exists so a
+           device can be proven working, and an admin diagnosing a leader's phone may still want
+           it reachable. Trade-off accepted by the owner: a leader can no longer self-test. */
+        const _testBtn=(ACTOR&&ACTOR.role==='admin')?`<button class="btn ghost sm" onclick="_pushTest()">Send a test</button>`:'';
         body=`<div class="rowsb" style="align-items:center"><span class="sub" style="margin:0">${icSm('check')} Alerts are on for this device</span>
-          <span style="display:flex;gap:6px"><button class="btn ghost sm" onclick="_pushTest()">Send a test</button><button class="btn ghost sm" onclick="_pushOff()">Turn off</button></span></div>`;
+          <span style="display:flex;gap:6px">${_testBtn}<button class="btn ghost sm" onclick="_pushOff()">Turn off</button></span></div>`;
       }else{
         body=`<button class="btn ghost sm" onclick="_pushOn()">${icSm('bell')} Turn on alerts for this device</button>`;
       }

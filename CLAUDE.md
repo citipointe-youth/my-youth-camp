@@ -129,9 +129,34 @@ declarations) and both self-wrap in try/catch — **this is fine, don't "fix" it
 things.** The UA gate (phones only) and the can't-throw-on-the-login-gate property are both
 preserved. `#mcpGate` deliberately untouched.
 
+### 6 — "Send a test" is admin-only (follow-up push, `camp-v94`)
+
+The push card on the Notices screen showed **Send a test** to every account with alerts on. It
+was clutter for the ~100 church/leader logins. Now gated on `ACTOR.role === 'admin'`.
+
+- ⚠️ **UI-ONLY HIDE — `POST /push/test` stays open to any authenticated account, deliberately.**
+  `sendTestToUser(actor.id, …)` only ever pushes to the **caller's own** devices, so there is
+  nothing to escalate and no security reason to lock the route. Read the 2026-07-31 push section
+  before "hardening" it: the route exists so a device can be *proven working*, and an admin
+  diagnosing a leader's phone may still want it reachable.
+- **Trade-off accepted by the owner:** a leader can no longer self-test that alerts reach their
+  phone — that diagnosis now goes through an admin. Zero cost at the time of the change
+  (`push_subscriptions` was empty), but it will matter once leaders opt in at the training day.
+
 ### Needs on-device eyeballing (tsc/vitest cannot prove any of it)
 The 🔑 hint's placement/wrapping and glyph rendering · the **three-button** password row at
 ~360px · an end-to-end run of the church-only button against the live endpoint.
+
+### Verified live in prod after the push
+`sw.js` served `camp-v93`; **`GET /ready` → `200 {"status":"ready","db":"ok","ms":2}`** — first
+end-to-end proof the readiness probe reaches Postgres through the session-mode pooler from
+`syd1`. Migration `0021` applied to prod **before** the code push, and its history row
+reconciled from the generated `20260805100813` back to **`0021`** (the N6 label drift), so prod
+now reads a clean `0001`–`0021`.
+
+**An external uptime monitor is live against `/ready` as of 2026-08-05** (owner). ⚠️ Keep it
+pointed there, **never at `/health`** — `/health` never touches the DB and stays 200 through a
+total pooler outage, which is the whole reason `/ready` exists.
 
 ## 🔴 Sponsor/discount tags were silently ignored on anyone missing an accommodation kind — 2026-08-05
 
