@@ -368,3 +368,107 @@ describe('AccountService — gender-scoped church accounts', () => {
     expect(churchUsers.map((u) => u.username).sort()).toEqual(['b-northside', 'g-northside']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// importPasswords — the reverse of "Randomise & export passwords" (2026-08-05).
+// This file has no shared `setup()` helper (unlike the plan's example), so this
+// describe block builds its own fixtures: an admin user (so `findOriginalAdmin`
+// resolves), an active church login `b-victory`, and an inactive church login
+// `oldchurch` — matching the plan's test bodies without touching any other
+// describe block's fixtures.
+// ---------------------------------------------------------------------------
+
+describe('AccountService.importPasswords', () => {
+  let users: InMemoryUserRepository;
+  let churches: InMemoryChurchRepository;
+  let people: InMemoryPersonRepository;
+  let svc: AccountService;
+
+  async function setup() {
+    users = new InMemoryUserRepository();
+    churches = new InMemoryChurchRepository();
+    people = new InMemoryPersonRepository();
+    await Promise.all([users.init(), churches.init(), people.init()]);
+    svc = makeAccountService(users, churches, people);
+
+    const adminUser = await users.save({
+      id: 'admin1', firstName: 'Admin', lastName: '', username: 'admin', role: 'admin',
+      churchId: null, churchName: null, zone: null, status: 'active',
+      passwordHash: await hashPassword('adminpass1'),
+      createdAt: NOW, updatedAt: NOW,
+    });
+    const target = await users.save({
+      id: 'u-bv', firstName: 'Victory', lastName: 'Boys', username: 'b-victory', role: 'church',
+      churchId: 'c1', churchName: 'Victory', zone: 'Yellow', genderScope: 'male', status: 'active',
+      passwordHash: await hashPassword('oldpassword1'),
+      createdAt: NOW, updatedAt: NOW,
+    });
+    const churchUserActor: Actor = {
+      id: target.id, role: 'church', churchId: 'c1', churchName: 'Victory', zone: 'Yellow', displayName: 'Victory',
+    };
+    const adminActor: Actor = {
+      id: adminUser.id, role: 'admin', churchId: null, churchName: null, zone: null, displayName: 'admin',
+    };
+
+    return { service: svc, admin: adminActor, userRepo: users, churchActor: churchUserActor };
+  }
+
+  const csv = (body: string) => `Username,Church / Role,Gender,Role,Password\n${body}`;
+
+  it('sets the password on every listed account and reports the count', async () => {
+    const { service, admin, userRepo } = await setup(); // reuse the file's own setup helper
+    const target = await userRepo.findByUsername('b-victory');
+    const res = await service.importPasswords(admin, {
+      csvData: csv('b-victory,Victory,Boys,Church,Donkey.683\n'),
+    });
+    expect(res.dryRun).toBe(false);
+    expect(res.applied).toBe(1);
+    const after = await userRepo.findById(target!.id);
+    expect(after!.passwordHash).not.toBe(target!.passwordHash);
+    expect(after!.mustChangePassword).toBe(false);
+  });
+
+  it('a dry run changes NOTHING but reports what would happen', async () => {
+    const { service, admin, userRepo } = await setup();
+    const before = await userRepo.findByUsername('b-victory');
+    const res = await service.importPasswords(admin, {
+      csvData: csv('b-victory,Victory,Boys,Church,Donkey.683\nb-nowhere,?,?,?,Kettle.221\n'),
+      dryRun: true,
+    });
+    expect(res.dryRun).toBe(true);
+    expect(res.willSet).toBe(1);
+    expect(res.applied).toBe(0);
+    expect(res.unmatched).toEqual(['b-nowhere']);
+    const after = await userRepo.findByUsername('b-victory');
+    expect(after!.passwordHash).toBe(before!.passwordHash);
+  });
+
+  it('NEVER returns a plaintext password in the response', async () => {
+    const { service, admin } = await setup();
+    const res = await service.importPasswords(admin, {
+      csvData: csv('b-victory,Victory,Boys,Church,Donkey.683\n'),
+    });
+    expect(JSON.stringify(res)).not.toContain('Donkey.683');
+  });
+
+  it('rejects a file missing the Password column instead of reporting an empty success', async () => {
+    const { service, admin } = await setup();
+    await expect(
+      service.importPasswords(admin, { csvData: 'Username,Church / Role\nb-victory,Victory\n' }),
+    ).rejects.toThrow(/Password/);
+  });
+
+  it('rejects a file with no data rows', async () => {
+    const { service, admin } = await setup();
+    await expect(
+      service.importPasswords(admin, { csvData: 'Username,Password\n' }),
+    ).rejects.toThrow(/no rows/i);
+  });
+
+  it('requires admin:manage', async () => {
+    const { service, churchActor } = await setup();
+    await expect(
+      service.importPasswords(churchActor, { csvData: csv('b-victory,V,Boys,Church,Donkey.683\n') }),
+    ).rejects.toThrow();
+  });
+});

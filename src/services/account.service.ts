@@ -16,6 +16,7 @@ import {
   CreateChurchWithAccountSchema,
   UpdateChurchSchema,
   UpdateChurchContactsSchema,
+  ImportPasswordsSchema,
 } from '../core/validation/account.schema';
 import { hashPassword, verifyPassword } from '../utils/crypto';
 import { newId } from '../utils/id';
@@ -24,6 +25,13 @@ import { toSafeUser } from './auth.service';
 import { invalidateDashboardCache } from './dashboard-cache';
 import { memorablePassword } from '../utils/memorable-password';
 import type { UserRole } from '../core/types/enums';
+import { parseCsv } from '../utils/csv';
+import {
+  parsePasswordRows,
+  planPasswordImport,
+  missingPasswordColumns,
+  PASSWORD_IMPORT_COLUMNS,
+} from './password-import';
 
 /**
  * Human-readable role names for the credentials export (2026-08-03).
@@ -56,6 +64,25 @@ export interface ChurchCredential {
    * otherwise unanswerable from the username alone.
    */
   role?: UserRole;
+}
+
+/**
+ * The upload's report. Counts and usernames ONLY — ⚠ a plaintext password must never travel
+ * back to the client. The request already carried them; echoing them into a response that a
+ * browser will cache and log serves no purpose and widens the exposure for free.
+ */
+export interface PasswordImportResult {
+  dryRun: boolean;
+  /** Rows that will be (dry run) or were (real run) applied. */
+  willSet: number;
+  /** 0 on a dry run. */
+  applied: number;
+  blank: number;
+  unmatched: string[];
+  protectedSkipped: string[];
+  invalid: { username: string; reason: string }[];
+  duplicates: string[];
+  inactive: string[];
 }
 
 /** Turn a church name into a stable, username-safe slug base ('Victory Church' → 'victory-church'). */
@@ -103,6 +130,8 @@ export interface AccountService {
    * set mustChangePassword — these are the churches' real passwords.
    */
   randomizeChurchPasswords(actor: Actor): Promise<ChurchCredential[]>;
+  /** Set passwords from an uploaded credentials sheet — the reverse of the export above. */
+  importPasswords(actor: Actor, input: unknown): Promise<PasswordImportResult>;
   listChurches(actor: Actor): Promise<Church[]>;
   updateChurch(actor: Actor, id: string, input: unknown): Promise<Church>;
   /**
@@ -450,6 +479,67 @@ export function makeAccountService(
         (a, b) => a.church.localeCompare(b.church) || (a.gender ?? '').localeCompare(b.gender ?? ''),
       );
       return rows;
+    },
+
+    /**
+     * The reverse of `randomizeChurchPasswords`: take the exported credentials sheet with the
+     * Password column filled in, and set those passwords.
+     *
+     * Every decision lives in the pure planner (`password-import.ts`); this method only does
+     * the three things a pure function cannot — read the users, hash, and save. `dryRun` runs
+     * the identical code path and stops before the writes, so the preview cannot disagree with
+     * what the confirm then does.
+     *
+     * ⚠ `mustChangePassword: false`, matching the randomise path. These ARE the real passwords
+     * the admin has chosen and is handing out, not admin-set temporaries.
+     */
+    async importPasswords(actor, input) {
+      assertCan(actor, 'admin:manage');
+      const data = ImportPasswordsSchema.parse(input);
+      const rows = parseCsv(data.csvData);
+      if (rows.length === 0) throw new BadRequestError('That file has no rows.');
+
+      // A renamed/absent column must be said out loud — see `missingPasswordColumns`.
+      const missing = missingPasswordColumns(rows);
+      if (missing.length > 0) {
+        const found = Object.keys(rows[0] ?? {}).join(', ');
+        throw new BadRequestError(
+          `That file is missing the ${missing.join(' and ')} column${missing.length > 1 ? 's' : ''}. ` +
+            `It needs ${PASSWORD_IMPORT_COLUMNS.join(' and ')}. Columns found: ${found}`,
+        );
+      }
+
+      const users = await userRepo.findAll();
+      const original = findOriginalAdmin(users);
+      const plan = planPasswordImport(parsePasswordRows(rows), users, original?.id ?? null);
+
+      let applied = 0;
+      if (!data.dryRun) {
+        for (const item of plan.apply) {
+          const user = users.find((u) => u.id === item.userId);
+          if (!user) continue; // read and write are one request apart; skip rather than throw
+          await userRepo.save({
+            ...user,
+            passwordHash: await hashPassword(item.password),
+            mustChangePassword: false,
+            updatedAt: nowISO(),
+          });
+          applied++;
+        }
+        if (applied > 0) invalidateDashboardCache();
+      }
+
+      return {
+        dryRun: data.dryRun,
+        willSet: plan.apply.length,
+        applied,
+        blank: plan.blank,
+        unmatched: plan.unmatched,
+        protectedSkipped: plan.protectedSkipped,
+        invalid: plan.invalid,
+        duplicates: plan.duplicates,
+        inactive: plan.inactive,
+      };
     },
 
     async listChurches(actor) {

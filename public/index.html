@@ -6392,7 +6392,13 @@ RENDER.adminAccounts=async function(){
   paint('adminAccounts',`
     <div class="card"><div class="lbl" style="margin-top:0">All login passwords</div>
       <p class="note-hint" style="margin:2px 0 8px">Issues a fresh memorable password to every church login and every leadership login, and downloads the full list as a CSV. The original admin account (this one) is never changed.</p>
-      <button class="btn ghost" onclick="randomizeChurchPasswords()" style="width:100%">${icSm('key')} Randomise &amp; export passwords</button></div>
+      <div style="display:flex;gap:8px;align-items:stretch">
+        <button class="btn ghost" onclick="randomizeChurchPasswords()" style="flex:1;min-width:0;margin-top:0">${icSm('key')} Randomise &amp; export passwords</button>
+        <button class="btn ghost sm" onclick="document.getElementById('pwUpIn').click()" style="flex:0 0 auto;width:auto;margin-top:0;min-width:92px">${icSm('upload')} Upload</button>
+        <input type="file" id="pwUpIn" accept=".csv,.xlsx,.xls" style="display:none" onchange="uploadPasswords()">
+      </div>
+      <p class="note-hint" style="margin:8px 0 0">Upload takes this same CSV back with the Password column filled in and sets those passwords. Accounts you leave out are untouched, and a blank password never changes anything.</p>
+      <div id="pwUpResult" style="display:none;margin-top:10px"></div></div>
     <div class="card"><div class="lbl" style="margin-top:0">Leadership accounts</div>${lr}</div>
     <div class="card"><div class="rowsb" style="align-items:center"><div class="lbl" style="margin-top:0">Churches ${helpTip('Churches named in a registration upload are auto-created, with the zone defaulting to Yellow — set the zone and login via Account Info. Accommodation overrides live on the Accommodation allocations screen.')}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" onclick="bulkChurchUpdate()">${icSm('key')} Bulk Church Update</button></div></div>${cr}</div>
@@ -6543,6 +6549,79 @@ async function randomizeChurchPasswords(){
   _saveTextFile(csv,_exportName('camp-passwords','csv'));
   toast('Passwords randomised & exported ('+rows.length+' logins)');
   try{await _rAccts();}catch(_){/* UI refresh only — export already succeeded */}
+}
+
+/* ===== PASSWORD UPLOAD — the reverse of "Randomise & export passwords" =====
+   Takes the exported CSV back with the Password column edited (or an .xlsx) and sets those
+   passwords. Runs the server's DRY RUN first and shows what it would do, because the two
+   mistakes this feature invites are silent: a mistyped username sets nothing at all, and the
+   wrong file entirely matches nothing at all. Both look identical to success without a preview.
+
+   File reading goes through _readImportFile, so .xlsx works for free via the lazy SheetJS
+   path — the same helper the Form/Ticket/Invoice and Offline Sign-In uploads use. */
+let _pwUpCsv=null;
+async function uploadPasswords(){
+  const input=document.getElementById('pwUpIn');
+  const file=input&&input.files&&input.files[0];
+  if(!file)return;
+  const box=document.getElementById('pwUpResult');
+  if(box){box.style.display='block';box.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">Reading sheet…</div></div>';}
+  try{
+    const rd=await _readImportFile(file);
+    _pwUpCsv=rd.text;
+    const r=await api('/accounts/passwords/import',{method:'POST',body:{csvData:_pwUpCsv,dryRun:true}});
+    if(box)box.innerHTML=_pwUpPreview(r,file.name);
+  }catch(e){
+    _pwUpCsv=null;
+    if(box)box.innerHTML='<p class="err" style="display:block">'+esc(e.message||'Could not read that file')+'</p>';
+    else toast(e.message||'Could not read that file');
+  }finally{ input.value=''; }
+}
+// Shared renderer for the dry-run preview and the applied result. Every skipped row is NAMED,
+// not just counted — "3 not matched" sends an admin back to a 30-row spreadsheet with no idea
+// which three, which is how a genuinely wrong file gets confirmed anyway.
+function _pwUpNote(icon,label,names){
+  if(!names||!names.length)return '';
+  return `<p class="note-hint" style="text-align:left;margin:6px 0 0">${icSm(icon)} <b>${names.length}</b> ${label}: ${names.map(esc).join(', ')}</p>`;
+}
+function _pwUpPreview(r,fileName){
+  const bits=[];
+  if(r.blank)bits.push(`${r.blank} blank password${r.blank===1?'':'s'} skipped`);
+  const head=r.willSet
+    ? `<div class="callbox">${icSm('check')} <b>${r.willSet}</b> password${r.willSet===1?'':'s'} will be set from <b>${esc(fileName)}</b>.${bits.length?' '+esc(bits.join(' · '))+'.':''}</div>`
+    // Nothing matched = almost always the wrong file. Say that, rather than showing a Confirm
+    // button that would do nothing and report success.
+    : `<div class="warnbox">${icSm('alert')} Nothing in <b>${esc(fileName)}</b> matches an account, so there is nothing to set. Check it is the passwords export, with usernames in the <b>Username</b> column.</div>`;
+  const detail=_pwUpNote('alert','not matched to any account',r.unmatched)
+    +_pwUpNote('alert','rejected as too short',(r.invalid||[]).map(i=>i.username))
+    +_pwUpNote('alert','listed twice with different passwords, so left alone',r.duplicates)
+    +_pwUpNote('alert','skipped — the original admin is never changed this way',r.protectedSkipped)
+    +_pwUpNote('alert','set, but the account is deactivated and still cannot log in',r.inactive);
+  const confirm=r.willSet
+    ? `<button class="btn" onclick="_pwUpConfirm()" style="margin-top:10px;width:100%">Set ${r.willSet} password${r.willSet===1?'':'s'}</button>`
+    : '';
+  return head+detail+confirm;
+}
+async function _pwUpConfirm(){
+  if(!_pwUpCsv){toast('Choose the file again');return;}
+  if(!await confirmSheet({title:'Set these passwords?',body:'Each listed account’s current password stops working immediately. Accounts not in the file are unchanged.',confirmLabel:'Set passwords',danger:true}))return;
+  const box=document.getElementById('pwUpResult');
+  if(box)box.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">Setting passwords…</div></div>';
+  try{
+    const r=await api('/accounts/passwords/import',{method:'POST',body:{csvData:_pwUpCsv,dryRun:false}});
+    _pwUpCsv=null;
+    const detail=_pwUpNote('alert','not matched to any account',r.unmatched)
+      +_pwUpNote('alert','rejected as too short',(r.invalid||[]).map(i=>i.username))
+      +_pwUpNote('alert','listed twice with different passwords, so left alone',r.duplicates)
+      +_pwUpNote('alert','skipped — the original admin is never changed this way',r.protectedSkipped)
+      +_pwUpNote('alert','set, but the account is deactivated and still cannot log in',r.inactive);
+    if(box)box.innerHTML=`<div class="callbox">${icSm('check')} <b>${r.applied}</b> password${r.applied===1?'':'s'} set.</div>`+detail;
+    toast('Passwords set ('+r.applied+')');
+    try{await _rAccts();}catch(_){/* UI refresh only — the passwords are already set */}
+  }catch(e){
+    if(box)box.innerHTML='<p class="err" style="display:block">'+esc(e.message||'Could not set passwords')+'</p>';
+    else toast(e.message||'Could not set passwords');
+  }
 }
 
 /* Bug-7: Bulk Church Update — one form listing every church with its login username (pre-filled)

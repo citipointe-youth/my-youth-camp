@@ -54,6 +54,14 @@ export const ChangeOwnPasswordSchema = z.object({
 
 export type ChangeOwnPasswordInput = z.infer<typeof ChangeOwnPasswordSchema>;
 
+export const ImportPasswordsSchema = z.object({
+  csvData: z.string().min(1),
+  /** True = report what WOULD happen and write nothing. */
+  dryRun: z.boolean().optional().default(false),
+});
+
+export type ImportPasswordsInput = z.infer<typeof ImportPasswordsSchema>;
+
 export const CreateChurchWithAccountSchema = z.object({
   churchName: z.string().min(1),
   zone: z.enum(ZONE_NAMES),

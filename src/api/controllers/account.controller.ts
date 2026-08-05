@@ -66,6 +66,11 @@ export function makeAccountController(services: AccountControllerServices) {
       return services.account.randomizeChurchPasswords(req.ctx.actor);
     },
 
+    async importPasswords(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.account.importPasswords(req.ctx.actor, req.body);
+    },
+
     async listChurches(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.account.listChurches(req.ctx.actor);
