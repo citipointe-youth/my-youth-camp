@@ -290,7 +290,7 @@ check "expected vs actual" before touching code.
 >   The amount owed only renders when `classroomPrice` is set; the paid/unpaid split has a
 >   price-independent fallback (paid more than their own ticket cost) so the card still works without it.
 
-## Frontend — `public/index.html` (single ~8,570-line SPA as of 2026-08-03)
+## Frontend — `public/index.html` (single ~9,450-line SPA as of 2026-08-05)
 
 > **`node --check` extract range: derive it, never cache it.** As of 2026-08-03 the script body
 > is lines **956–8564**, but that moves on almost every batch. The naive `<script>…</script>`
@@ -496,6 +496,31 @@ tolerate absence via `?? false`.
 ---
 
 ## Symptom router (fastest path)
+
+### 2026-08-05 — password UPLOAD (the reverse of "Randomise & export passwords")
+
+> **Where it lives:** Admin → **Accounts & churches** → the "All login passwords" card at the top.
+> Backend `src/services/password-import.ts` (pure, ALL the decision logic) +
+> `account.service.importPasswords`. Route `POST /accounts/passwords/import`, `admin:manage`.
+> SPA `uploadPasswords` / `_pwUpPreview` / `_pwUpConfirm`, right after `randomizeChurchPasswords`.
+> **Start at the PURE module** — it decides everything and is testable in isolation. The service
+> only reads users, hashes and saves.
+
+| Symptom | Go to |
+|---|---|
+| **"I uploaded the sheet and nothing happened"** | Expected when nothing matched: the preview shows a warnbox and renders **no Confirm button**, deliberately. Cause is almost always the file — check it has a `Username` column and that those usernames exist. `planPasswordImport` reports every unmatched name; read the preview rather than re-running. |
+| **"It says N not matched"** | The names are listed in the preview. Matching is `Username` ONLY, lowercased — there is no church/gender fallback, on purpose (a church-name typo would set the WRONG account's password and reconcile perfectly). A `b-`/`g-` prefix missing from the sheet is the usual cause. |
+| **🔴 "It wiped/cleared a password"** | It cannot, and there is a test. A blank password cell is counted in `plan.blank` and skipped. If a password genuinely stopped working, look at **`randomizeChurchPasswords`** (which rotates everything) or a manual reset — not this. |
+| **"It changed a church I didn't list"** | It cannot — absent accounts are never in `plan.apply`. Check the uploaded file actually contains that username (an unedited full export contains ALL of them, with their real passwords, so re-uploading it untouched re-sets everything it lists). |
+| **The original admin's password didn't change** | Correct and deliberate — refused even when listed (`findOriginalAdmin`), same rule as the randomise path. It is the recovery account. It appears in `protectedSkipped`. |
+| **A password was set on a DEACTIVATED account** | Deliberate, and it differs from `randomizeChurchPasswords`, which skips inactive accounts. Owner's explicit call 2026-08-05. The username is reported under "set, but the account is deactivated and still cannot log in". The login needs reactivating separately. |
+| **🔴 "The import said success but set nothing"** | This is the shape the missing-column guard exists to prevent — `missingPasswordColumns` throws naming the columns found. If you see a genuine silent empty success, that guard was bypassed or the column check was loosened. |
+| **A username listed twice did nothing** | Two different passwords for one username → BOTH rejected (`plan.duplicates`), because picking one sets a password the admin cannot predict. Identical duplicates apply once. |
+| **A row was rejected as "too short"** | Under 6 chars, matching `SetPasswordSchema`'s `z.string().min(6)`. Change one and change the other — `MIN_IMPORT_PASSWORD_LENGTH`. |
+| **The account must change its password at next login** | Should NOT happen — `mustChangePassword:false`, matching the randomise path. If it does, that flag got flipped in `importPasswords`. (Note the gate is repo-wide disabled anyway: `MUST_CHANGE_PASSWORD_ENFORCED=false`.) |
+| **The Upload button squashes the Randomise button** | The documented flex bug, 4th occurrence. `.btn` base CSS is `display:block;width:100%`, which becomes the **flex-basis** in a flex row. Upload must keep `btn ghost sm` + `flex:0 0 auto;width:auto`; Randomise keeps `flex:1;min-width:0`. |
+| **An .xlsx upload picks the wrong sheet** | `_xlsxToCsv` chooses via `_detectImportType`, which only knows the **Form/Ticket/Invoice** signatures — a passwords workbook matches none, so it falls back to **the first sheet**. Fine for a single-sheet file; a multi-sheet workbook must have the passwords first. Upload CSV if in doubt. |
+| Verify | `npx vitest run src/services/password-import.test.ts` (19, incl. the byte-exact round trip from the real export) + `npx vitest run src/services/account.service.test.ts` (6 for `importPasswords`). |
 
 ### 2026-08-04 (5th) — medical consent on the profile + the budget export became a workbook
 
@@ -866,7 +891,7 @@ FIXED".
 |---|---|
 | **A `b-`/`g-` login sees the other gender (or an `other`-gender student is invisible)** | `canAccessPerson` (`person.service.ts`) — gender narrowing is the ONLY place; denial is limited to a *concrete opposite* gender (`'other'`/unset = visible to both, by design). Roster/search/dashboard/registrant-`?churchId` fast-path all funnel through it. Scope rides `Actor.genderScope` (from `users.gender_scope`, migration `0006`, threaded in `auth.service.toActor`). A church login can't PATCH church/gender/zone (`update()` strips those for role `church` + re-asserts scope). |
 | **Church split / `b-`/`g-` accounts not created, or legacy login still works** | `account.service` `createChurchWithAccount` (creates both), `splitChurchAccounts` (idempotent back-fill + retire), `randomizeChurchPasswords` (splits+retires+randomises+returns CSV rows). Routes `POST /accounts/churches`, `/split`, `/randomize-passwords` (**admin-only**). One-off: `scripts/split-church-accounts.ts`. **Prod churches were split for real 2026-07-18** via the button — if a NEW church is added later and stays single-login, re-run the button or the split route. |
-| **Church password wrong format / export missing** | `src/utils/memorable-password.ts` (`Word.###`, ≥6 chars). SPA "Randomise & export church passwords" button in `RENDER.adminAccounts` → `POST /accounts/churches/randomize-passwords` → client CSV. `mustChangePassword` is never set on these. |
+| **Church password wrong format / export missing** | `src/utils/memorable-password.ts` (`Word.###`, ≥6 chars). SPA "Randomise & export passwords" button in `RENDER.adminAccounts` → `POST /accounts/churches/randomize-passwords` → client CSV. `mustChangePassword` is never set on these. ⚠ Since 2026-08-05 there is a sibling **Upload** button that goes the other way (sets passwords from an edited sheet) — see the 2026-08-05 section of the symptom router. The two share the card, not the code path. |
 | **"Randomise & export passwords" shows a network-error toast** | Check whether the CSV actually downloaded first — the export itself (`POST /accounts/churches/randomize-passwords`) runs and downloads BEFORE the cosmetic `_rAccts()` accounts-list refresh; a failure in that refresh alone must never read as the randomise having failed (fixed 2026-07-18, `randomizeChurchPasswords()` in `public/index.html`). If the CSV genuinely didn't download, the real error is in the POST itself — check the network tab / server logs, not this toast wording. |
 | **Incident won't log / not visible / church can see it** | `incident.service.ts` (Zod + `incident:manage` = zoneLeader/director/admin; delete = admin/director) + `incidents` table (migration `0007`, `summary` **encrypted** in `supabase.incidents.ts`). Routes `GET/POST /incidents`, `DELETE /incidents/:id`. SPA `RENDER.incidents` + home tile (`canManageIncident`) + Notes-page Record-filter "Incidents" option (leadership only). **Role-gated only — reachable in BOTH camp modes** (an at-camp-only gate was tried 2026-07-17 and reverted 2026-07-18: it left zoneLeader/director with no way to review a pre-camp incident). |
 | **Incidents screen is completely blank (form/list/buttons render as nothing)** | The shell's fixed `<section class="screen" id="…">` divs (see "Frontend files"/`_navTo` in this file) are the ONLY valid `paint()` targets — `paint`/`_showScreen`/`_spinner` silently no-op if `getElementById(id)` is null. Confirm `<section class="screen" id="incidents">` exists in the shell markup (it was missing entirely for one deploy, 2026-07-17→18 — not caught by typecheck/vitest, only a live browser check). If a FUTURE new `RENDER.<x>` screen goes blank, this missing-container class of bug is the first thing to check. |

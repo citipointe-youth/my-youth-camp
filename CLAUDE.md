@@ -4,6 +4,102 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Password UPLOAD — the reverse of the credentials export — 2026-08-05
+
+Owner request: *"a small button to the right of it for 'upload' that does the exact reverse (sets
+the passwords for account names found that match)"*, with resilience for blank passwords and for
+a file covering only a subset of churches. Backend + SPA. **No schema or migration change** —
+next migration is still `0021`. `npm run typecheck` clean, `npx vitest run` **975 pass / 61 files**
+(was 950/60; **+25**, and **+1 FILE** — a new test file), `node --check` OK on the SPA body
+(range **966–9452**, re-derived) and `sw.js`. `sw.js` `camp-v90`→**`camp-v91`**.
+
+Export the credentials CSV, edit the Password column, upload it back. Same card, same columns,
+so the round trip is exact. Reads `.xlsx` too, free, via the existing `_readImportFile`.
+
+### The decision logic is a PURE module, and that is the point
+New **`src/services/password-import.ts`** — `parsePasswordRows` / `planPasswordImport` /
+`missingPasswordColumns` / `PASSWORD_IMPORT_COLUMNS` / `MIN_IMPORT_PASSWORD_LENGTH`. No repo, no
+hashing, no clock. `account.service.importPasswords` only does the three things a pure function
+cannot: read the users, hash, save.
+
+> **Almost every rule in this feature is a FAILURE path** — a blank cell, an unknown username, a
+> half-filled sheet, the same login listed twice. Those are exactly the cases nobody exercises by
+> hand before camp, so they had to be testable without fixtures. 19 tests on the planner, 6 on the
+> service.
+
+### The rules, and why each one is what it is
+- ⚠️ **A BLANK PASSWORD CELL SKIPS THE ROW. It must NEVER clear a password.** The natural way to
+  say "don't change this one" in a spreadsheet is to empty the cell, and the natural (wrong)
+  reading of that is "set it to nothing" — which would lock a church out with no error at all.
+  `parsePasswordRows` deliberately KEEPS a username-with-no-password row so the planner can count
+  it as a deliberate skip rather than silently losing it.
+- **Accounts absent from the file are untouched by construction** — they are simply never in
+  `plan.apply`. That is what makes a one-church or a few-leaders list safe, and it needs no
+  special case.
+- ⚠️ **Matching is the `Username` column ONLY, lowercased.** Usernames are stored lowercased and
+  unique, so it is exact. **Do not add a church/gender fallback** — a church-name typo would then
+  set the *wrong account's* password, and it would reconcile perfectly to whoever read the sheet.
+  An unrecognised username is reported by name, never guessed at.
+- ⚠️ **The original admin is refused even when listed** (`findOriginalAdmin`), same reasoning as
+  `randomizeChurchPasswords`: it is the recovery account, and a typo there is how a camp ends up
+  with no way into the back office at all.
+- ⚠️ **INACTIVE ACCOUNTS ARE SET — deliberately, and this DIFFERS from
+  `randomizeChurchPasswords`, which skips them.** The owner chose it explicitly. The two are not
+  inconsistent: randomise *distributes* a CSV, and putting a working credential for a deactivated
+  login into a distributed file is the opposite of deactivating it; this direction *consumes* a
+  curated file, where pre-staging an account you are about to reactivate is a real thing to want.
+  Every inactive username is reported back — "set, but the account is deactivated and still cannot
+  log in" — because a password that works on a login that doesn't is otherwise a silent trap.
+- ⚠️ **A missing `Username`/`Password` column is a HARD ERROR naming the columns actually found.**
+  `field()` returns `''` both for an empty column and for one it cannot find, so without this the
+  wrong file parses as "every row blank" and the import reports a clean, successful, entirely
+  empty run. Same silent-success shape as the renamed care column (2026-08-04) and the
+  double-encoded snapshot. `missingColumns()` is reused, so ordinary case/spacing drift still
+  does not trip it.
+- **Same username twice with DIFFERENT passwords → both rejected**, named. Picking one would set a
+  password the admin cannot predict. An identical duplicate is a copy-paste and applies once.
+- **Under 6 chars → that row rejected, every other row still applies** (matches
+  `SetPasswordSchema`'s `z.string().min(6)`; keep the two in step).
+- **`mustChangePassword: false`**, matching the randomise path. These ARE the real passwords the
+  admin chose and is handing out, not admin-set temporaries.
+- ⚠️ **No plaintext password is ever in the response.** `PasswordImportResult` carries counts and
+  usernames only. The request already carried them; echoing them into a response a browser caches
+  and logs widens the exposure for free. There is a test asserting the password string appears
+  nowhere in the serialised result.
+
+### The dry run is not a nicety
+`POST /accounts/passwords/import {csvData, dryRun}` (`admin:manage`). The SPA previews first, then
+confirms.
+
+> **The two mistakes this feature invites are both SILENT: a mistyped username sets nothing, and
+> the wrong file entirely matches nothing.** Without a preview both are indistinguishable from
+> success. When `willSet` is 0 the preview says so in a warnbox and **renders no Confirm button
+> at all** — a button that would "succeed" at doing nothing is worse than none.
+
+Every skipped row is **named, not just counted**. "3 not matched" sends an admin back to a 30-row
+spreadsheet with no idea which three, which is how a genuinely wrong file gets confirmed anyway.
+`dryRun` runs the identical code path and stops before the writes, so the preview cannot disagree
+with what the confirm then does.
+
+### Round-trip test — the one that proves the feature works
+`describe('round trip from the real credentials export')` rebuilds the exporter's output
+byte-for-byte (BOM + CRLF + quoted fields, including a church name containing a comma) and feeds
+it back through the real parser. Its value is **pinning the column names and quoting across the
+two sides** — rename a column on either end and this fails instead of the feature silently
+no-opping. ⚠️ It does *not* prove BOM handling: that is double-covered anyway (`parseCsv` strips
+the BOM **and** `field()`/`missingColumns()` normalise it away), so removing either one alone
+would not fail a test.
+
+### SPA
+`uploadPasswords` / `_pwUpPreview` / `_pwUpNote` / `_pwUpConfirm` / `_pwUpCsv`, immediately after
+`randomizeChurchPasswords`. The button sits in a flex row beside it.
+
+- ⚠️ **FOURTH OCCURRENCE OF THE SAME FLEX BUG, pre-empted this time.** `.btn`'s base CSS is
+  `display:block;width:100%`, and inside a flex row that `width:100%` becomes the **flex-basis**,
+  so a bare `.btn` claims the row and squeezes its sibling to nothing. The Upload button is
+  `btn ghost sm` + `flex:0 0 auto;width:auto;min-width:92px`, and Randomise is `flex:1;min-width:0`.
+  Previously fixed 2026-07-08 and twice on 2026-08-02.
+
 ## Medical consent on the profile + the budget export is a styled workbook — 2026-08-04 (5th)
 
 Two owner items. **SPA-only** (`public/index.html`) — no backend, DTO, schema or migration change.
