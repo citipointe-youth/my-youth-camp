@@ -66,6 +66,12 @@ export function makeAccountController(services: AccountControllerServices) {
       return services.account.randomizeChurchPasswords(req.ctx.actor);
     },
 
+    /** 2026-08-05: re-randomise CHURCH LOGINS ONLY — leadership passwords untouched. */
+    async randomizeChurchOnlyPasswords(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.account.randomizeChurchOnlyPasswords(req.ctx.actor);
+    },
+
     async importPasswords(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.account.importPasswords(req.ctx.actor, req.body);

@@ -224,6 +224,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/accounts/churches', auth: true, handler: (r) => account.createChurch(r) },
     { method: 'POST', path: '/accounts/churches/split', auth: true, handler: (r) => account.splitChurches(r) },
     { method: 'POST', path: '/accounts/churches/randomize-passwords', auth: true, handler: (r) => account.randomizeChurchPasswords(r) },
+    { method: 'POST', path: '/accounts/churches/randomize-church-passwords', auth: true, handler: (r) => account.randomizeChurchOnlyPasswords(r) },
     { method: 'POST', path: '/accounts/passwords/import', auth: true, handler: (r) => account.importPasswords(r) },
     // Contacts-only edit. Reachable by a CHURCH login for its own church (2026-07-31), so it
     // must stay a separate route from the admin-only PATCH above — routing both through one

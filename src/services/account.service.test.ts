@@ -367,6 +367,92 @@ describe('AccountService — gender-scoped church accounts', () => {
     const churchUsers = (await users.findAll()).filter((u) => u.role === 'church');
     expect(churchUsers.map((u) => u.username).sort()).toEqual(['b-northside', 'g-northside']);
   });
+
+  // -------------------------------------------------------------------------
+  // randomizeChurchOnlyPasswords — 2026-08-05 owner request: rotate CHURCH
+  // logins ONLY, leaving director/zoneLeader/firstAid/secondary-admin
+  // passwords untouched. Shares `rotateChurchLogins` with the method above.
+  // -------------------------------------------------------------------------
+
+  it('randomizeChurchOnlyPasswords rotates every church login and returns export rows', async () => {
+    await svc.createChurchWithAccount(admin(), { churchName: 'Victory', zone: 'Yellow', accountUsername: 'victory' });
+    const before = (await users.findAll()).filter((u) => u.role === 'church').map((u) => u.passwordHash);
+
+    const rows = await svc.randomizeChurchOnlyPasswords(admin());
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.gender).sort()).toEqual(['female', 'male']);
+    for (const r of rows) {
+      expect(r.password).toMatch(/^[A-Z][a-z]+\.\d{3}$/);
+      expect(r.church).toBe('Victory');
+    }
+    const after = (await users.findAll()).filter((u) => u.role === 'church');
+    expect(after.map((u) => u.passwordHash).sort()).not.toEqual(before.sort());
+    for (const u of after) {
+      const row = rows.find((r) => r.username === u.username)!;
+      expect(await verifyPassword(row.password, u.passwordHash!)).toBe(true);
+      expect(u.mustChangePassword).toBeFalsy();
+    }
+  });
+
+  it('randomizeChurchOnlyPasswords backfills a missing gender account like the full randomiser', async () => {
+    await churches.save(church({ id: 'c9', name: 'Northside', zone: 'Red' }));
+    const rows = await svc.randomizeChurchOnlyPasswords(admin());
+    expect(rows).toHaveLength(2);
+    const churchUsers = (await users.findAll()).filter((u) => u.role === 'church');
+    expect(churchUsers.map((u) => u.username).sort()).toEqual(['b-northside', 'g-northside']);
+  });
+
+  it('randomizeChurchOnlyPasswords does NOT touch leadership passwords or the original admin', async () => {
+    // Original admin (earliest-created), a secondary admin, a director, a zoneLeader, firstAid.
+    const originalAdmin: User = {
+      id: 'admin-orig', firstName: 'Orig', lastName: 'Admin', username: 'admin', role: 'admin',
+      churchId: null, churchName: null, zone: null, status: 'active',
+      passwordHash: await hashPassword('adminpass'), createdAt: '2025-01-01T00:00:00.000Z', updatedAt: NOW,
+    };
+    const director: User = {
+      id: 'dir1', firstName: 'Dee', lastName: 'Rector', username: 'director', role: 'director',
+      churchId: null, churchName: null, zone: null, status: 'active',
+      passwordHash: await hashPassword('directorpass'), createdAt: NOW, updatedAt: NOW,
+    };
+    const zoneLeader: User = {
+      id: 'zl1', firstName: 'Zed', lastName: 'Leader', username: 'yellowzone', role: 'zoneLeader',
+      churchId: null, churchName: null, zone: 'Yellow', status: 'active',
+      passwordHash: await hashPassword('zonepass'), createdAt: NOW, updatedAt: NOW,
+    };
+    const firstAid: User = {
+      id: 'fa1', firstName: 'First', lastName: 'Aid', username: 'firstaid', role: 'firstAid',
+      churchId: null, churchName: null, zone: null, status: 'active',
+      passwordHash: await hashPassword('firstaidpass'), createdAt: NOW, updatedAt: NOW,
+    };
+    const secondaryAdmin: User = {
+      id: 'admin-2', firstName: 'Second', lastName: 'Admin', username: 'admin2', role: 'admin',
+      churchId: null, churchName: null, zone: null, status: 'active',
+      passwordHash: await hashPassword('adminpass2'), createdAt: '2026-02-01T00:00:00.000Z', updatedAt: NOW,
+    };
+    await Promise.all(
+      [originalAdmin, director, zoneLeader, firstAid, secondaryAdmin].map((u) => users.save(u)),
+    );
+    await svc.createChurchWithAccount(admin(), { churchName: 'Victory', zone: 'Yellow', accountUsername: 'victory' });
+
+    const beforeHashes = new Map(
+      (await users.findAll())
+        .filter((u) => u.role !== 'church')
+        .map((u) => [u.id, u.passwordHash]),
+    );
+
+    const rows = await svc.randomizeChurchOnlyPasswords(admin());
+
+    // Only the two church rows come back — nothing role-labelled for leadership.
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.role === undefined)).toBe(true);
+
+    // Every non-church account's hash is provably identical, byte-for-byte, before and after.
+    const afterUsers = await users.findAll();
+    for (const [id, hashBefore] of beforeHashes) {
+      const u = afterUsers.find((x) => x.id === id)!;
+      expect(u.passwordHash).toBe(hashBefore);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

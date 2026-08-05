@@ -7,6 +7,7 @@ import { sendError } from '../middleware/error.middleware';
 import { UnauthorizedError, MustChangePasswordError } from '../../core/errors/app-error';
 import { createLogger } from '../../utils/logger';
 import { RateLimiter } from '../../utils/rate-limiter';
+import { getSqlClient } from '../../repositories/supabase/client';
 
 const logger = createLogger('http');
 
@@ -31,11 +32,22 @@ function normaliseHeaders(
 // (see CLAUDE.md "Forced password change" — do the same in public/index.html).
 const MUST_CHANGE_PASSWORD_ENFORCED = false;
 
-// Login throttle: 10 FAILED attempts per (IP + username) per 15-minute window.
+// Login throttle: 15 FAILED attempts per (IP + username) per 15-minute window.
 // Keyed by ip+username (not bare IP) and counting failures only — at a camp venue all
 // ~200 leaders share ONE public IP behind the WiFi NAT and re-log-in every morning
-// (24h token TTL), so a bare-IP any-attempt bucket locked out the whole site.
-const loginLimiter = new RateLimiter(10, 15 * 60 * 1000);
+// (48h token TTL), so a bare-IP any-attempt bucket locked out the whole site.
+//
+// Raised 10 → 15 on 2026-08-05 (owner). A CHURCH LOGIN IS SHARED by several leaders, so the
+// ip+username bucket is not one person's typos — it is the whole church's, and on a camp or
+// church WiFi they all share the IP too. At 10 a handful of leaders fumbling the handed-out
+// password locked their entire church out for 15 minutes. 15 keeps a real brute-force
+// backstop (the keyspace is ~117k after the 2026-07-31 widening) while absorbing a shared
+// login's normal fumbling.
+const loginLimiter = new RateLimiter(15, 15 * 60 * 1000);
+
+// /ready's DB probe timeout — well under the Vercel function's maxDuration:30 and the
+// role-level statement_timeout of 15s, so a hung pooler still returns a fast 503.
+const READY_DB_TIMEOUT_MS = 5000;
 
 /** Rate-limit key for a login attempt: client IP + submitted username (lowercased). */
 function loginKeyOf(req: Request): string {
@@ -88,9 +100,48 @@ export function createApp(routes: (Route | BufferRoute)[], authService: AuthServ
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
 
-  // Health check
+  // Health check — LIVENESS ONLY. Does not touch the database, so it stays green through a
+  // total pooler outage. Left exactly as-is; see /ready below for a check that actually
+  // exercises the DB. Do not add a DB check here — that would silently regress /ready's
+  // whole reason for existing.
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', ts: new Date().toISOString() });
+  });
+
+  // Readiness check — 2026-08-05. An uptime monitor must be able to tell "the app process is
+  // up" (/health) apart from "the app can actually reach the database" (/ready). This runs a
+  // trivial `select 1` with a SHORT timeout, well under the Vercel function's maxDuration:30
+  // and the role-level statement_timeout of 15s (see CLAUDE.md), so a hung pooler fails this
+  // route fast instead of hanging the monitor's own request.
+  //
+  // ⚠ auth:false DELIBERATELY — an external uptime monitor cannot log in. And the response body
+  // never carries a connection string, hostname or driver error — only a generic status; the
+  // real detail goes to the server log via `logger`, never to the client.
+  app.get('/ready', async (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+
+    // memory/json persistence has no database at all — reporting "ready" here is honest, not
+    // a fake pass: there is nothing to check, so there is nothing that can be down. Mirrors
+    // how src/container.ts branches on PERSISTENCE.
+    if (env.PERSISTENCE !== 'supabase') {
+      res.status(200).json({ status: 'ready', db: 'n/a' });
+      return;
+    }
+
+    const started = Date.now();
+    try {
+      const sql = getSqlClient();
+      const timeout = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('readiness DB check timed out')), READY_DB_TIMEOUT_MS);
+      });
+      await Promise.race([sql`select 1`, timeout]);
+      res.status(200).json({ status: 'ready', db: 'ok', ms: Date.now() - started });
+    } catch (err) {
+      // Log the real detail server-side only — never in the response body (no hostname,
+      // connection string or driver error text reaches the client).
+      logger.error('[ready] DB check failed', err);
+      res.status(503).json({ status: 'degraded', db: 'error' });
+    }
   });
 
   // Static public files

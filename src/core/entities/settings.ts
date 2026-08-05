@@ -16,10 +16,23 @@ export interface CampSettings {
   checkInDays: string[];
   accommodationLocked: boolean;
   // Account login locks (manual toggles in admin Settings). When true, accounts of that
-  // role are blocked at LOGIN only (existing sessions keep working until their token TTL).
-  // Default false; admin/director/firstAid are never affected.
+  // role are blocked at LOGIN. Default false; admin/director/firstAid are never affected.
   churchLoginLocked: boolean;
   zoneLeaderLoginLocked: boolean;
+  /**
+   * Per-role session revocation epoch (2026-08-05). Stamped automatically to "now" the moment
+   * `churchLoginLocked`/`zoneLeaderLoginLocked` flips false->true (see `settings.service.ts`
+   * `update()`) — there is deliberately NO separate admin control for these two fields. Any
+   * token for that role whose `issuedAt` predates this timestamp is revoked in
+   * `auth.service.ts` `resolveToken`, so locking a role also kills sessions already issued to
+   * it, not just new logins. Turning the lock back OFF does NOT clear the stamp — a fresh login
+   * mints a newer `issuedAt` and works fine, while old tokens stay dead. `null` = never locked
+   * (or the deploy predates this feature) = no revocation check for that role.
+   * PER-ROLE, NOT ONE GLOBAL EPOCH: a single shared epoch would sign out admin/director/firstAid
+   * the moment churches are locked, which they must never be affected by.
+   */
+  churchSessionsValidFrom?: string | null;
+  zoneLeaderSessionsValidFrom?: string | null;
   // When true, church accounts (only) may only submit a daily check-in for the CURRENT
   // session (by real clock time) — not other days/sessions. Before camp starts, the first
   // session (day 1 PM) is treated as "current" so churches aren't locked out entirely.

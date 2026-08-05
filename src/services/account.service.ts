@@ -130,6 +130,13 @@ export interface AccountService {
    * set mustChangePassword — these are the churches' real passwords.
    */
   randomizeChurchPasswords(actor: Actor): Promise<ChurchCredential[]>;
+  /**
+   * 2026-08-05 owner request: rotate CHURCH logins ONLY, leaving every leadership password
+   * (director / zoneLeader / firstAid / secondary admins) untouched. For re-issuing church
+   * passwords after the Saturday handout without invalidating leadership logins. Shares every
+   * invariant of the church branch of `randomizeChurchPasswords` — see `rotateChurchLogins`.
+   */
+  randomizeChurchOnlyPasswords(actor: Actor): Promise<ChurchCredential[]>;
   /** Set passwords from an uploaded credentials sheet — the reverse of the export above. */
   importPasswords(actor: Actor, input: unknown): Promise<PasswordImportResult>;
   listChurches(actor: Actor): Promise<Church[]>;
@@ -226,6 +233,49 @@ export function makeAccountService(
       }
     }
     return removed;
+  }
+
+  /**
+   * THE SHARED CHURCH-LOGIN ROTATION LOOP — 2026-08-05.
+   *
+   * Extracted so `randomizeChurchPasswords` (church + leadership) and
+   * `randomizeChurchOnlyPasswords` (church only) call ONE implementation of "rotate every
+   * church login". Two copies of this loop is exactly the class of bug this codebase keeps
+   * recording — a copy that drifts is how the wrong accounts get rotated. Preserves every
+   * existing invariant: creates the gender account if missing, retires legacy combined logins,
+   * does NOT set `mustChangePassword` (these are the real handed-out passwords).
+   */
+  async function rotateChurchLogins(): Promise<ChurchCredential[]> {
+    const churches = await churchRepo.findAll();
+    const allUsers = await userRepo.findAll();
+    const rows: ChurchCredential[] = [];
+
+    for (const church of churches) {
+      const slugBase = slugifyUsername(church.name);
+      for (const gender of ['male', 'female'] as const) {
+        const existing = allUsers.find(
+          (u) => u.role === 'church' && u.churchId === church.id && u.genderScope === gender,
+        );
+        if (existing) {
+          // Reset to a fresh memorable password. Do NOT set mustChangePassword — this IS the
+          // church's real password.
+          const password = memorablePassword();
+          await userRepo.save({
+            ...existing,
+            passwordHash: await hashPassword(password),
+            mustChangePassword: false,
+            updatedAt: nowISO(),
+          });
+          rows.push({ username: existing.username, church: church.name, gender, password });
+        } else {
+          const { credential } = await createGenderAccount(church, gender, slugBase, allUsers);
+          rows.push(credential);
+        }
+      }
+      await retireLegacyChurchLogins(church.id, allUsers);
+    }
+
+    return rows;
   }
 
   return {
@@ -404,34 +454,8 @@ export function makeAccountService(
 
     async randomizeChurchPasswords(actor) {
       assertCan(actor, 'admin:manage');
-      const churches = await churchRepo.findAll();
+      const rows: ChurchCredential[] = await rotateChurchLogins();
       const allUsers = await userRepo.findAll();
-      const rows: ChurchCredential[] = [];
-
-      for (const church of churches) {
-        const slugBase = slugifyUsername(church.name);
-        for (const gender of ['male', 'female'] as const) {
-          const existing = allUsers.find(
-            (u) => u.role === 'church' && u.churchId === church.id && u.genderScope === gender,
-          );
-          if (existing) {
-            // Reset to a fresh memorable password. Do NOT set mustChangePassword — this IS the
-            // church's real password.
-            const password = memorablePassword();
-            await userRepo.save({
-              ...existing,
-              passwordHash: await hashPassword(password),
-              mustChangePassword: false,
-              updatedAt: nowISO(),
-            });
-            rows.push({ username: existing.username, church: church.name, gender, password });
-          } else {
-            const { credential } = await createGenderAccount(church, gender, slugBase, allUsers);
-            rows.push(credential);
-          }
-        }
-        await retireLegacyChurchLogins(church.id, allUsers);
-      }
 
       /* ── Leadership accounts (2026-08-03, owner request) ──
          Before this the button rotated church logins ONLY, so director / zone leader /
@@ -474,6 +498,26 @@ export function makeAccountService(
         });
       }
 
+      invalidateDashboardCache();
+      rows.sort(
+        (a, b) => a.church.localeCompare(b.church) || (a.gender ?? '').localeCompare(b.gender ?? ''),
+      );
+      return rows;
+    },
+
+    /**
+     * 2026-08-05 owner request: rotate CHURCH LOGINS ONLY — no leadership account is touched.
+     * Reason: after the Saturday handout the admin may need to re-issue church passwords
+     * without invalidating director/zone/first-aid logins that are still in use.
+     *
+     * Calls the SAME `rotateChurchLogins` loop as `randomizeChurchPasswords` above — do not
+     * duplicate it. Every invariant of the church branch carries over unchanged: gender accounts
+     * are created if missing, legacy combined logins are retired, `mustChangePassword` is NOT
+     * set (these are the real handed-out passwords), and the result is sorted identically.
+     */
+    async randomizeChurchOnlyPasswords(actor) {
+      assertCan(actor, 'admin:manage');
+      const rows = await rotateChurchLogins();
       invalidateDashboardCache();
       rows.sort(
         (a, b) => a.church.localeCompare(b.church) || (a.gender ?? '').localeCompare(b.gender ?? ''),

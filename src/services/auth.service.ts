@@ -6,8 +6,14 @@ import type { ZoneName } from '../core/types/enums';
 import { UnauthorizedError } from '../core/errors/app-error';
 import { LoginInputSchema } from '../core/validation/auth.schema';
 import type { LoginInput } from '../core/validation/auth.schema';
+import { ResponseCache } from '../utils/response-cache';
 
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const TOKEN_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours — church leaders use this as an installed
+// PWA at camp, where iOS AutoFill is unreliable, so every expiry means hand-typing a password.
+// Doubled from 24h on 2026-08-05. Because a locked-out role could otherwise keep a live session
+// for up to this long, the doubling ships together with the per-role revocation epoch below
+// (`SESSION_REVOCATION_CACHE_TTL_MS` / `isSessionRevoked`), which kills a locked role's tokens
+// within seconds of the lock, independent of the TTL.
 
 // A well-formed but unmatchable scrypt hash (salt:key). Used to run an equal-cost password
 // verification when the account doesn't exist / has no password, so login response time and
@@ -52,12 +58,24 @@ export function assertSessionSecret(): void {
 }
 
 function signSession(actor: Actor, expiresAt: number): string {
-  const payload = Buffer.from(JSON.stringify({ userId: actor.id, expiresAt, actor })).toString('base64url');
+  // `issuedAt` (2026-08-05) is what the per-role revocation epoch compares against — see
+  // `isSessionRevoked` below. A token minted before this field existed simply lacks it; that is
+  // the deliberate "legacy token" case handled there, not a bug.
+  const payload = Buffer.from(
+    JSON.stringify({ userId: actor.id, expiresAt, issuedAt: Date.now(), actor }),
+  ).toString('base64url');
   const sig = createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
   return `${payload}.${sig}`;
 }
 
-function parseSession(token: string): { userId: string; expiresAt: number; actor?: Actor } | null {
+interface ParsedSession {
+  userId: string;
+  expiresAt: number;
+  issuedAt?: number;
+  actor?: Actor;
+}
+
+function parseSession(token: string): ParsedSession | null {
   const dot = token.lastIndexOf('.');
   if (dot === -1) return null;
   const payload = token.slice(0, dot);
@@ -67,10 +85,85 @@ function parseSession(token: string): { userId: string; expiresAt: number; actor
     const a = Buffer.from(sig, 'base64url');
     const b = Buffer.from(expected, 'base64url');
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-    return JSON.parse(Buffer.from(payload, 'base64url').toString()) as { userId: string; expiresAt: number; actor?: Actor };
+    return JSON.parse(Buffer.from(payload, 'base64url').toString()) as ParsedSession;
   } catch {
     return null;
   }
+}
+
+/**
+ * Per-role session revocation epoch (2026-08-05). `resolveToken` does ZERO I/O for every other
+ * role, deliberately (see its own comment) — this is the one exception, and it is bounded: a
+ * settings read only ever happens for a `church`/`zoneLeader` actor, and the result is cached
+ * for `SESSION_REVOCATION_CACHE_TTL_MS` so a check-in-window burst of requests from the same
+ * role costs at most one DB read per minute, not one per request. Lock-to-logout latency of up
+ * to this TTL is accepted (owner-approved).
+ */
+const SESSION_REVOCATION_CACHE_TTL_MS = 60_000;
+
+interface RevocationEpochs {
+  church: string | null;
+  zoneLeader: string | null;
+}
+
+const REVOCATION_CACHE_KEY = 'epochs';
+
+/**
+ * Reads the two epoch columns off the settings singleton, through a 60s cache.
+ *
+ * ⚠️ IF THE SETTINGS READ THROWS, THE CALLER MUST TREAT THE ROLE AS NOT REVOKED. A transient DB
+ * blip must never lock the whole camp out of check-in mid-camp — that failure direction is
+ * deliberate, not an oversight, so this returns `null` epochs (nothing revoked) on error rather
+ * than propagating the throw. It is intentionally NOT this function's job to decide "allow the
+ * request" — that decision belongs to `isSessionRevoked`, which is what actually reasons about
+ * fail-open; this just hands back "nothing is known to be revoked" as the safe default.
+ */
+async function readRevocationEpochs(
+  settingsRepo: ISettingsRepository,
+  cache: ResponseCache<RevocationEpochs>,
+): Promise<RevocationEpochs> {
+  const cached = cache.get(REVOCATION_CACHE_KEY);
+  if (cached) return cached;
+  try {
+    const s = await settingsRepo.getSingleton();
+    const epochs: RevocationEpochs = {
+      church: s?.churchSessionsValidFrom ?? null,
+      zoneLeader: s?.zoneLeaderSessionsValidFrom ?? null,
+    };
+    cache.set(REVOCATION_CACHE_KEY, epochs);
+    return epochs;
+  } catch {
+    // Fail OPEN: a settings-read failure must never lock the camp out. Deliberately not cached,
+    // so the very next call retries against the DB rather than pinning "nothing is revoked" for
+    // a full 60s on the strength of one transient error.
+    return { church: null, zoneLeader: null };
+  }
+}
+
+/**
+ * Is this token dead because its role was locked out after (or without) it being issued?
+ *
+ * Rules (all deliberate — see the 2026-08-05 CLAUDE.md entry for the full reasoning):
+ * - Only `church`/`zoneLeader` are ever checked; admin/director/firstAid are unaffected by
+ *   construction (there is no admin/firstAid epoch field to read).
+ * - No epoch set for the role -> never revoked (the common case: nobody has been locked).
+ * - Epoch set AND `issuedAt` missing (a legacy pre-epoch token) -> REVOKED. A token with no
+ *   `issuedAt` cannot prove it postdates the epoch, so it fails closed once the role has
+ *   actually been locked (never before — see `readRevocationEpochs`, epochs start null).
+ * - Epoch set AND `issuedAt` predates it -> REVOKED.
+ */
+async function isSessionRevoked(
+  role: Actor['role'],
+  issuedAt: number | undefined,
+  settingsRepo: ISettingsRepository,
+  cache: ResponseCache<RevocationEpochs>,
+): Promise<boolean> {
+  if (role !== 'church' && role !== 'zoneLeader') return false;
+  const epochs = await readRevocationEpochs(settingsRepo, cache);
+  const epochIso = role === 'church' ? epochs.church : epochs.zoneLeader;
+  if (!epochIso) return false;
+  if (issuedAt === undefined) return true; // legacy token, epoch now set -> revoke
+  return issuedAt < Date.parse(epochIso);
 }
 
 export function toActor(user: User): Actor {
@@ -101,6 +194,12 @@ export interface AuthService {
 }
 
 export function makeAuthService(users: IUserRepository, settings?: ISettingsRepository): AuthService {
+  // Instance-scoped (not module-scoped) deliberately: this is created once at composition-root
+  // wiring for the real app (so the 60s bound applies exactly once, camp-wide), but tests build
+  // many short-lived services against many different settings fixtures in the same process — a
+  // module-level cache would leak an earlier test's epoch into a later one.
+  const revocationCache = new ResponseCache<RevocationEpochs>(SESSION_REVOCATION_CACHE_TTL_MS);
+
   return {
     async login(input: unknown) {
       const parsed = LoginInputSchema.safeParse(input);
@@ -143,12 +242,24 @@ export function makeAuthService(users: IUserRepository, settings?: ISettingsRepo
       const session = parseSession(token);
       if (!session) return null;
       if (Date.now() > session.expiresAt) return null;
-      // Trusted actor embedded in the signed token — no DB round-trip needed.
-      if (session.actor) return session.actor;
-      // Legacy token without an embedded actor: fall back to a lookup.
-      const user = await users.findById(session.userId);
-      if (!user || user.status !== 'active') return null;
-      return toActor(user);
+      // Trusted actor embedded in the signed token — no DB round-trip needed for the actor
+      // itself. Legacy token without an embedded actor: fall back to a lookup.
+      const actor = session.actor ?? await (async () => {
+        const user = await users.findById(session.userId);
+        if (!user || user.status !== 'active') return null;
+        return toActor(user);
+      })();
+      if (!actor) return null;
+      // Per-role session revocation epoch (2026-08-05). ZERO I/O for every role except
+      // church/zoneLeader — `isSessionRevoked` returns false immediately for anyone else, so
+      // admin/director/firstAid stay exactly as cheap as before this feature. When it does read
+      // settings, `settings` may be undefined (e.g. many unit tests construct this service
+      // without one) — treat that the same as "no epoch on record", i.e. never revoked.
+      if (settings) {
+        const revoked = await isSessionRevoked(actor.role, session.issuedAt, settings, revocationCache);
+        if (revoked) return null;
+      }
+      return actor;
     },
 
     async logout(_token: string) {

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createHmac } from 'node:crypto';
 import { makeAuthService, toActor, assertSessionSecret } from './auth.service';
 import { InMemoryUserRepository } from '../repositories/in-memory';
 import { hashPassword } from '../utils/crypto';
@@ -317,5 +318,174 @@ describe('AuthService.issueTokenFor', () => {
     const svc = makeAuthService(repo);
     expect(await svc.issueTokenFor('nope')).toBeNull();
     expect(await svc.issueTokenFor('x1')).toBeNull();
+  });
+});
+
+// ── 48h TTL + per-role session revocation epoch (2026-08-05) ──────────────────────────────────
+//
+// The TTL doubling (24h -> 48h) and the revocation epoch ship together deliberately: doubling
+// the TTL doubles how long a token from a locked-out role could otherwise keep working, so a
+// kill switch has to exist alongside it. See the CLAUDE.md entry for the full reasoning.
+
+// Mirrors auth.service.ts's INSECURE_FALLBACK — this is what SESSION_SECRET resolves to
+// whenever process.env.SESSION_SECRET is unset, which is the case throughout this test run
+// (nothing in this suite sets it). Used only to hand-construct a "legacy" token below that omits
+// `issuedAt`, simulating one minted before this feature existed.
+const DEV_FALLBACK_SECRET = 'camp-platform-dev-secret-change-in-production';
+
+function signLegacyToken(userId: string, expiresAt: number, actor: unknown): string {
+  const payload = Buffer.from(JSON.stringify({ userId, expiresAt, actor })).toString('base64url');
+  const sig = createHmac('sha256', DEV_FALLBACK_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+describe('AuthService — 48h TTL', () => {
+  let repo: InMemoryUserRepository;
+  beforeEach(async () => {
+    repo = new InMemoryUserRepository();
+    await repo.init();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('still resolves 47 hours after login', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T00:00:00.000Z'));
+    await seedUser(repo);
+    const svc = makeAuthService(repo);
+    const { token } = await svc.login({ username: 'admin', password: 'demo1234' });
+
+    vi.setSystemTime(new Date('2026-08-02T23:00:00.000Z')); // +47h
+    expect(await svc.resolveToken(token)).not.toBeNull();
+  });
+
+  it('is null 49 hours after login', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T00:00:00.000Z'));
+    await seedUser(repo);
+    const svc = makeAuthService(repo);
+    const { token } = await svc.login({ username: 'admin', password: 'demo1234' });
+
+    vi.setSystemTime(new Date('2026-08-03T01:00:00.000Z')); // +49h
+    expect(await svc.resolveToken(token)).toBeNull();
+  });
+});
+
+describe('AuthService — per-role session revocation epoch', () => {
+  let repo: InMemoryUserRepository;
+  beforeEach(async () => {
+    repo = new InMemoryUserRepository();
+    await repo.init();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('revokes a church token issued BEFORE the epoch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T10:00:00.000Z'));
+    await seedUser(repo, { id: 'c1', username: 'victory', role: 'church', churchId: 'ch1' });
+    const settings = fakeSettings({ churchSessionsValidFrom: '2026-08-01T11:00:00.000Z' });
+    const svc = makeAuthService(repo, settings);
+
+    const { token } = await svc.login({ username: 'victory', password: 'demo1234' });
+    expect(await svc.resolveToken(token)).toBeNull();
+  });
+
+  it('accepts a church token issued AFTER the epoch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    await seedUser(repo, { id: 'c1', username: 'victory', role: 'church', churchId: 'ch1' });
+    const settings = fakeSettings({ churchSessionsValidFrom: '2026-08-01T11:00:00.000Z' });
+    const svc = makeAuthService(repo, settings);
+
+    const { token } = await svc.login({ username: 'victory', password: 'demo1234' });
+    const actor = await svc.resolveToken(token);
+    expect(actor?.role).toBe('church');
+  });
+
+  it('revokes a zoneLeader token issued BEFORE the epoch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T10:00:00.000Z'));
+    await seedUser(repo, { id: 'z1', username: 'yellowzone', role: 'zoneLeader', zone: 'Yellow' });
+    const settings = fakeSettings({ zoneLeaderSessionsValidFrom: '2026-08-01T11:00:00.000Z' });
+    const svc = makeAuthService(repo, settings);
+
+    const { token } = await svc.login({ username: 'yellowzone', password: 'demo1234' });
+    expect(await svc.resolveToken(token)).toBeNull();
+  });
+
+  it('accepts a zoneLeader token issued AFTER the epoch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T12:00:00.000Z'));
+    await seedUser(repo, { id: 'z1', username: 'yellowzone', role: 'zoneLeader', zone: 'Yellow' });
+    const settings = fakeSettings({ zoneLeaderSessionsValidFrom: '2026-08-01T11:00:00.000Z' });
+    const svc = makeAuthService(repo, settings);
+
+    const { token } = await svc.login({ username: 'yellowzone', password: 'demo1234' });
+    const actor = await svc.resolveToken(token);
+    expect(actor?.role).toBe('zoneLeader');
+  });
+
+  it('never checks the epoch for admin/director/firstAid — a church epoch does not affect them', async () => {
+    await seedUser(repo, { id: 'd1', username: 'director', role: 'director' });
+    // Epoch is in the far future — if it were (wrongly) applied to every role, this token
+    // would be revoked no matter when it was issued.
+    const settings = fakeSettings({ churchSessionsValidFrom: '2099-01-01T00:00:00.000Z' });
+    const svc = makeAuthService(repo, settings);
+
+    const { token } = await svc.login({ username: 'director', password: 'demo1234' });
+    const actor = await svc.resolveToken(token);
+    expect(actor?.role).toBe('director');
+  });
+
+  it('a legacy token (no issuedAt) is REVOKED once the role epoch is set', async () => {
+    await seedUser(repo, { id: 'c1', username: 'victory', role: 'church', churchId: 'ch1' });
+    const settings = fakeSettings({ churchSessionsValidFrom: '2026-08-01T00:00:00.000Z' });
+    const svc = makeAuthService(repo, settings);
+
+    const legacyActor = toActor({
+      id: 'c1', firstName: 'Vic', lastName: 'Tory', username: 'victory', role: 'church',
+      churchId: 'ch1', status: 'active', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    } as User);
+    const token = signLegacyToken('c1', Date.now() + 1000 * 60 * 60, legacyActor);
+
+    expect(await svc.resolveToken(token)).toBeNull();
+  });
+
+  it('a legacy token (no issuedAt) resolves fine when no epoch is set', async () => {
+    await seedUser(repo, { id: 'c1', username: 'victory', role: 'church', churchId: 'ch1' });
+    const settings = fakeSettings({ churchSessionsValidFrom: null });
+    const svc = makeAuthService(repo, settings);
+
+    const legacyActor = toActor({
+      id: 'c1', firstName: 'Vic', lastName: 'Tory', username: 'victory', role: 'church',
+      churchId: 'ch1', status: 'active', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    } as User);
+    const token = signLegacyToken('c1', Date.now() + 1000 * 60 * 60, legacyActor);
+
+    const actor = await svc.resolveToken(token);
+    expect(actor?.role).toBe('church');
+  });
+
+  it('ALLOWS the request when the settings read throws, rather than locking the camp out', async () => {
+    await seedUser(repo, { id: 'c1', username: 'victory', role: 'church', churchId: 'ch1' });
+    // Mint the token against a healthy settings stub (login itself must succeed)...
+    const healthy = fakeSettings({});
+    const mintingSvc = makeAuthService(repo, healthy);
+    const { token } = await mintingSvc.login({ username: 'victory', password: 'demo1234' });
+
+    // ...then resolve it against a service whose settings read always throws.
+    const throwing: ISettingsRepository = {
+      async init() {},
+      async getSingleton(): Promise<CampSettings | null> {
+        throw new Error('DB blip');
+      },
+      async saveSingleton(s: CampSettings) { return s; },
+    };
+    const resolvingSvc = makeAuthService(repo, throwing);
+    const actor = await resolvingSvc.resolveToken(token);
+    expect(actor?.role).toBe('church');
   });
 });

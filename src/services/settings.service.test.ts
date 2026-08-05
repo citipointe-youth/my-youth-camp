@@ -158,3 +158,54 @@ describe('SettingsService — camp dates moved (item 3)', () => {
     }
   });
 });
+
+/* Session revocation epoch (2026-08-05) — flipping churchLoginLocked/zoneLeaderLoginLocked
+   false->true is the ONLY way churchSessionsValidFrom/zoneLeaderSessionsValidFrom are ever set;
+   there is deliberately no separate admin control. See auth.service.ts for what reads them. */
+describe('SettingsService — login lock stamps the session revocation epoch', () => {
+  let repo: InMemorySettingsRepository;
+  let svc: SettingsService;
+
+  beforeEach(async () => {
+    repo = new InMemorySettingsRepository();
+    await repo.saveSingleton(settings());
+    svc = makeSettingsService(repo);
+  });
+
+  it('stamps churchSessionsValidFrom when the lock flips false -> true', async () => {
+    const before = await svc.update(actor(), { campName: 'unrelated' });
+    expect(before.churchSessionsValidFrom).toBeFalsy();
+
+    const saved = await svc.update(actor(), { churchLoginLocked: true });
+    expect(saved.churchSessionsValidFrom).toBeTruthy();
+    expect(new Date(saved.churchSessionsValidFrom!).toISOString()).toBe(saved.churchSessionsValidFrom);
+  });
+
+  it('stamps zoneLeaderSessionsValidFrom when that lock flips false -> true', async () => {
+    const saved = await svc.update(actor(), { zoneLeaderLoginLocked: true });
+    expect(saved.zoneLeaderSessionsValidFrom).toBeTruthy();
+  });
+
+  it('does NOT clear the stamp when the lock is turned back off', async () => {
+    const locked = await svc.update(actor(), { churchLoginLocked: true });
+    const stamp = locked.churchSessionsValidFrom;
+    expect(stamp).toBeTruthy();
+
+    const unlocked = await svc.update(actor(), { churchLoginLocked: false });
+    expect(unlocked.churchSessionsValidFrom).toBe(stamp);
+  });
+
+  it('does NOT re-stamp (push the epoch forward) when the lock is already true and something else is saved', async () => {
+    const first = await svc.update(actor(), { churchLoginLocked: true });
+    const stamp = first.churchSessionsValidFrom;
+
+    const second = await svc.update(actor(), { churchLoginLocked: true, campName: 'Renamed' });
+    expect(second.churchSessionsValidFrom).toBe(stamp);
+  });
+
+  it('locking one role does not stamp the other', async () => {
+    const saved = await svc.update(actor(), { churchLoginLocked: true });
+    expect(saved.churchSessionsValidFrom).toBeTruthy();
+    expect(saved.zoneLeaderSessionsValidFrom).toBeFalsy();
+  });
+});

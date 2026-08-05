@@ -1574,8 +1574,15 @@ function _loginTips(){
   if(!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent))return;
   const el=document.getElementById('loginTips');
   if(!el)return;
-  el.innerHTML='Install as an app — <a href="/install.html">how to add to Home Screen</a>'
+  let html='Install as an app — <a href="/install.html">how to add to Home Screen</a>'
     +'<br>Password not saving? — <a href="/save-password.html">how to save it manually</a>';
+  /* 2026-08-05: iOS 18 DOES support AutoFill inside an installed (standalone) app, but the
+     saved credential usually sits behind the key (🔑) button in the QuickType bar above the
+     keyboard instead of being offered prominently like it is in Safari — leaders hand-type the
+     password because they don't know to tap it. _isIOS()/_isStandalone() are declared further
+     down the file but hoist (function declarations), and both already self-wrap in try/catch. */
+  if(_isIOS()&&_isStandalone())html+='<br>Saved password not showing? — tap the password box, then tap the 🔑 key above the keyboard to fill it.';
+  el.innerHTML=html;
   el.style.display='block';
 }
 /* ── Android install-as-app prompt (2026-07-31) ────────────────────────────────────────────
@@ -6411,9 +6418,10 @@ RENDER.adminAccounts=async function(){
      describing itself wrongly as much as it was hard to find. */
   paint('adminAccounts',`
     <div class="card"><div class="lbl" style="margin-top:0">All login passwords</div>
-      <p class="note-hint" style="margin:2px 0 8px">Issues a fresh memorable password to every church login and every leadership login, and downloads the full list as a CSV. The original admin account (this one) is never changed.</p>
-      <div style="display:flex;gap:8px;align-items:stretch">
-        <button class="btn ghost" onclick="randomizeChurchPasswords()" style="flex:1;min-width:0;margin-top:0">${icSm('key')} Randomise &amp; export passwords</button>
+      <p class="note-hint" style="margin:2px 0 8px">Issues fresh memorable passwords and downloads the list as a CSV. Two options below — rotate every login, or churches only (leadership passwords stay put). The original admin account (this one) is never changed either way.</p>
+      <div style="display:flex;gap:8px;align-items:stretch;flex-wrap:wrap">
+        <button class="btn ghost" onclick="randomizeChurchPasswords()" style="flex:1;min-width:150px;margin-top:0">${icSm('key')} Randomise all logins</button>
+        <button class="btn ghost" onclick="randomizeChurchOnlyPasswords()" style="flex:1;min-width:150px;margin-top:0">${icSm('key')} Randomise church logins only</button>
         <button class="btn ghost sm" onclick="document.getElementById('pwUpIn').click()" style="flex:0 0 auto;width:auto;margin-top:0;min-width:92px">${icSm('upload')} Upload</button>
         <input type="file" id="pwUpIn" accept=".csv,.xlsx,.xls" style="display:none" onchange="uploadPasswords()">
       </div>
@@ -6544,17 +6552,21 @@ async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter churc
 /* Feature 6: re-randomise EVERY church login's password and download the list as a CSV
    (username, church, gender, password). Also creates any missing b-/g- account and retires the
    old combined login, so one click both migrates and re-issues. Passwords are memorable (Word.##). */
-async function randomizeChurchPasswords(){
-  if(!await confirmSheet({title:'Re-randomise ALL login passwords and download the list?',body:'Every church login AND every leadership login (director, zone leader, first aid, any extra admin) gets a new password. The only account left alone is the original admin — this one. Every other current password stops working immediately, so hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
+/* 2026-08-05: a second button rotates CHURCH ACCOUNTS ONLY (backend
+   POST /accounts/churches/randomize-church-passwords, admin:manage). It returns the SAME row
+   shape as the all-accounts endpoint (username/church/gender/role/password), so there is ONE
+   shared exporter (`_pwRandomiseExport`) parameterised by endpoint/filename/wording — do not
+   write a second CSV builder. */
+async function _pwRandomiseExport(endpoint,filenamePrefix,noneMsg,toastVerb){
   // The POST does the whole split+randomise server-side and RETURNS the new passwords. That
   // response IS the only copy — so once it succeeds we must download the CSV before anything
   // else can fail. The accounts-list refresh afterwards is cosmetic; a hiccup there must NOT
   // surface as an error (it previously made a fully-successful randomise look like it failed,
   // and left the screen showing the pre-split accounts).
   let rows;
-  try{ rows=await api('/accounts/churches/randomize-passwords',{method:'POST',body:{}}); }
+  try{ rows=await api(endpoint,{method:'POST',body:{}}); }
   catch(e){ toast(e.message||'Could not randomise passwords'); return; }
-  if(!rows||!rows.length){ toast('No church accounts to export'); try{await _rAccts();}catch(_){} return; }
+  if(!rows||!rows.length){ toast(noneMsg); try{await _rAccts();}catch(_){} return; }
   const q=v=>{v=String(v==null?'':v);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
   /* 2026-08-03: the export now covers leadership accounts too, so two columns changed.
      `Gender` is BLANK for a leadership login rather than echoing something — only church
@@ -6566,9 +6578,19 @@ async function randomizeChurchPasswords(){
   const roleLabel={admin:'Admin',director:'Director',zoneLeader:'Zone leader',firstAid:'First aid',church:'Church'};
   const body=rows.map(r=>[r.username,r.church,r.gender==='male'?'Boys':r.gender==='female'?'Girls':'',roleLabel[r.role]||(r.gender?'Church':''),r.password]);
   const csv='﻿'+[header,...body].map(r=>r.map(q).join(',')).join('\r\n');
-  _saveTextFile(csv,_exportName('camp-passwords','csv'));
-  toast('Passwords randomised & exported ('+rows.length+' logins)');
+  _saveTextFile(csv,_exportName(filenamePrefix,'csv'));
+  toast(toastVerb+' ('+rows.length+' logins)');
   try{await _rAccts();}catch(_){/* UI refresh only — export already succeeded */}
+}
+async function randomizeChurchPasswords(){
+  if(!await confirmSheet({title:'Re-randomise ALL login passwords and download the list?',body:'Every church login AND every leadership login (director, zone leader, first aid, any extra admin) gets a new password. The only account left alone is the original admin — this one. Every other current password stops working immediately, so hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
+  await _pwRandomiseExport('/accounts/churches/randomize-passwords','camp-passwords','No church accounts to export','Passwords randomised & exported');
+}
+/* Church accounts ONLY — leadership logins (director/zone leader/first aid/any extra admin) are
+   left completely alone. Same confirm-then-download-first shape as the all-accounts version. */
+async function randomizeChurchOnlyPasswords(){
+  if(!await confirmSheet({title:'Re-randomise CHURCH login passwords only and download the list?',body:'Every church login (boys/girls, every ministry) gets a new password. Leadership passwords — director, zone leader, first aid, any extra admin — are NOT changed and keep working. Every current church password stops working immediately, so hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
+  await _pwRandomiseExport('/accounts/churches/randomize-church-passwords','church-passwords','No church accounts to export','Church passwords randomised & exported');
 }
 
 /* ===== PASSWORD UPLOAD — the reverse of "Randomise & export passwords" =====
@@ -9084,7 +9106,7 @@ async function _tryRestoreSession(){
     // GET /settings is deliberately auth:false (the login screen needs the camp name/branding),
     // so it happily 200s for a dead session — restore then sailed on, hid the login screen, and
     // the app blew up one tick later when _prefetch()'s authed calls all 401'd. Session tokens
-    // are stateless HMAC with a 24h TTL (auth.service.ts), so this fires for anyone returning
+    // are stateless HMAC with a 48h TTL (auth.service.ts), so this fires for anyone returning
     // the next day. On failure _doFetch() already runs sessionExpired(); the catch below clears
     // localStorage so the next load goes straight to a clean login screen.
     await api('/auth/me',{noCache:true});

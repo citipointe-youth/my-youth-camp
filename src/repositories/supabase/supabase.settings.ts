@@ -16,6 +16,11 @@ function toSettings(r: Record<string, unknown>): CampSettings {
     accommodationLocked: r['accommodation_locked'] as boolean,
     churchLoginLocked: (r['church_login_locked'] as boolean | null) ?? false,
     zoneLeaderLoginLocked: (r['zone_leader_login_locked'] as boolean | null) ?? false,
+    // 2026-08-05 — migration 0021. Per-role session revocation epoch. Tolerate absence on read
+    // (an un-migrated DB simply has no epoch, i.e. no role has ever been locked) like every
+    // other late-added column.
+    churchSessionsValidFrom: (r['church_sessions_valid_from'] as Date | null)?.toISOString() ?? null,
+    zoneLeaderSessionsValidFrom: (r['zone_leader_sessions_valid_from'] as Date | null)?.toISOString() ?? null,
     churchCheckinTimeRestricted: (r['church_checkin_time_restricted'] as boolean | null) ?? false,
     checkinSwitchoverTime: (r['checkin_switchover_time'] as string | null) ?? '14:00',
     checkinPhaseOverride: (r['checkin_phase_override'] as CampSettings['checkinPhaseOverride'] | null) ?? 'auto',
@@ -58,6 +63,8 @@ function settingsCols(s: CampSettings): Record<string, unknown> {
     accommodation_locked: s.accommodationLocked,
     church_login_locked: s.churchLoginLocked,
     zone_leader_login_locked: s.zoneLeaderLoginLocked,
+    church_sessions_valid_from: s.churchSessionsValidFrom ?? null,
+    zone_leader_sessions_valid_from: s.zoneLeaderSessionsValidFrom ?? null,
     church_checkin_time_restricted: s.churchCheckinTimeRestricted,
     checkin_switchover_time: s.checkinSwitchoverTime,
     checkin_phase_override: s.checkinPhaseOverride,
@@ -86,6 +93,7 @@ const UPDATE_COLS = [
   'camp_name', 'year', 'start_date', 'end_date', 'timezone',
   'check_in_banner', 'check_in_days', 'accommodation_locked',
   'church_login_locked', 'zone_leader_login_locked', 'church_checkin_time_restricted', 'camp_mode',
+  'church_sessions_valid_from', 'zone_leader_sessions_valid_from',
   'checkin_switchover_time', 'checkin_phase_override',
   'checkin_window_am_start', 'checkin_window_am_end', 'checkin_window_pm_start', 'checkin_window_pm_end',
   'last_temp_passwords', 'last_exported_at',

@@ -96,12 +96,28 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
       assertCan(actor, 'admin:manage');
       const parsed = UpdateSettingsSchema.parse(patch);
       const current = await get();
+      const now = nowISO();
       const updated: CampSettings = {
         ...current,
         ...parsed,
         id: SETTINGS_ID,
-        updatedAt: nowISO(),
+        updatedAt: now,
       };
+      // Session revocation epoch (2026-08-05): flipping a login lock false->true also stamps
+      // that role's epoch, so tokens already handed out to it are killed within 60s (the cache
+      // TTL `resolveToken` reads through), not just new logins from here on. This is the ONLY
+      // way these two fields are ever set — there is deliberately no separate admin control.
+      // Flipping the lock back OFF must NOT clear the stamp: a fresh login mints a newer
+      // `issuedAt` and works fine, while any still-live old token stays dead. Only the FALSE ->
+      // TRUE transition on THIS call stamps it — re-saving `true` on top of an already-true lock
+      // (e.g. an unrelated settings edit) must not keep pushing the epoch forward, or a
+      // perfectly valid session minted seconds ago would be killed by an admin renaming the camp.
+      if (parsed.churchLoginLocked === true && current.churchLoginLocked !== true) {
+        updated.churchSessionsValidFrom = now;
+      }
+      if (parsed.zoneLeaderLoginLocked === true && current.zoneLeaderLoginLocked !== true) {
+        updated.zoneLeaderSessionsValidFrom = now;
+      }
       // Item 3: move day-keyed content with the camp days before persisting the new dates, so a
       // date change never silently orphans the devotionals/schedule an admin already wrote.
       const moves = remapDays(current.checkInDays ?? [], updated.checkInDays ?? []);

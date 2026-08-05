@@ -255,6 +255,43 @@ check "expected vs actual" before touching code.
 >   (3rd): prices are now DERIVED from the invoices, so an empty setting is no longer a fault.**
 >   See the block below before touching anything here.
 
+> **2026-08-05 (2nd) — 48h sessions + session kill switch, church-only password reset, `/ready`
+> (grep the name). Full rationale: CLAUDE.md, the "48h sessions + a session KILL SWITCH" section
+> at the top.**
+> - **⚠️ "I LOCKED THE CHURCHES IN SETTINGS BUT A LEADER'S PHONE IS STILL SIGNED IN."** Rule out
+>   in this order before reading code: (1) **up to 60s of propagation** — the epoch read is
+>   cached (`response-cache.ts`), so a lock is not instant, by design; (2) the phone must make a
+>   **request** for the check to run — a screen sitting idle stays painted until it next calls
+>   the API; (3) check the epoch is actually stamped:
+>   `select church_sessions_valid_from, zone_leader_sessions_valid_from from settings;` — null
+>   means no lock transition ever happened, so **nothing** is revoked for that role.
+>   ⚠️ **Only `church` and `zoneLeader` are ever revoked.** admin/director/firstAid have no epoch
+>   field by construction — "the admin stayed logged in" is correct behaviour, not a bug.
+> - **`isSessionRevoked` / `readRevocationEpochs`** (`auth.service.ts`) — the whole rule.
+>   ⚠️ **It FAILS OPEN**: a settings-read throw allows the request, deliberately (a DB blip must
+>   never lock the camp out mid-check-in), and that failure is **not cached**. So *"the lock
+>   isn't taking effect"* can also mean the settings read is throwing — check the logs before
+>   assuming the epoch logic is wrong.
+> - **`issuedAt` in the signed payload** (`signSession`). A token minted before 2026-08-05 lacks
+>   it: **missing `issuedAt` + epoch set → REVOKED**. So the first lock after this shipped also
+>   kills every pre-existing token for that role. Intended.
+> - **`TOKEN_TTL_MS` is 48h** (was 24h). Anything reasoning about "the next day" — notably
+>   `_tryRestoreSession()` in the SPA — is now a two-day window.
+> - **⚠️ "THE UPTIME MONITOR SAID EVERYTHING WAS FINE DURING AN OUTAGE."** `/health` is
+>   **liveness only** — it never touches the DB, so it stays 200 through a total pooler failure.
+>   **`/ready` is the one that runs `select 1`** (5s timeout → 503). If the monitor is still
+>   pointed at `/health`, that is the bug. Do NOT add a DB check to `/health`; the pair is the
+>   point. `PERSISTENCE !== 'supabase'` legitimately reports `db:'n/a'`.
+> - **`rotateChurchLogins()`** (`account.service.ts:248`) — the ONE church-rotation loop, shared
+>   by `randomizeChurchPasswords` (church **+ leadership**) and `randomizeChurchOnlyPasswords`
+>   (church only, route `POST /accounts/churches/randomize-church-passwords`). *"The wrong
+>   accounts got new passwords"* → check **which button/route** was used, not the loop. SPA side
+>   both go through the single `_pwRandomiseExport(...)`.
+> - **Login throttle is now 15** failures per ip+username per 15 min (was 10). A church login is
+>   shared, so the bucket is the whole church's fumbling. *"A church is locked out"* → still a
+>   429 with `Retry-After`, still self-clearing; it is in-memory **per lambda instance**, so the
+>   effective limit is higher and a lockout may not reproduce on a retry.
+
 > **2026-08-02 (3rd) — family invoices + derived ticket prices (grep the name).
 > Full rationale: CLAUDE.md, the third 2026-08-02 section at the top.**
 > - **⚠️ "A BUNCH OF TICKETS SHOW $0 WITH NO DISCOUNT CODE" → SHARED FAMILY INVOICES.** Check it in

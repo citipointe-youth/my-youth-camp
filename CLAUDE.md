@@ -4,6 +4,135 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## 48h sessions + a session KILL SWITCH, church-only password reset, `/ready`, throttle 10→15 — 2026-08-05 (2nd)
+
+Pre-launch batch. The churches get their passwords on **Sat 2026-08-08** (~100 leaders log in
+and browse; camp itself is 2026-09-28). Backend + SPA + **migration `0021`**. `npm run
+typecheck` clean, `npx vitest run` **1013 pass / 62 files** (was 990/61; **+23**, **+1 file**).
+`node --check` OK on the SPA body (range **967–9518**, re-derived) and `sw.js`. `sw.js`
+`camp-v92`→**`camp-v93`**. Built by three parallel Sonnet subagents on disjoint file sets
+(auth / accounts+http / SPA), each verified independently afterwards.
+
+> ⚠️ **DEPLOY ORDER IS NOT FREE CHOICE. Apply `0021` to prod BEFORE pushing the code.**
+> `supabase.settings` writes **every column on every save**, so until the columns exist every
+> settings save, mode switch and new-year **fails in prod**. Same standing rule as `0015`–`0020`.
+
+### 1 — 🔴 LOCKING A ROLE DIDN'T LOG ANYONE OUT, AND THE TTL DOUBLING MADE THAT WORSE
+
+`churchLoginLocked` / `zoneLeaderLoginLocked` only ever blocked **new logins** — the comment
+block in `auth.service.ts` said so outright. Sessions are stateless HMAC (`signSession`) with no
+revocation, so an admin who locked the churches after camp left **every leader already holding a
+token signed in until it expired** — a live session into minors' PII after the admin believes
+it is closed. Doubling the TTL to 48h doubles that window, which is why the two ship together
+and must not be separated.
+
+- **`TOKEN_TTL_MS` 24h → 48h.** *Why:* leaders run this as an **installed PWA on iPhones**, and
+  iOS AutoFill is unreliable inside the installed app (it works in Safari). Every expiry means
+  hand-typing a password on a phone at camp.
+- **`issuedAt` (epoch ms) now travels in the signed payload** (`signSession`/`parseSession`).
+- **Two nullable ISO columns on `CampSettings`** — `churchSessionsValidFrom`,
+  `zoneLeaderSessionsValidFrom` (migration `0021`). `resolveToken` revokes a `church`/`zoneLeader`
+  token whose `issuedAt` predates the matching epoch.
+- ⚠️ **PER-ROLE, NOT ONE GLOBAL EPOCH.** A global epoch would sign the **admin** out at the
+  exact moment they lock the churches — i.e. the one action that most needs an admin still
+  logged in. Per-role mirrors the existing per-role toggles and leaves admin/director/firstAid
+  unaffected **by construction** (there is no epoch field for them to read).
+- **Wired to the existing toggle, no new admin control.** `settings.service.update()` stamps the
+  epoch on a **false→true transition only**.
+  - ⚠️ **Turning the lock back OFF must NOT clear the stamp.** A fresh login mints a newer
+    `issuedAt` and works fine; old tokens stay dead. Clearing it would resurrect them.
+  - ⚠️ **A redundant true→true save must NOT re-stamp** (found by the subagent, not in the
+    spec). Otherwise an admin renaming the camp minutes after locking the churches would kill a
+    session that logged in one second earlier. There is a test pinning this.
+
+### 1b — The cost is bounded to 60s, and it FAILS OPEN on purpose
+
+`resolveToken` did **zero I/O** and that was deliberate. It still does for every role except
+church/zoneLeader — `isSessionRevoked` returns `false` immediately for anyone else. When it does
+read settings it goes through `response-cache.ts` at a **60s** TTL, so lock-to-logout latency is
+up to 60s (owner-accepted).
+
+- ⚠️ **A SETTINGS-READ FAILURE ALLOWS THE REQUEST.** A transient DB blip must never lock the
+  whole camp out mid-check-in. The failure direction is deliberate — do not "harden" it to deny.
+- ⚠️ **The failure is deliberately NOT cached**, so the next call retries rather than pinning
+  "nothing is revoked" for a full 60s on one transient error.
+- ⚠️ **The cache is instance-scoped (inside `makeAuthService`), not module-scoped.** Module scope
+  leaks one test's settings fixture into the next test in the same process and makes the
+  revocation tests non-deterministic.
+- **Legacy tokens** (minted before `issuedAt` existed): **missing `issuedAt` + epoch set →
+  REVOKE**. At deploy no epoch is set, so nothing breaks; the rule only bites once a role is
+  actually locked, which is the intent.
+- `makeAuthService(users, settings?)` takes settings **optionally** (many unit tests build it
+  without one) — undefined is treated as "no epoch on record". **Both real composition paths
+  (`container.ts:212` and `:367`) pass it**, verified; if a third is ever added and forgets, the
+  kill switch silently does nothing.
+
+### 2 — A CHURCH-ONLY "randomise & export", beside the existing all-accounts one
+
+Since 2026-08-03 the one button rotated church logins **and** all leadership accounts
+(director/zoneLeader/firstAid/secondary admins, never the original admin). The owner needs to
+re-issue **church** passwords after Saturday without invalidating the leadership logins.
+
+- New `randomizeChurchOnlyPasswords(actor)` (`admin:manage`), route
+  **`POST /accounts/churches/randomize-church-passwords`**, same `ChurchCredential[]` shape.
+- ⚠️ **REFACTORED, NOT COPY-PASTED.** The church loop is now the single private
+  **`rotateChurchLogins()`** (`account.service.ts:248`); `randomizeChurchPasswords` calls it and
+  then adds the leadership loop. Two divergent copies of credential rotation is exactly how the
+  wrong accounts get rotated.
+- The load-bearing test asserts every **non-church password hash is byte-identical before and
+  after**, and that no leadership row leaks into the CSV. A test that only checked the returned
+  rows would pass while silently rotating passwords.
+- SPA: one shared **`_pwRandomiseExport(endpoint, filenamePrefix, noneMsg, toastVerb)`** backs
+  both buttons — do not write a second exporter. Church-only downloads as
+  `church-passwords-<date>.csv` vs `camp-passwords-<date>.csv` so they don't collide in
+  Downloads. (The upload path matches on the **`Username` column, not the filename**, so both
+  round-trip.)
+- ⚠️ **FIFTH BRUSH WITH THE FLEX BUG — the row now has THREE buttons.** `.btn` is
+  `display:block;width:100%`, which becomes the flex-basis. The row is `flex-wrap:wrap`, the two
+  randomise buttons are `flex:1;min-width:150px`, Upload stays `flex:0 0 auto;width:auto;
+  min-width:92px`. Previously fixed 2026-07-08, twice on 2026-08-02, and 2026-08-05.
+
+### 3 — `GET /ready` — because `/health` stays GREEN through a total DB outage
+
+`/health` returns `{status:'ok'}` **without touching the database**. It is a liveness probe, so
+an uptime monitor pointed at it reports healthy while every screen 503s — the exact failure it
+looks like it is watching for.
+
+- New **`GET /ready`**: `select 1` via the existing `getSqlClient()` singleton, raced against a
+  **5s `READY_DB_TIMEOUT_MS`** (well under `maxDuration:30` and the role-level 15s
+  `statement_timeout`), so a hung pooler fails fast instead of hanging the monitor.
+- **200 `{status:'ready',db:'ok',ms}` / 503 `{status:'degraded',db:'error'}`.** The **status
+  code** is the contract — monitors alert on non-2xx.
+- ⚠️ **Unauthenticated on purpose** (a monitor can't log in) and the body **never** carries a
+  connection string, hostname or driver error — that detail goes to `logger` only.
+- `PERSISTENCE !== 'supabase'` returns `{status:'ready',db:'n/a'}` — honest, not a fake pass:
+  there is no DB to check.
+- ⚠️ **Do NOT add a DB check to `/health`.** The pair is the point. **An external monitor must
+  be repointed at `/ready` to actually catch a pooler outage.**
+
+### 4 — Login throttle 10 → 15 failures (owner)
+
+`express-adapter.ts`. **A church login is SHARED by several leaders**, so the ip+username bucket
+is not one person's typos — it is the whole church's, and on a church/camp WiFi they share the
+IP too. At 10, a handful of leaders fumbling the handed-out password locked their **entire
+church** out for 15 minutes on the very day the passwords go out. 15 keeps a real brute-force
+backstop (keyspace ~117k since 2026-07-31) while absorbing normal fumbling. Window and
+failures-only keying unchanged.
+
+### 5 — iOS: tell people about the 🔑 key
+
+iOS 18 **does** support AutoFill in an installed web app, but the saved credential sits behind
+the key (🔑) button in the QuickType bar rather than being offered prominently as in Safari — so
+leaders hand-type. `_loginTips()` gains one line when `_isIOS() && _isStandalone()`.
+`_isIOS`/`_isStandalone` are declared *after* `_loginTips()` runs but **hoist** (function
+declarations) and both self-wrap in try/catch — **this is fine, don't "fix" it by moving
+things.** The UA gate (phones only) and the can't-throw-on-the-login-gate property are both
+preserved. `#mcpGate` deliberately untouched.
+
+### Needs on-device eyeballing (tsc/vitest cannot prove any of it)
+The 🔑 hint's placement/wrapping and glyph rendering · the **three-button** password row at
+~360px · an end-to-end run of the church-only button against the live endpoint.
+
 ## 🔴 Sponsor/discount tags were silently ignored on anyone missing an accommodation kind — 2026-08-05
 
 Found by an independent feature review of the budgeting/costing code (asked to look specifically
