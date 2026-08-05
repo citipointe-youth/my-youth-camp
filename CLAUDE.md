@@ -9,9 +9,11 @@
 Owner request: *"a small button to the right of it for 'upload' that does the exact reverse (sets
 the passwords for account names found that match)"*, with resilience for blank passwords and for
 a file covering only a subset of churches. Backend + SPA. **No schema or migration change** —
-next migration is still `0021`. `npm run typecheck` clean, `npx vitest run` **975 pass / 61 files**
-(was 950/60; **+25**, and **+1 FILE** — a new test file), `node --check` OK on the SPA body
-(range **966–9452**, re-derived) and `sw.js`. `sw.js` `camp-v90`→**`camp-v91`**.
+next migration is still `0021`. `npm run typecheck` clean, `npx vitest run` **981 pass / 61 files**
+(was 950/60; **+31**, and **+1 FILE** — a new test file), `node --check` OK on the SPA body
+(range **966–9477**, re-derived) and `sw.js`. `sw.js` `camp-v90`→**`camp-v91`**.
+Built by two parallel Sonnet subagents (backend / SPA — disjoint files), then independently
+reviewed by a third, which found the race in "The dry run is not a nicety" below.
 
 Export the credentials CSV, edit the Password column, upload it back. Same card, same columns,
 so the round trip is exact. Reads `.xlsx` too, free, via the existing `_readImportFile`.
@@ -79,7 +81,35 @@ confirms.
 Every skipped row is **named, not just counted**. "3 not matched" sends an admin back to a 30-row
 spreadsheet with no idea which three, which is how a genuinely wrong file gets confirmed anyway.
 `dryRun` runs the identical code path and stops before the writes, so the preview cannot disagree
-with what the confirm then does.
+with what the confirm then does **on the server**. The client was a different story:
+
+> ⚠️ **THE PREVIEW AND THE CONFIRM COULD DESCRIBE DIFFERENT FILES — found in independent review,
+> fixed same day.** `_pwUpCsv` was armed synchronously after the file read but the box was
+> painted after the *network* await, so two overlapping uploads could split them: pick a file,
+> realise mid-request it is the wrong one, tap Upload again and pick another; if the FIRST
+> request's response lands last it repaints the box with the OLD file's preview and filename
+> while the confirm button holds the NEW file's text. You would then confirm a file you never
+> reviewed — on the one screen in the app that rewrites credentials, and the preview is this
+> feature's entire safety net.
+>
+> Fixed with `_pwUpSeq`: bump on entry, blank `_pwUpCsv` immediately (a superseded upload must
+> never leave a live confirm behind), and bail after **every** await if another upload started.
+> **The armed text is assigned last, beside the paint** — that pairing is the actual fix; the
+> sequence alone would not guarantee it. `_pwUpConfirm` likewise **captures the csv and the
+> sequence BEFORE awaiting `confirmSheet`**, or a new upload started while that sheet is open
+> would blank it (posting nothing) or replace it (posting a file the confirmation never
+> described). **Do not "simplify" either half back into a bare module variable read after an
+> await.**
+
+### The parser and the column guard must accept the SAME headers
+Also from the review: `parsePasswordRows` accepted a `Login` column that `missingPasswordColumns`
+knew nothing about, so a `Login,Password` file was **rejected up front with a message claiming
+`Username` was missing** while the parser would have read it perfectly. Resolved by DELETING the
+speculative aliases rather than teaching the guard about them — `field()` already normalises, so
+the single `'Username'` alias resolves `User name` / `USERNAME` / `user_name`, exactly matching
+what `missingColumns()` accepts. ⚠️ **Add an alias to BOTH or NEITHER**: a guard stricter than the
+parser rejects good files, a guard looser than it lets a silently-empty run through. There is a
+`describe` block asserting the two agree across five header spellings and disagree on none.
 
 ### Round-trip test — the one that proves the feature works
 `describe('round trip from the real credentials export')` rebuilds the exporter's output

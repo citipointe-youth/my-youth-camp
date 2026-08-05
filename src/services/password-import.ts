@@ -27,8 +27,6 @@ export interface ParsedPasswordRow {
   username: string;
   /** Trimmed. May be `''`, which means "leave this account alone" (never "clear it"). */
   password: string;
-  /** 1-based line number in the uploaded file, header included, for error messages. */
-  rowNum: number;
 }
 
 export interface PasswordImportApply {
@@ -64,7 +62,7 @@ export function missingPasswordColumns(rows: Record<string, string>[]): string[]
 }
 
 /**
- * CSV rows → `{username, password, rowNum}`.
+ * CSV rows → `{username, password}`.
  *
  * A row with no username at all is dropped (trailing spreadsheet padding). A row WITH a
  * username but no password is KEPT, because the planner has to count it as a deliberate skip
@@ -72,11 +70,16 @@ export function missingPasswordColumns(rows: Record<string, string>[]): string[]
  */
 export function parsePasswordRows(rows: Record<string, string>[]): ParsedPasswordRow[] {
   const out: ParsedPasswordRow[] = [];
-  rows.forEach((row, i) => {
-    const username = field(row, 'Username', 'User name', 'Login').toLowerCase();
-    if (!username) return;
-    out.push({ username, password: field(row, 'Password'), rowNum: i + 2 });
-  });
+  for (const row of rows) {
+    // ⚠️ EXACTLY the aliases `missingPasswordColumns` accepts — one name, matched through
+    // `field()`'s normalisation, which already resolves `User name` / `USERNAME` / `user_name`.
+    // An extra alias here that the column guard does not know (this had `'Login'`, found in
+    // review) makes the two disagree: the parser would read the file happily while the guard
+    // rejected it up front for a missing `Username` column. Add an alias to BOTH or NEITHER.
+    const username = field(row, 'Username').toLowerCase();
+    if (!username) continue;
+    out.push({ username, password: field(row, 'Password') });
+  }
   return out;
 }
 

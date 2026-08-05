@@ -6559,23 +6559,41 @@ async function randomizeChurchPasswords(){
 
    File reading goes through _readImportFile, so .xlsx works for free via the lazy SheetJS
    path — the same helper the Form/Ticket/Invoice and Offline Sign-In uploads use. */
-let _pwUpCsv=null;
+/* ⚠️ `_pwUpCsv` IS ARMED ONLY AT THE MOMENT ITS OWN PREVIEW IS RENDERED, and `_pwUpSeq` voids
+   any older upload still in flight. Both halves are load-bearing — this pairing is the only
+   thing making the preview a real safety net rather than a decoration.
+
+   The bug it prevents (found in review, 2026-08-05): pick a file, realise mid-request it is the
+   wrong one, tap Upload again and pick another. Two dry runs are now racing. If the FIRST one's
+   response lands last it repaints the box with the OLD file's preview and filename — while the
+   confirm button is holding the NEW file's text. You would then confirm a file you never
+   reviewed, on the one screen in the app that rewrites credentials.
+
+   So: bump the sequence, blank the armed text immediately (a superseded upload must never leave
+   a live confirm behind), and after EVERY await bail if another upload has started. The armed
+   text is assigned last, next to the paint, so what is armed is always what is on screen. */
+let _pwUpCsv=null,_pwUpSeq=0;
 async function uploadPasswords(){
   const input=document.getElementById('pwUpIn');
   const file=input&&input.files&&input.files[0];
   if(!file)return;
   const box=document.getElementById('pwUpResult');
+  const seq=++_pwUpSeq;
+  _pwUpCsv=null;
   if(box){box.style.display='block';box.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">Reading sheet…</div></div>';}
   try{
     const rd=await _readImportFile(file);
+    if(seq!==_pwUpSeq)return; // superseded by a later pick — drop this one silently
+    const r=await api('/accounts/passwords/import',{method:'POST',body:{csvData:rd.text,dryRun:true}});
+    if(seq!==_pwUpSeq)return;
     _pwUpCsv=rd.text;
-    const r=await api('/accounts/passwords/import',{method:'POST',body:{csvData:_pwUpCsv,dryRun:true}});
     if(box)box.innerHTML=_pwUpPreview(r,file.name);
   }catch(e){
+    if(seq!==_pwUpSeq)return; // a superseded upload's failure must not clobber the live preview
     _pwUpCsv=null;
     if(box)box.innerHTML='<p class="err" style="display:block">'+esc(e.message||'Could not read that file')+'</p>';
     else toast(e.message||'Could not read that file');
-  }finally{ input.value=''; }
+  }finally{ if(input&&seq===_pwUpSeq)input.value=''; }
 }
 // Shared renderer for the dry-run preview and the applied result. Every skipped row is NAMED,
 // not just counted — "3 not matched" sends an admin back to a 30-row spreadsheet with no idea
@@ -6603,12 +6621,19 @@ function _pwUpPreview(r,fileName){
   return head+detail+confirm;
 }
 async function _pwUpConfirm(){
-  if(!_pwUpCsv){toast('Choose the file again');return;}
+  /* ⚠️ The reviewed text is CAPTURED HERE, before the confirm sheet is awaited, and the
+     sequence is captured with it. Reading `_pwUpCsv` after the await would let a new upload
+     started while the sheet is open blank it (→ posting nothing) or replace it (→ posting a
+     file this confirmation never described). Same failure class as the race in
+     `uploadPasswords` above. */
+  const csv=_pwUpCsv,seq=_pwUpSeq;
+  if(!csv){toast('Choose the file again');return;}
   if(!await confirmSheet({title:'Set these passwords?',body:'Each listed account’s current password stops working immediately. Accounts not in the file are unchanged.',confirmLabel:'Set passwords',danger:true}))return;
+  if(seq!==_pwUpSeq){toast('A different file was loaded — check the preview and try again');return;}
   const box=document.getElementById('pwUpResult');
   if(box)box.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">Setting passwords…</div></div>';
   try{
-    const r=await api('/accounts/passwords/import',{method:'POST',body:{csvData:_pwUpCsv,dryRun:false}});
+    const r=await api('/accounts/passwords/import',{method:'POST',body:{csvData:csv,dryRun:false}});
     _pwUpCsv=null;
     const detail=_pwUpNote('alert','not matched to any account',r.unmatched)
       +_pwUpNote('alert','rejected as too short',(r.invalid||[]).map(i=>i.username))

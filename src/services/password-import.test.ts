@@ -32,14 +32,14 @@ const users = [
 ];
 
 describe('parsePasswordRows', () => {
-  it('reads Username and Password, keeping the original row number', () => {
+  it('reads Username and Password', () => {
     const out = parsePasswordRows([
       { Username: 'b-victory', Password: 'Donkey.683' },
       { Username: 'g-victory', Password: 'Kettle.221' },
     ]);
     expect(out).toEqual([
-      { username: 'b-victory', password: 'Donkey.683', rowNum: 2 },
-      { username: 'g-victory', password: 'Kettle.221', rowNum: 3 },
+      { username: 'b-victory', password: 'Donkey.683' },
+      { username: 'g-victory', password: 'Kettle.221' },
     ]);
   });
 
@@ -65,7 +65,7 @@ describe('parsePasswordRows', () => {
   it('keeps a row whose password is blank but whose username is not', () => {
     // Load-bearing: the planner must SEE this row to count it as skipped-blank.
     const out = parsePasswordRows([{ Username: 'b-victory', Password: '' }]);
-    expect(out).toEqual([{ username: 'b-victory', password: '', rowNum: 2 }]);
+    expect(out).toEqual([{ username: 'b-victory', password: '' }]);
   });
 });
 
@@ -201,6 +201,38 @@ describe('planPasswordImport', () => {
 
   it('exports the columns the importer requires', () => {
     expect(PASSWORD_IMPORT_COLUMNS).toEqual(['Username', 'Password']);
+  });
+});
+
+/**
+ * ⚠️ THE PARSER AND THE COLUMN GUARD MUST ACCEPT THE SAME HEADERS.
+ *
+ * Found in review 2026-08-05: `parsePasswordRows` also accepted a `Login` column, which
+ * `missingPasswordColumns` knew nothing about — so a `Login,Password` file was rejected up front
+ * with a message claiming `Username` was missing, while the parser would have read it perfectly.
+ * A guard that is stricter than the parser rejects good files; a guard that is looser lets a
+ * silently-empty run through. They have to move together.
+ */
+describe('the column guard and the row parser accept the same headers', () => {
+  const headers: [string, string][] = [
+    ['Username', 'Password'],
+    ['username', 'password'],
+    ['USERNAME', 'PASSWORD'],
+    ['User name', 'Password'],
+    ['user_name', 'Password'],
+  ];
+
+  it.each(headers)('accepts %s / %s in both', (userCol, passCol) => {
+    const row = { [userCol]: 'b-victory', [passCol]: 'Donkey.683' };
+    expect(missingPasswordColumns([row])).toEqual([]);
+    expect(parsePasswordRows([row])).toEqual([{ username: 'b-victory', password: 'Donkey.683' }]);
+  });
+
+  it('rejects an unknown header in BOTH, rather than one accepting it', () => {
+    const row = { Login: 'b-victory', Password: 'Donkey.683' };
+    expect(missingPasswordColumns([row])).toEqual(['Username']);
+    // The parser must agree it found no username — not read it anyway.
+    expect(parsePasswordRows([row])).toEqual([]);
   });
 });
 
