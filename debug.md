@@ -290,6 +290,30 @@ check "expected vs actual" before touching code.
 >   The amount owed only renders when `classroomPrice` is set; the paid/unpaid split has a
 >   price-independent fallback (paid more than their own ticket cost) so the card still works without it.
 
+> **2026-08-05 — sponsor/discount tags ignored when accommodation is unrecorded (grep the name).
+> Full rationale: CLAUDE.md, the "🔴 Sponsor/discount tags were silently ignored" section at the top.**
+> - **⚠️ "THE GRAND TOTAL READS TOO HIGH" or "A SPONSOR CODE SHOWS $0 OWED, BUT PEOPLE ARE ON IT"**
+>   → check whether the person(s) in question have `accommodationKind` set at all. Before this fix,
+>   `classifyTicket` returned `'unknown'` for anyone without a Ticket List match and the sponsor $0
+>   rule in `personValue`/`sponsorAmountFor` never fired for that bucket — their full
+>   `registrationCost` was counted as received AND their sponsor ask read $0. Fixed by
+>   **`discountTagFor(p, tags)`** / SPA **`_discountTagFor(p,tags)`**, which resolves the tag
+>   independently of `accommodationKind` and is now passed into `personValue`/`_personValue` and
+>   `sponsorAmountFor`/`_sponsorAmountFor` as an explicit `tag` argument.
+> - **A DEPLOY DOES NOT BACKFILL THIS EITHER** — there is nothing stored to backfill; the fix is
+>   purely in how the existing `registrationCost`/`discountCode`/`accommodationKind` fields are
+>   read. If a figure still looks wrong after this ships, re-check the numbers by hand before
+>   assuming the fix didn't land (`sw.js` should read `camp-v92` or later).
+> - ⚠️ **Only `sponsor` needed the fix.** `discount` never had a zeroing rule to begin with (its
+>   value cascade was always amountPaid → registrationCost regardless of `cls`), and `inperson`
+>   correctly still requires a known kind to pick `prices.tent` vs `prices.classroom` — falling
+>   through when unknown is the pre-existing, deliberate behaviour. Don't "fix" `inperson` the same
+>   way; there is no base price to fall back to without knowing tent vs classroom.
+> - `classifyTicket`'s DISPLAY bucket is unchanged — a person with no `accommodationKind` still
+>   shows under "Accommodation not recorded" (⚠️) regardless of tag. Only the dollar VALUE changed.
+> - Verify: `npx vitest run src/services/budget.test.ts src/services/budget.sponsor.test.ts` —
+>   look for the "2026-08-05 fix" describe blocks in each.
+
 ## Frontend — `public/index.html` (single ~9,450-line SPA as of 2026-08-05)
 
 > **`node --check` extract range: derive it, never cache it.** As of 2026-08-03 the script body

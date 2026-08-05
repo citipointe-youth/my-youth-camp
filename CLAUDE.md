@@ -4,6 +4,66 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## 🔴 Sponsor/discount tags were silently ignored on anyone missing an accommodation kind — 2026-08-05
+
+Found by an independent feature review of the budgeting/costing code (asked to look specifically
+for false positives/negatives), not owner-reported — the effect had been live since the
+2026-07-29 ticket-classification rewrite. Backend (`src/services/budget.ts`) + SPA mirror
+(`public/index.html`). **No schema or migration change.** `npm run typecheck` clean, `npx vitest
+run` **990 pass / 61 files** (was 981/61; **+9**), `node --check` OK on the SPA body (range
+**966–9497**, re-derived) and `sw.js`. `sw.js` `camp-v91`→**`camp-v92`**.
+
+### The bug: `classifyTicket` decided BOTH the display bucket AND whether the tag applied at all
+`classifyTicket` returned `'unknown'` the instant `accommodationKind` wasn't exactly `'tent'` or
+`'classroom'` — **before it ever looked at the discount code's tag.** `accommodationKind` is owned
+by the Ticket List import, a separate CSV from Invoice; a registrant who has been through Form +
+Invoice but not yet matched to a Ticket List row (a straggler, an admin-added student, someone
+absent from that export) sits with `accommodationKind: null` for as long as that gap lasts, no
+matter how confidently their discount code has been tagged `sponsor` on the Budget screen.
+
+> ⚠️ **THIS WAS TWO BUGS WEARING ONE CAUSE, IN OPPOSITE DIRECTIONS.** `personValue` only forced
+> the sponsor $0 when `cls` was literally `'tent-sponsor'`/`'classroom-sponsor'` — which requires
+> `accommodationKind` to be known — so for an unknown-kind sponsor case it fell through to
+> `registrationCost` instead:
+> - **Grand total: FALSE POSITIVE.** Their full ticket price was counted as money received, even
+>   though a sponsor code means nothing arrived. The total read higher than the camp actually holds.
+> - **Sponsorship card: FALSE NEGATIVE.** The same fallback fed into `sponsorAmountFor`'s "received"
+>   figure, computing `ask = ticketValue − received = 0`. A genuine outstanding sponsorship ask
+>   vanished from the fundraising total with no warning — worse than the grand-total error, because
+>   there was no flag at all pointing at it (the person still shows under "Accommodation not
+>   recorded" ⚠️, but that flag says nothing about the sponsorship figure also being wrong).
+
+### The fix: the tag is resolved independently of the display bucket
+New **`discountTagFor(p, tags)`** / SPA **`_discountTagFor(p,tags)`** — the code lookup extracted
+out of `classifyTicket`, callable regardless of `accommodationKind`. `classifyTicket` still returns
+`'unknown'` when the kind is unrecorded (that part was correct — we genuinely don't know tent vs
+classroom, so there is no `unknown-sponsor` row), but `personValue`/`_personValue` and
+`sponsorAmountFor`/`_sponsorAmountFor` now take the **tag itself** as an explicit parameter and
+check it directly: `cls === 'tent-sponsor' || cls === 'classroom-sponsor' || tag === 'sponsor'`.
+
+- ⚠️ **`discount` and `inperson` do NOT need the same forcing rule.** `discount` never zeroed
+  anything to begin with (it just changes the bucket label; the value cascade — amountPaid →
+  registrationCost — was always correct regardless of `cls`). `inperson` still requires a known
+  `accommodationKind` to pick between `prices.tent`/`prices.classroom`, and falling through to
+  `amountPaid`/`registrationCost` when that's unknown is the existing, deliberate, documented
+  behaviour ("falls through rather than inventing a number") — **only `sponsor` was actually broken.**
+- **Every call site now passes the tag through**, not just `cls`: `computeBudget`'s scope loop,
+  `computeSponsorSummary`'s loop (which already had the tag in scope — it's how it found the code
+  in the first place, so this is never a re-derivation), and the SPA mirrors
+  `_budScopeRows`/`computeBudgetClient`/`computeSponsorSummaryClient`/`_budUpgrades`.
+- **9 new tests** — `budget.test.ts` (`discountTagFor`, `personValue` with `cls:'unknown'` +
+  each tag, a `computeBudget` invariant case) + `budget.sponsor.test.ts` (a $190 sponsor case with
+  `accommodationKind: null` asserting the ask is still $190, and the matching `computeBudget` call
+  reading $0 received). None of the existing 981 tests needed a fixture change — `tag` is an
+  optional trailing parameter, so every prior 4-argument call site was already correct.
+
+### If a budget/sponsorship figure still looks off after this
+Check whether the person in question actually has a Ticket List row (`accommodationKind` non-null)
+— this fix only restores the sponsor $0 rule for the *unrecorded-accommodation* case; it does not
+change anything for a person whose accommodation is already known and correctly bucketed. Compare
+against `git log` for `481bd33` if the fix's presence in the running build is ever in doubt (bumped
+`sw.js` to `camp-v92`, same convention as every other SPA-touching push).
+
 ## Password UPLOAD — the reverse of the credentials export — 2026-08-05
 
 Owner request: *"a small button to the right of it for 'upload' that does the exact reverse (sets
