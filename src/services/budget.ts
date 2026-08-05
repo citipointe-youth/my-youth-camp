@@ -178,20 +178,39 @@ export function labelForRow(cls: TicketClass, amount: number | null): string {
 }
 
 /**
+ * The admin's classification of a person's discount code, independent of accommodation kind.
+ * Null when there is no code, or the code is untagged, or the tag value is unrecognised.
+ *
+ * ⚠️ DELIBERATELY SEPARATE FROM `classifyTicket`. The tag is a fact about the CODE and must be
+ * knowable even when `accommodationKind` is null (registered via Form/Invoice but not yet on the
+ * Ticket List) — see `personValue`'s use of this for why collapsing the two caused sponsored
+ * places to be counted as revenue (2026-08-05 fix).
+ */
+export function discountTagFor(p: BudgetPerson, tags: DiscountTagMap): DiscountTag | null {
+  const code = (p.discountCode ?? '').trim();
+  if (!code) return null;
+  const tag = tags[code];
+  return tag === 'inperson' || tag === 'sponsor' || tag === 'discount' ? tag : null;
+}
+
+/**
  * Which of the nine buckets a registrant falls into.
  *
  * Accommodation kind decides tent vs classroom; the admin's tag on the person's discount code
  * decides the payment half. An unrecognised tag value is treated as untagged (plain), so a
  * hand-edited settings row can never crash the budget.
+ *
+ * ⚠️ This decides the DISPLAY bucket only. `accommodationKind` unknown → `'unknown'` regardless
+ * of the tag — we genuinely don't know tent vs classroom, so there is no `unknown-sponsor` row.
+ * That does NOT mean the tag is discarded: `personValue`/`sponsorAmountFor` look the tag up
+ * themselves (via `discountTagFor`) so a sponsor/discount code still values correctly even while
+ * its accommodation is unrecorded. See the 2026-08-05 fix note on `personValue`.
  */
 export function classifyTicket(p: BudgetPerson, tags: DiscountTagMap): TicketClass {
   const kind = p.accommodationKind;
   if (kind !== 'tent' && kind !== 'classroom') return 'unknown';
-  const code = (p.discountCode ?? '').trim();
-  const tag = code ? tags[code] : undefined;
-  if (tag === 'inperson' || tag === 'sponsor' || tag === 'discount') {
-    return `${kind}-${tag}` as TicketClass;
-  }
+  const tag = discountTagFor(p, tags);
+  if (tag) return `${kind}-${tag}` as TicketClass;
   return kind;
 }
 
@@ -238,19 +257,29 @@ export function classifyTicket(p: BudgetPerson, tags: DiscountTagMap): TicketCla
  *
  * `ticketPrice` is the already-resolved result of steps 1-2 (computeBudget does the lookup so this
  * stays a pure function). Null means neither was available.
+ *
+ * 🔴 BUG FIX (2026-08-05): `tag` is now taken directly (via `discountTagFor`), NOT re-derived from
+ * `cls`. Before this, a `sponsor`-tagged code only zeroed the value when `cls` was
+ * `'tent-sponsor'`/`'classroom-sponsor'` — which requires `accommodationKind` to be known. Someone
+ * registered via Form+Invoice but not yet on the Ticket List has `accommodationKind: null`, so
+ * `cls` was `'unknown'` and the sponsor rule never fired: their FULL `registrationCost` was
+ * counted as money received (inflating the grand total), and the Sponsorship card showed $0 owed
+ * for a place that was never actually paid for (a real ask silently vanishing). Passing the tag
+ * separately means a sponsor code always reads $0, whether or not the accommodation is known yet.
  */
 export function personValue(
   p: BudgetPerson,
   cls: TicketClass,
   prices: BasePrices,
   ticketPrice?: number | null,
+  tag?: DiscountTag | null,
 ): number | null {
   if (cls === 'tent-inperson' || cls === 'classroom-inperson') {
     if (ticketPrice != null) return ticketPrice;
     const fallback = cls === 'tent-inperson' ? prices.tent : prices.classroom;
     if (fallback != null) return fallback;
   }
-  if (cls === 'tent-sponsor' || cls === 'classroom-sponsor') return 0;
+  if (cls === 'tent-sponsor' || cls === 'classroom-sponsor' || tag === 'sponsor') return 0;
   if (p.amountPaid != null) return p.amountPaid;
   if (p.registrationCost != null) return p.registrationCost;
   return null;
@@ -366,7 +395,7 @@ export function computeBudget(
       byChurch.set(p.churchId, c);
     }
     const cls = classifyTicket(p, tags);
-    const value = personValue(p, cls, prices, resolveTicketPrice(p, priceTable));
+    const value = personValue(p, cls, prices, resolveTicketPrice(p, priceTable), discountTagFor(p, tags));
     if (value != null && value > 0) {
       fullAmount = fullAmount == null ? value : Math.max(fullAmount, value);
     }
@@ -508,18 +537,24 @@ export interface SponsorSummary {
  * setting — because "what is this place worth" is the identical question in both places.
  * A null `ticketValue` means no source knew, and the caller must count that person as
  * unpriced rather than as $0 (a $0 ask reads as "already covered").
+ *
+ * `tag` (2026-08-05) is passed through to `personValue` so a sponsor code still reads $0
+ * received even when `cls` is `'unknown'` (accommodation not yet imported) — see the fix note
+ * on `personValue`. Every caller here already knows the tag (it's how they found this code in
+ * the first place), so this is never a re-derivation.
  */
 export function sponsorAmountFor(
   p: BudgetPerson,
   cls: TicketClass,
   prices: BasePrices,
   ticketPrice?: number | null,
+  tag?: DiscountTag | null,
 ): { ticketValue: number | null; amount: number } {
   const kind = p.accommodationKind;
   const fallback = kind === 'tent' ? prices.tent : kind === 'classroom' ? prices.classroom : null;
   const ticketValue = ticketPrice ?? fallback;
   if (ticketValue == null) return { ticketValue: null, amount: 0 };
-  const received = personValue(p, cls, prices, ticketPrice) ?? 0;
+  const received = personValue(p, cls, prices, ticketPrice, tag) ?? 0;
   // Never negative: someone who over-paid against their ticket is not owed a sponsor.
   return { ticketValue, amount: Math.max(0, ticketValue - received) };
 }
@@ -586,7 +621,7 @@ export function computeSponsorSummary(
     const tag = tags[code];
     if (!tag || !SPONSOR_TAGS.includes(tag)) continue;
     const cls = classifyTicket(p, tags);
-    const { ticketValue, amount } = sponsorAmountFor(p, cls, prices, resolveTicketPrice(p, priceTable));
+    const { ticketValue, amount } = sponsorAmountFor(p, cls, prices, resolveTicketPrice(p, priceTable), tag);
     let bucket = byCode.get(code);
     if (!bucket) {
       bucket = { tag: tag as SponsorTag, entries: [] };

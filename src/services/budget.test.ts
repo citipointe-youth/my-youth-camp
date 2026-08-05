@@ -4,6 +4,7 @@ import {
   labelForClass,
   labelForRow,
   classifyTicket,
+  discountTagFor,
   personValue,
   budgetToCsv,
   computeDiscountCodeSummary,
@@ -113,6 +114,23 @@ describe('classifyTicket — all nine outcomes', () => {
     const badTags = { FOO: 'bogus' as unknown as DiscountTagMap[string] };
     expect(classifyTicket(p({ accommodationKind: 'tent', discountCode: 'FOO' }), badTags)).toBe('tent');
   });
+  it('accommodationKind unknown + a tagged code still classifies as "unknown", not a crash', () => {
+    expect(classifyTicket(p({ accommodationKind: null, discountCode: 'SPONSOR1' }), tags)).toBe('unknown');
+  });
+});
+
+describe('discountTagFor', () => {
+  const tags: DiscountTagMap = { SPON: 'sponsor', DISC: 'discount', INP: 'inperson' };
+  it('resolves the tag regardless of accommodationKind', () => {
+    expect(discountTagFor(p({ accommodationKind: null, discountCode: 'SPON' }), tags)).toBe('sponsor');
+    expect(discountTagFor(p({ accommodationKind: 'tent', discountCode: 'DISC' }), tags)).toBe('discount');
+  });
+  it('null when there is no code, an untagged code, or an unrecognised tag value', () => {
+    expect(discountTagFor(p({ discountCode: null }), tags)).toBeNull();
+    expect(discountTagFor(p({ discountCode: 'RANDOM' }), tags)).toBeNull();
+    const badTags = { FOO: 'bogus' as unknown as DiscountTagMap[string] };
+    expect(discountTagFor(p({ discountCode: 'FOO' }), badTags)).toBeNull();
+  });
 });
 
 describe('personValue', () => {
@@ -157,6 +175,28 @@ describe('personValue', () => {
     expect(personValue(person, 'classroom-sponsor', NO_PRICES)).toBe(0);
   });
 
+  /* 🔴 REGRESSION (2026-08-05) — the bug the feature review found: a sponsor-tagged code was
+     only zeroed when `cls` was 'tent-sponsor'/'classroom-sponsor', which requires
+     accommodationKind to be known. Someone registered via Form+Invoice but not yet on the
+     Ticket List has accommodationKind: null → cls: 'unknown', and the sponsor rule never fired
+     — their full registrationCost was counted as money received. Passing `tag` fixes this: the
+     tag alone must zero the value, regardless of what `cls` says. */
+  it('sponsor tag zeroes the value even when cls is "unknown" (accommodation not yet imported)', () => {
+    const person = p({ accommodationKind: null, discountCode: 'SPON', registrationCost: 190 });
+    expect(personValue(person, 'unknown', NO_PRICES, null, 'sponsor')).toBe(0);
+  });
+
+  it('a discount/inperson tag does NOT zero the value when cls is "unknown" — only sponsor does', () => {
+    const person = p({ accommodationKind: null, registrationCost: 190, amountPaid: 100 });
+    expect(personValue(person, 'unknown', NO_PRICES, null, 'discount')).toBe(100);
+    expect(personValue(person, 'unknown', NO_PRICES, null, 'inperson')).toBe(100);
+  });
+
+  it('no tag, cls "unknown" → unaffected, falls through as before', () => {
+    const person = p({ accommodationKind: null, registrationCost: 190 });
+    expect(personValue(person, 'unknown', NO_PRICES, null, null)).toBe(190);
+  });
+
   // Deliberate 2026-07-29 owner decision: the grand total reads as MONEY RECEIVED, not value of
   // all places, so amountPaid (what actually arrived) wins over registrationCost (the ticket
   // total) whenever both are recorded.
@@ -199,6 +239,20 @@ describe('computeBudget — core invariant', () => {
     expect(r.grandTotal).toBe(sumOfAllLines(r));
     // sanity: nobody silently dropped
     expect(r.camperCount + r.leaderCount).toBe(people.length);
+  });
+});
+
+describe('computeBudget — sponsor tag survives an unrecorded accommodation kind (2026-08-05 fix)', () => {
+  it('a sponsor-tagged person with accommodationKind:null contributes $0, not their registrationCost', () => {
+    const tags: DiscountTagMap = { SPON: 'sponsor' };
+    const people: BudgetPerson[] = [
+      p({ accommodationKind: null, discountCode: 'SPON', registrationCost: 190, amountPaid: null }),
+    ];
+    const r = computeBudget(people, { tags });
+    expect(r.grandTotal).toBe(0);
+    const row = r.churches[0]!.campers[0]!;
+    expect(row.key).toBe('unknown');
+    expect(row.lineTotal).toBe(0);
   });
 });
 

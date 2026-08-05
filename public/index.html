@@ -4102,13 +4102,28 @@ function _budRowLabel(cls,amount){
   const base=_BUD_CLASS_LABEL[cls]||cls;
   return amount==null?base:(base+' — '+_money(amount));
 }
-/** Mirrors budget.ts classifyTicket. An unrecognised tag falls back to the plain class. */
+/** Mirrors budget.ts discountTagFor — the tag alone, independent of accommodationKind. Null for
+    no code / untagged / an unrecognised tag value. See `_classifyTicket`'s comment for why this
+    must stay a SEPARATE function (2026-08-05 fix). */
+function _discountTagFor(p,tags){
+  const code=(p.discountCode||'').trim();
+  if(!code)return null;
+  const tag=(tags||{})[code];
+  return (tag==='inperson'||tag==='sponsor'||tag==='discount')?tag:null;
+}
+/* Mirrors budget.ts classifyTicket. An unrecognised tag falls back to the plain class.
+   ⚠️ DISPLAY BUCKET ONLY (2026-08-05 fix). accommodationKind unknown → 'unknown' regardless of
+   the tag — we don't know tent vs classroom, so there's no 'unknown-sponsor' row. That does NOT
+   mean the tag is thrown away: `_personValue`/`_sponsorAmountFor` look it up themselves via
+   `_discountTagFor`, so a sponsor code still reads $0 even while accommodation is unrecorded.
+   Before this fix a sponsor-tagged person with no accommodationKind yet (registered via Form+
+   Invoice but not on the Ticket List) had their FULL registrationCost counted as money received,
+   and the Sponsorship card showed $0 owed for them — see CLAUDE.md 2026-08-05. */
 function _classifyTicket(p,tags){
   const kind=p.accommodationKind;
   if(kind!=='tent'&&kind!=='classroom')return 'unknown';
-  const code=(p.discountCode||'').trim();
-  const tag=code?(tags||{})[code]:null;
-  if(tag==='inperson'||tag==='sponsor'||tag==='discount')return kind+'-'+tag;
+  const tag=_discountTagFor(p,tags);
+  if(tag)return kind+'-'+tag;
   return kind;
 }
 /* Mirrors budget.ts personValue — READ ITS DOC COMMENT before changing this. Order encodes a
@@ -4169,14 +4184,16 @@ function _resolveTicketPrice(p,table){
 /* ⚠️ THE IN-PERSON CASCADE (mirrors budget.ts personValue — read its doc comment). Most specific
    first, and each step is a real fallback: their own ticket cost → the learned price for their
    ticket TYPE → the admin's scalar setting, which is now only reachable for a ticket type nobody
-   has an invoice for. That last step is all `tentPrice`/`classroomPrice` are for now. */
-function _personValue(p,cls,prices,ticketPrice){
+   has an invoice for. That last step is all `tentPrice`/`classroomPrice` are for now.
+   🔴 `tag` (2026-08-05 fix) is taken directly via `_discountTagFor`, NOT re-derived from `cls` —
+   a sponsor code must read $0 even when `cls` is 'unknown' (accommodation not yet imported). */
+function _personValue(p,cls,prices,ticketPrice,tag){
   if(cls==='tent-inperson'||cls==='classroom-inperson'){
     if(ticketPrice!=null)return ticketPrice;
     const fb=cls==='tent-inperson'?prices.tent:prices.classroom;
     if(fb!=null)return fb;
   }
-  if(cls==='tent-sponsor'||cls==='classroom-sponsor')return 0;
+  if(cls==='tent-sponsor'||cls==='classroom-sponsor'||tag==='sponsor')return 0;
   if(p.amountPaid!=null)return p.amountPaid;
   if(p.registrationCost!=null)return p.registrationCost;
   return null;
@@ -4204,7 +4221,7 @@ function _budScopeRows(people,tags,prices,ptable){
   const by=new Map();
   people.forEach(p=>{
     const cls=_classifyTicket(p,tags);
-    const val=_personValue(p,cls,prices,_resolveTicketPrice(p,ptable));
+    const val=_personValue(p,cls,prices,_resolveTicketPrice(p,ptable),_discountTagFor(p,tags));
     let b=by.get(cls);
     if(!b){b={count:0,total:0,values:new Map(),missing:0,codes:new Map()};by.set(cls,b);}
     b.count++;
@@ -4315,7 +4332,7 @@ function _budUpgrades(regs,filterId){
         registrationType:r.registrationType||null};
       const cls=_classifyTicket(p,tags);
       if(cls!=='classroom')return;                      // sponsored/discounted — not an upgrade case
-      const value=_personValue(p,cls,prices,_resolveTicketPrice(p,ptable));
+      const value=_personValue(p,cls,prices,_resolveTicketPrice(p,ptable),_discountTagFor(p,tags));
       // What THEIR tent ticket cost — their own recorded cost first, else the learned price for
       // that exact ticket type. This is what makes early-bird vs standard tent work per person.
       const theirTicket=p.registrationCost!=null?p.registrationCost
@@ -4379,7 +4396,7 @@ function computeBudgetClient(regs,filterId){
   let full=null;
   const byChurch=new Map();
   people.forEach(p=>{
-    const v=_personValue(p,_classifyTicket(p,tags),prices,_resolveTicketPrice(p,ptable));
+    const v=_personValue(p,_classifyTicket(p,tags),prices,_resolveTicketPrice(p,ptable),_discountTagFor(p,tags));
     if(v!=null&&v>0)full=full==null?v:Math.max(full,v);
     let c=byChurch.get(p.churchId);
     if(!c){c={churchId:p.churchId,churchName:p.churchName,campers:[],leaders:[]};byChurch.set(p.churchId,c);}
@@ -4415,13 +4432,16 @@ function computeBudgetClient(regs,filterId){
    ⚠️ The ask is defined as the gap the budget ALREADY implies:
        sponsor amount = the place's ticket value − what `_personValue` counts as received
    so sponsor total + grand total = the value of every place. Deriving it from `discountAmount`
-   instead would stop the two reconciling. `inperson` is excluded — that money arrived. */
-function _sponsorAmountFor(p,cls,prices,ticketPrice){
+   instead would stop the two reconciling. `inperson` is excluded — that money arrived.
+   `tag` (2026-08-05 fix) is passed through to `_personValue` so a sponsor code still reads $0
+   received even when `cls` is 'unknown' — every caller here already knows the tag (it's how
+   they found this code), so this is never a re-derivation. */
+function _sponsorAmountFor(p,cls,prices,ticketPrice,tag){
   const kind=p.accommodationKind;
   const fb=kind==='tent'?prices.tent:kind==='classroom'?prices.classroom:null;
   const ticketValue=ticketPrice!=null?ticketPrice:fb;
   if(ticketValue==null)return {ticketValue:null,amount:0};
-  const received=_personValue(p,cls,prices,ticketPrice);
+  const received=_personValue(p,cls,prices,ticketPrice,tag);
   // Never negative: someone who over-paid against their own ticket is not owed a sponsor.
   return {ticketValue,amount:Math.max(0,ticketValue-(received==null?0:received))};
 }
@@ -4461,7 +4481,7 @@ function computeSponsorSummaryClient(regs,filterId){
       accommodationKind:r.accommodationKind||null,discountCode:code,
       registrationType:r.registrationType||null};
     const cls=_classifyTicket(p,tags);
-    const v=_sponsorAmountFor(p,cls,prices,_resolveTicketPrice(p,ptable));
+    const v=_sponsorAmountFor(p,cls,prices,_resolveTicketPrice(p,ptable),tag);
     let bucket=byCode.get(code);
     if(!bucket){bucket={tag,entries:[]};byCode.set(code,bucket);}
     bucket.entries.push({churchId:r.churchId,churchName:r.churchName,amount:v.amount,

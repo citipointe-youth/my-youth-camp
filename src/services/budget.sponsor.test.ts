@@ -180,6 +180,36 @@ describe('computeSponsorSummary — prices it cannot know', () => {
   });
 });
 
+describe('computeSponsorSummary — a sponsored place with unrecorded accommodation (2026-08-05 fix)', () => {
+  /* 🔴 REGRESSION — the feature-review finding. Registered via Form+Invoice (so registrationCost
+     is known) but not yet matched to a Ticket List row, so accommodationKind is null and
+     classifyTicket returns 'unknown'. Before this fix, sponsorAmountFor/personValue only zeroed
+     "received" when `cls` was 'tent-sponsor'/'classroom-sponsor' — which 'unknown' never is —
+     so `received` fell through to registrationCost, making the ask look like $0 (as if the whole
+     ticket had already been covered) instead of the true $190 still needed. */
+  const person = p({
+    accommodationKind: null,
+    discountCode: 'YC26SPON',
+    registrationCost: 190,
+    amountPaid: null,
+  });
+
+  it('is still counted as a full $190 ask, not $0, even though accommodation is unrecorded', () => {
+    const s = computeSponsorSummary([person], { tags: SPONSOR, prices: NO_PRICES });
+    expect(s.unpricedCount).toBe(0); // the ticket price IS known — just not the accommodation kind
+    expect(s.total).toBe(190);
+    expect(s.fullTotal).toBe(190);
+    expect(s.codes[0]!.bands).toEqual([
+      { amount: 190, ticketValue: 190, count: 1, total: 190, ticketTypes: [] },
+    ]);
+  });
+
+  it('the matching computeBudget row correctly reads $0 received (not the $190 registrationCost)', () => {
+    const b = computeBudget([person], { tags: SPONSOR });
+    expect(b.grandTotal).toBe(0);
+  });
+});
+
 describe('computeSponsorSummary — code x church', () => {
   const tags: DiscountTagMap = { SPONA: 'sponsor', HALF: 'discount' };
   const people = [
