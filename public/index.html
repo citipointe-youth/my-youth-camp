@@ -1576,12 +1576,15 @@ function _loginTips(){
   if(!el)return;
   let html='Install as an app — <a href="/install.html">how to add to Home Screen</a>'
     +'<br>Password not saving? — <a href="/save-password.html">how to save it manually</a>';
-  /* 2026-08-05: iOS 18 DOES support AutoFill inside an installed (standalone) app, but the
-     saved credential usually sits behind the key (🔑) button in the QuickType bar above the
-     keyboard instead of being offered prominently like it is in Safari — leaders hand-type the
-     password because they don't know to tap it. _isIOS()/_isStandalone() are declared further
-     down the file but hoist (function declarations), and both already self-wrap in try/catch. */
-  if(_isIOS()&&_isStandalone())html+='<br>Saved password not showing? — tap the password box, then tap the 🔑 key above the keyboard to fill it.';
+  /* ⚠️ TRIED AND REMOVED — DON'T RE-ADD (added 2026-08-05, removed 2026-08-06, owner).
+     A third line here explained that on iOS 18 the saved credential sits behind the key (🔑)
+     button in the QuickType bar rather than being offered prominently as in Safari, so leaders
+     hand-type instead of tapping it. That premise is still TRUE and is worth knowing when
+     someone reports "AutoFill doesn't work in the installed app" — but the fix does not belong
+     on the login screen. Three lines of small print under the sign-in button is more text than
+     a leader logging in will read, and it competed with the two links that actually go
+     somewhere. Keep this screen to the two links; put AutoFill guidance in /save-password.html
+     if it is ever needed again. */
   el.innerHTML=html;
   el.style.display='block';
 }

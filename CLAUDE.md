@@ -119,15 +119,24 @@ church** out for 15 minutes on the very day the passwords go out. 15 keeps a rea
 backstop (keyspace ~117k since 2026-07-31) while absorbing normal fumbling. Window and
 failures-only keying unchanged.
 
-### 5 — iOS: tell people about the 🔑 key
+### 5 — ~~iOS: tell people about the 🔑 key~~ — SHIPPED THEN REMOVED THE NEXT DAY (`camp-v95`)
 
 iOS 18 **does** support AutoFill in an installed web app, but the saved credential sits behind
 the key (🔑) button in the QuickType bar rather than being offered prominently as in Safari — so
-leaders hand-type. `_loginTips()` gains one line when `_isIOS() && _isStandalone()`.
-`_isIOS`/`_isStandalone` are declared *after* `_loginTips()` runs but **hoist** (function
-declarations) and both self-wrap in try/catch — **this is fine, don't "fix" it by moving
-things.** The UA gate (phones only) and the can't-throw-on-the-login-gate property are both
-preserved. `#mcpGate` deliberately untouched.
+leaders hand-type. `_loginTips()` gained one line when `_isIOS() && _isStandalone()`.
+
+⚠️ **Removed 2026-08-06 at the owner's request: it was one line of small print too many.** The
+login screen is back to its two links. **The PREMISE IS STILL TRUE and still worth knowing** when
+someone reports "AutoFill doesn't work in the installed app" — it just doesn't belong on the
+login screen, where a third line competed with the two links that actually go somewhere. If it
+is ever needed again, put it in `/save-password.html`, not `_loginTips()`. A `DON'T RE-ADD`
+comment sits at the removal site.
+
+Still true and load-bearing for whatever *does* live in `_loginTips()`: `_isIOS`/`_isStandalone`
+are declared *after* it runs but **hoist** (function declarations) and both self-wrap in
+try/catch — **don't "fix" that by moving things.** The UA gate (phones only) and the
+can't-throw-on-the-login-gate property must both be preserved. Both helpers remain in use by the
+push card, so neither is dead code. `#mcpGate` deliberately untouched throughout.
 
 ### 6 — "Send a test" is admin-only (follow-up push, `camp-v94`)
 
@@ -144,8 +153,8 @@ was clutter for the ~100 church/leader logins. Now gated on `ACTOR.role === 'adm
   (`push_subscriptions` was empty), but it will matter once leaders opt in at the training day.
 
 ### Needs on-device eyeballing (tsc/vitest cannot prove any of it)
-The 🔑 hint's placement/wrapping and glyph rendering · the **three-button** password row at
-~360px · an end-to-end run of the church-only button against the live endpoint.
+The **three-button** password row at ~360px · an end-to-end run of the church-only button
+against the live endpoint · the login screen back at **two** tip lines (`camp-v95`).
 
 ### Verified live in prod after the push
 `sw.js` served `camp-v93`; **`GET /ready` → `200 {"status":"ready","db":"ok","ms":2}`** — first
