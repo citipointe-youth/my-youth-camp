@@ -3095,16 +3095,22 @@ function buildPeopleSnap(regs){
   const tent=regs.filter(r=>r.accommodationKind==='tent').length,cls=regs.filter(r=>r.accommodationKind==='classroom').length;
   const al=accLabelOf(tent,cls);const wwc=leaders.filter(l=>!l.blueCardCollected).length;
   const cols=grades.map(x=>`<div class="gcol${x.n?'':' empty'}"><div class="gbar-col" style="height:${x.n?Math.round(x.n/maxG*64)+4:4}px"></div><span class="n">${x.n||''}</span><span class="g">${x.gr}</span></div>`).join('');
+  // The Student split / Leader split gender bars are hidden for a gender-scoped church login
+  // (b-/g- accounts): every person they can see is the same gender, so the bar is always 100%
+  // one colour and the other figure always 0 — it reads as missing data, not as information.
+  // Detected from ACTOR.genderScope, NOT role==='church' — a legacy unsplit church login has
+  // no gender scope and its split IS meaningful, and director/admin/zoneLeader keep it too.
+  const genderScoped=!!(ACTOR&&(ACTOR.genderScope==='male'||ACTOR.genderScope==='female'));
   return `<div class="card snap">
     <div class="rowsb"><div><div class="lbl" style="margin:0">Students</div><div class="bignum">${campers.length}</div></div>
     ${al.primary!=='none'?`<span class="accbadge ${al.primary}">${ACC_LABEL[al.primary]||al.primary}</span>`:''}
     </div>
-    <div class="lbl" style="margin-top:12px">Student split</div>
+    ${genderScoped?'':`<div class="lbl" style="margin-top:12px">Student split</div>
     <div class="gbar"><i class="m" style="width:${g.male/gtot*100}%"></i><i class="f" style="width:${g.female/gtot*100}%"></i></div>
     <div class="glabels"><span>Guys <b style="color:var(--male)">${g.male}</b></span><span>Girls <b style="color:var(--female)">${g.female}</b></span></div>
     <div class="lbl" style="margin-top:12px">Leader split</div>
     <div class="gbar"><i class="m" style="width:${lg.male/lgtot*100}%"></i><i class="f" style="width:${lg.female/lgtot*100}%"></i></div>
-    <div class="glabels"><span>Guys <b style="color:var(--male)">${lg.male}</b></span><span>Girls <b style="color:var(--female)">${lg.female}</b></span></div>
+    <div class="glabels"><span>Guys <b style="color:var(--male)">${lg.male}</b></span><span>Girls <b style="color:var(--female)">${lg.female}</b></span></div>`}
     <div class="lbl" style="margin-top:14px">By grade</div><div class="gradebars">${cols}</div>
     <div class="rowsb" style="margin-top:12px;font-size:.8rem"><span style="font-weight:700">${leaders.length} leaders</span>${wwc?`<span class="pill warn">${wwc} need blue card</span>`:`<span class="pill ok">${icSm('check')} Blue cards</span>`}</div></div>`;
 }
