@@ -4,6 +4,77 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## 🔴 Supabase Pro + the connection sizing that actually mattered — 2026-08-07
+
+**Infrastructure + a one-line code change**, no schema/migration. `npm run typecheck` clean,
+`npx vitest run` **1013 pass / 62 files** (unchanged — config, not logic). No `sw.js` bump
+(backend only). Commit `4dfac4a`. Full numbers + the go/no-go table live in
+**`docs/SESSION-MODE-CUTOVER.md`** ("WINDOW 2, PART ONE"); the standing reference is the
+**"session-mode cutover + connection sizing"** block further down this file. This section is the
+*why*.
+
+| | Before | After |
+|---|---|---|
+| Plan / compute | Free / Nano | **Pro / Micro** |
+| `max_connections` | 60 | **60 (UNCHANGED)** |
+| Supavisor Pool Size | 15 | **30** |
+| App pool `max` (`client.ts`) | 5 | **3** |
+| **Vercel instances served at once** | **3** | **10** |
+
+### 🔴 Two things here are counter-intuitive and both cost real capacity if forgotten
+
+**1. UPGRADING THE PLAN BUYS NO CONNECTIONS.** `max_connections` scales with **compute**, and
+**Micro is 60 — identical to the free Nano.** Only Small (90) and above move it. Pro bought
+daily backups, no auto-pause and PITR eligibility. Measured before *and* after the upgrade: 60
+both times. ⚠️ `SESSION-MODE-CUTOVER.md` step 6 says "read `max_connections` on the paid
+config" — followed literally it reads 60, **looks like the gate passed, and proves nothing.**
+
+**2. THE BINDING CONSTRAINT WAS NEVER `max_connections` — IT WAS THE SUPAVISOR POOL SIZE.**
+Prod is on the **session-mode** pooler, where a connection holds a dedicated Postgres backend
+for its whole life instead of being multiplexed. So:
+
+```
+concurrent Vercel instances served  =  Supavisor pool size / client.ts max
+```
+
+At the untouched defaults (**15 / 5**) that was **THREE INSTANCES** — against a 100–200-leader
+AM check-in burst. The 4th instance onward would have **queued**, and queuing at check-in is
+indistinguishable from an outage to a leader holding a phone. This was live and unnoticed for
+the entire life of the deployment; `max_connections` (60, never close to exhausted) would never
+have revealed it, because Supavisor caps the backends long before Postgres does.
+
+⚠️ **The two numbers are HALF OF A PAIR, in two different systems** — one in the Supabase
+dashboard, one in this repo. Changing either alone silently moves the ceiling and nothing in
+CI, `tsc` or `vitest` will catch it. **Redo the arithmetic and change both together.**
+
+### Why `max: 3` and not lower
+
+Queries here run **2–40ms** (a live `/ready` probe measured 21ms cold, 2–3ms warm), so
+per-instance parallelism was never the constraint — **connection slots were**. CMS ran healthy
+on `max: 2`. ⚠️ **Never `max: 1`**: it caused head-of-line blocking in CMS, where one slow query
+held the ONLY connection and froze every request on that instance, **including login**.
+
+### Operational lessons worth keeping
+
+- ⚠️ **Set compute size FIRST, then pool size** — a resize can reset the pool to the new default,
+  so setting the pool first risks silently losing it.
+- **`statement_timeout = 15s` on role `postgres` survived BOTH the plan upgrade and the compute
+  restart** — verified, not assumed. Still re-check it after any future resize; it is a role
+  config, not a migration, and would be lost if the project were ever recreated.
+- **A compute resize is ~2 minutes of hard downtime.** During it the DB refuses connections
+  outright (an MCP query returned *"Connection terminated due to connection timeout"*). Do
+  resizes in a deliberate window — this is exactly why the sizing was settled before the church
+  handout rather than in September.
+- **`/ready` is the fastest recovery signal after a resize** — poll it until `db:"ok"` returns
+  rather than guessing. It is what confirmed recovery here.
+
+### Still outstanding — the burst load test
+`SESSION-MODE-CUTOVER.md` step 8, deliberately deferred to **~mid-September**. Owner's decision
+2026-08-07: **run the leaders' day on Micro + 30/3, reassess then.** ⚠️ If that test wants more
+headroom the move is **Small + pool 50**, *not* a smaller `client.ts max` — 3 is the floor worth
+having. 30 backends + ~15 used by Supabase's own services already sits near the practical
+ceiling of Micro's 57 usable.
+
 ## 48h sessions + a session KILL SWITCH, church-only password reset, `/ready`, throttle 10→15 — 2026-08-05 (2nd)
 
 Pre-launch batch. The churches get their passwords on **Sat 2026-08-08** (~100 leaders log in

@@ -255,6 +255,58 @@ check "expected vs actual" before touching code.
 >   (3rd): prices are now DERIVED from the invoices, so an empty setting is no longer a fault.**
 >   See the block below before touching anything here.
 
+> **2026-08-07 — connections, the pooler, and what to check AT CAMP. Full rationale: CLAUDE.md,
+> "Supabase Pro + the connection sizing that actually mattered" at the top; numbers in
+> `docs/SESSION-MODE-CUTOVER.md`.**
+>
+> 🔴 **"EVERYTHING IS SLOW / EVERY SCREEN HANGS AT THE SAME TIME" — CHECK CONNECTIONS FIRST,
+> BEFORE READING ANY FEATURE CODE.** Prod is on the **session-mode** pooler, so a connection
+> holds a dedicated backend for its whole life and the ceiling is:
+>
+> ```
+> concurrent Vercel instances served  =  Supavisor pool size / client.ts max   (now 30 / 3 = 10)
+> ```
+>
+> Past that, requests **queue** — which looks like "the app is slow", not like an error. The
+> tell is that it hits **everything at once** and clears on its own when load drops.
+> - **The one query to run** (safe, read-only):
+>   ```sql
+>   select count(*) as conns,
+>          count(*) filter (where state='active') as active,
+>          max(extract(epoch from (now()-query_start))) filter (where state='active') as longest_s
+>   from pg_stat_activity;
+>   ```
+>   Healthy idle baseline is **~16 of 60**, ~5 of them Supavisor, 0 active. Approaching the pool
+>   size, or anything `active` for **seconds**, is the fault.
+> - ⚠️ **`max_connections` (60) is NOT the number that runs out — the Supavisor Pool Size (30)
+>   is.** Supavisor caps backends long before Postgres does, so `pg_stat_activity` can look
+>   comfortable while clients queue in the pooler. **A healthy-looking connection count does not
+>   clear the pooler.**
+> - **[human] Orphaned `ClientRead` backends** after heavy load: the `pg_terminate_backend`
+>   query is in `SESSION-MODE-CUTOVER.md` step 4. Claude cannot run it.
+> - ⚠️ **`client.ts max` and the dashboard Pool Size are HALF OF A PAIR.** Changing one alone
+>   silently moves the ceiling and **no test, `tsc` run or CI check will catch it.**
+> - ⚠️ **DO NOT "fix" a slow camp morning by lowering `client.ts max` to 1.** That caused
+>   head-of-line blocking in CMS — one slow query froze every request on the instance, login
+>   included. 3 is the floor. If more headroom is genuinely needed the move is **Small compute +
+>   pool 50**.
+>
+> - **"`/ready` is slower than usual."** 2–3ms warm, **~21–28ms cold** — a cold Vercel function,
+>   not a database problem. Only a **non-200** means anything is actually wrong. Do not chase a
+>   30ms reading.
+> - **"The uptime monitor went red for ~2 minutes and came back."** If a **compute resize** was
+>   done, that is expected — a resize is hard downtime and the DB refuses connections outright
+>   (MCP returns *"Connection terminated due to connection timeout"*). Poll `/ready` until
+>   `db:"ok"` returns rather than guessing at recovery.
+> - ⚠️ **After ANY compute resize, re-verify the role timeout** —
+>   `select rolconfig from pg_roles where rolname='postgres';` should contain
+>   `statement_timeout=15s`. It survived the 2026-08-07 upgrade + resize, but it is role config,
+>   **not** a migration, so it is not re-applied by anything and would be lost if the project
+>   were recreated.
+> - **Upgrading the Supabase PLAN never changes `max_connections`** — that follows **compute**,
+>   and **Micro is 60, the same as the free Nano**. If someone reports "we're on paid now so
+>   connections shouldn't be the problem", they are wrong.
+
 > **2026-08-05 (2nd) — 48h sessions + session kill switch, church-only password reset, `/ready`
 > (grep the name). Full rationale: CLAUDE.md, the "48h sessions + a session KILL SWITCH" section
 > at the top.**
