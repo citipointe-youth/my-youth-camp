@@ -4,6 +4,60 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## 86 stale "needs review" flags cleared — a DATA operation, no code change — 2026-08-07 (2nd)
+
+Owner: *"the data import review is slightly too sensitive… if it calculates someone's amount from
+an invoice and it matches a ticket price that has more than 15 entries, it's good."* **Measured
+against prod first, and the premise no longer held: there was nothing left to loosen.** No code
+change — no `invoice-split.ts`, no importer, no schema, no `sw.js` bump. One `UPDATE`.
+
+### The flags were RESIDUE, not sensitivity — and the distinction is the whole entry
+
+88 people were flagged. All 86 of the shared-invoice ones already held **correct** per-person
+costs — every value exactly $150 or $190, including the mixed `190 + 190 + 150` family on invoice
+`022439` that was the $176.67/$176.67/$176.66 case in the 2026-08-04 (4th) section. The camp has
+exactly two prices (`Classroom Accommodation` $190 × 201, `EARLY BIRD | Tent Accomodation`
+$150 × 113), and of the 86: **0 missing a ticket type, 0 missing a cost, 0 with an odd cost, 86/86
+with a `confirmed` `accommodationKind`.**
+
+> ⚠️ **A PRICED TICKET TYPE MEANS BRANCH 1 OF `resolveInvoiceSplit`, WHICH NEVER FLAGS.** So every
+> one of those 86 would resolve clean on a re-import — they were the tail of the 2026-08-04 (2b)
+> ordering bug, whose money was repaired while `needs_review` was not, exactly as `debug.md` says
+> ("no code change rewrites stored data"). Camp-wide check: **44 shared invoices, 101 people, and
+> all 44 have every person on a priced type.** There is no flagged split left that the current
+> rules would flag.
+
+**The proposed ">15 entries" threshold was therefore NOT built, deliberately.** With a two-price
+catalogue where both prices have 100+ holders, it accepts no decomposition the current code
+rejects and rejects none it accepts — dead code with a maintenance cost. ⚠️ It also **cannot** be
+allowed to silence the one-tent-one-classroom case: both prices there are well-established, so a
+popularity rule would accept an arbitrary one of the two assignments, which is the
+reconciles-perfectly-but-wrong number that case exists to catch. If a third ticket type ever makes
+the catalogue $150/$170/$190, revisit it as a *guard* ("distrust a lone decomposition leaning on a
+thin-sample price"), never as "accept more".
+
+### What was actually done
+`update people set needs_review=false, needs_review_reason=null, updated_at=now() where
+needs_review and needs_review_reason ilike '%split equally%'` → **86 rows.** No money column
+touched. The 86 ids were captured before the write.
+
+**2 flags remain and are legitimate, left alone on purpose** — one *Multiple active tickets (2)*
+(ticket #31489) and one *Multiple invoices (2) — amounts were summed*. Those are the duplicate
+detectors in `ticket-import.service.ts:235` / `invoice-import.service.ts:422`, not the split, and
+they are the two rows genuinely worth a human look.
+
+⚠️ **A bulk "mark all as reviewed" button was designed and NOT built** (owner's call, after the
+measurement). Scope was to be the currently-filtered rows, gated `import:run` (admin + director),
+sending explicit ids rather than a filter spec — *do not* re-implement the Data tab's filter
+predicate server-side, that is the fourth-copy-of-a-rule failure. Revisit only if another batch
+of flags ever appears; single flags are fine through the existing per-row modal.
+
+### The four things that set the flag (nobody could find this list before)
+`ticket-import.service.ts:288` unmatched ticket row → flagged orphan · `:235` 2+ active tickets ·
+`invoice-import.service.ts:422` 2+ invoices · `:526` unresolvable shared invoice. **Only the last
+is the auto-split** — the other three flag no matter how clean the numbers are, which is why "the
+split is too sensitive" and "why is this flagged" are usually different questions.
+
 ## 🔴 Supabase Pro + the connection sizing that actually mattered — 2026-08-07
 
 **Infrastructure + a one-line code change**, no schema/migration. `npm run typecheck` clean,
