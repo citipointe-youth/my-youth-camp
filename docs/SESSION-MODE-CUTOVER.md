@@ -115,6 +115,53 @@ out app-level bugs in session mode and confirm the harness works against MYC's e
 
 ---
 
+---
+
+## ✅ WINDOW 2, PART ONE — DONE 2026-08-07. Read this before the sizing sections below.
+
+The plan was upgraded and the config sized. **Steps 5–7 are done; step 8 (the burst load test)
+is deliberately still outstanding and belongs in September.**
+
+| Fact | Value (measured, not assumed) |
+|---|---|
+| Plan | **Pro** |
+| Compute | **Micro** (upgraded from Nano) |
+| `max_connections` | **60** · `superuser_reserved_connections` **3** → 57 usable |
+| Baseline connections used by Supabase's own services | **~15** |
+| Supavisor **Pool Size** | **15 → 30** |
+| Supavisor max client connections | 200 (not the constraint) |
+| `DATABASE_URL` | **:5432 session pooler** — cutover confirmed done |
+| App pool `max` (`client.ts`) | **5 → 3** |
+| Role `statement_timeout` | **`15s`, survived both the plan upgrade and the compute restart** |
+
+> 🔴 **THE HEADLINE, AND STEP 6 BELOW IS MISLEADING WITHOUT IT: `max_connections` DOES NOT SCALE
+> WITH THE PLAN, ONLY WITH COMPUTE — AND MICRO IS 60, IDENTICAL TO THE FREE NANO.** Only Small
+> (90) and above raise it. Upgrading to Pro bought backups, no auto-pause and PITR eligibility;
+> it bought **zero** extra connections. Anyone reading step 6 expecting the number to have moved
+> will read 60 and think the gate passed.
+
+**The real ceiling was never `max_connections` — it was the Supavisor Pool Size.** In session
+mode a client connection holds a dedicated backend for its whole life, so:
+
+```
+concurrent Vercel instances served  =  Supavisor pool size / app pool max
+```
+
+At the defaults (**15 / 5**) that was **three instances** before everything else queues — far
+short of a 100–200-leader AM burst, and queuing at check-in is indistinguishable from an outage.
+Now at **30 / 3** it is **ten**. 30 backends + ~15 internal fits inside 57, with ~12 spare.
+
+**Why not Small?** It reaches the same ten instances (50 / 5) but costs more, and the load test
+that would justify it hasn't run. Owner's decision 2026-08-07: **run the leaders' day on Micro +
+30/3, then reassess at the September load test.** If that test wants more headroom the move is
+**Small + pool 50**, *not* a smaller `client.ts max` — 3 is already the floor worth having (1
+caused head-of-line blocking in CMS; 2 is the lowest CMS ran healthy on).
+
+⚠️ **Set the compute size FIRST, then the pool size** — resizing can reset the pool to the new
+default. And re-verify the role `statement_timeout` after any resize (it survived this one).
+
+---
+
 ## Window 2 — At upgrade (~1–2 weeks before camp, paid)
 
 Give this enough lead time before camp week that there's room to react — never same-day.

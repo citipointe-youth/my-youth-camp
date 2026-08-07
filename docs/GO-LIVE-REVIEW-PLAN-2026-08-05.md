@@ -62,6 +62,21 @@ Reads well. The problems below are all in what is *not* covered by any of that.
 
 ## 2. Findings — ranked by consequence
 
+> ## ✅ F1 + F2 RESOLVED 2026-08-07 — read this before the two sections below
+>
+> Upgraded to **Pro**, compute **Nano → Micro**, Supavisor **Pool Size 15 → 30**, app pool
+> **`max` 5 → 3**. `statement_timeout=15s` survived both the plan upgrade and the compute
+> restart; `/ready` came back `db:"ok"` in 21ms after the resize.
+>
+> **F1 was confirmed exactly as predicted: `max_connections` is STILL 60 on Micro** — the plan
+> upgrade bought backups and no auto-pause, not capacity. **But the binding constraint turned
+> out to be the Supavisor Pool Size, not `max_connections`:** at the 15/5 default only
+> **3 Vercel instances** could be served at once. It is now **10** (30/3).
+>
+> Owner's decision: **run the leaders' day on Micro + 30/3, reassess at the September load
+> test.** If that test wants more headroom the move is **Small + pool 50**, not a smaller
+> `client.ts max`. Full numbers in `docs/SESSION-MODE-CUTOVER.md`.
+
 ### 🔴 F1 — Upgrading to Pro does NOT buy connection headroom. Micro = 60, same as Nano.
 
 Supabase's own table: **Nano 60 / Micro 60 / Small 90 / Medium 120**

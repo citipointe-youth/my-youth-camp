@@ -1935,7 +1935,7 @@ in-memory to a real Supabase backend is done and serving traffic.
 |---|---|
 | **GitHub** | `citipointe-youth/my-youth-camp` — **auto-deploys from `master`** |
 | **Vercel** | team `citipointe-youth`, project `my-youth-camp` (serverless via `api/index.ts`) |
-| **Supabase** | ref `nwfafrgojqkxylbppywo` (Sydney); all 16 tables applied; reached via `DATABASE_URL` (transaction pooler) |
+| **Supabase** | ref `nwfafrgojqkxylbppywo` (Sydney); all 16 tables applied; reached via `DATABASE_URL` — **session pooler, port 5432** since the 2026-08-07 cutover (was the transaction pooler on 6543) |
 | **Login** | `admin` (username, not email); password set in the DB post-deploy |
 
 Trackers: **`CHANGELOG.txt`** (phase-by-phase + KNOWN RISKS), `docs/PROGRAM-LOG.md` (initiative log),
@@ -4152,7 +4152,7 @@ Default port: **4200**. Set `PORT=xxxx` to override.
 |---|---|
 | `memory` (default) | In-memory; demo seed runs on startup |
 | `json` | In-memory + JSON files in `DATA_DIR` |
-| `supabase` | Supabase Postgres (requires `DATABASE_URL`) — **the live production backend** (ref `nwfafrgojqkxylbppywo`; use the transaction-pooler URL on port 6543, not the IPv6-only direct host) |
+| `supabase` | Supabase Postgres (requires `DATABASE_URL`) — **the live production backend** (ref `nwfafrgojqkxylbppywo`; use the **SESSION-pooler URL on port 5432** — `aws-…pooler.supabase.com`, user `postgres.<ref>` — **not** the IPv6-only direct host `db.<ref>.supabase.co`, which is also :5432 but will not work on Vercel) |
 
 ```
 PORT=4200
@@ -4177,13 +4177,38 @@ on the role, **not** in `supabase/migrations/` — it survives new-year rollover
 re-applied if the Supabase project is ever recreated.** Verify with
 `select rolconfig from pg_roles where rolname='postgres';`.
 
-### Planned: session-mode pooler cutover — see `docs/SESSION-MODE-CUTOVER.md`
+### ✅ DONE — session-mode cutover + connection sizing (2026-08-07). Runbook: `docs/SESSION-MODE-CUTOVER.md`
 
-To survive the camp AM-check-in burst (100–200 leaders), the plan is to switch the pooler
-from **transaction mode (port 6543)** to **session mode (port 5432)** — the fix that ended
-the CMS outage. **Not yet done** (gated on the paid upgrade for the camp burst test; the
-cutover itself can happen anytime — the runbook splits it into "do now" vs "at upgrade").
-Two env gotchas that matter here:
+Prod is on the **session-mode pooler (port 5432)**, **Supabase Pro**, **Micro** compute.
+Confirmed by measurement 2026-08-07, not assumed:
+
+| | |
+|---|---|
+| `max_connections` / reserved | **60 / 3** → 57 usable · ~15 used by Supabase's own services |
+| Supavisor **Pool Size** | **30** (was the 15 default) |
+| App pool `max` (`client.ts`) | **3** (was 5) |
+| Role `statement_timeout` | `15s` — survived both the plan upgrade and the compute restart |
+
+> 🔴 **UPGRADING THE PLAN BUYS NO CONNECTIONS. `max_connections` scales with COMPUTE, and
+> MICRO IS 60 — IDENTICAL TO THE FREE NANO.** Only Small (90) and above raise it. Pro bought
+> backups, no auto-pause and PITR eligibility. Do not read "we're on paid now" as headroom.
+
+> ⚠️ **THE REAL CEILING IS THE SUPAVISOR POOL SIZE, AND IT IS HALF OF A PAIR.** In session mode
+> a connection holds a dedicated backend for its whole life, so
+> **`instances served = pool size / client.ts max`**. At the defaults (15 / 5) that was **three
+> Vercel instances** before everything else queued — nowhere near a 100–200-leader AM burst, and
+> queuing at check-in looks exactly like an outage. At **30 / 3** it is **ten**. Change either
+> number and you silently move that ceiling: **redo the arithmetic, and change both together.**
+
+**Still outstanding: the burst load test** (`SESSION-MODE-CUTOVER.md` step 8) — deliberately
+deferred to ~mid-September. If it wants more headroom the move is **Small + pool 50**, *not* a
+smaller `client.ts max`: 3 is the floor worth having (`max:1` caused head-of-line blocking in
+CMS, where one slow query froze every request on the instance including login).
+
+⚠️ **Set compute size FIRST, then pool size** — a resize can reset the pool to the new default.
+Re-verify the role `statement_timeout` after any resize.
+
+Two env gotchas that still matter here:
 
 - **The app reads only `DATABASE_URL`** (`src/config/env.ts`) — never `POSTGRES_URL*` or any
   other var the **Supabase→Vercel integration** syncs. So the integration's env sync does
