@@ -5964,18 +5964,40 @@ function selSchedDay(d){SCHED_DAY=d;RENDER.schedule();}
 
 /* ===== DEVOTIONAL ===== */
 let DEVO_DAY=null;
+/* A CHURCH account inside a preview sees DAY 1 ONLY (2026-08-07, owner request).
+   Why this is needed on top of the `isCampToday` lock below: that lock only bites when TODAY is
+   a camp day, so PRE-CAMP it is inert and every day stays selectable. From the leaders' handout
+   day a church login can tap "Preview at-camp view" on the home screen and read all four days of
+   devotional content weeks early. Day 1 is the only one that should be visible as a sample.
+   Covers BOTH preview kinds: the church's own at-camp preview (`PREVIEW_MODE`) and an admin
+   previewing a church login (`ACCOUNT_PREVIEW`, whose stated promise is "exactly as they see it").
+   Deliberately does NOT apply to a real at-camp session — there `isCampToday` already pins the
+   view to today, which is stricter and correct; nor to any non-church role.
+   ⚠️ CLIENT-SIDE BY NECESSITY, not by oversight: `PREVIEW_MODE` is a purely client-side construct
+   and the bearer token is the church's REAL token, so the server cannot distinguish a preview read
+   of /devotional/:day from a genuine at-camp one. Proportionate because the content is a spoiler,
+   not private data — do not mistake this for a privacy boundary. */
+function _devoDay1Only(){
+  return !!(ACTOR&&ACTOR.role==='church'&&(PREVIEW_MODE||ACCOUNT_PREVIEW));
+}
 RENDER.devotional=async function(){
   const days=SETTINGS?.checkInDays||[];
   // Item 12: default to TODAY's devotional and grey out the other camp days (only today's is the
   // "current" one). Outside the camp dates there is no current day, so all days stay selectable.
   const today=localDateISO();
   const isCampToday=days.includes(today);
-  if(!DEVO_DAY)DEVO_DAY=isCampToday?today:((SETTINGS?.checkInDays&&SETTINGS.checkInDays[0])||null);
+  const day1Only=_devoDay1Only();
+  // Forced on EVERY render, not just when unset: DEVO_DAY is module-level and survives
+  // navigation, so a day picked before the preview was entered (or before the at-camp overlay
+  // was toggled on) would otherwise persist into the locked view.
+  if(day1Only)DEVO_DAY=days[0]||null;
+  else if(!DEVO_DAY)DEVO_DAY=isCampToday?today:((SETTINGS?.checkInDays&&SETTINGS.checkInDays[0])||null);
   if(!DEVO_DAY){paint('devotional','<p class="note-hint">No camp days configured.</p>','Daily Devotional','');return;}
   const d=await api('/devotional/'+DEVO_DAY).catch(()=>null);
   const daySeg=days.length>1?`<div class="seg">${days.map(dy=>{
-    const locked=isCampToday&&dy!==today;
-    return `<button class="${dy===DEVO_DAY?'on':''}"${locked?' style="opacity:.4"':''} onclick="${locked?"toast('Today\\'s devotional is the current one')":`selDevoDay('${dy}')`}">${new Date(dy+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',timeZone:'UTC'})}</button>`;
+    const locked=day1Only?dy!==DEVO_DAY:(isCampToday&&dy!==today);
+    const lockMsg=day1Only?"toast('Only day 1 is available in preview')":"toast('Today\\'s devotional is the current one')";
+    return `<button class="${dy===DEVO_DAY?'on':''}"${locked?' style="opacity:.4"':''} onclick="${locked?lockMsg:`selDevoDay('${dy}')`}">${new Date(dy+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',timeZone:'UTC'})}</button>`;
   }).join('')}</div>`:'';
   paint('devotional',daySeg+(d?`<div class="hero" style="background:radial-gradient(130% 130% at 100% 0%,var(--teal),var(--navy) 78%)">
     <div class="k">Verse of the day</div><h2 style="font-size:1.06rem;line-height:1.5;font-weight:700">"${esc(d.verse)}"</h2>
@@ -5984,7 +6006,13 @@ RENDER.devotional=async function(){
     <div class="card" style="background:var(--tint);border-color:var(--lav)"><div class="h3" style="margin-top:0;color:var(--violet-d)">Prayer</div><p style="font-size:.92rem;color:var(--violet-dd);line-height:1.65;font-style:italic">${esc(d.prayer)}</p></div>`
     :'<p class="note-hint">No devotional set for this day.</p>'),'Daily Devotional',dayLong(DEVO_DAY));
 };
-function selDevoDay(d){DEVO_DAY=d;RENDER.devotional();}
+// Second gate on the same rule as `_devoDay1Only` — the locked buttons above already don't call
+// this, so it is belt-and-braces against a future caller (or a stale inline handler in an already
+// -rendered screen) reaching a non-day-1 devotional while a church preview is active.
+function selDevoDay(d){
+  if(_devoDay1Only()&&d!==((SETTINGS?.checkInDays||[])[0]))return;
+  DEVO_DAY=d;RENDER.devotional();
+}
 
 /* ===== FAQ (pre-camp Help aid) ===== */
 RENDER.faq=async function(){

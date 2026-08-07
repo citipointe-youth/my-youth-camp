@@ -4,6 +4,44 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Church previews see DAY 1 ONLY of the devotional — 2026-08-07 (3rd)
+
+Owner request on launch eve. **SPA-only** — no backend, DTO, schema or migration change.
+`npm run typecheck` clean, `npx vitest run` **1013 pass / 62 files** (unchanged — browser-only),
+`node --check` OK on the SPA body (range **967–9558**, re-derived) and `sw.js`. `sw.js`
+`camp-v96`→**`camp-v97`**. New `scripts/devotional-preview-harness.js` (**19 checks**).
+
+### ⚠️ The existing day lock is INERT PRE-CAMP, which is the whole reason this was needed
+`RENDER.devotional`'s original rule is `isCampToday && dy !== today` — it only bites when TODAY is
+a camp day. Camp is 2026-09-28, so from the leaders' handout day a church login could tap
+**"Preview at-camp view"** on the home screen (that card is shown in pre-camp to *all* roles) and
+read **all four days** of devotional content weeks early. Day 1 is the only one meant to be
+visible as a sample.
+
+- New **`_devoDay1Only()`** — church role AND (`PREVIEW_MODE` || `ACCOUNT_PREVIEW`). Covers both
+  preview kinds: the church's own at-camp preview and an admin previewing a church login (whose
+  stated promise is "exactly as they see it").
+- ⚠️ **`DEVO_DAY` is forced on EVERY render, not just when unset.** It is module-level and survives
+  navigation, so a day picked before the preview was entered — or before the at-camp overlay was
+  toggled on — would otherwise persist straight into the locked view.
+- `selDevoDay` carries the same gate. The locked buttons already don't call it; this is
+  belt-and-braces against a stale inline handler in an already-rendered screen.
+- ⚠️ **Deliberately does NOT touch a real at-camp session** — there `isCampToday` already pins the
+  view to today, which is stricter and correct — **nor any non-church role**. Harness cases 5–7
+  pin all three no-regression paths.
+
+> ⚠️ **CLIENT-SIDE BY NECESSITY, NOT BY OVERSIGHT — and NOT a privacy boundary.** `PREVIEW_MODE` is
+> a purely client-side construct and the bearer token is the church's **real** token, so the server
+> cannot distinguish a preview read of `/devotional/:day` from a genuine at-camp one. Proportionate
+> because the content is a spoiler, not private data. **Do not "harden" this server-side** without
+> first giving preview a real server-visible representation.
+
+**`scripts/devotional-preview-harness.js`** runs the REAL extracted functions against stubs and
+**self-extracts the block by its `/* ===== DEVOTIONAL ===== */` comment markers rather than a line
+range** — the ranges quoted in this file have drifted repeatedly. **Proven to catch a regression,
+not merely to pass:** replacing `_devoDay1Only`'s body with `return false` fails **8 of the 19**
+checks.
+
 ## 86 stale "needs review" flags cleared — a DATA operation, no code change — 2026-08-07 (2nd)
 
 Owner: *"the data import review is slightly too sensitive… if it calculates someone's amount from
