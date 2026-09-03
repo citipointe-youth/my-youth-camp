@@ -5133,7 +5133,7 @@ function _accomOverrideCard(churches){
      unusual in here?" is the question a collapsed summary has to answer on its own. `helpTip` goes
      in the body, not the <summary>: tapping the bubble would also toggle the disclosure. */
   return `<div class="card" style="margin-top:14px"><details>
-    <summary style="cursor:pointer;font-weight:700">Accommodation overrides (${set} set)</summary>
+    <summary style="cursor:pointer;font-weight:700">Church accommodation override (${set} set)</summary>
     <p class="note-hint" style="text-align:left">Force every student and leader from a church into one accommodation type on the next registration upload. ${helpTip(_OVERRIDE_TIP)}</p>
     ${rows}
   </details></div>`;
@@ -6851,7 +6851,7 @@ RENDER.adminAccom=async function(){
         <button class="btn sm" onclick="addRoom()" style="flex:none;align-self:flex-end">Add</button>
       </div></div>
     <div class="card"><div class="rowsb"><div>
-      <div style="font-weight:700">Accommodation overrides</div>
+      <div style="font-weight:700">Church accommodation override</div>
       <div class="sub">${ovSet} set · now on the allocations screen</div></div>
       <button class="btn ghost sm" style="flex:0 0 auto" onclick="go('accom')">Open ${icSm('arrowr')}</button></div></div>`,'Accommodation setup','Classrooms');
 };
