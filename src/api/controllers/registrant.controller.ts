@@ -15,7 +15,9 @@ export function makeRegistrantController(services: RegistrantControllerServices)
     async list(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       const churchId = req.query['churchId'];
-      return (await person.listRegistrants(req.ctx.actor, churchId)).map(toRegistrantDto);
+      // Budget/Data-Import widening only; PersonService re-gates it to director/admin.
+      const includeCancelled = req.query['includeCancelled'] === '1' || req.query['includeCancelled'] === 'true';
+      return (await person.listRegistrants(req.ctx.actor, churchId, { includeCancelled })).map(toRegistrantDto);
     },
 
     async get(req: HttpRequest) {
@@ -69,6 +71,17 @@ export function makeRegistrantController(services: RegistrantControllerServices)
           : null;
       }
 
+      const ovRaw = b['accommodationOverride'];
+      if (ovRaw !== undefined && ovRaw !== null && ovRaw !== 'tent' && ovRaw !== 'classroom') {
+        throw new BadRequestError('accommodationOverride must be tent, classroom or null');
+      }
+      for (const k of ['amountPaidOverride', 'refundAmount'] as const) {
+        const v = b[k];
+        if (v !== undefined && v !== null && !Number.isFinite(Number(v))) {
+          throw new BadRequestError(`${k} must be a number or null`);
+        }
+      }
+
       const patch: Partial<Person> = {
         ...(b['firstName'] !== undefined && { firstName: b['firstName'] as string }),
         ...(b['lastName'] !== undefined && { lastName: b['lastName'] as string }),
@@ -108,6 +121,18 @@ export function makeRegistrantController(services: RegistrantControllerServices)
         ...(b['invoiceNumber'] !== undefined && { invoiceNumber: b['invoiceNumber'] as string | null }),
         ...(b['accommodationKindConfidence'] !== undefined && {
           accommodationKindConfidence: b['accommodationKindConfidence'] as Person['accommodationKindConfidence'],
+        }),
+        /* Individual overrides (0022, Data Import). `null` is a meaningful value for all three
+           (clear the override / clear the refund), so these test `!== undefined`, matching every
+           other entry here. No importer can reach this path. */
+        ...(b['accommodationOverride'] !== undefined && {
+          accommodationOverride: b['accommodationOverride'] as Person['accommodationOverride'],
+        }),
+        ...(b['amountPaidOverride'] !== undefined && {
+          amountPaidOverride: b['amountPaidOverride'] == null ? null : Number(b['amountPaidOverride']),
+        }),
+        ...(b['refundAmount'] !== undefined && {
+          refundAmount: b['refundAmount'] == null ? null : Number(b['refundAmount']),
         }),
         ...(b['discountAmount'] !== undefined && { discountAmount: b['discountAmount'] as number | null }),
         ...(b['amountPaid'] !== undefined && { amountPaid: b['amountPaid'] as number | null }),
