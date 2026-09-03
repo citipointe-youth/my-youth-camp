@@ -4673,7 +4673,9 @@ function _budUnpricedInperson(regs,filterId,ptable,prices){
       const p={registrationCost:r.registrationCost==null?null:Number(r.registrationCost),
         amountPaid:r.amountPaid==null?null:Number(r.amountPaid),
         accommodationKind:r.accommodationKind||null,discountCode:r.discountCode,
-        registrationType:r.registrationType||null};
+        registrationType:r.registrationType||null,
+        amountPaidOverride:r.amountPaidOverride==null?null:Number(r.amountPaidOverride)};
+      if(p.amountPaidOverride!=null)return; // an admin-set override makes the value known regardless of ticket class/price-table state
       const cls=_classifyTicket(p,tags);
       if(cls!=='tent-inperson'&&cls!=='classroom-inperson')return;
       if(_resolveTicketPrice(p,ptable)!=null)return;                       // priced from data
