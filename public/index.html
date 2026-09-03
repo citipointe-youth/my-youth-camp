@@ -8206,7 +8206,7 @@ async function offlineSignInUpload(){
 
 /* ===== UNALLOCATED REGISTRANTS + CHURCH OVERRIDES (bottom of Data Import) ===== */
 const UNALLOCATED_ID='__unallocated__'; // must match backend UNALLOCATED_CHURCH_ID
-let _allocState={unallocated:[],regs:[],churches:[],overrides:[]};
+let _allocState={unallocated:[],regs:[],regsAll:[],churches:[],overrides:[]};
 
 /* ⚠️ THESE FETCHES USED TO FAIL SILENTLY, AND ONE OF THEM WAS FAILING FOR A MONTH.
    `/import/allocations` 500'd on every call (see the repo mapper fix, 2026-08-01) and the bare
@@ -8219,13 +8219,19 @@ async function _loadAllocation(){
   const wrap=document.getElementById('allocWrap'); if(!wrap) return;
   _allocErrs=[];
   const grab=(p,label)=>api(p).catch(e=>{_allocErrs.push(label+': '+((e&&e.message)||'failed'));return [];});
-  const [unallocated,regs,churches,overrides]=await Promise.all([
+  const [unallocated,allRegs,churches,overrides]=await Promise.all([
     grab('/import/unallocated','Unallocated registrants'),
-    grab(_scoped('/registrants'),'Registrants'),
+    grab(_scoped('/registrants?includeCancelled=1'),'Registrants'),
     grab('/accounts/churches','Churches'),
     grab('/import/allocations','Church overrides'),
   ]);
-  _allocState={unallocated:unallocated||[],regs:regs||[],churches:churches||[],overrides:overrides||[]};
+  /* ONE fetch, two views. `regs` stays exactly what it always was — active registrants — so the
+     unallocated/designated/church-override cards and their search are untouched. `regsAll` keeps
+     the cancelled people the cancels/refunds card needs to still show after a cancel lands.
+     A church login is re-gated server-side and just gets the active list back either way. */
+  const _all=allRegs||[];
+  _allocState={unallocated:unallocated||[],regs:_all.filter(r=>r.status!=='cancelled'),
+    regsAll:_all,churches:churches||[],overrides:overrides||[]};
   _renderAllocCards();
 }
 
