@@ -127,6 +127,27 @@ describe('audit-export: master workbook', () => {
     const faRow = (fa.getRow(2).values as unknown[]).map((v) => String(v ?? ''));
     expect(faRow).toEqual(expect.arrayContaining(['9', 'female']));
   });
+
+  it('keeps cancelled people in the Attendees sheet, flagged with a Cancelled column (task 16)', async () => {
+    await people.save(person({
+      id: 'cam2', firstName: 'Gone', lastName: 'Away', lifecycle: 'cancelled', kind: 'youth',
+    }));
+    const wb = await load();
+    const attendees = wb.getWorksheet('Attendees')!;
+    const header = (attendees.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    expect(header).toContain('Cancelled');
+    const cancelledIdx = header.indexOf('Cancelled');
+    let found = false;
+    attendees.eachRow((r, rowNum) => {
+      if (rowNum === 1) return;
+      const cells = (r.values as unknown[]).map((v) => String(v ?? ''));
+      if (cells.includes('Gone')) {
+        found = true;
+        expect(cells[cancelledIdx]).toBe('Yes');
+      }
+    });
+    expect(found).toBe(true);
+  });
 });
 
 describe('audit-export: sign-in/out log running totals (chronological across students AND leaders)', () => {

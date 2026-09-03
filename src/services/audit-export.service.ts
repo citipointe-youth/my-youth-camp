@@ -156,10 +156,13 @@ export function makeAuditExportService(
 
       // ----- Attendees -----
       const attendees = wb.addWorksheet('Attendees');
-      attendees.addRow(['First Name', 'Last Name', 'Kind', 'Church', 'Zone', 'Grade', 'Gender', 'Accommodation', 'Lifecycle', 'At Camp']);
+      attendees.addRow(['First Name', 'Last Name', 'Kind', 'Church', 'Zone', 'Grade', 'Gender', 'Accommodation', 'Lifecycle', 'At Camp', 'Cancelled']);
       attendees.getRow(1).font = { bold: true };
+      /* Cancelled people stay IN every export, marked — one consistent rule (they are hidden from
+         on-screen ops lists only). An export is the audit trail: someone who withdrew after paying
+         is exactly who a reconciliation needs to see. */
       for (const p of people) {
-        if (!isCamper(p)) continue;
+        if (!isCamper(p) && p.lifecycle !== 'cancelled') continue;
         attendees.addRow([
           p.firstName, p.lastName,
           p.kind === 'leader' ? 'Leader' : 'Student',
@@ -169,6 +172,7 @@ export function makeAuditExportService(
           accommodationDisplay(p.accommodationKind),
           p.lifecycle,
           p.atCamp ? 'Yes' : 'No',
+          p.lifecycle === 'cancelled' ? 'Yes' : '',
         ]);
       }
 

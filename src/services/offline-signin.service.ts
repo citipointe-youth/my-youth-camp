@@ -42,20 +42,23 @@ export function makeOfflineSignInService(personRepo: IPersonRepository): Offline
     async exportTemplate(actor) {
       assertCan(actor, 'import:run');
       const people = await personRepo.findAll();
+      /* Cancelled people stay IN every export, marked — one consistent rule (they are hidden from
+         on-screen ops lists only). An export is the audit trail: someone who withdrew after paying
+         is exactly who a reconciliation needs to see. */
       const students = people
-        .filter((p) => p.kind !== 'leader' && p.lifecycle !== 'cancelled')
+        .filter((p) => p.kind !== 'leader')
         .sort((a, b) => a.churchName.localeCompare(b.churchName) || a.lastName.localeCompare(b.lastName));
 
       const wb = new ExcelJS.Workbook();
       const sheet = wb.addWorksheet('Offline Sign-In');
-      sheet.addRow(['First Name', 'Last Name', 'Church', 'Gender', 'Grade', 'Signed In?']);
+      sheet.addRow(['First Name', 'Last Name', 'Church', 'Gender', 'Grade', 'Signed In?', 'Cancelled']);
       sheet.getRow(1).font = { bold: true };
-      sheet.addRow([SAMPLE_FIRST_NAME, SAMPLE_LAST_NAME, '(example row — leave church/gender/grade blank or edit freely, it is ignored)', '', '', 'Y']);
+      sheet.addRow([SAMPLE_FIRST_NAME, SAMPLE_LAST_NAME, '(example row — leave church/gender/grade blank or edit freely, it is ignored)', '', '', 'Y', '']);
       sheet.getRow(2).font = { italic: true, color: { argb: 'FF888888' } };
       for (const p of students) {
-        sheet.addRow([p.firstName, p.lastName, p.churchName, p.gender, p.grade ?? '', '']);
+        sheet.addRow([p.firstName, p.lastName, p.churchName, p.gender, p.grade ?? '', '', p.lifecycle === 'cancelled' ? 'Yes' : '']);
       }
-      sheet.columns = [{ width: 16 }, { width: 16 }, { width: 26 }, { width: 10 }, { width: 8 }, { width: 12 }];
+      sheet.columns = [{ width: 16 }, { width: 16 }, { width: 26 }, { width: 10 }, { width: 8 }, { width: 12 }, { width: 11 }];
 
       const buffer = await wb.xlsx.writeBuffer();
       return Buffer.from(buffer);

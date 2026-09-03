@@ -4250,8 +4250,12 @@ function _budScopeRows(people,tags,prices,ptable){
     const cls=_classifyTicket(p,tags);
     const val=_personValue(p,cls,prices,_resolveTicketPrice(p,ptable),_discountTagFor(p,tags));
     let b=by.get(cls);
-    if(!b){b={count:0,total:0,values:new Map(),missing:0,codes:new Map()};by.set(cls,b);}
+    if(!b){b={count:0,total:0,values:new Map(),missing:0,codes:new Map(),cancelled:0};by.set(cls,b);}
     b.count++;
+    // Task 16 — cancelled people are still counted/valued above (Task 14: cancelling must not
+    // move the money), so this is a COUNT within the row, not a filter. Export-only field; no
+    // on-screen card reads it yet.
+    if(p.status==='cancelled')b.cancelled++;
     if(val==null)b.missing++;else{b.total+=val;b.values.set(val,(b.values.get(val)||0)+1);}
     const c=(p.discountCode||'').trim();if(c)b.codes.set(c,(b.codes.get(c)||0)+1);
   });
@@ -4261,7 +4265,8 @@ function _budScopeRows(people,tags,prices,ptable){
     const amount=(b.values.size===1&&b.missing===0)?[...b.values.keys()][0]:null;
     let hint=null;if(b.codes.size===1){const [code,n]=[...b.codes.entries()][0];if(n===b.count)hint=code;}
     rows.push({key:cls,label:_budRowLabel(cls,amount),amount,count:b.count,lineTotal:b.total,
-      unrecorded:cls==='unknown',valueMissingCount:b.missing,codeHint:hint,valueBreakdown:_budValueBreakdown(b)});
+      unrecorded:cls==='unknown',valueMissingCount:b.missing,codeHint:hint,valueBreakdown:_budValueBreakdown(b),
+      cancelledCount:b.cancelled});
   });
   return rows;
 }
@@ -4426,7 +4431,7 @@ function computeBudgetClient(regs,filterId){
       registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
       amountPaidOverride:num(r.amountPaidOverride),refundAmount:num(r.refundAmount),
       accommodationKind:r.accommodationKind||null,discountCode:r.discountCode,
-      registrationType:r.registrationType||null}));
+      registrationType:r.registrationType||null,status:r.status||null}));
   let full=null;
   const byChurch=new Map();
   people.forEach(p=>{
@@ -5023,7 +5028,11 @@ async function exportBudget(){
     sum.push([_xc('"Money received" counts what has actually come in: a full-sponsor code contributes $0 and a place paid in person is valued at its ticket price. Sponsorship is the gap that must arrive from elsewhere for the camp to be whole.',XS.NOTE)]);
 
     /* ── Sheet 2: By ministry ─────────────────────────────────────────────────────────────── */
-    const HEAD=['Church','Row type','Audience','Accommodation','Payment type','Discount code','People','Unit price','Line total'];
+    // Task 16 — 'Cancelled' is a COUNT within the row's People, not a filter: cancelled people
+    // stay IN every export, marked — one consistent rule (they are hidden from on-screen ops
+    // lists only). An export is the audit trail: someone who withdrew after paying is exactly
+    // who a reconciliation needs to see. Their money still counts in Line total (Task 14).
+    const HEAD=['Church','Row type','Audience','Accommodation','Payment type','Discount code','People','Unit price','Line total','Cancelled'];
     const rows=[HEAD.map((h)=>_xc(h,XS.HEAD))];
     const detail=(church,aud,list)=>(list||[]).forEach((r)=>rows.push([
       /* The church name repeats on every row so the sheet stays filterable and pivotable — the
@@ -5032,6 +5041,7 @@ async function exportBudget(){
       _xc(church,XS.MUTED),_xc('Detail',XS.MUTED),_xc(aud,XS.TEXT),
       _xc(_budAccom(r.key),XS.TEXT),_xc(_budPayment(r.key),XS.TEXT),_xc(r.codeHint||'',XS.TEXT),
       _xn(r.count,XS.NUM),_xn(r.amount==null?null:r.amount,XS.MONEY),_xn(r.lineTotal,XS.MONEY),
+      _xn(r.cancelledCount||0,XS.NUM),
     ]));
     /* ⚠ THE CHURCH TOTAL LEADS ITS BLOCK, DETAIL SITS UNDER IT (owner, 2026-08-04 5th-b).
        A spreadsheet subtotal conventionally FOLLOWS its rows, which is why it was written that
@@ -5040,14 +5050,19 @@ async function exportBudget(){
        varies by ministry. Leading with it means scrolling the sheet reads as a list of totals,
        with the working underneath for anyone who wants it. The row keeps its top border, which
        now separates one ministry's block from the previous one. */
+    const cancelledIn=(list)=>(list||[]).reduce((s,r)=>s+(r.cancelledCount||0),0);
     rep.churches.forEach((c)=>{
+      const churchCancelled=cancelledIn(c.campers)+cancelledIn(c.leaders);
       rows.push([_xc(c.churchName,XS.TOT_T),_xc('Church total',XS.TOT_T),_xc('',XS.TOT_T),_xc('',XS.TOT_T),
-        _xc('',XS.TOT_T),_xc('',XS.TOT_T),_xn(c.camperCount+c.leaderCount,XS.TOT_N),_xn(null,XS.TOT_M),_xn(c.total,XS.TOT_M)]);
+        _xc('',XS.TOT_T),_xc('',XS.TOT_T),_xn(c.camperCount+c.leaderCount,XS.TOT_N),_xn(null,XS.TOT_M),_xn(c.total,XS.TOT_M),
+        _xn(churchCancelled,XS.TOT_N)]);
       detail(c.churchName,'Student',c.campers);
       detail(c.churchName,'Leader',c.leaders);
     });
+    const campCancelled=rep.churches.reduce((s,c)=>s+cancelledIn(c.campers)+cancelledIn(c.leaders),0);
     rows.push([_xc(scopeLabel,XS.GRAND_T),_xc('Camp total',XS.GRAND_T),_xc('',XS.GRAND_T),_xc('',XS.GRAND_T),
-      _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(rep.grandTotal,XS.GRAND_M)]);
+      _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(rep.grandTotal,XS.GRAND_M),
+      _xn(campCancelled,XS.GRAND_N)]);
     // The filter covers the RECEIVED table only — see the sponsorship block below.
     const receivedRows=rows.length;
 
@@ -5072,14 +5087,15 @@ async function exportBudget(){
       spon.churches.forEach((c)=>c.codes.forEach((x)=>rows.push([
         _xc(c.name,XS.MUTED),_xc('Sponsor by ministry',XS.MUTED),_xc('',XS.TEXT),_xc('',XS.TEXT),
         _xc(_SPONSOR_TAG_LABEL[x.tag]||x.tag,XS.TEXT),_xc(x.code,XS.TEXT),
-        _xn(x.count,XS.NUM),_xn(null,XS.MONEY),_xn(x.total,XS.MONEY)])));
+        _xn(x.count,XS.NUM),_xn(null,XS.MONEY),_xn(x.total,XS.MONEY),_xc('',XS.TEXT)])));
       rows.push([_xc(scopeLabel,XS.GRAND_T),_xc('Sponsor total',XS.GRAND_T),_xc('',XS.GRAND_T),_xc('',XS.GRAND_T),
-        _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(spon.count,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(spon.total,XS.GRAND_M)]);
+        _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(spon.count,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(spon.total,XS.GRAND_M),
+        _xc('',XS.GRAND_T)]);
     }
 
     const sheets=[
       {name:'Summary',cols:[46,10,14],rows:sum},
-      {name:'By ministry',cols:[26,20,10,16,18,16,9,12,13],rows:rows,freeze:1,filter:'A1:I'+receivedRows},
+      {name:'By ministry',cols:[26,20,10,16,18,16,9,12,13,11],rows:rows,freeze:1,filter:'A1:J'+receivedRows},
     ];
 
     const blob=await _xlsxBlob(sheets);
@@ -5346,6 +5362,21 @@ function _accomExportRows(){
   underThreshold.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(c=>{
     sumRows.push(['  '+c.name,c.classroom+' of '+c.total+' chose classroom']);
   });
+
+  /* Task 16 — cancelled people stay IN every export, marked (they are hidden from on-screen ops
+     lists only). An export is the audit trail: someone who withdrew after paying is exactly who
+     a reconciliation needs to see.
+     ⚠ Listed here, NOT folded into `groups`/`by`/`td` above. Those three functions are the SAME
+     ones that drive the LIVE allocation screen's capacity/placement maths (`drawAccom`,
+     `addAlloc`/`removeAlloc` all call `accomGroups`/`accomChurches`/`tentDist` directly) — widening
+     them to include cancelled people would move real room-capacity, cohort and tent counts, which
+     is exactly what Task 14 forbids. This list is read straight off the raw `regs`, so it cannot
+     shift a single number in the sheets above. */
+  const cancelledPeople=(regs||[]).filter(r=>r.status==='cancelled')
+    .slice().sort((a,b)=>(a.churchName||'').localeCompare(b.churchName||'')||(a.lastName||'').localeCompare(b.lastName||''));
+  sumRows.push(['',''],['CANCELLED (excluded from every count above)',cancelledPeople.length]);
+  if(!cancelledPeople.length)sumRows.push(['',"None"]);
+  else cancelledPeople.forEach(p=>sumRows.push(['  '+(p.firstName||'')+' '+(p.lastName||'')+' ('+(p.churchName||'')+')','Cancelled']));
 
   return {sumRows,cohortRows,roomRows,tentRows,
     empty:!rooms.length&&!groups.length&&tentRows.length<=2};

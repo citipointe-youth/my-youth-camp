@@ -195,6 +195,12 @@ run('7. Cancelled registrations are excluded',
     check('tents ignore cancelled', d.tentRows.length, 2);
     check('summary headcount ignores cancelled',
       d.sumRows.find((r) => r[0] === 'Registrations (excluding cancelled)')[1], 10);
+    // Task 16 (2026-09-03) — cancelled people stay IN the export, marked, but must never move
+    // any of the counts above (proven by the three checks unchanged from before this feature).
+    check('the 8 cancelled people are LISTED, marked, in the summary sheet',
+      d.sumRows.find((r) => r[0] === 'CANCELLED (excluded from every count above)')[1], 8);
+    check('every listed cancelled row is marked "Cancelled"',
+      d.sumRows.filter((r) => r[1] === 'Cancelled').length, 8);
   });
 
 // ── 8. No accommodation type recorded is surfaced, never silently dropped ──────────────────
