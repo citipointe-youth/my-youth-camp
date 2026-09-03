@@ -8215,6 +8215,11 @@ let _allocState={unallocated:[],regs:[],regsAll:[],churches:[],overrides:[]};
    `_allocErrs` collects the failures and `_renderAllocCards` prints them. Keep the catches (one
    dead endpoint must not blank the whole screen) but NEVER go back to discarding the reason. */
 let _allocErrs=[];
+/* The two override cards are working lists, not queries: the admin searches a student in, acts,
+   and the row stays put. They live in module state because _renderAllocCards rewrites
+   #allocWrap wholesale — anything held only in the DOM would not survive a save. */
+let _indivIds=[];   // "Individual accommodation override"
+let _crIds=[];      // "Registration cancels / refunds"
 async function _loadAllocation(){
   const wrap=document.getElementById('allocWrap'); if(!wrap) return;
   _allocErrs=[];
@@ -8328,6 +8333,39 @@ function _renderAllocCards(){
     ${scroller(designated.map(o=>ovRow(o,'Unallocate')).join(''),designated.length)}
   </details></div>`:'';
 
+  const accLabel=k=>k==='tent'?'Tent':k==='classroom'?'Classroom':'—';
+  const money=v=>v==null?'—':'$'+Number(v).toFixed(2);
+  const indivRows=_indivIds.map(id=>{
+    const p=_allocState.regs.find(r=>r.id===id); if(!p)return '';
+    const ch=_allocState.churches.find(c=>c.id===p.churchId);
+    const ov=p.accommodationOverride||'';
+    return `<div class="card" style="padding:10px"><details data-ac="indiv:${esc(p.id)}">
+      <summary style="cursor:pointer;font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</summary>
+      <div class="sub" style="margin-top:6px">Individual accommodation: <b>${esc(accLabel(p.accommodationKind))}</b>${ov?' · overridden':''}</div>
+      <div class="sub">Church accommodation: <b>${esc(accLabel(ch&&ch.accommodationOverride))}</b></div>
+      <label class="sub" style="display:block;margin-top:8px">Accommodation override</label>
+      <select class="fld" id="indivAcc_${esc(p.id)}">
+        <option value=""${ov===''?' selected':''}>Leave unchanged</option>
+        <option value="tent"${ov==='tent'?' selected':''}>Tent</option>
+        <option value="classroom"${ov==='classroom'?' selected':''}>Classroom</option>
+      </select>
+      <div class="sub" style="margin-top:8px">Amount paid: <b>${esc(money(p.amountPaidOverride!=null?p.amountPaidOverride:p.amountPaid))}</b>${p.amountPaidOverride!=null?' · overridden':''}</div>
+      <label class="sub" style="display:block;margin-top:4px">New amount paid</label>
+      <input class="fld" id="indivAmt_${esc(p.id)}" type="number" step="0.01" inputmode="decimal" placeholder="Leave blank to keep existing">
+      <div class="rowsb" style="gap:6px;margin-top:8px">
+        <button class="btn ghost" onclick="indivRemove('${esc(p.id)}')">Remove from list</button>
+        <button class="btn" style="width:auto;flex:0 0 auto;margin-top:0" onclick="indivSave('${esc(p.id)}')">Save override</button>
+      </div>
+    </details></div>`;
+  }).join('');
+  /* Collapsed by default like every other card on this screen (:8244). */
+  const cardD=`<div class="card"><details data-ac="indivcard">
+    <summary style="cursor:pointer;font-weight:700">Individual accommodation override (${_indivIds.length})</summary>
+    <p class="note-hint" style="text-align:left">Set where one student sleeps, and/or what they paid, regardless of the ticket list, the invoice or their church's accommodation. Survives re-imports.</p>
+    <input class="fld" id="indivSearch" oninput="_renderIndivSearch()" placeholder="Search a student to add…">
+    <div id="indivSearchResults"></div>
+    ${indivRows}
+  </details></div>`;
   const errCard=_allocErrs.length?`<div class="card"><p class="err" style="display:block">Some allocation data could not be loaded, so the lists below may be incomplete: ${esc(_allocErrs.join(' · '))}</p></div>`:'';
   /* Same capture/reapply as `_budRedraw` (:4913). Before this, EVERY write on this screen
      (allocate, override, undo) re-emitted all the cards with no `open` attribute, so the whole
@@ -8340,7 +8378,7 @@ function _renderAllocCards(){
   const openKeys=[...wrap.querySelectorAll('details[data-ac]')].filter(d=>d.open).map(d=>d.getAttribute('data-ac'));
   const sc=_scroller(document.getElementById('import'));
   const y=sc?sc.scrollTop:0;
-  wrap.innerHTML=errCard+cardA+cardB+cardC;
+  wrap.innerHTML=errCard+cardA+cardB+cardC+cardD;
   openKeys.forEach(k=>{const d=wrap.querySelector(`details[data-ac="${k}"]`);if(d)d.open=true;});
   if(sc)sc.scrollTop=y;
 }
@@ -8384,6 +8422,39 @@ async function confirmOverride(id){
 async function undoOverride(id){
   try{await api('/import/allocations/'+id,{method:'DELETE'});toast('Reverted');_invalidate('/import/allocations');await _loadAllocation();}
   catch(e){toast(e.message||'Failed');}
+}
+
+function _renderIndivSearch(){
+  const box=document.getElementById('indivSearchResults'); if(!box) return;
+  const q=(document.getElementById('indivSearch').value||'').trim().toLowerCase();
+  if(q.length<2){box.innerHTML='';return;}
+  // Active registrants only — you do not set sleeping arrangements for a cancelled student.
+  const hits=_allocState.regs.filter(r=>_indivIds.indexOf(r.id)<0
+    && `${r.firstName} ${r.lastName}`.toLowerCase().includes(q)).slice(0,8);
+  box.innerHTML=hits.length?hits.map(p=>`<div class="rowsb" style="gap:6px;padding:4px 0">
+    <div><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}</div></div>
+    <button class="btn ghost" onclick="indivAdd('${esc(p.id)}')">Add</button>
+  </div>`).join(''):'<p class="note-hint">No matches.</p>';
+}
+function indivAdd(id){ if(_indivIds.indexOf(id)<0)_indivIds.push(id); _renderAllocCards(); }
+function indivRemove(id){ _indivIds=_indivIds.filter(x=>x!==id); _renderAllocCards(); }
+
+async function indivSave(id){
+  const sel=document.getElementById('indivAcc_'+id), amtEl=document.getElementById('indivAmt_'+id);
+  const body={};
+  // Blank means "keep whatever exists" for BOTH fields — they are independent.
+  if(sel&&sel.value)body.accommodationOverride=sel.value;
+  const raw=amtEl?String(amtEl.value).trim():'';
+  if(raw!==''){
+    const n=Number(raw);
+    if(!isFinite(n)||n<0){toast('Enter a valid amount');return;}
+    body.amountPaidOverride=n;
+  }
+  if(!Object.keys(body).length){toast('Both fields are blank — nothing to save');return;}
+  try{
+    await api('/registrants/'+id,{method:'PATCH',body});
+    toast('Override saved');_invalidate('/registrants');await _loadAllocation();
+  }catch(e){toast(e.message||'Failed');}
 }
 
 /* ===== DATA (director/admin): filterable registration table + Elvanto-format export ===== */
