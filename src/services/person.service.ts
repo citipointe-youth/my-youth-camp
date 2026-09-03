@@ -51,7 +51,7 @@ export interface PersonService {
   /** All people the actor may see (any lifecycle), role-scoped. */
   list(actor: Actor, opts?: { zone?: string; churchId?: string; q?: string }): Promise<Person[]>;
   /** Pre-camp view: lifecycle === 'registered'. */
-  listRegistrants(actor: Actor, churchId?: string): Promise<Person[]>;
+  listRegistrants(actor: Actor, churchId?: string, opts?: { includeCancelled?: boolean }): Promise<Person[]>;
   /** At-camp view: lifecycle ∈ {arrived, checked_out, departed}. */
   listCampers(actor: Actor, opts?: { zone?: string; churchId?: string; q?: string }): Promise<Person[]>;
   get(actor: Actor, id: string): Promise<Person>;
@@ -167,8 +167,16 @@ export function makePersonService(repo: IPersonRepository): PersonService {
       return scopedAll(actor, opts);
     },
 
-    async listRegistrants(actor, churchId) {
+    async listRegistrants(actor, churchId, opts = {}) {
       assertCan(actor, 'registrant:read');
+      /* `includeCancelled` exists for ONE caller: the Budget screen. Cancelling must not silently
+         drop a person's money (both isRegistrant and isCamper exclude cancelled), so the budget —
+         and only the budget — sees them; their value keeps counting until a Refund is recorded.
+         Gated to director/admin, which is exactly who can open the budget and the Data Import
+         screen, so a church login can never widen its own scope with a query param. */
+      const includeCancelled = opts.includeCancelled === true
+        && (actor.role === 'director' || actor.role === 'admin');
+      const keep = (p: Person) => isRegistrant(p) || (includeCancelled && p.lifecycle === 'cancelled');
       // Preserve the legacy churchId fast-path access check (registrant.service.list).
       if (churchId) {
         const items = await repo.findByChurch(churchId);
@@ -180,10 +188,10 @@ export function makePersonService(repo: IPersonRepository): PersonService {
         }
         // canAccessChurch is gender-unaware; re-filter through canAccessPerson so a
         // gender-scoped (b-/g-) login can never pull the other gender via ?churchId.
-        return items.filter(isRegistrant).filter((p) => canAccessPerson(actor, p));
+        return items.filter(keep).filter((p) => canAccessPerson(actor, p));
       }
       const all = await scopedAll(actor, {});
-      return all.filter(isRegistrant);
+      return all.filter(keep);
     },
 
     async listCampers(actor, opts = {}) {
