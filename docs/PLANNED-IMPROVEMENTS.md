@@ -7,6 +7,54 @@ without going through clarifying questions first.
 
 ---
 
+## 2026-09-04 — Follow-ups from individual overrides / cancels / refunds (`0022`) — OPEN
+
+The feature shipped and is live (see CLAUDE.md's 2026-09-03 section; `0022` applied and
+reconciled, deployed as `cbbab80`). These are the things deliberately **not** done, kept here
+because they are candidates for next year's version. Nothing below is a defect in what shipped.
+
+### Two decisions the owner still has to make
+
+| # | Decision | Why it was left open |
+|---|---|---|
+| 1 | **Should a `church` login be able to set overrides / cancel / refund via the API?** | `person.service.update` requires only `registrant:write`, which `church` holds, so the API accepts these four fields (`accommodationOverride`, `amountPaidOverride`, `refundAmount`, `status`) from a church account even though no UI offers them. It is **consistent with the existing convention** — `amountPaid`, `needsReview` and `ticketNumber` behave the same way — so tightening it is a deliberate change to an established pattern that could break live church workflows, not an obvious fix. But it is new reach over *money*. Options: gate the four behind `budget:manage`/`admin:manage` for non-owner-scoped actors, or accept the convention explicitly. **No task-level review ever asked this; it surfaced only at the whole-branch pass.** |
+| 2 | **Sign off (or don't) on names in the accommodation export.** | Cancelled people now appear by full name + church in a Summary appendix of a sheet that was previously pure aggregate counts. That shape was forced: un-filtering the allocation sheets would have moved live room/cohort/tent counts. Correct, but a first for that export and privacy-adjacent. |
+
+### Known ceilings worth revisiting
+
+- **`reset()` and `newYear()` will delete every override, refund and cancellation.** Both call
+  `personRepo.deleteAll()` unconditionally (`admin.service.ts:127,254`). The Form-import sweep
+  guard protects these five columns against a re-import, but **not** against the rollover — which
+  is precisely the operation that runs between camps. If next year's rollover is expected to
+  preserve any of this, the upgrade path is the `allocation_overrides` side-table pattern keyed on
+  `firstNameKey`/`lastNameKey`/`mobileKey` (`src/core/entities/allocation-override.ts:12-18`),
+  which survives a hard delete by construction. There is a `ponytail:` note at the guard saying so.
+- **No way to reverse a cancel, or clear an override, from the UI.** The service supports
+  un-cancelling (the `unCancelling` branch and its test exist) and the API accepts `null` for all
+  three override fields — only the UI omits both. Per the spec, blank means "keep existing". An
+  admin who cancels the wrong person currently needs a direct `PATCH`. A reverse action on the
+  cancels/refunds card is the obvious small addition.
+- **The two budget implementations must stay in lockstep by hand, forever.**
+  `src/services/budget.ts` is dead server-side; the SPA mirror in `public/index.html` is what
+  actually runs. They have already drifted once historically. Any change to person-value maths has
+  to be made twice, and only review catches a divergence.
+
+### Tooling / test debt
+
+- **`scripts/budget-xlsx-harness.js` is broken** by unrelated signature drift from 2026-08-05
+  (`_personValue` gained a `,tag` parameter). Pre-existing and unrelated to this work, but it has
+  now blocked byte-level verification of export changes twice running. Worth 20 minutes.
+- **The SPA has no fetch-mocking harness at all.** The Critical bug found in this branch's final
+  review — the accommodation export's appendix silently always empty, because `RENDER.accom` never
+  passed `includeCancelled=1` — was invisible to `scripts/accom-export-harness.js` *by
+  construction*, since that harness injects fixture rows straight into the export function and
+  never exercises the real fetch. The current guard is a static source-regex assertion. Any harness
+  that could exercise a real fetch path would close a whole class of gap.
+- Small gaps, each cheap when the file is next open: `person.dto.test.ts` never asserts
+  `cancelledAt` on output; no test pins that re-submitting an unchanged `refundAmount` doesn't
+  re-stamp `refundedAt`; `registrant.controller.test.ts` (new) covers the two numeric validation
+  branches but not `accommodationOverride`'s enum branch.
+
 ## 2026-07-31 — Owner answers to web-push §12 q9–12 (ANSWERED — record of record)
 
 The last four open questions on web push. All organisational; none blocked the build. With these
