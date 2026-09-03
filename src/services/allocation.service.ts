@@ -89,7 +89,9 @@ export function makeAllocationService(
       // RAW, not the resolved effective value: this is a manual church re-allocation, not an
       // individual accommodation override, so it must read/write the importers' own column
       // (matches ticket-import.service.ts:193's same raw-read-through-the-effective-field rule).
-      const currentKind = person.accommodationKindRaw ?? person.accommodationKind ?? null;
+      const currentKind = person.accommodationKindRaw !== undefined
+        ? person.accommodationKindRaw
+        : (person.accommodationKind ?? null);
       const accommodationKind = accommodationKindForChurch(person.kind, currentKind, church.accommodationOverride ?? null);
       // Bug 2: override applies to leaders too, so any person with a church override is "forced".
       const forcedAccom = !!church.accommodationOverride;

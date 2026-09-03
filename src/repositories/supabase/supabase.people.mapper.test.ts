@@ -266,4 +266,32 @@ describe('individual accommodation override (0022)', () => {
     const cols = personColumns(saved);
     expect(cols['accommodation_kind']).toBe('classroom'); // not the stale 'tent' raw
   });
+
+  // Fix round 2 — allocation.service's OWN read of the carrier used `??`, reopening the exact
+  // corruption Finding 2 closed one line earlier: a genuinely null raw with an active individual
+  // override reads accommodationKind as the resolved override, and `??` walked past the null
+  // straight to that resolved value. Allocated into a church with NO church-level override, the
+  // resolver returns the value unchanged and the save then bakes the override into the raw carrier
+  // — permanently. `!== undefined` must bind this read too, not just personColumns' write.
+  it('allocation.service reading the carrier with `??` (not `!== undefined`) would bake a null-raw override into the persisted column', () => {
+    // Mapper-built person: raw is genuinely null (no ticket-derived kind), but an individual
+    // override resolves accommodationKind to 'classroom'.
+    const p = toPerson({ ...baseRow(), accommodation_kind: null, accommodation_override: 'classroom' }, [], []);
+    expect(p.accommodationKind).toBe('classroom'); // resolved
+    expect(p.accommodationKindRaw).toBeNull();      // genuinely empty raw
+
+    // allocation.service's FIXED read: `!== undefined ? raw : (kind ?? null)`.
+    const currentKindFixed = p.accommodationKindRaw !== undefined ? p.accommodationKindRaw : (p.accommodationKind ?? null);
+    expect(currentKindFixed).toBeNull();
+    // Allocated into a church with NO church-level override: accommodationKindForChurch returns
+    // currentKind unchanged (null), and the save carries it into BOTH fields, as the real code does.
+    const savedFixed = { ...p, accommodationKind: currentKindFixed, accommodationKindRaw: currentKindFixed };
+    expect(personColumns(savedFixed)['accommodation_kind']).toBeNull(); // override NOT baked in
+
+    // The DEFECTIVE `??` read this fix replaces, for contrast — proves the bug class is real:
+    const currentKindBroken = p.accommodationKindRaw ?? p.accommodationKind ?? null;
+    expect(currentKindBroken).toBe('classroom'); // walks past the null raw to the resolved value
+    const savedBroken = { ...p, accommodationKind: currentKindBroken, accommodationKindRaw: currentKindBroken };
+    expect(personColumns(savedBroken)['accommodation_kind']).toBe('classroom'); // corruption
+  });
 });
