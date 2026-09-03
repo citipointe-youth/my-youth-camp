@@ -8366,6 +8366,31 @@ function _renderAllocCards(){
     <div id="indivSearchResults"></div>
     ${indivRows}
   </details></div>`;
+  const crRows=_crIds.map(id=>{
+    const p=_allocState.regsAll.find(r=>r.id===id); if(!p)return '';
+    const cancelled=p.status==='cancelled';
+    return `<div class="card" style="padding:10px">
+      <div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div>
+      <div class="sub">${esc(p.churchName||'No church')} · paid ${esc(money(p.amountPaidOverride!=null?p.amountPaidOverride:p.amountPaid))}${p.refundAmount!=null?' · refunded '+esc(money(p.refundAmount)):''}</div>
+      <div class="sub">${cancelled?'<b>Registration cancelled</b>':'Registered'}</div>
+      <div class="rowsb" style="gap:6px;margin-top:8px">
+        <button class="btn ghost" onclick="crRemove('${esc(p.id)}')">Remove from list</button>
+        ${cancelled?'':`<button class="btn" style="width:auto;flex:0 0 auto;margin-top:0" onclick="crCancel('${esc(p.id)}')">Cancel registration</button>`}
+      </div>
+      <div class="rowsb" style="gap:6px;margin-top:8px">
+        <input class="fld" id="crAmt_${esc(p.id)}" type="number" step="0.01" inputmode="decimal" placeholder="Refund amount" style="flex:1">
+        <button class="btn alt" style="width:auto;flex:0 0 auto;margin-top:0" onclick="crRefund('${esc(p.id)}')">Refund</button>
+      </div>
+    </div>`;
+  }).join('');
+  const cardE=`<div class="card"><details data-ac="crcard">
+    <summary style="cursor:pointer;font-weight:700">Registration cancels / refunds (${_crIds.length})</summary>
+    <p class="note-hint" style="text-align:left">Cancelling removes someone from the check-in roster and every on-screen list, but keeps their money in the budget — record a refund separately. The two actions are independent.</p>
+    <input class="fld" id="crSearch" oninput="_renderCrSearch()" placeholder="Search a student to add…">
+    <div id="crSearchResults"></div>
+    ${crRows}
+  </details></div>`;
+
   const errCard=_allocErrs.length?`<div class="card"><p class="err" style="display:block">Some allocation data could not be loaded, so the lists below may be incomplete: ${esc(_allocErrs.join(' · '))}</p></div>`:'';
   /* Same capture/reapply as `_budRedraw` (:4913). Before this, EVERY write on this screen
      (allocate, override, undo) re-emitted all the cards with no `open` attribute, so the whole
@@ -8378,7 +8403,7 @@ function _renderAllocCards(){
   const openKeys=[...wrap.querySelectorAll('details[data-ac]')].filter(d=>d.open).map(d=>d.getAttribute('data-ac'));
   const sc=_scroller(document.getElementById('import'));
   const y=sc?sc.scrollTop:0;
-  wrap.innerHTML=errCard+cardA+cardB+cardC+cardD;
+  wrap.innerHTML=errCard+cardA+cardB+cardC+cardD+cardE;
   openKeys.forEach(k=>{const d=wrap.querySelector(`details[data-ac="${k}"]`);if(d)d.open=true;});
   if(sc)sc.scrollTop=y;
 }
@@ -8454,6 +8479,50 @@ async function indivSave(id){
   try{
     await api('/registrants/'+id,{method:'PATCH',body});
     toast('Override saved');_invalidate('/registrants');await _loadAllocation();
+  }catch(e){toast(e.message||'Failed');}
+}
+
+function _renderCrSearch(){
+  const box=document.getElementById('crSearchResults'); if(!box) return;
+  const q=(document.getElementById('crSearch').value||'').trim().toLowerCase();
+  if(q.length<2){box.innerHTML='';return;}
+  // regsAll, not regs: an already-cancelled student must still be findable, to refund them.
+  const hits=_allocState.regsAll.filter(r=>_crIds.indexOf(r.id)<0
+    && `${r.firstName} ${r.lastName}`.toLowerCase().includes(q)).slice(0,8);
+  box.innerHTML=hits.length?hits.map(p=>`<div class="rowsb" style="gap:6px;padding:4px 0">
+    <div><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}${p.status==='cancelled'?' · cancelled':''}</div></div>
+    <button class="btn ghost" onclick="crAdd('${esc(p.id)}')">Add</button>
+  </div>`).join(''):'<p class="note-hint">No matches.</p>';
+}
+function crAdd(id){ if(_crIds.indexOf(id)<0)_crIds.push(id); _renderAllocCards(); }
+function crRemove(id){ _crIds=_crIds.filter(x=>x!==id); _renderAllocCards(); }
+
+function crCancel(id){
+  const p=_allocState.regsAll.find(r=>r.id===id); if(!p)return;
+  modal(`<div class="h3" style="margin-top:0">Cancel registration</div>
+    <p class="note-hint" style="text-align:left">Cancel <b>${esc(p.firstName)} ${esc(p.lastName)}</b>'s registration? They drop off the check-in roster and every on-screen list immediately. <b>Their money stays in the budget</b> — record a refund separately if one is owed.</p>
+    <div class="rowsb" style="gap:6px;margin-top:10px">
+      <button class="btn ghost" onclick="closeModal()">Keep registered</button>
+      <button class="btn" onclick="crCancelConfirm('${esc(id)}')">Cancel registration</button>
+    </div>`);
+}
+async function crCancelConfirm(id){
+  try{
+    await api('/registrants/'+id,{method:'PATCH',body:{status:'cancelled'}});
+    closeModal();toast('Registration cancelled');_invalidate('/registrants');await _loadAllocation();
+  }catch(e){toast(e.message||'Failed');}
+}
+
+async function crRefund(id){
+  const el=document.getElementById('crAmt_'+id);
+  const raw=el?String(el.value).trim():'';
+  if(raw===''){toast('Enter a refund amount');return;}
+  const n=Number(raw);
+  if(!isFinite(n)||n<0){toast('Enter a valid amount');return;}
+  try{
+    // Independent of cancel in both directions — refunding does not withdraw the registration.
+    await api('/registrants/'+id,{method:'PATCH',body:{refundAmount:n}});
+    toast('Refund recorded');_invalidate('/registrants');await _loadAllocation();
   }catch(e){toast(e.message||'Failed');}
 }
 
