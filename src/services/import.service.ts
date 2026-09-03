@@ -32,6 +32,7 @@ export interface ImportResult {
   updated: number;
   skipped: number;
   deleted: number;
+  retained: number;
   dryRun: boolean;
   errors: Array<{ row: number; message: string }>;
   warnings: Array<{ row: number; message: string }>;
@@ -505,9 +506,40 @@ export function makeImportService(
         }
       }
 
-      // Anyone in the DB but not in the uploaded CSV is removed (the upload is authoritative).
-      const absentIds = allPersons.map((p) => p.id).filter((id) => !seenIds.has(id));
+      // Anyone in the DB but not in the uploaded CSV is removed (the upload is authoritative)…
+      const absentIdsAll = allPersons.map((p) => p.id).filter((id) => !seenIds.has(id));
+
+      /* …EXCEPT anyone carrying an admin decision that this CSV knows nothing about. The Form
+         export is Elvanto's view of who is registered, so a cancelled student or someone with a
+         hand-set override is EXACTLY the person who stops appearing in it — and hard-deleting
+         them would take the override, the refund and their whole record with it. Overrides must
+         survive re-imports in any order, any number of times.
+
+         NOTE (ponytail): these five columns live ON `people`, so this guard is the only thing protecting
+         them from a hard delete. If a new delete path ever appears (another importer, a manual
+         purge, the new-year rollover) it needs the same guard — or move the data to the
+         `allocation_overrides` side-table pattern keyed on firstNameKey/lastNameKey/mobileKey
+         (src/core/entities/allocation-override.ts:12-18), which survives a delete by design. */
+      const isProtected = (p: Person) =>
+        p.lifecycle === 'cancelled' ||
+        p.accommodationOverride != null ||
+        p.amountPaidOverride != null ||
+        p.refundAmount != null;
+      const absentSetAll = new Set(absentIdsAll);
+      const protectedPeople = allPersons.filter((p) => absentSetAll.has(p.id) && isProtected(p));
+      const protectedIds = new Set(protectedPeople.map((p) => p.id));
+      const absentIds = absentIdsAll.filter((id) => !protectedIds.has(id));
       const deleted = absentIds.length;
+      const retained = protectedPeople.length;
+
+      for (const p of protectedPeople) {
+        warnings.push({
+          row: 0,
+          message:
+            `${p.firstName} ${p.lastName} (${p.churchName || 'no church'}) is no longer in this file but ` +
+            'was KEPT — they have a cancellation, refund or individual override recorded',
+        });
+      }
 
       /* Item A follow-up (2026-07-28): NAME the people this import is about to delete.
          The result already carried a `deleted` COUNT, but a count gives an admin no way to spot
@@ -545,7 +577,7 @@ export function makeImportService(
         invalidateDashboardCache();
       }
 
-      return { created, updated, skipped, deleted, dryRun: opts.dryRun, errors, warnings, churchesCreated, phantomChurches };
+      return { created, updated, skipped, deleted, retained, dryRun: opts.dryRun, errors, warnings, churchesCreated, phantomChurches };
     },
   };
 }

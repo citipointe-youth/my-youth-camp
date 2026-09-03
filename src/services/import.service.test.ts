@@ -513,6 +513,57 @@ describe('ImportService.importCsv — warns by name about pending deletions', ()
   });
 });
 
+/* Task 9: protect overridden/cancelled people from the Form import's delete sweep.
+   The Form export is Elvanto's view of who is registered, so a cancelled student or someone
+   with a hand-set individual override is exactly the person who stops appearing in it — and the
+   delete sweep above must never take their record (and the override/refund/cancellation stamped
+   on it) with it. */
+describe('ImportService.importCsv — protects overridden/cancelled people from the delete sweep', () => {
+  async function seedPerson(
+    h: Awaited<ReturnType<typeof build>>,
+    over: { firstName: string; lastName: string } & Record<string, unknown>,
+  ) {
+    await h.svc.importCsv(actor('admin'), {
+      csvData: `First Name,Last Name,Church,Grade\n${over.firstName},${over.lastName},Victory,9`,
+    });
+    const all = await h.personRepo.findAll();
+    const created = all.find((p) => p.firstName === over.firstName && p.lastName === over.lastName)!;
+    const updated = { ...created, ...over };
+    await h.personRepo.save(updated);
+    return updated;
+  }
+
+  function csvWithNobody() {
+    // A non-empty CSV (importCsv rejects a file with no data rows) naming someone who matches
+    // none of the seeded people, so every seeded person is genuinely absent from this "upload".
+    return 'First Name,Last Name,Church,Grade\nNobody,Placeholder,Victory,9';
+  }
+
+  it('never deletes an absent person who carries an override, a refund or a cancellation', async () => {
+    const h = await build();
+    // Someone withdrew, was refunded, and is no longer in the church's Elvanto export.
+    const keep = await seedPerson(h, { firstName: 'Cancelled', lastName: 'Camper', lifecycle: 'cancelled' });
+    const overridden = await seedPerson(h, { firstName: 'Over', lastName: 'Ridden', accommodationOverride: 'tent' });
+    const ordinary = await seedPerson(h, { firstName: 'Plain', lastName: 'Person' });
+
+    const res = await h.svc.importCsv(actor('admin'), { csvData: csvWithNobody(), dryRun: false });
+
+    expect(await h.personRepo.findById(keep.id)).not.toBeNull();
+    expect(await h.personRepo.findById(overridden.id)).not.toBeNull();
+    expect(await h.personRepo.findById(ordinary.id)).toBeNull();
+    expect(res.deleted).toBe(1);
+    expect(res.retained).toBe(2);
+  });
+
+  it('does not warn that a protected person will be deleted in a dry run', async () => {
+    const h = await build();
+    await seedPerson(h, { firstName: 'Cancelled', lastName: 'Camper', lifecycle: 'cancelled' });
+    const res = await h.svc.importCsv(actor('admin'), { csvData: csvWithNobody(), dryRun: true });
+    expect(res.warnings.some((w) => w.message.includes('will be DELETED'))).toBe(false);
+    expect(res.retained).toBe(1);
+  });
+});
+
 /* Item 12 (2026-07-28): a trailing blank line is spreadsheet padding, not a defect. It used to
    report "Missing firstName or lastName" on a file that otherwise imported perfectly — the
    reported "throws first/last name not detected but then imports successfully" symptom. */
