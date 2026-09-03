@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import ExcelJS from 'exceljs';
 import { makeOfflineSignInService, type OfflineSignInService } from './offline-signin.service';
 import { InMemoryPersonRepository } from '../repositories/in-memory';
 import type { Actor } from '../core/entities/user';
@@ -74,6 +75,30 @@ describe('OfflineSignInService', () => {
       expect(buf.length).toBeGreaterThan(0);
       // xlsx files are zip archives — PK magic bytes.
       expect(buf.subarray(0, 2).toString('utf-8')).toBe('PK');
+    });
+
+    // Task 16 fix round 1 — the template stopped filtering cancelled people out (2026-09-03);
+    // this pins that they are still present, and marked, rather than silently vanishing.
+    it('keeps a cancelled student on the template, marked Cancelled', async () => {
+      await people.save(person({ id: 'p1', firstName: 'Ada', lastName: 'Lovelace', lifecycle: 'registered' }));
+      await people.save(person({ id: 'p2', firstName: 'Gone', lastName: 'Away', lifecycle: 'cancelled' }));
+      const buf = await svc.exportTemplate(admin());
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buf as unknown as ArrayBuffer);
+      const sheetRows = wb.worksheets[0]!;
+      const header = (sheetRows.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+      expect(header).toContain('Cancelled');
+      const cancelledIdx = header.indexOf('Cancelled');
+      let found = false;
+      sheetRows.eachRow((r, rowNum) => {
+        if (rowNum <= 2) return; // header + sample row
+        const cells = (r.values as unknown[]).map((v) => String(v ?? ''));
+        if (cells.includes('Gone')) {
+          found = true;
+          expect(cells[cancelledIdx]).toBe('Yes');
+        }
+      });
+      expect(found).toBe(true);
     });
   });
 
@@ -152,6 +177,42 @@ describe('OfflineSignInService', () => {
 
       expect(result.signedIn).toBe(0);
       expect(result.unmatched).toEqual(['Ada Lovelace (Victory Church)']);
+    });
+
+    // Task 16 fix round 1 — a cancelled person can now appear on the template (marked
+    // "Cancelled"), so a "Y" against one is a real, reachable input. Must never sign them in.
+    it('never signs in a cancelled person marked Y, and reports it separately', async () => {
+      await people.save(person({
+        id: 'p1', firstName: 'Gone', lastName: 'Away', lifecycle: 'cancelled', atCamp: false,
+      }));
+      const csv = sheet([['Gone', 'Away', 'Victory Church', 'female', '9', 'Y']]);
+
+      const result = await svc.importSignIns(admin(), csv);
+
+      expect(result.signedIn).toBe(0);
+      expect(result.alreadySignedIn).toBe(0);
+      expect(result.cancelledSkipped).toEqual(['Gone Away (Victory Church)']);
+      const updated = await people.findById('p1');
+      // No roster breach (lifecycle/atCamp untouched) AND no phantom audit event.
+      expect(updated?.lifecycle).toBe('cancelled');
+      expect(updated?.atCamp).toBe(false);
+      expect(updated?.signOutHistory).toHaveLength(0);
+    });
+
+    it('does not count a cancelled person into signedIn even alongside real sign-ins', async () => {
+      await people.save(person({ id: 'p1', firstName: 'Ada', lastName: 'Lovelace', atCamp: false }));
+      await people.save(person({
+        id: 'p2', firstName: 'Gone', lastName: 'Away', lifecycle: 'cancelled', atCamp: false,
+      }));
+      const csv = sheet([
+        ['Ada', 'Lovelace', 'Victory Church', 'female', '9', 'Y'],
+        ['Gone', 'Away', 'Victory Church', 'female', '9', 'Y'],
+      ]);
+
+      const result = await svc.importSignIns(admin(), csv);
+
+      expect(result.signedIn).toBe(1);
+      expect(result.cancelledSkipped).toEqual(['Gone Away (Victory Church)']);
     });
   });
 });

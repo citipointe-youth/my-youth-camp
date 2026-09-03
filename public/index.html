@@ -5119,7 +5119,13 @@ async function exportBudget(){
    below is an auto-distribution view (7 per tent, leaders in separate tents). */
 RENDER.accom=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('accom','<p class="note-hint" style="margin-top:24px;text-align:center">Accommodation allocations are available to directors only.</p>','Accommodation allocations','');return;}
-  const [regs,rooms,alloc,churches]=await Promise.all([api(_scoped('/registrants')),api('/accommodation/classrooms'),api('/accommodation/allocations'),api('/accounts/churches').catch(()=>[])]);
+  // Task 16 fix round 1 — `includeCancelled=1` is REQUIRED here, or `_accomExportRows`'s
+  // cancelled-people appendix silently always reads empty in production (the server strips
+  // cancelled registrants by default; see person.service.ts's `includeCancelled` gate, already
+  // used the same way at :4618 and :8264). `accomChurches`/`accomGroups`/`tentDist` all filter
+  // `status!=='cancelled'` internally, so widening this fetch cannot move a single room, cohort,
+  // tent or occupancy count — verified in scripts/accom-export-harness.js.
+  const [regs,rooms,alloc,churches]=await Promise.all([api(_scoped('/registrants?includeCancelled=1')),api('/accommodation/classrooms'),api('/accommodation/allocations'),api('/accounts/churches').catch(()=>[])]);
   window._accomRegs=regs||[];window._accomRooms=rooms||[];window._accomAlloc=alloc||{};
   /* The overrides card sits OUTSIDE `#accomBody` on purpose — `drawAccom()` rewrites that div on
      every allocation change, and rebuilding the card there would slam the <details> shut (and drop
@@ -8232,8 +8238,12 @@ async function offlineSignInUpload(){
     const bits=[`${r.signedIn} signed in`];
     if(r.alreadySignedIn)bits.push(`${r.alreadySignedIn} already at camp`);
     if(r.unmatched&&r.unmatched.length)bits.push(`${r.unmatched.length} not matched`);
+    // Task 16 fix round 1 — a "Y" against a cancelled person is never signed in; named here so
+    // a leader isn't left wondering why the count came up short.
+    if(r.cancelledSkipped&&r.cancelledSkipped.length)bits.push(`${r.cancelledSkipped.length} cancelled — not signed in`);
     const unmatchedList=r.unmatched&&r.unmatched.length?`<p class="note-hint" style="text-align:left;margin-top:6px">Not matched: ${r.unmatched.map(esc).join(', ')}</p>`:'';
-    if(box){box.innerHTML=`<div class="callbox">${icSm('check')} ${bits.join(' · ')}</div>${unmatchedList}`;}
+    const cancelledList=r.cancelledSkipped&&r.cancelledSkipped.length?`<p class="note-hint" style="text-align:left;margin-top:6px">Cancelled, not signed in: ${r.cancelledSkipped.map(esc).join(', ')}</p>`:'';
+    if(box){box.innerHTML=`<div class="callbox">${icSm('check')} ${bits.join(' · ')}</div>${unmatchedList}${cancelledList}`;}
     toast('Offline sign-in applied');
   }catch(e){if(box)box.innerHTML='<p class="err" style="display:block">'+esc(e.message||'Import failed')+'</p>';else toast(e.message||'Import failed');}
   finally{input.value='';}

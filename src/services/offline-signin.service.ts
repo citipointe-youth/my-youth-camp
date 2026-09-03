@@ -14,6 +14,19 @@ export interface OfflineSignInResult {
   alreadySignedIn: number;
   /** "First Last (Church)" for rows marked Y that couldn't be matched to a registered student. */
   unmatched: string[];
+  /**
+   * "First Last (Church)" for rows marked Y that matched a CANCELLED registrant — never signed
+   * in. Task 16 fix round 1: once the export template stopped filtering cancelled people out
+   * (they now appear, marked "Cancelled"), a leader could tick "Y" against one by mistake. A
+   * cancelled person must never be counted into `signedIn` or given a sign-in event: `atCamp`
+   * for a cancelled person is `false` (never `true`, see person.service.ts's cancel transition),
+   * so the pre-existing `alreadySignedIn` guard never catches them — without this explicit skip
+   * they would get a real "in" event appended to `signOutHistory` (person-lifecycle.ts's
+   * `withSignEvent` always appends the event even though `applyCheckIn` correctly refuses to
+   * change a cancelled person's lifecycle/atCamp), a phantom row in the compliance audit trail
+   * for someone who never actually arrived.
+   */
+  cancelledSkipped: string[];
 }
 
 export interface OfflineSignInService {
@@ -79,6 +92,7 @@ export function makeOfflineSignInService(personRepo: IPersonRepository): Offline
       const toSignIn: Person[] = [];
       let alreadySignedIn = 0;
       const unmatched: string[] = [];
+      const cancelledSkipped: string[] = [];
 
       for (const row of rows) {
         const firstName = (row['First Name'] ?? '').trim();
@@ -92,6 +106,14 @@ export function makeOfflineSignInService(personRepo: IPersonRepository): Offline
         const person = index.get(`${norm(church)}|${norm(firstName)}|${norm(lastName)}`);
         if (!person) {
           unmatched.push(`${firstName} ${lastName} (${church})`);
+          continue;
+        }
+        // Task 16 fix round 1 — a cancelled person can now appear on the template (marked
+        // "Cancelled"). Never sign them in: no roster breach either way (`applyCheckIn` refuses
+        // to change their lifecycle/atCamp), but `withSignEvent` would still append a phantom
+        // "in" event to their audit trail and this row would inflate `signedIn`.
+        if (person.lifecycle === 'cancelled') {
+          cancelledSkipped.push(`${firstName} ${lastName} (${church})`);
           continue;
         }
         if (person.atCamp) {
@@ -117,7 +139,7 @@ export function makeOfflineSignInService(personRepo: IPersonRepository): Offline
         invalidateDashboardCache();
       }
 
-      return { signedIn: toSignIn.length, alreadySignedIn, unmatched };
+      return { signedIn: toSignIn.length, alreadySignedIn, unmatched, cancelledSkipped };
     },
   };
 }

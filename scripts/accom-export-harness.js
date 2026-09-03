@@ -228,5 +228,24 @@ run('10. Stale allocation entry (group gone after a re-import) is ignored',
       d.sumRows.find((r) => r[0] === 'Placed in a classroom')[1], 10);
   });
 
+// ── 11. RENDER.accom actually REQUESTS cancelled people from the server ────────────────────
+// Critical fix, review round 1 (2026-09-03): every scenario above proves _accomExportRows()
+// does the right thing with whatever is in window._accomRegs — but that proves nothing about
+// production, where window._accomRegs is populated by RENDER.accom's own network fetch. The
+// server strips cancelled registrants from /registrants by default (person.service.ts's
+// `includeCancelled` gate), so without `?includeCancelled=1` on THAT fetch, _accomRegs never
+// contains a cancelled person at all and the Summary-sheet appendix is silently always empty
+// in the real app — exactly the class of gap scenario 7 above cannot catch, because it injects
+// cancelled people directly rather than going through the fetch. This is a STATIC source check
+// (RENDER.accom is async and depends on api()/DOM, not worth mocking a whole fetch stack for),
+// but it is exactly the "exercises the real fetch path" check the review asked for: it fails if
+// this call is ever reverted to a bare `/registrants`.
+console.log('\n11. RENDER.accom requests cancelled registrants (or the export appendix is always empty)');
+const renderAccomSrc = extract('RENDER.accom=async function(){');
+checkTrue('the /registrants fetch inside RENDER.accom includes includeCancelled=1',
+  /_scoped\(['"]\/registrants\?includeCancelled=1['"]\)/.test(renderAccomSrc),
+  'RENDER.accom must fetch /registrants?includeCancelled=1 (mirroring RENDER.budget and ' +
+  '_loadAllocation) or window._accomRegs never contains cancelled people in production');
+
 console.log('\n' + (failures ? failures + ' CHECK(S) FAILED' : 'All checks passed.'));
 process.exit(failures ? 1 : 0);
