@@ -26,6 +26,12 @@ export interface RegistrantDto {
   grade: Person['grade'];
   accommodationKind: Person['accommodationKind'];
   accommodationLabel: string | null;
+  /** Raw individual override, so the Data Import panels can show raw vs effective. */
+  accommodationOverride: Person['accommodationOverride'];
+  amountPaidOverride: number | null;
+  refundAmount: number | null;
+  refundedAt: string | null;
+  cancelledAt: string | null;
   mobile: string | null;
   parentGuardianName: string | null;
   parentPhone: string | null;
@@ -93,6 +99,12 @@ export interface CamperDto {
   gender: Person['gender'];
   grade: Person['grade'];
   accommodationKind: Person['accommodationKind'];
+  /** Raw individual override, so the Data Import panels can show raw vs effective. */
+  accommodationOverride: Person['accommodationOverride'];
+  amountPaidOverride: number | null;
+  refundAmount: number | null;
+  refundedAt: string | null;
+  cancelledAt: string | null;
   registrationType: string | null;
   registrationCost: number | null;
   discountCode: string | null;
@@ -150,6 +162,11 @@ export function toRegistrantDto(p: Person): RegistrantDto {
     grade: p.grade ?? null,
     accommodationKind: p.accommodationKind ?? null,
     accommodationLabel: p.accommodationLabel ?? null,
+    accommodationOverride: p.accommodationOverride ?? null,
+    amountPaidOverride: p.amountPaidOverride ?? null,
+    refundAmount: p.refundAmount ?? null,
+    refundedAt: p.refundedAt ?? null,
+    cancelledAt: p.cancelledAt ?? null,
     mobile: p.mobile ?? null,
     parentGuardianName: p.parentGuardianName ?? null,
     parentPhone: p.parentPhone ?? null,
@@ -207,6 +224,11 @@ export function toCamperDto(p: Person): CamperDto {
     gender: p.gender,
     grade: p.grade ?? null,
     accommodationKind: p.accommodationKind ?? null,
+    accommodationOverride: p.accommodationOverride ?? null,
+    amountPaidOverride: p.amountPaidOverride ?? null,
+    refundAmount: p.refundAmount ?? null,
+    refundedAt: p.refundedAt ?? null,
+    cancelledAt: p.cancelledAt ?? null,
     registrationType: p.registrationType ?? null,
     registrationCost: p.registrationCost ?? null,
     discountCode: p.discountCode ?? null,

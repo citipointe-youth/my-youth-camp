@@ -163,3 +163,17 @@ describe('toRegistrantDto exposes the Elvanto submission date', () => {
     expect(toRegistrantDto(p).dateSubmitted).toBeNull();
   });
 });
+
+describe('individual overrides and cancel/refund fields', () => {
+  it('carries the individual overrides and cancel/refund fields to the SPA', () => {
+    const dto = toRegistrantDto({ ...personFixture(), accommodationKind: 'classroom',
+      accommodationOverride: 'classroom', amountPaidOverride: 250, refundAmount: 50,
+      refundedAt: '2026-09-01T00:00:00.000Z', cancelledAt: null, lifecycle: 'cancelled' });
+    expect(dto.accommodationKind).toBe('classroom'); // already resolved by the mapper
+    expect(dto.accommodationOverride).toBe('classroom');
+    expect(dto.amountPaidOverride).toBe(250);
+    expect(dto.refundAmount).toBe(50);
+    expect(dto.refundedAt).toBe('2026-09-01T00:00:00.000Z');
+    expect(dto.status).toBe('cancelled');
+  });
+});
