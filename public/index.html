@@ -8262,7 +8262,7 @@ function _renderAllocCards(){
      job is the CSV upload at the top; the allocation tools are a secondary task that was pushing
      it off the fold. `<summary>` carries the count, so "is there anything to do here?" is still
      answerable without opening anything. Do not add `open` to any of them. */
-  const cardA=`<div class="card"><details>
+  const cardA=`<div class="card"><details data-ac="unallocated">
     <summary style="cursor:pointer;font-weight:700">Unallocated registrants (${un.length})</summary>
     <p class="note-hint" style="text-align:left">These people chose “OTHER – please specify below” and have no church yet. Allocate each to a church.</p>${scroller(unRows,un.length)}
   </details></div>`;
@@ -8304,7 +8304,7 @@ function _renderAllocCards(){
   /* ⚠ The override search input lives INSIDE this <details>. `_renderOvSearch` reads
      `#ovSearch`/`#ovSearchResults` by id and both bail on a null element, so a collapsed card is
      safe — a <details> keeps its children in the DOM either way. Do not move the search out. */
-  const cardB=`<div class="card"><details>
+  const cardB=`<div class="card"><details data-ac="churchov">
     <summary style="cursor:pointer;font-weight:700">Church overrides (${manual.length})</summary>
     <p class="note-hint" style="text-align:left">People you moved to a different church than their form said. These persist across re-imports.</p>
     <div class="card" style="padding:10px;background:var(--paper)">
@@ -8316,14 +8316,27 @@ function _renderAllocCards(){
   </details></div>`;
 
   // Also collapsed — this one is a record of completed work, not a to-do list.
-  const cardC=designated.length?`<div class="card"><details>
+  const cardC=designated.length?`<div class="card"><details data-ac="designated">
     <summary style="cursor:pointer;font-weight:700">Designated from “OTHER” (${designated.length})</summary>
     <p class="note-hint" style="text-align:left">People who chose “OTHER – please specify below” and have since been given a church. Unallocate returns them to the unallocated list above.</p>
     ${scroller(designated.map(o=>ovRow(o,'Unallocate')).join(''),designated.length)}
   </details></div>`:'';
 
   const errCard=_allocErrs.length?`<div class="card"><p class="err" style="display:block">Some allocation data could not be loaded, so the lists below may be incomplete: ${esc(_allocErrs.join(' · '))}</p></div>`:'';
+  /* Same capture/reapply as `_budRedraw` (:4913). Before this, EVERY write on this screen
+     (allocate, override, undo) re-emitted all the cards with no `open` attribute, so the whole
+     screen collapsed and jumped to the top mid-task. paint()'s samePaint/keepY guard (:2488)
+     does not help here — this writes #allocWrap.innerHTML directly and never goes through paint.
+     `data-ac` keys the cards (and the per-student rows in the two override cards) so reopening
+     is stable across a re-render that changes list contents.
+     This restores only what the operator themselves opened — the collapsed-by-default rule
+     above (:8244) still stands, so do NOT add `open` to any card's markup. */
+  const openKeys=[...wrap.querySelectorAll('details[data-ac]')].filter(d=>d.open).map(d=>d.getAttribute('data-ac'));
+  const sc=_scroller(document.getElementById('import'));
+  const y=sc?sc.scrollTop:0;
   wrap.innerHTML=errCard+cardA+cardB+cardC;
+  openKeys.forEach(k=>{const d=wrap.querySelector(`details[data-ac="${k}"]`);if(d)d.open=true;});
+  if(sc)sc.scrollTop=y;
 }
 
 function _renderOvSearch(){
