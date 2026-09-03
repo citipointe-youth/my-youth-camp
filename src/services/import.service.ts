@@ -418,8 +418,14 @@ export function makeImportService(
               blueCardExpiry: blueCardExpiry ?? match.blueCardExpiry,
               churchUnlistedNote: churchUnlistedNote ?? match.churchUnlistedNote,
               elvantoMeta: elvantoMeta.dateSubmitted ? elvantoMeta : match.elvantoMeta,
-              accommodationKind: accommodationKind ?? match.accommodationKindRaw ?? match.accommodationKind,
-              accommodationKindRaw: accommodationKind ?? match.accommodationKindRaw ?? match.accommodationKind,
+              // ⚠️ `!== undefined`, never `??` — a genuine `null` raw (accommodation_kind blank,
+              // accommodation_override set) must NOT be walked past to match.accommodationKind
+              // (the resolved/effective value), or a Form re-import with no CSV value bakes the
+              // override back into the importers' own column.
+              accommodationKind: accommodationKind ??
+                (match.accommodationKindRaw !== undefined ? match.accommodationKindRaw : match.accommodationKind),
+              accommodationKindRaw: accommodationKind ??
+                (match.accommodationKindRaw !== undefined ? match.accommodationKindRaw : match.accommodationKind),
               registrationType: registrationType ?? match.registrationType,
               registrationCost: registrationCost ?? match.registrationCost,
               discountCode: discountCode ?? match.discountCode,

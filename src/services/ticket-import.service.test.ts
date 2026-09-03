@@ -211,6 +211,32 @@ describe('TicketImportService.importTicketsCsv — accommodation overwrite', () 
   });
 });
 
+describe('TicketImportService.importTicketsCsv — null raw with an individual override (fix round)', () => {
+  it('does not let a null accommodationKindRaw fall through to the resolved (overridden) accommodationKind', async () => {
+    // The raw column is genuinely empty (no ticket-derived kind), but an individual override
+    // has resolved accommodationKind to 'classroom'. A re-import with no Ticket Type on this
+    // row must not treat the resolved value as if it were the raw one.
+    const existing = person({
+      id: 'p1',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      churchId: 'c1',
+      accommodationKind: 'classroom',
+      accommodationKindRaw: null,
+      accommodationOverride: 'classroom',
+      accommodationKindConfidence: 'confirmed',
+    });
+    const { svc, personRepo } = await build([church({ id: 'c1', name: 'Victory' })], [existing]);
+    const csv = 'First Name,Last Name,Ticket Number\nAda,Lovelace,TKT-9'; // no Ticket Type column
+    await svc.importTicketsCsv(actor('admin'), { csvData: csv });
+    const all = await personRepo.findAll();
+    expect(all[0]!.accommodationKind).toBeNull();
+    expect(all[0]!.accommodationKindRaw).toBeNull();
+    // The override itself is untouched — this importer never reads or writes it.
+    expect(all[0]!.accommodationOverride).toBe('classroom');
+  });
+});
+
 describe('TicketImportService.importTicketsCsv — church override', () => {
   it('church override wins over the CSV ticket type with a warning, for a youth', async () => {
     const existing = person({ id: 'p1', firstName: 'Ada', lastName: 'Lovelace', churchId: 'c1', kind: 'youth' });

@@ -192,7 +192,12 @@ export function makeTicketImportService(
 
             // RAW, not the resolved effective value: this import owns accommodation_kind and must
             // never write an individual override back into its own column.
-            let finalKind: Person['accommodationKind'] = existing.accommodationKindRaw ?? existing.accommodationKind ?? null;
+            // ⚠️ `!== undefined`, never `??` — a genuine `null` raw (accommodation_kind blank,
+            // accommodation_override set) must NOT fall through to `existing.accommodationKind`
+            // (the resolved/effective value), or a re-import with no ticket carries the override
+            // back into this import's own column.
+            let finalKind: Person['accommodationKind'] =
+              existing.accommodationKindRaw !== undefined ? existing.accommodationKindRaw : (existing.accommodationKind ?? null);
             let finalConfidence: Person['accommodationKindConfidence'] = existing.accommodationKindConfidence;
             if (churchOverride) {
               finalKind = churchOverride;

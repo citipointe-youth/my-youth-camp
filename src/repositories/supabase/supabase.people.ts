@@ -372,7 +372,15 @@ export function personColumns(p: Person): Record<string, unknown> {
     discount_code: p.discountCode ?? null,
     ticket_number: p.ticketNumber ?? null,
     invoice_number: p.invoiceNumber ?? null,
-    accommodation_kind_confidence: p.accommodationKindConfidence ?? null,
+    /* ⚠️ Same write-back trap as accommodation_kind, on the sibling column. `toPerson` forces
+       p.accommodationKindConfidence to 'confirmed' whenever an override is present, REGARDLESS
+       of what is actually stored — so writing it straight back would overwrite a genuine
+       'guessed'/null confidence with a fabricated 'confirmed' the moment ANY unrelated field on
+       this person is saved. That corruption survives clearing the override (invoice-import's
+       alreadyConfirmed gate would then wrongly treat the person as permanently confirmed). While
+       an override is active the read path ignores this column entirely (it keys off
+       accommodation_override), so writing null here is safe now and honest later. */
+    accommodation_kind_confidence: p.accommodationOverride != null ? null : (p.accommodationKindConfidence ?? null),
     discount_amount: p.discountAmount ?? null,
     amount_paid: p.amountPaid ?? null,
     fees_amount: p.feesAmount ?? null,

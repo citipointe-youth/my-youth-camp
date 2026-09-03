@@ -221,4 +221,49 @@ describe('individual accommodation override (0022)', () => {
     const cols = personColumns({ ...handBuiltPerson(), accommodationKind: 'tent' });
     expect(cols['accommodation_kind']).toBe('tent');
   });
+
+  // THE SIBLING REGRESSION GUARD (fix round). Without this, `toPerson`'s forced 'confirmed'
+  // (synthesised whenever accommodation_override is set) would be written straight back into
+  // accommodation_kind_confidence by ANY unrelated save, permanently corrupting a genuine
+  // 'guessed'/null confidence — surviving even after the override is later cleared.
+  it('personColumns writes null confidence for an overridden person, never the forced "confirmed"', () => {
+    const p = toPerson({ ...baseRow(), accommodation_kind: 'tent', accommodation_override: 'classroom',
+      accommodation_kind_confidence: 'guessed' }, [], []);
+    expect(p.accommodationKindConfidence).toBe('confirmed'); // the forced read-time value
+    const cols = personColumns(p);
+    expect(cols['accommodation_kind_confidence']).toBeNull(); // never the forced value
+  });
+
+  it('personColumns writes the real confidence through unchanged when there is no override', () => {
+    const p = toPerson({ ...baseRow(), accommodation_kind: 'tent', accommodation_override: null,
+      accommodation_kind_confidence: 'guessed' }, [], []);
+    const cols = personColumns(p);
+    expect(cols['accommodation_kind_confidence']).toBe('guessed');
+  });
+
+  // Separates `!== undefined` from `??` in personColumns' raw carrier — a hand-built case with
+  // raw undefined and kind 'tent' would pass under `??` too, so a future "simplification" to
+  // `??` would slip through the existing guard unnoticed. `null` must persist as `null`.
+  it('personColumns persists a null accommodationKindRaw as null, never falls through to accommodationKind', () => {
+    const cols = personColumns({ ...handBuiltPerson(), accommodationKindRaw: null, accommodationKind: 'classroom' });
+    expect(cols['accommodation_kind']).toBeNull();
+  });
+
+  // Coverage for the 5th read-modify-write site found in review: allocation.service.allocate
+  // computes a forced accommodationKind from the CHURCH's accommodationOverride and saves
+  // `{...person, accommodationKind, accommodationKindRaw: accommodationKind, ...}` — a plain
+  // spread over a mapper-built Person. The in-memory repo used by allocation.service.test.ts
+  // stores objects verbatim and cannot catch a stale-raw-carrier bug; this exercises the same
+  // shape through the REAL mapper instead.
+  it('a plain spread with a fresh accommodationKindRaw (allocation.service pattern) persists the new kind, not the stale raw', () => {
+    // Mapper-built person: raw says 'tent' from the Ticket List, no individual override.
+    const p = toPerson({ ...baseRow(), accommodation_kind: 'tent', accommodation_override: null }, [], []);
+    expect(p.accommodationKindRaw).toBe('tent');
+    // allocation.service.allocate's save pattern: church accommodationOverride forces 'classroom',
+    // and the fix carries it into accommodationKindRaw too (not just accommodationKind).
+    const forced = 'classroom' as const;
+    const saved = { ...p, accommodationKind: forced, accommodationKindRaw: forced };
+    const cols = personColumns(saved);
+    expect(cols['accommodation_kind']).toBe('classroom'); // not the stale 'tent' raw
+  });
 });

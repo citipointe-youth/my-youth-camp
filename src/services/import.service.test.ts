@@ -394,6 +394,35 @@ describe('ImportService.importCsv — blank-cell guard on update (no clobbering)
   });
 });
 
+describe('ImportService.importCsv — null raw with an individual override (fix round)', () => {
+  it('does not let a null accommodationKindRaw fall through to the resolved (overridden) accommodationKind on re-import', async () => {
+    const h = await build([church({ id: 'c1', name: 'Victory' })]); // no CHURCH override
+    // Create the person, then simulate the mapper state for someone with an INDIVIDUAL
+    // accommodation override and no ticket-derived value at all: the raw column is genuinely
+    // null, but accommodationKind reads as the resolved 'classroom'.
+    await h.svc.importCsv(actor('admin'), { csvData: 'First Name,Last Name,Church\nAda,Lovelace,Victory' });
+    const before = (await h.personRepo.findAll())[0]!;
+    await h.personRepo.save({
+      ...before,
+      accommodationKind: 'classroom',
+      accommodationKindRaw: null,
+      accommodationOverride: 'classroom',
+    });
+
+    // Re-import with no Type column at all — the Form CSV has nothing to say about it.
+    const res = await h.svc.importCsv(actor('admin'), {
+      csvData: 'First Name,Last Name,Church\nAda,Lovelace,Victory',
+      updateExisting: true,
+    });
+    expect(res).toMatchObject({ created: 0, updated: 1 });
+    const after = (await h.personRepo.findAll())[0]!;
+    expect(after.accommodationKind).toBeNull();
+    expect(after.accommodationKindRaw).toBeNull();
+    // The override itself is untouched — the Form import never reads or writes it.
+    expect(after.accommodationOverride).toBe('classroom');
+  });
+});
+
 describe('import: unallocated + overrides', () => {
   // The multi-word note column is quoted, exactly as a real Elvanto export has it.
   const HEADER = 'First Name,Last Name,Gender,School Grade,Mobile Number,Attendee\'s Church,"If from a church not listed, please specify church name & Youth Pastor"';

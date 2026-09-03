@@ -96,6 +96,12 @@ export function buildAccommodationPriceLookup(
     if (p.accommodationKindConfidence !== 'confirmed') continue;
     if (p.accommodationKind == null) continue;
     if (p.registrationCost == null) continue;
+    // ⚠️ An individual override reads as 'confirmed' with the OVERRIDE as its kind (never a
+    // ticket-derived one), and its registrationCost is whatever ticket they actually bought —
+    // e.g. a $150 tent ticket forced to 'classroom'. Training the price table on that teaches
+    // "$150 = classroom", which is exactly backwards. Same "a guess must not confirm itself"
+    // rule as the CONFIRMED-only gate above, mirrored onto human corrections.
+    if (p.accommodationOverride != null) continue;
     const cents = Math.round(p.registrationCost * 100);
     let kindCounts = counts.get(cents);
     if (!kindCounts) {

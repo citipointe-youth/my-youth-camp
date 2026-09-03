@@ -86,7 +86,11 @@ export function makeAllocationService(
       const now = nowISO();
 
       // Apply church + zone + (student) accommodation override immediately.
-      const accommodationKind = accommodationKindForChurch(person.kind, person.accommodationKind, church.accommodationOverride ?? null);
+      // RAW, not the resolved effective value: this is a manual church re-allocation, not an
+      // individual accommodation override, so it must read/write the importers' own column
+      // (matches ticket-import.service.ts:193's same raw-read-through-the-effective-field rule).
+      const currentKind = person.accommodationKindRaw ?? person.accommodationKind ?? null;
+      const accommodationKind = accommodationKindForChurch(person.kind, currentKind, church.accommodationOverride ?? null);
       // Bug 2: override applies to leaders too, so any person with a church override is "forced".
       const forcedAccom = !!church.accommodationOverride;
       await personRepo.save({
@@ -95,6 +99,7 @@ export function makeAllocationService(
         churchName: church.name,
         zone: church.zone,
         accommodationKind,
+        accommodationKindRaw: accommodationKind,
         accommodationKindConfidence: forcedAccom ? 'confirmed' : person.accommodationKindConfidence,
         updatedAt: now,
       });

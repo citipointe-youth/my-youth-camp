@@ -433,6 +433,29 @@ describe('InvoiceImportService.importInvoicesCsv — accommodation guess', () =>
     expect(p.accommodationKindConfidence).toBe('guessed');
     expect(res.guessedAccommodationCount).toBe(1);
   });
+
+  // Fix round — an individual override reads 'confirmed' with the OVERRIDE as its kind, but its
+  // registrationCost is still whatever ticket the person actually bought (e.g. a tent price on
+  // a person forced to classroom). Training the price table on that teaches the wrong lesson.
+  it('excludes people with an individual accommodationOverride from the price-lookup samples', async () => {
+    const overridden = [
+      person({ id: 's1', accommodationKind: 'classroom', accommodationOverride: 'classroom',
+        accommodationKindConfidence: 'confirmed', registrationCost: 150 }),
+      person({ id: 's2', accommodationKind: 'classroom', accommodationOverride: 'classroom',
+        accommodationKindConfidence: 'confirmed', registrationCost: 150 }),
+      person({ id: 's3', accommodationKind: 'classroom', accommodationOverride: 'classroom',
+        accommodationKindConfidence: 'confirmed', registrationCost: 150 }),
+    ];
+    const target = person({ id: 'target', invoiceNumber: 'INV-OVR' });
+    const { svc, personRepo } = await build([...overridden, target]);
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: `${HDR}\nINV-OVR,,,,150,,150,,,`,
+    });
+    const p = (await personRepo.findAll()).find((x) => x.id === 'target')!;
+    // Without the exclusion this would guess 'classroom' at $150 (3 samples, 100% majority).
+    expect(p.accommodationKind).toBeUndefined();
+    expect(res.guessedAccommodationCount).toBe(0);
+  });
 });
 
 describe('InvoiceImportService.importInvoicesCsv — never deletes, dry-run', () => {
