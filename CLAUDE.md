@@ -11,6 +11,15 @@ Five new nullable `people` columns land in migration **`0022`**: `accommodation_
 to prod BEFORE this code pushes** — same standing rule as `0016`–`0021`: `supabase.people`'s
 mapper reads these columns on every person save, so a person write fails until they exist.
 
+**✅ APPLIED AND DEPLOYED (2026-09-04).** `0022` was applied to prod FIRST, then `master` pushed.
+The MCP `apply_migration` recorded the history row as `20260903195203`, reconciled to `'0022'` per
+the standing rule (collision guard returned 0 first); `schema_migrations` now reads `0001`–`0022`
+contiguous, 22 rows against 22 files. All five columns verified `is_nullable=YES` with no default,
+and 596 existing people were unchanged (every new column null). Deployed as `dpl_6K1HBT4E…`
+(`source:"git"`, commit `cbbab80`, ready in 23s); prod `/ready` returned `db:ok` in 1ms and
+`sw.js` serves `camp-v106`. **Two decisions were deliberately left open for the owner** — see
+"Open decisions" at the end of this section.
+
 ### What was built
 Two new **Data Import** cards (Individual accommodation override, and cancel/refund) let an
 admin/director hand-correct a single registration without an importer touching it: force a
@@ -101,6 +110,28 @@ is no compiler or test enforcing that pairing — a future refactor to the cance
 `person.service.ts` could drift the timestamps out of sync with the fields this guard reads, and
 the guard would keep compiling and keep passing its own tests while silently protecting the wrong
 set of people. There is now a short comment at `isProtected` pointing back at this.
+
+### Open decisions (deliberately NOT made during implementation)
+
+Both were raised by the final whole-branch review and left for the owner rather than settled
+autonomously. Neither blocks the deployed feature.
+
+1. **A `church` login can reach the new override/cancel fields by direct API call.**
+   `person.service.update` requires only `registrant:write`, which `church` holds, and
+   `registrant.controller` handles `accommodationOverride`/`amountPaidOverride`/`refundAmount`/
+   `status` on the same path as every other patchable field. No UI exposes this to a church
+   account, but the API does. It is **consistent with the existing convention** on that endpoint —
+   `amountPaid`, `needsReview` and `ticketNumber` are likewise only UI-gated for church logins —
+   so tightening it is a deliberate change to an established pattern that could break live church
+   workflows, not an obvious bug fix. It is nonetheless new reach over *money* fields. Options:
+   gate these four behind `budget:manage`/`admin:manage` for non-owner-scoped actors, or accept
+   the inherited convention explicitly. **No task review ever asked this question** — it surfaced
+   only at the whole-branch pass.
+2. **The accommodation export now lists cancelled people by full name and church** in a Summary
+   appendix, on a sheet that was previously pure aggregate counts. That shape was chosen because
+   un-filtering the allocation sheets would have moved live room/cohort/tent counts, which was
+   forbidden. It is correct, but it is a first for that export and is privacy-adjacent, so it is
+   flagged for explicit sign-off rather than assumed.
 
 ## Church previews see DAY 1 ONLY of the devotional — 2026-08-07 (3rd)
 
