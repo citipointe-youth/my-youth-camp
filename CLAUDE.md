@@ -4,6 +4,19 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Override search-result buttons — `camp-v107` — 2026-09-04
+
+The **Add** / **Change church** buttons in the three Data Import override cards' search results
+were full-width. Cause is the trap already documented above `ovRow`: a bare `.btn` is
+`display:block;width:100%`, and inside a `.rowsb` flex row that `width:100%` becomes the item's
+**flex-basis**, so the button eats the row and wraps each name/church onto three lines on a phone.
+Fix (the same one `ovRow`'s Undo button already carried): `class="btn ghost sm"` +
+`style="flex:0 0 auto;min-width:…"` on the button, `style="flex:1;min-width:0"` on the text block.
+Applied in `_renderOvSearch`, `_renderIndivSearch`, `_renderCrSearch`.
+
+**Rule: every button placed inside a `.rowsb` must be `.btn … sm` with `flex:0 0 auto` (or carry
+an explicit `width:auto`).** Grep `class="btn` near `rowsb` before adding a new one.
+
 ## Individual overrides, cancellations & refunds — migration `0022` — 2026-09-03
 
 Five new nullable `people` columns land in migration **`0022`**: `accommodation_override`,
