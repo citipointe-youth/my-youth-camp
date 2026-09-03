@@ -662,3 +662,47 @@ describe('ChurchBudget.discountCodes', () => {
     expect(noosa.discountCodes.find((r) => r.code === 'SPONSOR')!.tag).toBe('sponsor');
   });
 });
+
+describe('personValue: individual overrides (0022)', () => {
+  const prices = { tent: 300, classroom: 400 };
+
+  it('amountPaidOverride beats the inperson-ticket branch', () => {
+    const person = { ...p({}), amountPaid: 100, registrationCost: 300, amountPaidOverride: 250 };
+    expect(personValue(person, 'tent-inperson', prices, 300, 'inperson')).toBe(250);
+  });
+
+  it('amountPaidOverride beats a sponsor code (which otherwise forces $0)', () => {
+    const person = { ...p({}), amountPaidOverride: 250 };
+    expect(personValue(person, 'tent-sponsor', prices, null, 'sponsor')).toBe(250);
+  });
+
+  it('amountPaidOverride beats amountPaid and registrationCost', () => {
+    const person = { ...p({}), amountPaid: 100, registrationCost: 300, amountPaidOverride: 250 };
+    expect(personValue(person, 'unknown', prices, null, null)).toBe(250);
+  });
+
+  it('an override of 0 is honoured, not treated as absent', () => {
+    const person = { ...p({}), amountPaid: 100, amountPaidOverride: 0 };
+    expect(personValue(person, 'unknown', prices, null, null)).toBe(0);
+  });
+
+  it('a refund subtracts from the normal cascade', () => {
+    const person = { ...p({}), amountPaid: 300, refundAmount: 50 };
+    expect(personValue(person, 'unknown', prices, null, null)).toBe(250);
+  });
+
+  it('a refund subtracts from an override too', () => {
+    const person = { ...p({}), amountPaid: 100, amountPaidOverride: 250, refundAmount: 50 };
+    expect(personValue(person, 'unknown', prices, null, null)).toBe(200);
+  });
+
+  it('a refund against an unknowable value stays null, not a negative number', () => {
+    const person = { ...p({}), amountPaid: null, registrationCost: null, refundAmount: 50 };
+    expect(personValue(person, 'unknown', prices, null, null)).toBeNull();
+  });
+
+  it('leaves the existing cascade untouched when neither field is set', () => {
+    const person = { ...p({}), amountPaid: 100, registrationCost: 300 };
+    expect(personValue(person, 'unknown', prices, null, null)).toBe(100);
+  });
+});

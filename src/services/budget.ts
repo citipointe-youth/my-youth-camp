@@ -107,6 +107,10 @@ export interface BudgetPerson {
   registrationType?: string | null;
   /** Owned by the Invoice import — what actually arrived. */
   amountPaid?: number | null;
+  /** Individual amount-paid override — beats this entire cascade. Never set by an importer. */
+  amountPaidOverride?: number | null;
+  /** Refund issued; subtracted from whatever the base value came out as. */
+  refundAmount?: number | null;
 }
 
 export interface CategoryRow {
@@ -266,6 +270,9 @@ export function classifyTicket(p: BudgetPerson, tags: DiscountTagMap): TicketCla
  * counted as money received (inflating the grand total), and the Sponsorship card showed $0 owed
  * for a place that was never actually paid for (a real ask silently vanishing). Passing the tag
  * separately means a sponsor code always reads $0, whether or not the accommodation is known yet.
+ *
+ * `amountPaidOverride` and `refundAmount` (2026-09-03): the override short-circuits everything
+ * below — see `amountPaidBase` — and the refund then subtracts from whatever the base came out as.
  */
 export function personValue(
   p: BudgetPerson,
@@ -274,6 +281,27 @@ export function personValue(
   ticketPrice?: number | null,
   tag?: DiscountTag | null,
 ): number | null {
+  const base = amountPaidBase(p, cls, prices, ticketPrice, tag);
+  if (base == null) return null; // unknowable stays unknowable — never a bare -refund
+  return base - (p.refundAmount ?? 0);
+}
+
+/**
+ * The pre-refund value. `amountPaidOverride` short-circuits EVERYTHING — it is not another rung
+ * on the cascade, it IS the person's value once an admin has set it (including a deliberate 0,
+ * which is why this tests `!= null` and not truthiness).
+ *
+ * ⚠️ MIRRORED in public/index.html `_personValueBase`. That copy is what the live Budget screen
+ * and its export actually run; this one is dead server-side. Change both together.
+ */
+function amountPaidBase(
+  p: BudgetPerson,
+  cls: TicketClass,
+  prices: BasePrices,
+  ticketPrice?: number | null,
+  tag?: DiscountTag | null,
+): number | null {
+  if (p.amountPaidOverride != null) return p.amountPaidOverride;
   if (cls === 'tent-inperson' || cls === 'classroom-inperson') {
     if (ticketPrice != null) return ticketPrice;
     const fallback = cls === 'tent-inperson' ? prices.tent : prices.classroom;
