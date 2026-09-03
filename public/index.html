@@ -8459,8 +8459,8 @@ function _renderOvSearch(){
   if(q.length<2){box.innerHTML='';return;}
   const hits=_allocState.regs.filter(r=>r.churchId!==UNALLOCATED_ID && `${r.firstName} ${r.lastName}`.toLowerCase().includes(q)).slice(0,8);
   box.innerHTML=hits.length?hits.map(p=>`<div class="rowsb" style="gap:6px;padding:4px 0">
-    <div><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}</div></div>
-    <button class="btn ghost" onclick="overridePrompt('${esc(p.id)}')">Change church</button>
+    <div style="flex:1;min-width:0"><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}</div></div>
+    <button class="btn ghost sm" style="flex:0 0 auto;min-width:112px" onclick="overridePrompt('${esc(p.id)}')">Change church</button>
   </div>`).join(''):'<p class="note-hint">No matches.</p>';
 }
 
@@ -8502,8 +8502,8 @@ function _renderIndivSearch(){
   const hits=_allocState.regs.filter(r=>_indivIds.indexOf(r.id)<0
     && `${r.firstName} ${r.lastName}`.toLowerCase().includes(q)).slice(0,8);
   box.innerHTML=hits.length?hits.map(p=>`<div class="rowsb" style="gap:6px;padding:4px 0">
-    <div><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}</div></div>
-    <button class="btn ghost" onclick="indivAdd('${esc(p.id)}')">Add</button>
+    <div style="flex:1;min-width:0"><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}</div></div>
+    <button class="btn ghost sm" style="flex:0 0 auto;min-width:72px" onclick="indivAdd('${esc(p.id)}')">Add</button>
   </div>`).join(''):'<p class="note-hint">No matches.</p>';
 }
 function indivAdd(id){ if(_indivIds.indexOf(id)<0)_indivIds.push(id); _renderAllocCards(); }
@@ -8535,8 +8535,8 @@ function _renderCrSearch(){
   const hits=_allocState.regsAll.filter(r=>_crIds.indexOf(r.id)<0
     && `${r.firstName} ${r.lastName}`.toLowerCase().includes(q)).slice(0,8);
   box.innerHTML=hits.length?hits.map(p=>`<div class="rowsb" style="gap:6px;padding:4px 0">
-    <div><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}${p.status==='cancelled'?' · cancelled':''}</div></div>
-    <button class="btn ghost" onclick="crAdd('${esc(p.id)}')">Add</button>
+    <div style="flex:1;min-width:0"><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}${p.status==='cancelled'?' · cancelled':''}</div></div>
+    <button class="btn ghost sm" style="flex:0 0 auto;min-width:72px" onclick="crAdd('${esc(p.id)}')">Add</button>
   </div>`).join(''):'<p class="note-hint">No matches.</p>';
 }
 function crAdd(id){ if(_crIds.indexOf(id)<0)_crIds.push(id); _renderAllocCards(); }
