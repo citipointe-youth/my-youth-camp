@@ -4202,8 +4202,19 @@ function _resolveTicketPrice(p,table){
    ticket TYPE → the admin's scalar setting, which is now only reachable for a ticket type nobody
    has an invoice for. That last step is all `tentPrice`/`classroomPrice` are for now.
    🔴 `tag` (2026-08-05 fix) is taken directly via `_discountTagFor`, NOT re-derived from `cls` —
-   a sponsor code must read $0 even when `cls` is 'unknown' (accommodation not yet imported). */
+   a sponsor code must read $0 even when `cls` is 'unknown' (accommodation not yet imported).
+   `amountPaidOverride`/`refundAmount` (2026-09-03) — see `_personValueBase` below. */
+/* MIRROR OF src/services/budget.ts `personValue` — the two MUST agree; the server copy is dead
+   code and this is what the live Budget screen and its export actually run. Change both together.
+   `amountPaidOverride` short-circuits the whole cascade (an admin's stated figure IS the value,
+   including a deliberate 0); the refund then subtracts from whatever the base came out as. */
 function _personValue(p,cls,prices,ticketPrice,tag){
+  const base=_personValueBase(p,cls,prices,ticketPrice,tag);
+  if(base==null)return null; // unknowable stays unknowable — never a bare negative refund
+  return base-(p.refundAmount!=null?Number(p.refundAmount):0);
+}
+function _personValueBase(p,cls,prices,ticketPrice,tag){
+  if(p.amountPaidOverride!=null)return Number(p.amountPaidOverride);
   if(cls==='tent-inperson'||cls==='classroom-inperson'){
     if(ticketPrice!=null)return ticketPrice;
     const fb=cls==='tent-inperson'?prices.tent:prices.classroom;
@@ -4344,6 +4355,8 @@ function _budUpgrades(regs,filterId){
       const p={churchId:r.churchId,churchName:r.churchName,kind:r.kind==='leader'?'leader':'camper',
         registrationCost:r.registrationCost==null?null:Number(r.registrationCost),
         amountPaid:r.amountPaid==null?null:Number(r.amountPaid),
+        amountPaidOverride:r.amountPaidOverride==null?null:Number(r.amountPaidOverride),
+        refundAmount:r.refundAmount==null?null:Number(r.refundAmount),
         accommodationKind:r.accommodationKind||null,discountCode:r.discountCode,
         registrationType:r.registrationType||null};
       const cls=_classifyTicket(p,tags);
@@ -4407,6 +4420,7 @@ function computeBudgetClient(regs,filterId){
   const people=(regs||[]).filter(r=>r.status!=='cancelled').filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
     .map(r=>({churchId:r.churchId,churchName:r.churchName,kind:r.kind==='leader'?'leader':'camper',
       registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
+      amountPaidOverride:num(r.amountPaidOverride),refundAmount:num(r.refundAmount),
       accommodationKind:r.accommodationKind||null,discountCode:r.discountCode,
       registrationType:r.registrationType||null}));
   let full=null;
@@ -4494,6 +4508,7 @@ function computeSponsorSummaryClient(regs,filterId){
     if(!tag||_SPONSOR_TAGS.indexOf(tag)<0)return;
     const p={churchId:r.churchId,churchName:r.churchName,
       registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
+      amountPaidOverride:num(r.amountPaidOverride),refundAmount:num(r.refundAmount),
       accommodationKind:r.accommodationKind||null,discountCode:code,
       registrationType:r.registrationType||null};
     const cls=_classifyTicket(p,tags);
