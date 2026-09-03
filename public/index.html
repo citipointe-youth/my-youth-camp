@@ -4348,7 +4348,11 @@ function _budUpgrades(regs,filterId){
      with their OWN ticket cost instead. */
   const classroomRef=_budClassroomRef(ptable,prices);
   const paid=[],owing=[],unknown=[];
-  (regs||[]).filter(r=>r.status!=='cancelled')
+  /* Cancelled people are DELIBERATELY still here (0022). Cancelling a registration must not move
+     the money — their value keeps counting until a Refund is recorded against them. Every
+     non-budget list on this screen and elsewhere still excludes them (:3341, :5126, :5201,
+     :5292, :7708) and must keep doing so. */
+  (regs||[])
     .filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
     .filter(r=>r.accommodationKind==='classroom'&&_budTicketKind(r.registrationType)==='tent')
     .forEach(r=>{
@@ -4417,7 +4421,7 @@ function computeBudgetClient(regs,filterId){
   /* Learned from the FULL set, never the filtered one: a ticket type priced only at another
      church must still price this church's in-person holders of it. */
   const ptable=_budTicketPrices(regs);
-  const people=(regs||[]).filter(r=>r.status!=='cancelled').filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
+  const people=(regs||[]).filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
     .map(r=>({churchId:r.churchId,churchName:r.churchName,kind:r.kind==='leader'?'leader':'camper',
       registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
       amountPaidOverride:num(r.amountPaidOverride),refundAmount:num(r.refundAmount),
@@ -4498,7 +4502,7 @@ function computeSponsorSummaryClient(regs,filterId){
   // Learned from the FULL set, same as computeBudgetClient — a type priced only at another
   // church must still price this church's holders of it.
   const ptable=_budTicketPrices(regs);
-  const people=(regs||[]).filter(r=>r.status!=='cancelled')
+  const people=(regs||[])
     .filter(r=>!filterId||filterId==='all'||r.churchId===filterId);
   const byCode=new Map();
   people.forEach(r=>{
@@ -4589,7 +4593,7 @@ function _deriveDiscountPurpose(pairs){
 /** Mirrors src/services/budget.ts computeDiscountCodeSummary (incl. the per-code `tag`). */
 function computeDiscountSummaryClient(regs,filterId){
   const tags=_budTags();
-  const people=(regs||[]).filter(r=>r.status!=='cancelled').filter(r=>!filterId||filterId==='all'||r.churchId===filterId);
+  const people=(regs||[]).filter(r=>!filterId||filterId==='all'||r.churchId===filterId);
   const counts=new Map(),pairsByCode=new Map();
   people.forEach(r=>{const code=(r.discountCode||'').trim();if(!code)return;
     counts.set(code,(counts.get(code)||0)+1);
@@ -4606,7 +4610,7 @@ function computeDiscountSummaryClient(regs,filterId){
 }
 RENDER.budget=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('budget','<p class="note-hint" style="margin-top:24px;text-align:center">Budget is available to directors only.</p>','Budget & Costings','');return;}
-  const [regs,camperPage]=await Promise.all([api(_scoped('/registrants')),api(_scoped('/campers?pageSize=1000')).catch(()=>[])]);
+  const [regs,camperPage]=await Promise.all([api(_scoped('/registrants?includeCancelled=1')),api(_scoped('/campers?pageSize=1000')).catch(()=>[])]);
   // Anyone already at camp (esp. leaders, bulk-signed-in on the mode switch) has
   // lifecycle !== 'registered' and drops out of /registrants — merge in /campers
   // (deduped by id) so registration fees for arrived people still count.
@@ -4667,7 +4671,7 @@ function _budUpgGroup(title,rows,warn){
 function _budUnpricedInperson(regs,filterId,ptable,prices){
   const tags=_budTags();
   const types=new Set();let count=0;
-  (regs||[]).filter(r=>r.status!=='cancelled')
+  (regs||[])
     .filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
     .forEach(r=>{
       const p={registrationCost:r.registrationCost==null?null:Number(r.registrationCost),
