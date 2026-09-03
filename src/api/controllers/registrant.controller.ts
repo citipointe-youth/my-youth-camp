@@ -77,8 +77,8 @@ export function makeRegistrantController(services: RegistrantControllerServices)
       }
       for (const k of ['amountPaidOverride', 'refundAmount'] as const) {
         const v = b[k];
-        if (v !== undefined && v !== null && !Number.isFinite(Number(v))) {
-          throw new BadRequestError(`${k} must be a number or null`);
+        if (v !== undefined && v !== null && (!Number.isFinite(Number(v)) || Number(v) < 0)) {
+          throw new BadRequestError(`${k} must be a non-negative number or null`);
         }
       }
 
