@@ -88,4 +88,21 @@ describe('allocation service', () => {
     await people.save(person({}));
     await expect(svc.allocate(admin, { personId: 'p1', churchId: UNALLOCATED_CHURCH_ID })).rejects.toThrow();
   });
+
+  // Fix round 3 — the previous mapper-level test hand-typed the `??` vs `!== undefined` logic
+  // instead of calling the real allocate(), so reverting the source fix would leave it passing.
+  // This calls the real service and observes the real saved Person.
+  it('does not bake a null-raw individual override into accommodationKindRaw on allocate', async () => {
+    const { people, svc } = await setup(); // church 'c1' (Grace Point) has NO accommodationOverride
+    await people.save(person({
+      accommodationKind: 'classroom',       // resolved (an individual override applies)
+      accommodationKindRaw: null,           // genuinely empty raw column
+      accommodationOverride: 'classroom',
+    }));
+    await svc.allocate(admin, { personId: 'p1', churchId: 'c1' });
+    const p = await people.findById('p1');
+    expect(p!.accommodationKindRaw).toBeNull(); // NOT 'classroom' — the bug this guards against
+    expect(p!.accommodationKind).toBeNull();
+    expect(p!.accommodationOverride).toBe('classroom'); // untouched by allocation.service
+  });
 });
