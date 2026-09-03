@@ -614,6 +614,13 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-09-03 — individual overrides, cancel/refund (Data Import cards)
+
+| Symptom | Go to |
+|---|---|
+| **The Data Import screen collapses and jumps to the top on every write** | `_renderAllocCards` used to rewrite `#allocWrap.innerHTML` wholesale on every allocate/undo/override/cancel, re-emitting every `<details>` with no `open` and resetting scroll — `paint()`'s `samePaint`/`keepY` guard never applies here because this path bypasses `paint()` entirely. Fixed by adopting `_budRedraw`'s capture/reapply pattern keyed on `data-ac`: open-state and scroll position are captured before the rewrite and reapplied after. If a Data Import card starts collapsing/jumping again after a future edit, check whether the new write path still goes through this capture/reapply, or reverted to a bare `innerHTML=`. |
+| **Cancelling a registration silently drops it from the budget total** | `isRegistrant`/`isCamper` both exclude `lifecycle:'cancelled'` by design, so flipping the flag used to remove the person's money from every budget total with no visible cause and no error. Fixed with `includeCancelled` on `listRegistrants` (see CLAUDE.md's 2026-09-03 section) — their value now keeps counting until a Refund is recorded against them. If a cancelled person's money is STILL missing from the budget after a refund has genuinely not been recorded, check the `/registrants` fetch on the calling screen actually passes `includeCancelled=1` — the flag is opt-in per caller, not a global default. |
+
 ### 2026-08-05 — password UPLOAD (the reverse of "Randomise & export passwords")
 
 > **Where it lives:** Admin → **Accounts & churches** → the "All login passwords" card at the top.

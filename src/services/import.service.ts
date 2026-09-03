@@ -515,11 +515,15 @@ export function makeImportService(
          them would take the override, the refund and their whole record with it. Overrides must
          survive re-imports in any order, any number of times.
 
-         NOTE (ponytail): these five columns live ON `people`, so this guard is the only thing protecting
+         ponytail: these five columns live ON `people`, so this guard is the only thing protecting
          them from a hard delete. If a new delete path ever appears (another importer, a manual
          purge, the new-year rollover) it needs the same guard — or move the data to the
          `allocation_overrides` side-table pattern keyed on firstNameKey/lastNameKey/mobileKey
          (src/core/entities/allocation-override.ts:12-18), which survives a delete by design. */
+      // ⚠ This guard does NOT test `refundedAt`/`cancelledAt` directly — it's safe only because
+      // `person.service.ts`'s `update()` keeps those two fields in lockstep with `refundAmount`/
+      // `lifecycle` in both directions (the cancel/refund patch). If that invariant is ever
+      // relaxed, re-check this guard before assuming it still covers what it claims to.
       const isProtected = (p: Person) =>
         p.lifecycle === 'cancelled' ||
         p.accommodationOverride != null ||

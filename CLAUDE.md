@@ -4,6 +4,104 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Individual overrides, cancellations & refunds — migration `0022` — 2026-09-03
+
+Five new nullable `people` columns land in migration **`0022`**: `accommodation_override`,
+`amount_paid_override`, `refund_amount`, `refunded_at`, `cancelled_at`. **`0022` must be applied
+to prod BEFORE this code pushes** — same standing rule as `0016`–`0021`: `supabase.people`'s
+mapper reads these columns on every person save, so a person write fails until they exist.
+
+### What was built
+Two new **Data Import** cards (Individual accommodation override, and cancel/refund) let an
+admin/director hand-correct a single registration without an importer touching it: force a
+person's accommodation kind regardless of what the Ticket List/Invoice say, force their
+amount-paid, or record a refund against them. A registration can also be **cancelled**
+(`lifecycle:'cancelled'`) without being deleted. Backend budget maths (`src/services/budget.ts`)
+and its SPA mirror (`public/index.html`) both learned to respect the two overrides and the refund;
+the server API, the Form-import delete guard, and the Budget/accommodation/Data-Import screens
+were all updated to keep cancelled people visible where their money or their room still matters.
+
+### The mapper chokepoint and its raw carrier — read this before patching `accommodationKind`
+`accommodationKind` on a mapped `Person` is the **EFFECTIVE** value — `toPerson` resolves it as
+`accommodationOverride ?? accommodationKindRaw`. `accommodationKindRaw` is what `personColumns`
+actually **persists**. **Anyone patching `accommodationKind` on a mapped person must set the raw
+carrier too, or the edit silently does not persist** — the resolved value gets read back on the
+next load exactly as before, because the importers' column never moved.
+
+Four sites had this bug latent (all now fixed, all now set both fields together):
+- `import.service.ts` — the Form import's create and update paths.
+- `ticket-import.service.ts` — the Ticket List import.
+- `allocation.service.ts` — the manual church-allocation path (`accommodationKindForChurch`).
+- `person.service.ts`'s `update()` — the generic PATCH path (any hand-correction screen).
+
+A future fifth site is not caught by the compiler — `accommodationKindRaw` is `?:` optional on
+`Person`, so a plain `{ accommodationKind: x }` patch type-checks fine while doing nothing useful.
+
+### Cancel does not change the budget — `includeCancelled` has THREE callers, not one
+Cancelling a registration must not silently drop the person's money — both `isRegistrant` and
+`isCamper` exclude `lifecycle:'cancelled'`, so without an escape hatch a cancelled person's value
+would vanish from every screen that reads either view. `PersonService.listRegistrants`'s
+`includeCancelled` option is that escape hatch, gated to director/admin (server-side) so a church
+login can't widen its own scope with a query param. **Three callers pass it**: the Budget screen,
+`RENDER.accom` (the accommodation export — a cancelled person's room/tent placement is still real
+until they're actually moved out), and `_loadAllocation` (the Data Import screen, which needs to
+keep showing a cancelled person's card so the cancel/refund UI can still reach them). Do not
+document or assume this is a single-caller field — it was, and stopped being true partway through
+this work; check `person.service.ts`'s own comment above `listRegistrants` before trusting a stale
+description of it.
+
+The **five budget-side SPA filters were deliberately relaxed** to keep counting a cancelled
+person's money (via `includeCancelled=1` on the `/registrants` fetch) — the **ops-side filters
+were deliberately NOT relaxed**, and still exclude cancelled people via `r.status!=='cancelled'`
+at (grep-verified, 2026-09-03) `public/index.html:3341`, `:5169`, `:5244`, `:5335`, `:7767`. A
+cancelled student must not appear on a live roster or an ops list; their money must not disappear
+from a ledger. **These line numbers drift on every SPA edit — re-grep `status!=='cancelled'`
+before trusting them; do not copy them forward on faith.**
+
+### `atCamp` and `lifecycle` are orthogonal by design — the cancel transition is the ONE exception
+The presence model (see "Presence model (P0)" below) treats `atCamp` and `lifecycle` as
+independent on purpose. **The cancel transition deliberately breaks that rule, and this is the
+single highest-value thing to understand about this feature:** `person.service.ts`'s `update()`
+forces `atCamp:false` the instant `lifecycle` moves to `'cancelled'` (and clears `cancelledAt` on
+the reverse transition). This is safe ONLY because `checkin.service.ts`, `checkin-warnings.ts` and
+`dashboard.service.ts` all filter their rosters/counts on `atCamp` and **never read `lifecycle`
+at all**. Without the forced flip, cancelling someone would leave them `atCamp:true` forever —
+still on the live check-in roster, still counted in "still to check in", still showing as
+physically present at camp days after the office cancelled their registration.
+
+**Do not "fix" this back into pure orthogonality.** The predictable way this regresses: someone
+reads the P0 invariant below, notices the cancel patch violates it, and "cleans it up" by removing
+the forced `atCamp:false`. The visible consequence is silent and delayed — nothing breaks that
+day, but the next check-in session puts a cancelled student back on the roster as if nothing had
+happened, and nothing in `tsc`/`vitest` will catch it because both sides of that coupling are
+already individually tested; only the interaction is fragile.
+
+### The Form-import sweep guard, and the `ponytail:` note
+The Form import deletes anyone absent from the uploaded CSV (the upload is authoritative) — a
+cancelled registration or a hand-set override is exactly the kind of person who legitimately
+stops appearing in a re-export, so `import.service.ts`'s `isProtected(p)` guard exempts anyone
+with `lifecycle==='cancelled'` or a non-null `accommodationOverride`/`amountPaidOverride`/
+`refundAmount` from the delete sweep. The `ponytail:` note beside it names the honest ceiling:
+**these five columns living directly on `people` means this ONE guard is the only thing standing
+between a re-import and losing an override outright.** A new delete path — another importer, a
+manual purge, **`admin.service.ts`'s `reset()` and `newYear()`, both of which call
+`personRepo.deleteAll()` unconditionally** — is not covered by this guard and would take every
+override, refund and cancellation with it. This is disclosed, not hidden: the note already names
+"a manual purge, the new-year rollover" as needing the same guard; say it here in plain terms too,
+because `reset`/`newYear` are real, reachable admin operations, not hypothetical ones. If this
+ever bites, the upgrade path is the `allocation_overrides` side-table pattern keyed on
+`firstNameKey`/`lastNameKey`/`mobileKey` (`src/core/entities/allocation-override.ts:12-18`), which
+survives a hard delete by construction — unlike a column on `people`.
+
+`isProtected` also has a second, quieter dependency worth naming: it never tests `refundedAt`/
+`cancelledAt` directly, only `lifecycle`/`refundAmount`/`accommodationOverride`/
+`amountPaidOverride`. That's safe only because `person.service.ts`'s `update()` keeps the two
+timestamp fields in lockstep with the fields the guard actually checks, in both directions. There
+is no compiler or test enforcing that pairing — a future refactor to the cancel/refund patch in
+`person.service.ts` could drift the timestamps out of sync with the fields this guard reads, and
+the guard would keep compiling and keep passing its own tests while silently protecting the wrong
+set of people. There is now a short comment at `isProtected` pointing back at this.
+
 ## Church previews see DAY 1 ONLY of the devotional — 2026-08-07 (3rd)
 
 Owner request on launch eve. **SPA-only** — no backend, DTO, schema or migration change.

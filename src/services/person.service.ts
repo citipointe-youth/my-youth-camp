@@ -169,11 +169,12 @@ export function makePersonService(repo: IPersonRepository): PersonService {
 
     async listRegistrants(actor, churchId, opts = {}) {
       assertCan(actor, 'registrant:read');
-      /* `includeCancelled` exists for ONE caller: the Budget screen. Cancelling must not silently
-         drop a person's money (both isRegistrant and isCamper exclude cancelled), so the budget —
-         and only the budget — sees them; their value keeps counting until a Refund is recorded.
-         Gated to director/admin, which is exactly who can open the budget and the Data Import
-         screen, so a church login can never widen its own scope with a query param. */
+      /* `includeCancelled` has three callers: the Budget screen, `RENDER.accom` (the
+         accommodation export) and `_loadAllocation` (the Data Import screen). Cancelling must not
+         silently drop a person's money or vanish them from these views (both isRegistrant and
+         isCamper exclude cancelled), so all three see them; their value keeps counting until a
+         Refund is recorded. Gated to director/admin, which is exactly who can open the budget and
+         the Data Import screen, so a church login can never widen its own scope with a query param. */
       const includeCancelled = opts.includeCancelled === true
         && (actor.role === 'director' || actor.role === 'admin');
       const keep = (p: Person) => isRegistrant(p) || (includeCancelled && p.lifecycle === 'cancelled');

@@ -4355,8 +4355,8 @@ function _budUpgrades(regs,filterId){
   const paid=[],owing=[],unknown=[];
   /* Cancelled people are DELIBERATELY still here (0022). Cancelling a registration must not move
      the money — their value keeps counting until a Refund is recorded against them. Every
-     non-budget list on this screen and elsewhere still excludes them (:3341, :5126, :5201,
-     :5292, :7708) and must keep doing so. */
+     non-budget list on this screen and elsewhere still excludes them (:3341, :5169, :5244,
+     :5335, :7767) and must keep doing so. */
   (regs||[])
     .filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
     .filter(r=>r.accommodationKind==='classroom'&&_budTicketKind(r.registrationType)==='tent')
