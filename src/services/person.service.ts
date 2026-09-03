@@ -285,7 +285,26 @@ export function makePersonService(repo: IPersonRepository): PersonService {
       const rawPatch: Partial<Person> = safeRest.accommodationKind !== undefined
         ? { accommodationKindRaw: safeRest.accommodationKind }
         : {};
-      const updated: Person = { ...existing, ...safeRest, ...rawPatch, id: existing.id, lifecycle: nextLifecycle, updatedAt: nowISO() };
+      /* ⚠️ `atCamp` and `lifecycle` are ORTHOGONAL by design (person.ts:129-130) and atCamp is
+         stripped from every patch above — deliberately. This ONE transition couples them, because
+         checkin.service.ts:113-121, checkin-warnings.ts:179-188 and dashboard.service.ts:207-215
+         all filter on atCamp and never consult lifecycle: without this, a cancelled student stays
+         on the check-in roster and in the "still to check in" count. Do not "fix" this back.
+         Cancelling deliberately does NOT change the budget — their money keeps counting until
+         Refund is pressed (see listRegistrants `includeCancelled`). */
+      const cancelling = nextLifecycle === 'cancelled' && existing.lifecycle !== 'cancelled';
+      const unCancelling = nextLifecycle === 'registered' && existing.lifecycle === 'cancelled';
+      const cancelPatch: Partial<Person> =
+        cancelling ? { atCamp: false, cancelledAt: nowISO() }
+        : unCancelling ? { cancelledAt: null }
+        : {};
+      // A refund is money leaving — stamp when. Independent of cancel in both directions.
+      const refundPatch: Partial<Person> =
+        safeRest.refundAmount !== undefined && safeRest.refundAmount !== existing.refundAmount
+          ? { refundedAt: safeRest.refundAmount == null ? null : nowISO() }
+          : {};
+      const updated: Person = { ...existing, ...safeRest, ...rawPatch, ...cancelPatch, ...refundPatch,
+        id: existing.id, lifecycle: nextLifecycle, updatedAt: nowISO() };
       // Fail-closed: the patched result must still be inside the actor's scope (a zoneLeader/
       // admin/director changing church/zone can't push a person out of what they may access).
       if (!canAccessPerson(actor, updated)) {

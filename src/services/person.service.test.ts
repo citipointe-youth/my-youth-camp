@@ -258,6 +258,78 @@ describe('PersonService write surface (Step 4)', () => {
   });
 });
 
+function baseInput() {
+  return {
+    firstName: 'New', lastName: 'Person', gender: 'female' as const,
+    churchId: 'c1', churchName: 'Victory', zone: 'Yellow',
+  };
+}
+
+describe('cancel / refund / overrides (0022)', () => {
+  let repo: InMemoryPersonRepository;
+  let svc: ReturnType<typeof makePersonService>;
+  const admin = actor('admin');
+  beforeEach(async () => { repo = await freshRepo(); svc = makePersonService(repo); });
+
+  it('clearing atCamp is what makes a cancel reach check-in, warnings and the dashboard', async () => {
+    const p = await svc.create(admin, baseInput());
+    await repo.save({ ...(await repo.findById(p.id))!, atCamp: true });
+    const out = await svc.update(admin, p.id, { lifecycle: 'cancelled' } as Partial<Person>);
+    expect(out.lifecycle).toBe('cancelled');
+    expect(out.atCamp).toBe(false);
+    expect(out.cancelledAt).not.toBeNull();
+  });
+
+  it('un-cancelling clears the cancelledAt stamp', async () => {
+    const p = await svc.create(admin, baseInput());
+    await svc.update(admin, p.id, { lifecycle: 'cancelled' } as Partial<Person>);
+    const out = await svc.update(admin, p.id, { lifecycle: 'registered' } as Partial<Person>);
+    expect(out.lifecycle).toBe('registered');
+    expect(out.cancelledAt).toBeNull();
+  });
+
+  it('accepts the individual overrides without touching the raw importer value', async () => {
+    const p = await svc.create(admin, { ...baseInput(), accommodationKind: 'tent' });
+    const out = await svc.update(admin, p.id, { accommodationOverride: 'classroom' } as Partial<Person>);
+    expect(out.accommodationOverride).toBe('classroom');
+    expect(out.accommodationKindRaw !== undefined ? out.accommodationKindRaw : out.accommodationKind).toBe('tent');
+  });
+
+  it('stamps refundedAt when a refund is recorded, and does not imply a cancel', async () => {
+    const p = await svc.create(admin, baseInput());
+    const out = await svc.update(admin, p.id, { refundAmount: 50 } as Partial<Person>);
+    expect(out.refundAmount).toBe(50);
+    expect(out.refundedAt).not.toBeNull();
+    expect(out.lifecycle).toBe('registered'); // refund and cancel are independent
+  });
+});
+
+describe('listRegistrants includeCancelled (0022)', () => {
+  let repo: InMemoryPersonRepository;
+  let svc: ReturnType<typeof makePersonService>;
+  const admin = actor('admin');
+  const churchActor = actor('church', { churchId: 'c1' });
+  beforeEach(async () => { repo = await freshRepo(); svc = makePersonService(repo); });
+
+  it('excludes cancelled people by default — every ops list depends on this', async () => {
+    const p = await svc.create(admin, baseInput());
+    await svc.update(admin, p.id, { lifecycle: 'cancelled' } as Partial<Person>);
+    expect((await svc.listRegistrants(admin)).map(r => r.id)).not.toContain(p.id);
+  });
+
+  it('includes them when asked, so the budget still counts their money', async () => {
+    const p = await svc.create(admin, baseInput());
+    await svc.update(admin, p.id, { lifecycle: 'cancelled' } as Partial<Person>);
+    expect((await svc.listRegistrants(admin, undefined, { includeCancelled: true })).map(r => r.id)).toContain(p.id);
+  });
+
+  it('ignores includeCancelled for a church login (budget is director/admin only)', async () => {
+    const p = await svc.create(admin, baseInput());
+    await svc.update(admin, p.id, { lifecycle: 'cancelled' } as Partial<Person>);
+    expect((await svc.listRegistrants(churchActor, undefined, { includeCancelled: true })).map(r => r.id)).not.toContain(p.id);
+  });
+});
+
 describe('PersonService.listMedicalWatch', () => {
   async function medRepo() {
     const repo = new InMemoryPersonRepository();
