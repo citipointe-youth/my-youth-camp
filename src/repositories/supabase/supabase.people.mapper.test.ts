@@ -125,3 +125,100 @@ describe('people mapper encryption', () => {
     expect(p.consents.medical.granted).toBe(true);
   });
 });
+
+describe('individual accommodation override (0022)', () => {
+  function baseRow(): Record<string, unknown> {
+    return {
+      id: 'p_ovr1', first_name: 'Sam', last_name: 'Override', gender: 'male',
+      date_of_birth: null, grade: null, school: null, kind: 'youth',
+      church_id: 'ch_1', church_name: 'C', zone: 'Blue', group_id: null,
+      mobile: null, email: null, suburb: null, postcode: null, state: null,
+      medical_conditions: [], dietary_requirements: [],
+      other_medications: null, medicare_number: null,
+      church_unlisted_note: null, elvanto_meta: null,
+      parent_guardian_name: null, parent_phone: null, parent_relation: null,
+      blue_card_number: null, blue_card_expiry: null,
+      consents: { medical: { granted: false, timestamp: null }, media: { granted: false, timestamp: null }, supervision: { granted: false, timestamp: null } },
+      payment_status: 'unpaid', accommodation_kind: null, accommodation_label: null,
+      registration_type: null, registration_cost: null, discount_code: null,
+      ticket_number: null, invoice_number: null, accommodation_kind_confidence: null,
+      discount_amount: null, amount_paid: null, fees_amount: null, tax_amount: null,
+      accommodation_override: null, amount_paid_override: null,
+      refund_amount: null, refunded_at: null, cancelled_at: null,
+      needs_review: false, needs_review_reason: null,
+      lifecycle: 'registered', at_camp: false,
+      created_at: new Date('2026-01-01T00:00:00.000Z'), updated_at: new Date('2026-01-01T00:00:00.000Z'),
+    };
+  }
+
+  function handBuiltPerson(): Person {
+    return {
+      id: 'p_hb1',
+      firstName: 'Hand', lastName: 'Built', gender: 'male',
+      dateOfBirth: null, grade: null, school: null, kind: 'youth',
+      churchId: 'ch_1', churchName: 'C', zone: 'Blue', groupId: null,
+      mobile: null, email: null, suburb: null, postcode: null, state: null,
+      medicalConditions: [], dietaryRequirements: [],
+      otherMedications: null, medicareNumber: null,
+      churchUnlistedNote: null,
+      parentGuardianName: null, parentPhone: null, parentRelation: null,
+      blueCardNumber: null, blueCardExpiry: null,
+      consents: {
+        medical: { granted: false, timestamp: null },
+        media: { granted: false, timestamp: null },
+        supervision: { granted: false, timestamp: null },
+      },
+      paymentStatus: 'unpaid', accommodationKind: null, accommodationLabel: null,
+      registrationType: null, registrationCost: null, discountCode: null,
+      ticketNumber: null, invoiceNumber: null, accommodationKindConfidence: null,
+      discountAmount: null, amountPaid: null, feesAmount: null, taxAmount: null,
+      needsReview: false, needsReviewReason: null,
+      lifecycle: 'registered', atCamp: false,
+      checkInHistory: [], signOutHistory: [],
+      elvantoMeta: null,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      // accommodationKindRaw deliberately absent (undefined) — this Person was not built by toPerson.
+    };
+  }
+
+  it('resolves accommodationKind from accommodation_override and marks it confirmed', () => {
+    const p = toPerson({ ...baseRow(), accommodation_kind: 'tent', accommodation_override: 'classroom',
+      accommodation_kind_confidence: 'guessed' }, [], []);
+    expect(p.accommodationKind).toBe('classroom');       // effective
+    expect(p.accommodationKindRaw).toBe('tent');         // what the importers said
+    expect(p.accommodationOverride).toBe('classroom');
+    expect(p.accommodationKindConfidence).toBe('confirmed');
+  });
+
+  it('falls through to accommodation_kind when there is no override', () => {
+    const p = toPerson({ ...baseRow(), accommodation_kind: 'tent', accommodation_override: null,
+      accommodation_kind_confidence: 'guessed' }, [], []);
+    expect(p.accommodationKind).toBe('tent');
+    expect(p.accommodationKindRaw).toBe('tent');
+    expect(p.accommodationOverride).toBeNull();
+    expect(p.accommodationKindConfidence).toBe('guessed');
+  });
+
+  it('maps the money and cancel fields', () => {
+    const p = toPerson({ ...baseRow(), amount_paid_override: 250, refund_amount: 50,
+      refunded_at: new Date('2026-09-01T00:00:00Z'), cancelled_at: new Date('2026-09-02T00:00:00Z') }, [], []);
+    expect(p.amountPaidOverride).toBe(250);
+    expect(p.refundAmount).toBe(50);
+    expect(p.refundedAt).toBe('2026-09-01T00:00:00.000Z');
+    expect(p.cancelledAt).toBe('2026-09-02T00:00:00.000Z');
+  });
+
+  // THE REGRESSION GUARD. Without this, saving an overridden person bakes the override
+  // into the importers' accommodation_kind column and the original value is gone for good.
+  it('personColumns persists the RAW accommodation kind, never the resolved override', () => {
+    const p = toPerson({ ...baseRow(), accommodation_kind: 'tent', accommodation_override: 'classroom' }, [], []);
+    const cols = personColumns(p);
+    expect(cols['accommodation_kind']).toBe('tent');
+    expect(cols['accommodation_override']).toBe('classroom');
+  });
+
+  it('personColumns falls back to accommodationKind for a hand-built person (no raw carrier)', () => {
+    const cols = personColumns({ ...handBuiltPerson(), accommodationKind: 'tent' });
+    expect(cols['accommodation_kind']).toBe('tent');
+  });
+});

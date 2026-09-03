@@ -94,6 +94,40 @@ export interface Person {
   // ----- pre-camp / Hub -----
   paymentStatus: PaymentStatus;
   accommodationKind?: AccommodationKind | null;
+  /**
+   * The EFFECTIVE accommodation is `accommodationKind` above — `toPerson` resolves it as
+   * `accommodationOverride ?? accommodationKindRaw` so every reader honours the override with
+   * no further change. These two fields are the inputs to that resolution.
+   *
+   * Individual accommodation override (Data Import → "Individual accommodation override").
+   * Beats the Ticket List, the Invoice, and `Church.accommodationOverride`.
+   * NO importer ever reads, writes or clears this.
+   */
+  accommodationOverride?: AccommodationKind | null;
+  /**
+   * The raw `accommodation_kind` column as stored — what the three importers own.
+   *
+   * ⚠️ `personColumns` persists THIS, not `accommodationKind`, so saving a person who carries an
+   * override cannot bake the resolved value into the importers' column. `undefined` means this
+   * Person was not built by the mapper (a hand-constructed new import row), and `personColumns`
+   * then falls back to `accommodationKind`. Any code that patches `accommodationKind` on a
+   * MAPPED person MUST set this too — see person.service.update and the two importers.
+   */
+  accommodationKindRaw?: AccommodationKind | null;
+  /**
+   * Individual amount-paid override. Short-circuits the ENTIRE personValue cascade (inperson
+   * tag → sponsor tag → amountPaid → registrationCost). NO importer ever touches it.
+   */
+  amountPaidOverride?: number | null;
+  /** Refund issued against this registration; subtracted from their budget value. Partial refunds are normal. */
+  refundAmount?: number | null;
+  /** When the refund was recorded. Money-adjacent audit stamp. */
+  refundedAt?: ISODateString | null;
+  /**
+   * Audit stamp for the → cancelled transition. The cancel STATE itself lives in `lifecycle`
+   * (there is deliberately no second cancelled concept) — this only records when it happened.
+   */
+  cancelledAt?: ISODateString | null;
   accommodationLabel?: string | null;
   registrationType?: string | null;
   registrationCost?: number | null;

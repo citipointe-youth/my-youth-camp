@@ -134,19 +134,36 @@ export function toPerson(
     blueCardExpiry: readEncDate(row, 'blue_card_expiry', id),
     consents: readEncConsents(row, id),
     paymentStatus: row['payment_status'] as Person['paymentStatus'],
-    accommodationKind: (row['accommodation_kind'] as Person['accommodationKind']) ?? null,
+    /* THE OVERRIDE CHOKEPOINT. Resolved once, here, on the read path: every consumer of
+       accommodationKind (dashboard counts, allocation grouping, tent distribution, the
+       allocations screen + its 4-sheet export, budget classifyTicket, the audit workbook,
+       the Data tab) honours an individual override with no code of its own. The raw column
+       rides alongside as accommodationKindRaw and is what personColumns writes back. */
+    accommodationKind:
+      ((row['accommodation_override'] as Person['accommodationKind']) ??
+        (row['accommodation_kind'] as Person['accommodationKind'])) ?? null,
+    accommodationKindRaw: (row['accommodation_kind'] as Person['accommodationKind']) ?? null,
+    accommodationOverride: (row['accommodation_override'] as Person['accommodationOverride']) ?? null,
     accommodationLabel: (row['accommodation_label'] as string | null) ?? null,
     registrationType: (row['registration_type'] as string | null) ?? null,
     registrationCost: (row['registration_cost'] as number | null) ?? null,
     discountCode: (row['discount_code'] as string | null) ?? null,
     ticketNumber: (row['ticket_number'] as string | null) ?? null,
     invoiceNumber: (row['invoice_number'] as string | null) ?? null,
-    accommodationKindConfidence:
-      (row['accommodation_kind_confidence'] as Person['accommodationKindConfidence']) ?? null,
+    /* An override is a human decision, so it reads as 'confirmed'. This is also what stops the
+       Invoice import's price-guessing from touching an overridden person
+       (invoice-import.service.ts:434-439 only guesses when nothing better exists). */
+    accommodationKindConfidence: row['accommodation_override'] != null
+      ? 'confirmed'
+      : ((row['accommodation_kind_confidence'] as Person['accommodationKindConfidence']) ?? null),
     discountAmount: (row['discount_amount'] as number | null) ?? null,
     amountPaid: (row['amount_paid'] as number | null) ?? null,
     feesAmount: (row['fees_amount'] as number | null) ?? null,
     taxAmount: (row['tax_amount'] as number | null) ?? null,
+    amountPaidOverride: (row['amount_paid_override'] as number | null) ?? null,
+    refundAmount: (row['refund_amount'] as number | null) ?? null,
+    refundedAt: row['refunded_at'] ? (row['refunded_at'] as Date).toISOString() : null,
+    cancelledAt: row['cancelled_at'] ? (row['cancelled_at'] as Date).toISOString() : null,
     needsReview: (row['needs_review'] as boolean | null) ?? false,
     needsReviewReason: (row['needs_review_reason'] as string | null) ?? null,
     lifecycle: row['lifecycle'] as Person['lifecycle'],
@@ -340,7 +357,15 @@ export function personColumns(p: Person): Record<string, unknown> {
     blue_card_expiry_enc: maybeEncrypt(p.blueCardExpiry ?? null, aad('blue_card_expiry', id)),
     consents_enc: maybeEncrypt(JSON.stringify(p.consents), aad('consents', id)),
     payment_status: p.paymentStatus,
-    accommodation_kind: p.accommodationKind ?? null,
+    /* ⚠️ RAW, never p.accommodationKind — that field is the RESOLVED effective value and writing
+       it back would bake an override into the importers' column, destroying what the CSV said.
+       `undefined` = hand-built person (no mapper), so fall back. See Person.accommodationKindRaw. */
+    accommodation_kind: (p.accommodationKindRaw !== undefined ? p.accommodationKindRaw : p.accommodationKind) ?? null,
+    accommodation_override: p.accommodationOverride ?? null,
+    amount_paid_override: p.amountPaidOverride ?? null,
+    refund_amount: p.refundAmount ?? null,
+    refunded_at: p.refundedAt ?? null,
+    cancelled_at: p.cancelledAt ?? null,
     accommodation_label: p.accommodationLabel ?? null,
     registration_type: p.registrationType ?? null,
     registration_cost: p.registrationCost ?? null,
@@ -377,6 +402,8 @@ const PERSON_UPDATE_COLS = [
   // Ticket List / Invoice import fields (017).
   'ticket_number', 'invoice_number', 'accommodation_kind_confidence', 'discount_amount',
   'amount_paid', 'fees_amount', 'tax_amount', 'needs_review', 'needs_review_reason',
+  // Individual overrides + cancel/refund (0022). Never written by any importer.
+  'accommodation_override', 'amount_paid_override', 'refund_amount', 'refunded_at', 'cancelled_at',
 ] as const;
 
 /**

@@ -190,7 +190,9 @@ export function makeTicketImportService(
             // (students AND leaders), not just youth — matches import.service + allocate.
             const churchOverride = churchOverrideById.get(existing.churchId);
 
-            let finalKind: Person['accommodationKind'] = existing.accommodationKind;
+            // RAW, not the resolved effective value: this import owns accommodation_kind and must
+            // never write an individual override back into its own column.
+            let finalKind: Person['accommodationKind'] = existing.accommodationKindRaw ?? existing.accommodationKind ?? null;
             let finalConfidence: Person['accommodationKindConfidence'] = existing.accommodationKindConfidence;
             if (churchOverride) {
               finalKind = churchOverride;
@@ -220,6 +222,7 @@ export function makeTicketImportService(
             const merged: Person = {
               ...mergedOwned,
               accommodationKind: finalKind,
+              accommodationKindRaw: finalKind,
               accommodationKindConfidence: finalConfidence,
               updatedAt: now,
             };
@@ -274,6 +277,7 @@ export function makeTicketImportService(
               churchName: '',
               paymentStatus: parsedPaymentStatus ?? 'unpaid',
               accommodationKind: parsedKind,
+              accommodationKindRaw: parsedKind,
               accommodationLabel: null,
               registrationType: ticketTypeRaw || null,
               registrationCost: null,

@@ -172,6 +172,7 @@ const OWNED_KEYS = [
   'feesAmount',
   'taxAmount',
   'accommodationKind',
+  'accommodationKindRaw',
   'accommodationKindConfidence',
   // Item A (2026-07-28): the multi-invoice review flag has to be an owned key or
   // `mergeOwnedFields` silently drops it (it only copies keys named here).
@@ -436,6 +437,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             const guess = priceLookup.get(Math.round(ticketTotal * 100));
             if (guess) {
               incoming.accommodationKind = guess;
+              incoming.accommodationKindRaw = guess;
               incoming.accommodationKindConfidence = 'guessed';
               guessedAccommodationCount++;
             }

@@ -278,7 +278,14 @@ export function makePersonService(repo: IPersonRepository): PersonService {
       }
       const nextLifecycle =
         lifecycle === 'cancelled' || lifecycle === 'registered' ? lifecycle : existing.lifecycle;
-      const updated: Person = { ...existing, ...safeRest, id: existing.id, lifecycle: nextLifecycle, updatedAt: nowISO() };
+      /* A patch that sets accommodationKind is setting the IMPORTERS' value (the manual
+         hand-correction path), so it must move the raw carrier too — personColumns persists
+         accommodationKindRaw, and leaving it holding `existing`'s stale value would silently
+         discard the edit. The individual override is a separate field and is untouched here. */
+      const rawPatch: Partial<Person> = safeRest.accommodationKind !== undefined
+        ? { accommodationKindRaw: safeRest.accommodationKind }
+        : {};
+      const updated: Person = { ...existing, ...safeRest, ...rawPatch, id: existing.id, lifecycle: nextLifecycle, updatedAt: nowISO() };
       // Fail-closed: the patched result must still be inside the actor's scope (a zoneLeader/
       // admin/director changing church/zone can't push a person out of what they may access).
       if (!canAccessPerson(actor, updated)) {
