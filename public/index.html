@@ -7457,6 +7457,80 @@ function _xlsxToCsv(arrayBuffer){
   }
   return XLSX.utils.sheet_to_csv(wb.Sheets[chosen]);
 }
+/* ===== Import warnings — grouped, expandable (2026-09-04) =====
+   The three importers have ALWAYS returned a full `warnings[]`; this screen rendered only
+   `errors` and silently dropped the rest (117 messages on a real 2026-09-02 run). Each warning
+   now carries a stable `code` (src/core/types/import-warning.ts) so we group by category
+   instead of pattern-matching the prose.
+   ⚠️ Labels below are a DISPLAY MIRROR of IMPORT_WARNING_META, not a rule — an unknown code
+   degrades to a prettified version of the code itself, so adding a server-side code without
+   touching this file is safe (it just reads slightly worse until a label is added here). */
+const IMPORT_WARN_LABELS={
+  'missing-care-column':['Care column missing from the export — imports blank','critical'],
+  'church-would-be-created':['Unrecognised church — would be created','info'],
+  'church-created':['Unrecognised church — created','info'],
+  'unknown-grade':['Unrecognised school grade — left blank','review'],
+  'manual-allocation-ambiguous':['Manual allocation skipped — duplicate name/mobile','review'],
+  'manual-allocation-church-forced':['Church forced by manual allocation','info'],
+  'accommodation-church-override':['Accommodation overridden by church override','info'],
+  'duplicate-submission':['Duplicate submission — most recent won','review'],
+  'duplicate-submission-order-undetermined':['Duplicate submission — most recent COULD NOT be determined','critical'],
+  'absent-but-retained':['Absent from file but KEPT (cancellation/refund/override)','info'],
+  'absent-will-delete':['Absent from file — will be DELETED','critical'],
+  'absent-delete-truncated':['More deletions not listed individually','critical'],
+  'occurrence-mismatch':['Row occurrence does not match filter — skipped','info'],
+  'ticket-not-active':['Ticket status not Active — row skipped','info'],
+  'unknown-ticket-type':['Unrecognised ticket type — accommodation unchanged','review'],
+  'unknown-payment-status':['Unrecognised payment status — unchanged','review'],
+  'multiple-active-tickets':['Multiple active tickets — one kept','review'],
+  'unmatched-orphan-created':['No matching student — created as an orphan ("Needs review")','review'],
+  'multiple-occurrences':['Multiple event occurrences in one file','review'],
+  'no-financial-data':['No financial data in row — skipped','info'],
+  'billing-name-match-only':['Matched by billing-contact name only — verify the payer is the registrant','review'],
+  'billing-name-ambiguous':['Billing contact matches several people — invoice unmatched','review'],
+  'invoice-unmatched':['No matching person — invoice NOT imported','critical'],
+  'multiple-invoices-summed':['Multiple invoices for one person — amounts summed','review'],
+  'shared-invoice-split-by-price':['Shared invoice — split cleanly by ticket price','info'],
+  'shared-invoice-split-residual':['Shared invoice — split by the only resolvable price combination','info'],
+  'shared-invoice-split-equally':['Shared invoice — price unknown, split EQUALLY and flagged','review'],
+};
+const _WARN_SEV_ORDER={critical:0,review:1,info:2};
+const _WARN_SEV_COLOR={critical:'var(--danger)',review:'var(--warn,#b45309)',info:'var(--muted)'};
+const WARN_ROW_CAP=25;
+function _warnMeta(code){
+  const m=IMPORT_WARN_LABELS[code];
+  if(m)return{label:m[0],sev:m[1]};
+  // Unknown/absent code — never drop the warning, just label it generically.
+  return{label:code?String(code).replace(/-/g,' ').replace(/^./,c=>c.toUpperCase()):'Other',sev:'review'};
+}
+// Grouped, collapsed warnings block for one file's result. Returns '' when there are none.
+function _warnGroupHtml(r,key){
+  const ws=(r&&r.warnings)||[];
+  if(!ws.length)return '';
+  const groups=new Map();
+  for(const w of ws){
+    const code=w.code||'';
+    if(!groups.has(code))groups.set(code,[]);
+    groups.get(code).push(w);
+  }
+  const ordered=[...groups.entries()].sort((a,b)=>{
+    const sa=_WARN_SEV_ORDER[_warnMeta(a[0]).sev]??1,sb=_WARN_SEV_ORDER[_warnMeta(b[0]).sev]??1;
+    return sa-sb||b[1].length-a[1].length;
+  });
+  const inner=ordered.map(([code,list])=>{
+    const {label,sev}=_warnMeta(code);
+    const rows=list.slice(0,WARN_ROW_CAP).map(w=>
+      `<div style="font-size:.74rem;color:var(--muted);padding:1px 0">${w.row?'Row '+w.row+': ':''}${esc(w.message||'')}</div>`).join('');
+    const more=list.length>WARN_ROW_CAP?`<div class="sub" style="font-size:.72rem">+${list.length-WARN_ROW_CAP} more</div>`:'';
+    return `<details style="margin:3px 0 3px 8px">
+      <summary style="cursor:pointer;font-size:.78rem;color:${_WARN_SEV_COLOR[sev]||'var(--muted)'}"><b>${list.length}</b> · ${esc(label)}</summary>
+      <div style="margin:2px 0 4px 10px">${rows}${more}</div></details>`;
+  }).join('');
+  const worst=_warnMeta(ordered[0][0]).sev;
+  return `<details style="margin-top:5px" ${worst==='critical'?'open':''}>
+    <summary style="cursor:pointer;font-size:.78rem;color:${_WARN_SEV_COLOR[worst]||'var(--muted)'}">${icSm('alert')} <b>${ws.length}</b> warning${ws.length===1?'':'s'} in ${ordered.length} categor${ordered.length===1?'y':'ies'}</summary>
+    ${inner}</details>`;
+}
 // Per-type "extra" warning line for the preview/result (orphans, guessed accommodation, unmatched).
 function _importExtraLine(type,r){
   if(type==='tickets')return r.created?`${icSm('alert')} <b>${r.created}</b> ticket${r.created===1?'':'s'} didn't match an existing student — created as "Needs review". Import the <b>Form</b> file first so tickets attach to real students.`:null;
@@ -9005,8 +9079,8 @@ async function _renderImportPreview(){
     const errList=errs.length?`<div style="margin-top:4px">${errs.slice(0,8).map(e=>`<div style="color:var(--danger);font-size:.76rem">Row ${e.row}: ${esc(e.message)}</div>`).join('')}${errs.length>8?`<div class="sub">+${errs.length-8} more error${errs.length-8===1?'':'s'}</div>`:''}</div>`:'';
     return `<div style="border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px">
       <div class="rowsb" style="align-items:center"><b style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.name)}</b><span class="pill info" style="flex:none">${IMPORT_TYPES[b.type].label}</span></div>
-      <div class="sub" style="margin-top:2px">${r.created} to add \xb7 ${r.updated} to update \xb7 ${r.skipped} to skip${del} \xb7 ${errs.length} error${errs.length===1?'':'s'}</div>
-      ${extra?`<div class="sub" style="margin-top:2px">${extra}</div>`:''}${errList}</div>`;
+      <div class="sub" style="margin-top:2px">${r.created} to add \xb7 ${r.updated} to update \xb7 ${r.skipped} to skip${del} \xb7 ${errs.length} error${errs.length===1?'':'s'} \xb7 ${(r.warnings||[]).length} warning${(r.warnings||[]).length===1?'':'s'}</div>
+      ${extra?`<div class="sub" style="margin-top:2px">${extra}</div>`:''}${errList}${_warnGroupHtml(r,b.type)}</div>`;
   }).join('');
   // Bug-11 guard: importing Ticket/Invoice with no Form ever imported (and none in this batch) means
   // rows can't match a student and become "Needs review" orphans. Warn loudly.
@@ -9064,7 +9138,7 @@ async function _confirmImport(){
     }
   }catch(e){toast(e.message);if(box)_renderImportPreview();return;}
   _importBatch=null;
-  const lines=done.map(({b,r})=>`<div class="sub"><b>${IMPORT_TYPES[b.type].label}:</b> <b style="color:#15803d">${r.created}</b> new · <b>${r.updated}</b> updated · ${r.skipped} skipped${r.deleted?' · '+r.deleted+' removed':''} · ${(r.errors||[]).length} errors</div>`).join('');
+  const lines=done.map(({b,r})=>`<div class="sub"><b>${IMPORT_TYPES[b.type].label}:</b> <b style="color:#15803d">${r.created}</b> new · <b>${r.updated}</b> updated · ${r.skipped} skipped${r.deleted?' · '+r.deleted+' removed':''} · ${(r.errors||[]).length} errors</div>${_warnGroupHtml(r,b.type)}`).join('');
   const reviewBtn=(flagged||unmatched)?`<button class="btn alt" style="margin-top:8px" onclick="_goReviewData()">${icSm('alert')} Review ${flagged+unmatched} flagged record${flagged+unmatched===1?'':'s'} ${icSm('arrowr')}</button>`:'';
   if(box){box.style.display='block';box.innerHTML=`<div class="callbox"><b>Import complete</b></div>${lines}${reviewBtn}`;}
   _loadImportStamps(); // refresh the per-source "last imported" lines

@@ -2,6 +2,7 @@ import type { IPersonRepository, IChurchRepository } from '../repositories/inter
 import type { Person } from '../core/entities/person';
 import type { Actor } from '../core/entities/user';
 import type { AccommodationKind, PaymentStatus } from '../core/types/enums';
+import type { ImportWarning } from '../core/types/import-warning';
 import { assertCan } from './access-control';
 import { BadRequestError } from '../core/errors/app-error';
 import { parseCsv } from '../utils/csv';
@@ -39,7 +40,7 @@ export interface TicketImportResult {
   skipped: number; // missing name / ambiguous match / occurrence-filtered / row error
   dryRun: boolean;
   errors: Array<{ row: number; message: string }>;
-  warnings: Array<{ row: number; message: string }>;
+  warnings: ImportWarning[];
   orphansCreated: string[]; // "First Last" labels
 }
 
@@ -127,6 +128,7 @@ export function makeTicketImportService(
             eventOccurrenceRaw.toLowerCase() !== opts.eventOccurrence.trim().toLowerCase()
           ) {
             warnings.push({
+              code: 'occurrence-mismatch',
               row: rowNum,
               message:
                 `Row occurrence "${eventOccurrenceRaw || '(blank)'}" does not match filter ` +
@@ -143,6 +145,7 @@ export function makeTicketImportService(
           const ticketStatusRaw = field(row, 'Ticket Status');
           if (ticketStatusRaw && ticketStatusRaw.trim().toLowerCase() !== 'active') {
             warnings.push({
+              code: 'ticket-not-active',
               row: rowNum,
               message: `Ticket Status "${ticketStatusRaw}" is not Active — row skipped`,
             });
@@ -158,6 +161,7 @@ export function makeTicketImportService(
           const parsedKind = ticketTypeRaw ? mapTicketType(ticketTypeRaw) : null;
           if (ticketTypeRaw && parsedKind === null) {
             warnings.push({
+              code: 'unknown-ticket-type',
               row: rowNum,
               message: `Unrecognized Ticket Type "${ticketTypeRaw}" — accommodation left unchanged`,
             });
@@ -167,6 +171,7 @@ export function makeTicketImportService(
           const parsedPaymentStatus = paymentStatusRaw ? mapPaymentStatus(paymentStatusRaw) : null;
           if (paymentStatusRaw && parsedPaymentStatus === null) {
             warnings.push({
+              code: 'unknown-payment-status',
               row: rowNum,
               message: `Unrecognized Payment Status "${paymentStatusRaw}" — left unchanged`,
             });
@@ -204,6 +209,7 @@ export function makeTicketImportService(
               finalConfidence = 'confirmed';
               if (parsedKind && parsedKind !== churchOverride) {
                 warnings.push({
+                  code: 'accommodation-church-override',
                   row: rowNum,
                   message: `Accommodation "${parsedKind}" overridden to "${churchOverride}" (church override)`,
                 });
@@ -235,6 +241,7 @@ export function makeTicketImportService(
             if (dupTickets > 1) {
               const kindLabel = finalKind ?? 'unchanged';
               warnings.push({
+                code: 'multiple-active-tickets',
                 row: rowNum,
                 message:
                   `${firstName} ${lastName} has ${dupTickets} active tickets in this file — ` +
@@ -310,6 +317,7 @@ export function makeTicketImportService(
             addToIndex(index, person);
             orphansCreated.push(`${firstName} ${lastName}`);
             warnings.push({
+              code: 'unmatched-orphan-created',
               row: rowNum,
               message: `No matching person found for "${firstName} ${lastName}" — created as an unmatched orphan`,
             });
@@ -323,6 +331,7 @@ export function makeTicketImportService(
 
       if (!opts.eventOccurrence && occurrencesSeen.size > 1) {
         warnings.push({
+          code: 'multiple-occurrences',
           row: 0,
           message:
             `Multiple event occurrences found in this file (${[...occurrencesSeen].join(', ')}) — ` +

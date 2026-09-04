@@ -8,6 +8,7 @@ import {
 } from './church-allocation';
 import type { Actor } from '../core/entities/user';
 import type { ConsentType } from '../core/types/enums';
+import type { ImportWarning } from '../core/types/import-warning';
 import { assertCan } from './access-control';
 import { BadRequestError } from '../core/errors/app-error';
 import { parseCsv } from '../utils/csv';
@@ -35,7 +36,7 @@ export interface ImportResult {
   retained: number;
   dryRun: boolean;
   errors: Array<{ row: number; message: string }>;
-  warnings: Array<{ row: number; message: string }>;
+  warnings: ImportWarning[];
   churchesCreated: string[];
   phantomChurches: string[];
 }
@@ -125,6 +126,7 @@ export function makeImportService(
          header row the admin is looking at in their spreadsheet. */
       for (const missing of missingColumns(rawRows[0], CARE_COLUMNS)) {
         warnings.push({
+          code: 'missing-care-column',
           row: 1,
           message: `Column "${missing}" is not in this file — every registrant will import with that field BLANK. Check the Elvanto export includes it before confirming.`,
         });
@@ -186,7 +188,7 @@ export function makeImportService(
         if (opts.dryRun) {
           // Dry-run: flag for operator confirmation, return a sentinel
           if (!phantomChurches.includes(name)) phantomChurches.push(name);
-          warnings.push({ row: rowNum, message: `Church "${name}" not found — would be created (dry-run)` });
+          warnings.push({ code: 'church-would-be-created', row: rowNum, message: `Church "${name}" not found — would be created (dry-run)` });
           return `__phantom__${key}`;
         }
         const id = newId('church');
@@ -205,7 +207,7 @@ export function makeImportService(
         newlyCreated.set(key, id);
         churchZoneById.set(id, church.zone);
         churchesCreated.push(name);
-        warnings.push({ row: rowNum, message: `Church "${name}" not found — created (zone defaulted to Yellow)` });
+        warnings.push({ code: 'church-created', row: rowNum, message: `Church "${name}" not found — created (zone defaulted to Yellow)` });
         return id;
       }
 
@@ -258,7 +260,7 @@ export function makeImportService(
           const gradeRaw = field(row, 'School Grade', 'grade', 'Grade');
           const { kind, grade } = parseGradeOrLeader(gradeRaw);
           if (gradeRaw && grade === null && kind === 'youth') {
-            warnings.push({ row: rowNum, message: `Unrecognized School Grade "${gradeRaw}" — grade left blank` });
+            warnings.push({ code: 'unknown-grade', row: rowNum, message: `Unrecognized School Grade "${gradeRaw}" — grade left blank` });
           }
 
           const dob = normalizeDate(field(row, 'Date of Birth', 'dateOfBirth', 'dob', 'DOB'));
@@ -272,12 +274,12 @@ export function makeImportService(
           let resolvedChurchId: string;
           let resolvedChurchName: string;
           if (ovMatch === 'ambiguous') {
-            warnings.push({ row: rowNum, message: `Manual allocation for "${firstName} ${lastName}" skipped — duplicate name/mobile can't be disambiguated` });
+            warnings.push({ code: 'manual-allocation-ambiguous', row: rowNum, message: `Manual allocation for "${firstName} ${lastName}" skipped — duplicate name/mobile can't be disambiguated` });
           }
           if (ovMatch && ovMatch !== 'ambiguous') {
             resolvedChurchId = ovMatch.assignedChurchId;
             resolvedChurchName = ovMatch.assignedChurchName;
-            warnings.push({ row: rowNum, message: `Church forced to "${resolvedChurchName}" by manual allocation` });
+            warnings.push({ code: 'manual-allocation-church-forced', row: rowNum, message: `Church forced to "${resolvedChurchName}" by manual allocation` });
           } else if (explicitChurchId) {
             resolvedChurchId = explicitChurchId;
             resolvedChurchName = churchName || explicitChurchId;
@@ -324,6 +326,7 @@ export function makeImportService(
           const accommodationKind: Person['accommodationKind'] = churchOverride ?? csvAccommodationKind;
           if (churchOverride && csvAccommodationKind && csvAccommodationKind !== churchOverride) {
             warnings.push({
+              code: 'accommodation-church-override',
               row: rowNum,
               message: `Accommodation "${csvAccommodationKind}" overridden to "${churchOverride}" (church override)`,
             });
@@ -375,7 +378,13 @@ export function makeImportService(
               : `${firstName} ${lastName} appears ${timesSeen} times in this file — ` +
                 `the most recent submission wins field by field, and a blank cell in it keeps ` +
                 `the earlier value. Check the ticket type and cost.`;
-            warnings.push({ row: rowNum, message });
+            warnings.push({
+              code: orderUndetermined
+                ? 'duplicate-submission-order-undetermined'
+                : 'duplicate-submission',
+              row: rowNum,
+              message,
+            });
           }
 
           const rowPhone = phoneKey(mobile);
@@ -538,6 +547,7 @@ export function makeImportService(
 
       for (const p of protectedPeople) {
         warnings.push({
+          code: 'absent-but-retained',
           row: 0,
           message:
             `${p.firstName} ${p.lastName} (${p.churchName || 'no church'}) is no longer in this file but ` +
@@ -557,6 +567,7 @@ export function makeImportService(
       const absentPeople = allPersons.filter((p) => absentSetForWarning.has(p.id));
       for (const p of absentPeople.slice(0, DELETE_WARNING_CAP)) {
         warnings.push({
+          code: 'absent-will-delete',
           row: 0,
           message:
             `${p.firstName} ${p.lastName} (${p.churchName || 'no church'}) is no longer in this file ` +
@@ -565,6 +576,7 @@ export function makeImportService(
       }
       if (absentPeople.length > DELETE_WARNING_CAP) {
         warnings.push({
+          code: 'absent-delete-truncated',
           row: 0,
           message: `…and ${absentPeople.length - DELETE_WARNING_CAP} more people will be deleted (${absentPeople.length} in total)`,
         });

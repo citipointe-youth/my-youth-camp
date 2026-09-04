@@ -1,6 +1,7 @@
 import type { IPersonRepository } from '../repositories/interfaces/entity-repositories';
 import type { Person } from '../core/entities/person';
 import type { AccommodationKind } from '../core/types/enums';
+import type { ImportWarning, ImportWarningCode } from '../core/types/import-warning';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
 import { BadRequestError } from '../core/errors/app-error';
@@ -50,7 +51,7 @@ export interface InvoiceImportResult {
   guessedAccommodationCount: number;
   dryRun: boolean;
   errors: Array<{ row: number; message: string }>;
-  warnings: Array<{ row: number; message: string }>;
+  warnings: ImportWarning[];
   unmatchedInvoices: Array<{
     row: number;
     invoiceNumber: string | null;
@@ -294,7 +295,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             feesAmount === null &&
             taxAmount === null
           ) {
-            warnings.push({ row: rowNum, message: 'No financial data in row — skipped' });
+            warnings.push({ code: 'no-financial-data', row: rowNum, message: 'No financial data in row — skipped' });
             skipped++;
             continue;
           }
@@ -324,11 +325,13 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             if (result.status === 'matched') {
               matchedPeople = [result.person];
               warnings.push({
+                code: 'billing-name-match-only',
                 row: rowNum,
                 message: `Matched by billing-contact name only — verify "${billingFirst} ${billingLast}" is actually a covered registrant, not just the payer`,
               });
             } else if (result.reason === 'ambiguous') {
               warnings.push({
+                code: 'billing-name-ambiguous',
                 row: rowNum,
                 message: `Billing contact "${billingFirst} ${billingLast}" matches ${result.candidates.length} people — ambiguous, invoice unmatched`,
               });
@@ -344,6 +347,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
               ticketTotal,
             });
             warnings.push({
+              code: 'invoice-unmatched',
               row: rowNum,
               message: `No matching person for invoice ${invoiceNumber ?? '(no invoice number)'} (amount paid: ${amountPaid ?? 'unknown'}) — not imported`,
             });
@@ -418,6 +422,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
           moneyByPerson.set(person.id, acc);
           if (prior) {
             warnings.push({
+              code: 'multiple-invoices-summed',
               row: rowNum,
               message:
                 `${person.firstName} ${person.lastName} has ${acc.rows} invoices in this file — ` +
@@ -511,7 +516,17 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
               matchedPeople
                 .map((p, i) => `${p.firstName} ${p.lastName} ${formatMoney(parts[i] ?? null)}`)
                 .join(', ');
+            // The three split outcomes get DISTINCT codes on purpose: only 'split-equally'
+            // sets needsReview, and CLAUDE.md's 2026-08-07 entry turns on being able to tell
+            // "the split is too sensitive" apart from "why is this flagged".
+            const splitCode: ImportWarningCode =
+              split.method === 'ticket-price'
+                ? 'shared-invoice-split-by-price'
+                : split.method === 'residual'
+                  ? 'shared-invoice-split-residual'
+                  : 'shared-invoice-split-equally';
             warnings.push({
+              code: splitCode,
               row: rowNum,
               message:
                 split.method === 'ticket-price'

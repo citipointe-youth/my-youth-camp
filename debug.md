@@ -614,6 +614,17 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-09-04 — import warnings: grouped preview + the `code` contract
+
+| Symptom | Go to |
+|---|---|
+| **A warning I know the importer raises never appears on the Data Import screen** | Until 2026-09-04 the preview rendered `r.errors` ONLY and dropped `r.warnings` entirely (117 messages on a real 2026-09-02 run). Now `_warnGroupHtml(r)` renders them, grouped by `code`, in both `_renderImportPreview` and `_confirmImport`. If a specific warning still doesn't show, confirm the service actually pushes it (`grep "warnings.push" src/services/*import*.ts`) — the render path no longer filters anything. |
+| **The upload machine's emailed summary groups a warning under a wrong/ugly heading** | The script groups on `warning.code` (`src/core/types/import-warning.ts`). An **unknown** code is the script's problem, not the app's; a **renamed** code is this repo's. Codes are an out-of-repo contract: **add freely, never rename.** Nothing catches a rename — not tsc, not vitest, not the script. |
+| **`import-warning-codes.test.ts` fails after adding a warning** | Two causes, and the assertion message names which: a `warnings.push({…})` with no `code:` key (it prints `file:line`), or a code with no `IMPORT_WARNING_META` entry. Add the code to the union AND the meta map — the `Record<ImportWarningCode, …>` type makes a missing meta entry a compile error too. If the failure names `'ticket-price'` or `'residual'`, the second scrape's `=== '…'` strip has been broken: those are `split.method` values, not codes. |
+| **A warning renders with a generic label like "Shared invoice split equally"** | That is `_warnMeta`'s **deliberate fallback** for a code with no entry in the SPA's `IMPORT_WARN_LABELS` mirror (`public/index.html` has no build step, so it cannot import `IMPORT_WARNING_META`). Not a bug — add the label to the mirror. It degrades rather than throwing on purpose: this renders on the one screen that rewrites the whole roster. |
+| **"Review N flagged records" goes to a Data tab that shows fewer than N** | Expected, and NOT fixed by this batch. `_confirmImport` sums ticket orphans + `unmatchedInvoices.length`, but an unmatched invoice never creates a person, so it carries no `needsReview` flag and the Data tab's filter cannot show it. The 1 unmatched invoice has persisted across 2026-09-01 and 09-02. It is now named in the preview (`invoice-unmatched`), but reconciling it has no in-app destination. |
+| **Invoice `updated` is larger than the number of rows in the file** | Correct. `invoice-import.service.ts` counts distinct **people touched** (the `firstTouch` guard on `touched`), and one shared-invoice row touches several people — 481 rows → 560 people matches the measured 44 shared invoices over 101 people. Do not "fix" it to count rows. |
+
 ### 2026-09-03 — individual overrides, cancel/refund (Data Import cards)
 
 | Symptom | Go to |

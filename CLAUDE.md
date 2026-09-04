@@ -4,6 +4,88 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Import warnings are grouped and VISIBLE — `code` is an out-of-repo contract — `camp-v108` — 2026-09-04
+
+Backend + SPA. **No schema or migration change** — next migration is still `0023`.
+`npm run typecheck` clean, `npx vitest run` **1059 pass / 64 files** (was 1055/63; **+4**, **+1
+file**), `node --check` OK on the SPA body (range **967–9859**, re-derived) and `sw.js`.
+`sw.js` `camp-v107`→**`camp-v108`**.
+
+### The screen had been throwing away every warning since the importers were written
+All three import services have always returned `warnings: Array<{row, message}>`
+(`import.service.ts:38`, `ticket-import.service.ts:42`, `invoice-import.service.ts:53`), and
+`_renderImportPreview` rendered **only `r.errors`**. On a real 2026-09-02 run that silently
+discarded **117 messages** (25 Form + 15 Ticket + 77 Invoice) — including the row-1 care-column
+warning whose entire reason for existing (2026-08-04 (2d)) is to be *"visible in the dry-run
+preview before anything is confirmed"*. It never was.
+
+> ⚠️ **THE OWNER'S UPLOAD MACHINE POSTS TO THE API DIRECTLY AND WAS THE ONLY THING SEEING THESE.**
+> A script on a separate PC posts the three CSVs to `/import/csv`, `/import/tickets`,
+> `/import/invoices` and emails a per-file summary (`created=… errors=… warnings=…`). That is why
+> the counts were known while the app showed nothing, and it is why the **response shape is a
+> contract with a client that cannot be typechecked from this repo.**
+
+### `ImportWarningCode` — add freely, NEVER rename
+New `src/core/types/import-warning.ts`: `ImportWarning {row, message, code}`, the
+`ImportWarningCode` union (**27 codes**), and `IMPORT_WARNING_META` (label + severity
+`critical`/`review`/`info`) beside it, so adding a code without a label is a **type error**.
+Every one of the 22 `warnings.push()` sites across the three services now supplies a `code`.
+`message` stays free-text and may be reworded at will — **that is the whole point of the code**,
+so nothing has to pattern-match the prose.
+
+- ⚠️ **The three shared-invoice split outcomes get DISTINCT codes**
+  (`shared-invoice-split-by-price` / `-residual` / `-equally`). Only `-equally` sets
+  `needsReview`. The 2026-08-07 (2nd) entry turns entirely on being able to tell *"the split is
+  too sensitive"* apart from *"why is this flagged"*, and until now nothing in the data could.
+- **Adding a code is additive and safe for the script** — it reads `.length`. **Renaming one
+  silently breaks its grouping**, with no error on either side. There is no test that can catch a
+  rename (a test cannot know intent); the comment at the top of the file carries that rule.
+
+### The guard test is source inspection, and it is proven to catch a regression
+`src/services/import-warning-codes.test.ts` (4 tests) scrapes the three services: every
+`warnings.push({…})` literal must contain a `code:` key, and every emitted code string must have
+an `IMPORT_WARNING_META` entry. **Verified by reverting, not asserted:** deleting the `code:` line
+from `ticket-import.service.ts`'s unknown-ticket-type warning fails the suite naming
+`ticket-import.service.ts:163`.
+
+- ⚠️ **The second scrape must strip `=== '…'` comparison operands first.** The invoice split
+  assigns its code through a typed local, and the ternary's `split.method === 'ticket-price'`
+  comparisons otherwise read as codes — the first version of this test failed on
+  `'ticket-price'`/`'residual'`, which are split METHOD names, not warning codes.
+- It also asserts `emitted.size >= 20`, so a regex that silently matches nothing cannot make the
+  suite pass vacuously — the same too-weak-fixture failure as the `VAPID_ENV` `'pub'`/`'priv'`
+  placeholders.
+
+### SPA — collapsed, grouped by severity, and it must degrade rather than throw
+`_warnGroupHtml(r)` + `IMPORT_WARN_LABELS` + `_warnMeta` render a `<details>` per file —
+*"⚠ 77 warnings in 4 categories"* — containing one nested `<details>` per code
+(*"70 · Matched by billing-contact name only"*), capped at `WARN_ROW_CAP` (25) rows per group.
+Groups sort **critical → review → info**, then by count; the block auto-opens only when its worst
+severity is `critical`. Wired into both the dry-run preview card and the post-confirm result, and
+both now print a warnings count beside the errors count.
+
+- ⚠️ **`IMPORT_WARN_LABELS` is a hand-kept DISPLAY MIRROR of `IMPORT_WARNING_META`, not a rule.**
+  `public/index.html` has no build step so it cannot import the real one. An **unknown code
+  degrades to a prettified version of the code string** rather than throwing or dropping the
+  warning, so adding a server-side code without touching the SPA is safe — it just reads slightly
+  worse. A 4th test flags any declared code missing a SPA label, as a nudge, not a correctness gate.
+- This is deliberately **not** the fourth-copy-of-a-rule failure: the mirror carries labels and
+  severities (presentation), never the decision about *when* a warning fires.
+
+### Two things the numbers revealed, neither a bug
+- **Invoice `updated` legitimately exceeds the file's row count** (481 rows → 560 updated). It
+  counts distinct **people touched** (the `firstTouch` guard on the `touched` map), and one
+  shared-invoice row touches several people — consistent with the measured 44 shared invoices over
+  101 people.
+- ⚠️ **AN UNMATCHED INVOICE IS INVISIBLE INSIDE THE APP, AND STILL IS.** It never creates a person
+  (`Person.churchId` is non-nullable, the export has no church column), so it can carry no
+  `needsReview` flag and cannot appear on the Data tab. `_confirmImport` counts it into the
+  **"Review N flagged records"** button, which filters on `needsReview` — **so that portion of the
+  count leads to a screen that cannot show it.** The same 1 unmatched invoice persisted across
+  2026-09-01 and 09-02. It is now at least *named* in the preview (`invoice-unmatched`, severity
+  `critical`), but reconciling it still has no in-app destination. Left as-is deliberately — the
+  fix is a real screen, not a bigger warning.
+
 ## Override search-result buttons — `camp-v107` — 2026-09-04
 
 The **Add** / **Change church** buttons in the three Data Import override cards' search results
