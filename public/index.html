@@ -4739,13 +4739,25 @@ function computeDiscountSummaryClient(regs,filterId){
 }
 RENDER.budget=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('budget','<p class="note-hint" style="margin-top:24px;text-align:center">Budget is available to directors only.</p>','Budget & Costings','');return;}
-  const [regs,camperPage]=await Promise.all([api(_scoped('/registrants?includeCancelled=1')),api(_scoped('/campers?pageSize=1000')).catch(()=>[])]);
+  /* ⚠️ This used to be `.catch(()=>[])` — a failure silently dropped every already-arrived
+     person (all leaders, and every student who has signed in) from the budget, with no error,
+     no toast and nothing on screen. That is indistinguishable from "the camp is smaller than
+     you thought". The reason is now RECORDED and printed on the Summary reconciliation block.
+     ⚠️ NOT paginated: `pageSize` is not implemented server-side (verified 2026-09-05, nothing
+     under src/ reads it), so /campers already returns everything. Adding a `page` loop against
+     an endpoint that ignores it would re-fetch page 1 forever and duplicate every camper. */
+  const regs=await api(_scoped('/registrants?includeCancelled=1'));
+  let campers=[],fetchErr=null;
+  try{
+    const res=await api(_scoped('/campers'));
+    campers=Array.isArray(res)?res:(res.items||[]);
+  }catch(e){fetchErr=(e&&e.message)||String(e);}
   // Anyone already at camp (esp. leaders, bulk-signed-in on the mode switch) has
   // lifecycle !== 'registered' and drops out of /registrants — merge in /campers
   // (deduped by id) so registration fees for arrived people still count.
-  const campers=Array.isArray(camperPage)?camperPage:camperPage.items||[];
   const regIds=new Set((regs||[]).map(r=>r.id));
   window._budgetRegs=[...(regs||[]),...campers.filter(c=>!regIds.has(c.id))];
+  window._budgetFetch={count:window._budgetRegs.length,error:fetchErr};
   const churches=[...new Map((regs||[]).map(r=>[r.churchId,r.churchName])).entries()].map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name));
   const selHtml=`<div class="rowsb" style="gap:8px;margin-bottom:12px">
     <select id="budChurch" onchange="drawBudget()" style="flex:1"><option value="all">All ministries</option>${churches.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>
@@ -5004,6 +5016,8 @@ function drawBudget(){
   // Camp settings is admin-only (see the role map), so a director gets the same facts without a
   // button that would bounce them off a screen they cannot open.
   const isAdmin=ACTOR&&ACTOR.role==='admin';
+  const bf=window._budgetFetch;
+  const fetchWarn=(bf&&bf.error)?`<div class="warnbox">Some people could not be loaded, so every figure below under-reports. ${esc(bf.error)}</div>`:'';
   const priceGate=unpriced.count
     ?`<div class="warnbox" style="margin-bottom:12px">${icSm('alert')} <b>${unpriced.count} ${unpriced.count===1?'person':'people'} paid in person on a ticket with no known price.</b>
        They are counted at <b>$0</b>, so the total below under-reads. Every other ticket type is priced automatically from its invoices — ${esc(unpriced.types.join(', '))} ${unpriced.types.length===1?'has':'have'} none.
@@ -5044,7 +5058,7 @@ function drawBudget(){
         <span class="lbl">Outstanding</span><b>${_money(upg.owedTotal)}</b></div>`:''}
     </div></div>`:'';
   const box=document.getElementById('budgetBody');
-  if(box)box.innerHTML=`${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${sponSection}${upgSection}${priceSection}${discSection}</div></div>`;
+  if(box)box.innerHTML=`${fetchWarn}${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${sponSection}${upgSection}${priceSection}${discSection}</div></div>`;
 }
 /* Which way the Sponsorship card is sliced. Module-level rather than a DOM read, so the choice
    survives `_budRedraw()` (classifying a code redraws the screen, and a director working down
