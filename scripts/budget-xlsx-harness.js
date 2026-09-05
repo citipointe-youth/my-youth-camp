@@ -77,11 +77,16 @@ function extract(decl) {
 }
 
 let savedBlob = null, savedName = null, lastToast = null;
+// `sel` used to be hardcoded to 'all', which is exactly why the whole-branch review found
+// Finding A and this harness didn't: nothing here could ever exercise a scoped (single-ministry)
+// export. Configurable via SEL_VALUES — set SEL_VALUES.budChurch before an export to simulate the
+// admin picking a ministry from the dropdown, reset to 'all' after (section 10 below does both).
+const SEL_VALUES = { budChurch: 'all' };
 const ctx = {
   console, JSON, Object, String, Number, Math, Array, Date, RegExp, Map, Set, isFinite, Promise,
   Uint8Array, Uint32Array, DataView, ArrayBuffer, Blob, TextEncoder, Response, Error,
   CompressionStream: typeof CompressionStream === 'function' ? CompressionStream : undefined,
-  sel: () => 'all',
+  sel: (id) => (Object.prototype.hasOwnProperty.call(SEL_VALUES, id) ? SEL_VALUES[id] : 'all'),
   toast: (msg) => { lastToast = msg; },
   document: { getElementById: () => null },
   _exportName: (base, ext) => base + '.' + ext,
@@ -215,19 +220,27 @@ const CARINDALE_PEOPLE = [
 ];
 const GRACE_PEOPLE = Array.from({ length: 4 }, () => budPerson({
   churchId: 'c2', churchName: 'Grace Point', accommodationKind: null }));
-ctx.computeBudgetClient = () => ({
-  churches: [
-    {
-      churchName: 'Citipointe, Carindale', churchId: 'c1',
-      camperCount: 13, leaderCount: 2, total: 2350, _people: CARINDALE_PEOPLE,
-    },
-    {
-      churchName: 'Grace Point', churchId: 'c2',
-      camperCount: 4, leaderCount: 0, total: 0, _people: GRACE_PEOPLE,
-    },
-  ],
-  camperCount: 17, leaderCount: 2, churchCount: 2, grandTotal: 2350,
-});
+const ALL_BUD_CHURCHES = [
+  { churchName: 'Citipointe, Carindale', churchId: 'c1', camperCount: 13, leaderCount: 2, total: 2350, _people: CARINDALE_PEOPLE },
+  { churchName: 'Grace Point', churchId: 'c2', camperCount: 4, leaderCount: 0, total: 0, _people: GRACE_PEOPLE },
+];
+// Scope-aware (2026-09-06, Finding A harness work) — the real `computeBudgetClient` filters
+// `_people` by `!filterId||filterId==='all'||r.churchId===filterId`; this stub applies the
+// IDENTICAL predicate at church granularity so section 10 below can exercise a genuinely scoped
+// export (one ministry only) rather than always the fixed two-church fixture. Every existing
+// call site passes 'all' (via the default SEL_VALUES.budChurch), so this is a no-op for every
+// check above and below that doesn't touch scope.
+ctx.computeBudgetClient = (regs, filterId) => {
+  const churches = (!filterId || filterId === 'all')
+    ? ALL_BUD_CHURCHES : ALL_BUD_CHURCHES.filter((c) => c.churchId === filterId);
+  return {
+    churches,
+    camperCount: churches.reduce((s, c) => s + c.camperCount, 0),
+    leaderCount: churches.reduce((s, c) => s + c.leaderCount, 0),
+    churchCount: churches.length,
+    grandTotal: churches.reduce((s, c) => s + c.total, 0),
+  };
+};
 
 /* The owner's exact sponsorship case, needed before the first export so the whole workbook is
    built once. YC26SPON is a FULL sponsorship spanning two tent prices; YC26HALF is a part
@@ -370,9 +383,14 @@ console.log('\n0. _budExportRows — grouping and totality');
   ctx.SETTINGS.discountCodeTags = { YC26SPON: 'sponsor', YC26HALF: 'discount', YC26CASH: 'inperson', YC26LDR: 'sponsor' };
   ctx.window._budgetRegs = SPONSOR_REGS;
   // `window._budgetFetch` is a LATER task's field (Task 6); exportBudget's read of it degrades to
-  // null when absent. Simulated here, deliberately mismatched against `printed` (19), so this run
-  // proves the reconciliation can actually FIRE rather than always reading "0 OK".
-  ctx.window._budgetFetch = { count: 20 };
+  // null when absent. ⚠ `.count` itself is now VESTIGIAL for the reconciliation's actual number —
+  // Finding A (2026-09-06) changed `fetched` to be derived by filtering `window._budgetRegs`
+  // itself (see exportBudget), so `.count` here only gates the presence check ("has a fetch
+  // happened at all"). The mismatch this section proves the reconciliation can FIRE on comes for
+  // free from the fixture: SPONSOR_REGS (16 people, the population `fetched` now reads) is a
+  // deliberately DIFFERENT array from the fixed church rows `computeBudgetClient` returns (19
+  // people, what `printed` accumulates) — section 8 below pins the exact numbers this produces.
+  ctx.window._budgetFetch = { count: SPONSOR_REGS.length };
   await ctx.exportBudget();
   assertExportOk();
   const buf = Buffer.from(await savedBlob.arrayBuffer());
@@ -634,15 +652,19 @@ console.log('\n0. _budExportRows — grouping and totality');
        accumulated by detail() and nothing here hardcodes it independently — this is what turns
        "a reconciliation block exists" into "the reconciliation block reflects reality", and it is
        what a detail()-undercounts-people regression actually breaks (see the revert-proof in the
-       task report: this exact check is the one that fails). */
+       task report: this exact check is the one that fails).
+       ⚠ 16/19/-3 (was 20/19/1 before Finding A) — `fetched` is now `SPONSOR_REGS.length` (the
+       array `computeSponsorSummaryClient` also reads), not the old free-standing `.count: 20`.
+       This scope is 'all', so the filter keeps every entry; the mismatch is the fixture's, by
+       construction (two different populations feed `fetched` and `printed` here) — not a bug. */
     // Match by PREFIX, not equality — the label's apostrophes round-trip through the XML as
     // `&apos;` and parseSheet deliberately does not decode entities (see section 7b's own
     // &quot;-laden check above), so an exact-equality lookup against the literal text would
     // silently match nothing.
     const recCell = (prefix) => cellAt(sum.find((r) => ((cellAt(r, 'A') || {}).text || '').indexOf(prefix) === 0), 'B');
-    check('People fetched from the app is exact', recCell('People fetched from the app').num, 20);
+    check('People fetched from the app is exact', recCell('People fetched from the app').num, SPONSOR_REGS.length);
     check("People on 'By ministry' matches printed", recCell('People on').num, 19);
-    check('Difference is exact', recCell('Difference').num, 1);
+    check('Difference is exact', recCell('Difference').num, SPONSOR_REGS.length - 19);
   }
 
   console.log('\n9. An independent parser can read it back');
@@ -662,6 +684,65 @@ console.log('\n0. _budExportRows — grouping and totality');
   check('SheetJS reads the camp total', ws['J8'].v, 2350);
   check('SheetJS reads the comma-containing church name intact', ws['A2'].v, 'Citipointe, Carindale');
   check('SheetJS reads the appended sponsorship total', ws['J14'].v, 1860);
+
+  /* 🔴 FINDING A (whole-branch review, 2026-09-06) — the reconciliation false-positived on EVERY
+     single-ministry export. `fetched` used to read `window._budgetFetch.count` — the CAMP-WIDE
+     population `RENDER.budget` sets once and never re-scopes — while `printed` (via
+     `rep.churches`) correctly covered only the selected church. `sel` was hardcoded to 'all'
+     above, so this harness structurally could not exercise a scoped export at all; that is why
+     `SEL_VALUES` (see the top of this file) exists now. */
+  console.log('\n10. Finding A (2026-09-06) — a SCOPED export scopes `fetched` too, not just `printed`');
+  {
+    const ALL_PEOPLE = [...CARINDALE_PEOPLE, ...GRACE_PEOPLE];
+    ctx.window._budgetRegs = ALL_PEOPLE;
+    // Deliberately the CAMP-WIDE count (19), not the scoped one (15) — this is exactly the value
+    // Finding A's bug used to read verbatim. If the fix regresses back to reading `.count`
+    // directly, "People fetched" below reports 19 again and the two new checks fail.
+    ctx.window._budgetFetch = { count: ALL_PEOPLE.length };
+    SEL_VALUES.budChurch = 'c1';
+    await ctx.exportBudget();
+    assertExportOk();
+    const scopedParts = unzip(Buffer.from(await savedBlob.arrayBuffer()));
+    const scopedSum = parseSheet(scopedParts['xl/worksheets/sheet1.xml']);
+    const scopedTexts = scopedSum.map((r) => (r || []).map((c) => c.text).join(' '));
+    const recCellA = (prefix) => cellAt(scopedSum.find((r) =>
+      ((cellAt(r, 'A') || {}).text || '').indexOf(prefix) === 0), 'B');
+    check('scoped export: People fetched from the app is scoped to the ministry, not camp-wide',
+      recCellA('People fetched from the app').num, CARINDALE_PEOPLE.length);
+    check("scoped export: People on 'By ministry' matches the same ministry",
+      recCellA('People on').num, CARINDALE_PEOPLE.length);
+    check('scoped export: Difference is exactly 0', recCellA('Difference').num, 0);
+    checkTrue('scoped export: NO "Do not rely on the totals above" warning on a correct export',
+      !scopedTexts.some((t) => /Do not rely on the totals/.test(t)));
+    SEL_VALUES.budChurch = 'all';
+  }
+
+  /* 🔴 FINDING B (whole-branch review, 2026-09-06) — an isolated `/campers` failure never reached
+     the Summary sheet. `window._budgetFetch.count` is computed from the already-shrunk
+     `_budgetRegs` array, so `fetched === printed`, `diff === 0`, and the error note — gated on
+     `if(diff)` — never rendered. It must appear on its own line regardless of `diff`, and the two
+     notes must be able to coexist (checked in section 8/10 above: a non-zero diff with no error
+     present prints no error line; here a zero diff with an error present still prints one). */
+  console.log('\n11. Finding B (2026-09-06) — a fetch error surfaces even when Difference is 0');
+  {
+    const ALL_PEOPLE = [...CARINDALE_PEOPLE, ...GRACE_PEOPLE];
+    ctx.window._budgetRegs = ALL_PEOPLE;
+    ctx.window._budgetFetch = { count: ALL_PEOPLE.length, error: 'Network timeout fetching /campers' };
+    SEL_VALUES.budChurch = 'all';
+    await ctx.exportBudget();
+    assertExportOk();
+    const errParts = unzip(Buffer.from(await savedBlob.arrayBuffer()));
+    const errSum = parseSheet(errParts['xl/worksheets/sheet1.xml']);
+    const errTexts = errSum.map((r) => (r || []).map((c) => c.text).join(' '));
+    const recCellB = (prefix) => cellAt(errSum.find((r) =>
+      ((cellAt(r, 'A') || {}).text || '').indexOf(prefix) === 0), 'B');
+    check('fetch-error case: Difference is exactly 0 (fetched === printed, both camp-wide)',
+      recCellB('Difference').num, 0);
+    checkTrue('fetch-error case: the fetch error is on the Summary sheet EVEN THOUGH Difference is 0',
+      errTexts.some((t) => /camper list failed to load/.test(t) && /Network timeout/.test(t)));
+    checkTrue('fetch-error case: no mismatch warning is printed alongside it (diff really is 0)',
+      !errTexts.some((t) => /Do not rely on the totals/.test(t)));
+  }
 
   /* Everything above proves the bytes are what we intended. Only Excel itself proves Excel is
      happy with them, and that cannot run in CI — so it is an opt-in dump rather than a check:

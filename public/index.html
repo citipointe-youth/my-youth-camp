@@ -5235,14 +5235,24 @@ async function exportBudget(){
       [_xc('Leaders',XS.TEXT),_xn(rep.leaderCount,XS.NUM),_xn(null,XS.MONEY)],
       [_xc('Total received',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(rep.grandTotal,XS.GRAND_M)],
     ];
-    /* RECONCILIATION (2026-09-05). Every person in the app must be traceable to one line of
-       'By ministry'. Two independent things can break that, and this block separates them:
-       a grouping bug (caught by _budExportRows' totality assertion) and a SHORT FETCH — the
-       campers request failing or truncating, which used to be swallowed entirely.
+    /* RECONCILIATION (2026-09-05, re-scoped 2026-09-06 — Finding A). Every person in the app
+       must be traceable to one line of 'By ministry'. Two independent things can break that,
+       and this block separates them: a grouping bug (caught by _budExportRows' totality
+       assertion) and a SHORT FETCH — the campers request failing or truncating, which used to
+       be swallowed entirely.
+       🔴 Finding A (2026-09-06): `fetched` USED TO read `window._budgetFetch.count` directly —
+       the camp-wide population `RENDER.budget` sets once and never re-scopes — while `printed`
+       (via `rep.churches`) correctly covers only `scope`. That false-positived the reconciliation
+       on EVERY single-ministry export: 5 people, 3 at Victory, scope=Victory → "fetched 5,
+       printed 3, Difference 2" on a completely correct export. `fetched` is now filtered from the
+       SAME source array (`window._budgetRegs`) with the IDENTICAL predicate
+       `computeBudgetClient` itself uses (`!scope||scope==='all'||r.churchId===scope`) — never
+       re-derived some other way, or the two can drift again.
        ⚠ `window._budgetFetch` is produced by a later task and may not exist yet — the read below
        is guarded so a missing value degrades to "not reported" rather than throwing. */
     const fetched=(window._budgetFetch&&window._budgetFetch.count!=null)
-      ?window._budgetFetch.count:null;
+      ?(window._budgetRegs||[]).filter((r)=>!scope||scope==='all'||r.churchId===scope).length
+      :null;
     sum.push([]);   // blank spacer, matching every other section heading on this sheet
     sum.push([_xc('Reconciliation',XS.SECTION)]);
     sum.push([_xc('People fetched from the app',XS.TEXT),_xn(fetched,XS.NUM),_xc('',XS.TEXT)]);
@@ -5250,8 +5260,17 @@ async function exportBudget(){
     const diff=fetched==null?null:fetched-printed;
     sum.push([_xc('Difference',XS.TOT_T),_xn(diff,XS.TOT_N),_xc(diff===0?'OK':'',XS.TOT_T)]);
     if(diff){
-      sum.push([_xc('⚠ '+Math.abs(diff)+' people are missing from this export. Do not rely on the totals above.'
-        +((window._budgetFetch&&window._budgetFetch.error)?' The camper list failed to load: '+window._budgetFetch.error:''),XS.NOTE)]);
+      sum.push([_xc('⚠ '+Math.abs(diff)+' people are missing from this export. Do not rely on the totals above.',XS.NOTE)]);
+    }
+    /* 🔴 Finding B (2026-09-06) — a fetch error must surface on its OWN line, independently of
+       `diff`. `window._budgetFetch.count` is computed from the already-SHRUNK `_budgetRegs`
+       array (RENDER.budget builds it AFTER the campers fetch fails), so an isolated `/campers`
+       failure gives `fetched === printed`, `diff === 0`, and the old code — gated on `if(diff)`
+       — never printed the error at all. The on-screen warnbox in `drawBudget` was never affected
+       by this; this is only about the exported workbook. Both notes can appear TOGETHER (a
+       fetch error AND a non-zero diff are different failures, not alternatives). */
+    if(window._budgetFetch&&window._budgetFetch.error){
+      sum.push([_xc('⚠ The camper list failed to load: '+window._budgetFetch.error,XS.NOTE)]);
     }
     sum.push([]);
     if(spon.count){

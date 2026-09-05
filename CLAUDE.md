@@ -8,10 +8,57 @@
 
 7-task branch (`budget-export-traceability`). **No schema or migration change** — next migration
 is still `0023`. `npm run typecheck` clean, `npx vitest run` **1065 pass / 64 files** (was
-1059/64; **+6**, no new files), `node scripts/budget-xlsx-harness.js` **133 ok**, `node --check`
-OK on the SPA body (range **967–10056**, re-derived) and `sw.js`, `node
-scripts/accom-export-harness.js` and `node scripts/filter-persist-harness.js` both clean.
-`sw.js` `camp-v108`→**`camp-v109`**.
+1059/64; **+6**, no new files), `node scripts/budget-xlsx-harness.js` **142 ok** (was 133 —
+**+9**, the final fix wave below), `node --check` OK on the SPA body (range **967–10074**,
+re-derived) and `sw.js`, `node scripts/accom-export-harness.js` and `node
+scripts/filter-persist-harness.js` both clean. `sw.js` `camp-v108`→**`camp-v109`**.
+
+### 🔴 Final fix wave (same day, before deploy) — the reconciliation itself had two bugs
+A whole-branch review (structurally invisible to the per-task reviews above, which each only see
+one commit's diff) found the reconciliation block this branch added was **wrong in exactly the
+two ways a reconciliation must never be wrong**: a false alarm on a correct export, and a real
+failure that produced no alarm at all. Files touched: `public/index.html` (`exportBudget`),
+`scripts/budget-xlsx-harness.js`, `debug.md`. **`src/**` untouched.**
+
+- 🔴 **Finding A — the reconciliation false-positived on EVERY single-ministry export.**
+  `fetched` read `window._budgetFetch.count` — the CAMP-WIDE population `RENDER.budget` sets
+  ONCE and never re-scopes — while `printed` (via `rep.churches`, built from the SAME `scope`
+  `exportBudget` passes to `computeBudgetClient`) correctly covered only the selected church.
+  Reproduced: 5 people, 3 at Victory; scope=`all` → "Difference: 0, OK"; scope=Victory →
+  "People fetched: 5", "People on 'By ministry': 3", "Difference: 2", plus the "Do not rely on
+  the totals above" warning — on a completely correct export. This fired the first time anyone
+  used the ministry dropdown, a normal pre-existing workflow, not an edge case. **Fixed by
+  scoping `fetched` from the SAME source array** (`window._budgetRegs`), filtered with the
+  **identical predicate** `computeBudgetClient` itself uses
+  (`!scope||scope==='all'||r.churchId===scope`) — never re-derived any other way, or the two can
+  drift apart again. The guarded degradation to `null` when `window._budgetFetch` is absent is
+  unchanged.
+- 🔴 **Finding B — an isolated `/campers` failure never reached the Summary sheet.**
+  `window._budgetFetch.count` is computed from the **already-shrunk** `_budgetRegs` array (it is
+  set AFTER the campers fetch fails), so a lone fetch failure gives `fetched === printed`,
+  `diff === 0`, and the error text — gated on `if(diff)` — never rendered at all. The on-screen
+  warnbox in `drawBudget` was never affected; this was only about the exported workbook. Fixed:
+  the fetch-error line is now printed whenever `window._budgetFetch.error` is set, **independent
+  of `diff`** — the two notes are different failures and can appear separately or together.
+- 🔴 **Finding C — the debug.md symptom-router row for this was itself wrong**, in both
+  directions: it said a short camper fetch alone could cause a non-zero Difference (false, per
+  Finding B — it gives `diff===0`) and called a grouping bug "the" cause while never naming the
+  actual dominant one (the scope dropdown, Finding A). Rewritten — see the 2026-09-06 row in
+  `debug.md`'s symptom router.
+- **Harness work, PROVEN to catch both regressions, not just assumed to:** `sel` is now
+  configurable (`SEL_VALUES.budChurch`, was hardcoded `'all'`) and `computeBudgetClient`'s stub
+  is scope-aware, so section 10 can exercise a genuinely single-ministry export. Reverting
+  Finding A's fix (back to `fetched=window._budgetFetch.count`) fails all 3 of section 10's new
+  checks (`fetched` reads camp-wide 19 instead of the scoped 15, `Difference` reads 4 instead of
+  0, and the false "Do not rely" warning reappears). Reverting Finding B's fix (restoring the
+  `if(diff)`-gated error text) fails section 11's "the fetch error is on the Summary sheet EVEN
+  THOUGH Difference is 0" check. Both proofs restored to green afterward — **142 ok**.
+- ⚠️ **`sw.js`'s `CACHE` was deliberately NOT bumped for this wave**, even though `public/
+  index.html` changed and the standing rule in this file says it must be — the fix-wave brief
+  constrained edits to exactly three files (`public/index.html`, `scripts/budget-xlsx-harness.js`,
+  `debug.md`) and `sw.js` was not one of them. **Whoever deploys this must bump `camp-v109` before
+  or alongside the push**, or an already-installed PWA can keep serving the pre-fix `exportBudget`
+  indefinitely on iOS (documented lazy-worker-update behaviour, see the 2026-08-01 section).
 
 ### The harness had been silently dead for a month, straight through the 2026-09-03 release
 `scripts/budget-xlsx-harness.js`'s `extract()` matched functions by their **full signature**, and
@@ -111,7 +158,10 @@ type, Number, Raw invoice value, Effective $ to budget per ticket, Effective $ t
 Cancelled**. Summary gained a **reconciliation block** (people fetched from the app vs. people
 printed on `By ministry`, with the difference stated loudly — "Do not rely on the totals above" —
 rather than as a quiet number nobody checks) and an **unclassified-codes block** naming each
-untagged code, its headcount and its excluded dollar gap.
+untagged code, its headcount and its excluded dollar gap. ⚠️ **As of the 2026-09-06 final fix
+wave, "people fetched from the app" is SCOPED to whatever ministry `budChurch` has selected, the
+same as "people printed"** — see Finding A above. A single-ministry export reconciling against
+the camp-wide population was the exact bug that wave fixed.
 
 > 🔴 **`_avgDiscountPct` was missing from the harness's own extraction list, and that silently
 > broke the SECOND `exportBudget()` call in the same test run.** `exportBudget`'s own try/catch
@@ -144,10 +194,14 @@ untagged code, its headcount and its excluded dollar gap.
 ### Task 6 — the camper fetch failure is recorded, not swallowed
 `RENDER.budget`'s camper fetch used to `.catch(()=>[])` — a genuine fetch failure was
 indistinguishable from "this camp has no leaders yet". It now records `window._budgetFetch =
-{count, error}`, and the Summary sheet's reconciliation reads it: a non-null `error` is folded
-into the "Difference" explanation ("The camper list failed to load: …") so a reconciliation
-mismatch is diagnosable from the export alone, not just from opening devtools. An on-card warnbox
-surfaces the same failure on screen.
+{count, error}`, and the Summary sheet's reconciliation reads it. An on-card warnbox surfaces the
+same failure on screen (unaffected by anything below).
+
+⚠️ **Corrected 2026-09-06 (Finding B) — the error used to be folded INTO the "Difference"
+explanation, gated on `if(diff)`, which meant it never printed at all for an isolated `/campers`
+failure** (`window._budgetFetch.count` is computed from the already-shrunk `_budgetRegs` array,
+so `fetched === printed` and `diff === 0` in exactly that case). It now prints on its own line
+whenever `window._budgetFetch.error` is set, regardless of `diff` — see the final fix wave above.
 
 ### Real-Excel verification — done, with one honest caveat
 `BUDGET_XLSX_OUT=C:/tmp/budget.xlsx node scripts/budget-xlsx-harness.js`, then opened over COM
