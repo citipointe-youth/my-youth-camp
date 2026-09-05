@@ -584,7 +584,7 @@ console.log('\n0. _budExportRows — grouping and totality');
      caught only by counting cells in the unzipped workbook, never by reading the source. These
      assertions count what actually reaches the file, so the source can no longer lie about it. */
   console.log('');
-  console.log('7c. Non-detail rows are genuinely 11 cells wide in the emitted XML');
+  console.log('7a. Non-detail rows are genuinely 11 cells wide in the emitted XML');
   const widthOf = (r) => (r || []).length;
   check('the sponsorship section heading emits 11 cells', widthOf(g[campTotIdx + 2]), 11);
   check('the camp total row emits 11 cells', widthOf(g[campTotIdx]), 11);
