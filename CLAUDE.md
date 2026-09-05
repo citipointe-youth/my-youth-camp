@@ -4,6 +4,172 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Budget export traceability — the harness was dead for a month, ~$13,000 of sponsorship was invisible — `camp-v109` — 2026-09-06
+
+7-task branch (`budget-export-traceability`). **No schema or migration change** — next migration
+is still `0023`. `npm run typecheck` clean, `npx vitest run` **1065 pass / 64 files** (was
+1059/64; **+6**, no new files), `node scripts/budget-xlsx-harness.js` **133 ok**, `node --check`
+OK on the SPA body (range **967–10056**, re-derived) and `sw.js`, `node
+scripts/accom-export-harness.js` and `node scripts/filter-persist-harness.js` both clean.
+`sw.js` `camp-v108`→**`camp-v109`**.
+
+### The harness had been silently dead for a month, straight through the 2026-09-03 release
+`scripts/budget-xlsx-harness.js`'s `extract()` matched functions by their **full signature**, and
+a `tag` parameter was appended to two of them on 2026-08-05 without the harness being re-run. It
+threw on startup from that day forward — **ZERO checks ran for a month**, including through the
+2026-09-03 cancel/refund release, which shipped with no harness coverage at all despite touching
+the exact code this file exports. Fixed by matching on a **name prefix** instead of the full
+signature, plus a sandbox guard that fails loudly (naming the missing symbol) if a function this
+script depends on is ever renamed or absent — see the `['_budScopeRows', '_budExportRows', …]`
+list in the script, which itself had to be updated when `_budExportRows` was added in Task 4.
+
+### Untagged discount codes were invisible to the sponsorship ask — measured, not estimated
+Only **5 of 19** discount codes in prod use are classified in `settings.discount_code_tags`
+(`KH100`, `YC26YP`, `YC26EFT`, `YC26CASH`, `VICTORY50`). The other 14 were silently excluded from
+`computeSponsorSummary`/`computeSponsorSummaryClient`, which only ever walked `sponsor`/`discount`
+tags — an untagged code, however deep the discount on its invoices, contributed **nothing** to the
+reported sponsorship gap.
+
+| Code | People | $ gap | Discount |
+|---|---|---|---|
+| `YC26BNESPONSOR` | 30 | $5,700 | 100% |
+| `ALIVE100` | 11 | $1,730 | 100% |
+| `YC26ELEVATION` | 8 | $1,480 | 100% |
+| `YC26STAFF` | 5 | $950 | 100% |
+| `YSPINESPONSOR` | 3 | $530 | 100% |
+| `YC26NORTHINTERN` + `YC26KHPARENTS` + `YC26REDINTERN` | 6 | $1,020 | 100% |
+| `SWB100` | 1 | $190 | 100% |
+| `YSNORTH50` | 9 | — | 50% |
+| `VICTORYBNE100` | 5 | — | 47% |
+| `YC26BNEINTERN` | 3 | — | 67% |
+| `YC26CLASS` | 3 | — | 86% |
+| `YC26CLASSFULL` | 1 | — | 90% |
+
+**64 people / $11,600** on 100%-discount untagged codes, plus **21 more** on partially-discounted
+untagged codes — **~85 people, ~$13,000** of sponsorship gap that never appeared anywhere on the
+Budget screen or its export. Prod otherwise measured clean for the 2026-09-03 feature the harness
+missed: **0 cancellations, 0 amount-paid overrides, exactly 1 refund** — so the cancel/refund
+defects this branch also fixes were real bugs, just latent against prod's actual data.
+
+> ⚠️ **REPORT, NEVER INFER.** `isUnclassifiedDiscount`/`_isUnclassifiedDiscount` detect an
+> untagged code with real invoice evidence of a discount and report it — as a person, a dollar
+> gap, and a named code on the Summary sheet's "Unclassified discount codes" block — and
+> **exclude** its money from every total. **Do not map a discount percentage onto a tag** (e.g.
+> "100% off → sponsor"). An untagged 100%-discount code can legitimately be a staff comp or a desk
+> payment that was never meant to be a sponsorship ask; guessing would ask a real sponsor for
+> money nobody owes. **The totals only move once a human classifies the code** on the Budget
+> screen. This is the same doctrine as the pre-existing `discountTagConflict` check — report,
+> don't correct.
+
+### Sponsorship loop order — cancelled-gated, then unclassified, then tagged
+`computeSponsorSummary` (server) and `computeSponsorSummaryClient` (SPA) both run, per person, in
+this exact order: **(1)** skip a blank discount code; **(2)** resolve `tag` and `unclassified` and
+derive `inAskPopulation = (tag is sponsor/discount) || unclassified`; **(3)** if
+`status==='cancelled'`, count it into `withdrawnCount`/`withdrawnTotal` **only if** it was in the
+ask population, then `continue`/`return` — a cancelled person on an `inperson` tag or a plain
+untagged code with no discount evidence was never part of any ask and is skipped outright, not
+counted as withdrawn; **(4)** if `unclassified`, accumulate into the unclassified bucket and
+`continue`/`return`; **(5)** otherwise, if untagged or not a sponsor/discount tag, `continue`/
+`return`; **(6)** accumulate into the tagged sponsor/discount bucket. Both implementations call
+the **pre-refund** value (`receivedBeforeRefund` server-side, `_personValueBase` in the SPA) for
+every gap calculation — **never** `personValue`/`_personValue`, which subtracts the refund. A
+refund must not re-open a sponsorship gap the camp already chose to give back.
+
+- ⚠️ **A cancellation is gated on being IN the ask population, not counted unconditionally.**
+  This was a real bug found and fixed mid-branch (review round 1→2): a cancelled person on an
+  untagged-but-discounted code was briefly falling through into `unclassifiedTotal` instead of
+  `withdrawnCount`/`withdrawnTotal`. The cancelled check must run **first**, before the
+  unclassified check, and must itself be scoped to `inAskPopulation`.
+- Verified side-by-side, 2026-09-06: the two implementations are identical in order and
+  condition. The one structural (non-semantic) difference is that the SPA precomputes `cls`/`tp`
+  once per person before branching, while the server computes `classifyTicket`/
+  `resolveTicketPrice` inline inside whichever branch needs them — both are pure functions of
+  already-known inputs, so this changes nothing observable, only when a value already implied by
+  the inputs gets computed.
+
+### `_budExportRows` — export-only, deliberately a SECOND function
+New in Task 4: export rows grouped by **(ticket class × discount code)**, with totality guaranteed
+by construction (every person lands in exactly one bucket keyed by `cls+'\0'+code`, so Σ row
+counts always equals the fetched population — see the reconciliation block below).
+
+> ⚠️ **`_budExportRows` must NOT be merged with `_budScopeRows`.** The on-screen Budget card
+> deliberately keeps `_budScopeRows`'s campers/leaders-merged rows (owner decision, 2026-08-02) —
+> that shape answers "what did this ministry owe" for a director glancing at the screen. The
+> export needs the finer (ticket class × code) grain to name which discount code sits behind each
+> line. These are two different questions with two different correct shapes; DRYing them into one
+> function would force one of the two screens to answer the wrong question.
+- **OR-accumulate `unclassified` per row, never overwrite.** `isUnclassifiedDiscount` depends on
+  the PERSON (`discountAmount`/`amountPaid`/`registrationCost`), not the code alone, so two people
+  sharing one untagged code can disagree — found in review (2026-09-06): overwriting would let a
+  classified member's `false` silently clear a genuinely-unclassified row. A false positive
+  (over-reporting) is safe; a false negative here would print "Full price" on a row that actually
+  holds a discounted, unreported person.
+
+### `exportBudget` — 11 columns, a Summary reconciliation block, and a bug the harness itself found
+New columns (`By ministry` sheet): **Church, Row type, Audience, Accommodation, Code used, Code
+type, Number, Raw invoice value, Effective $ to budget per ticket, Effective $ to budget total,
+Cancelled**. Summary gained a **reconciliation block** (people fetched from the app vs. people
+printed on `By ministry`, with the difference stated loudly — "Do not rely on the totals above" —
+rather than as a quiet number nobody checks) and an **unclassified-codes block** naming each
+untagged code, its headcount and its excluded dollar gap.
+
+> 🔴 **`_avgDiscountPct` was missing from the harness's own extraction list, and that silently
+> broke the SECOND `exportBudget()` call in the same test run.** `exportBudget`'s own try/catch
+> swallows every internal error into a toast (by design — a broken build must not crash the whole
+> screen) — so the missing extraction turned into a silent `ReferenceError` inside the export,
+> `_rlSaveBlob` never ran, and every downstream check kept reading the **FIRST** (untagged) run's
+> stale blob. The checks still **passed**, against the wrong workbook. Found only because the
+> failure mode was investigated rather than accepted. Fixed two ways: `_avgDiscountPct` added to
+> the extraction list, and a new **`assertExportOk()`** called after every `await
+> ctx.exportBudget()`, asserting the internal catch never fired (`!lastToast ||
+> !/Could not build/.test(lastToast)`) — so a broken build now fails loudly, at the exact call
+> that broke it, instead of producing confusing unrelated-looking diffs several hundred lines
+> later.
+
+> ⚠️ **Raw invoice value = `amountPaid` — the owner's explicit choice** (2026-09-05), taken
+> *before* any override or refund. **Accepted trade-off: a sponsored row reads `$0.00` in BOTH the
+> Raw invoice value AND the Effective $ columns** — a sponsor invoice genuinely settles at $0, so
+> there is nothing to distinguish. The gap lives in the Sponsorship block, not on the row. Do not
+> "fix" this by substituting `registrationCost` for a sponsored row's raw value — that would
+> contradict the same owner ruling that makes `personValue`'s grand total read as MONEY RECEIVED,
+> not the value of every place.
+> ⚠️ **A row padded with bare `null` entries emits ONE cell, not eleven.** `_xlSheetXml` **skips**
+> a bare `null` array entry entirely, while `_xc('', style)` emits a real styled `<c/>` blank —
+> these look identical in the source array but are NOT identical in the emitted XML. Harness
+> section **7a** asserts the **EMITTED width** of the sponsorship-heading, camp-total and header
+> rows (11 cells each, counted in the unzipped XML), not just their source-array length — a
+> regression here would otherwise silently narrow a styled row without any test noticing, because
+> the source array can lie about what actually reaches the file.
+
+### Task 6 — the camper fetch failure is recorded, not swallowed
+`RENDER.budget`'s camper fetch used to `.catch(()=>[])` — a genuine fetch failure was
+indistinguishable from "this camp has no leaders yet". It now records `window._budgetFetch =
+{count, error}`, and the Summary sheet's reconciliation reads it: a non-null `error` is folded
+into the "Difference" explanation ("The camper list failed to load: …") so a reconciliation
+mismatch is diagnosable from the export alone, not just from opening devtools. An on-card warnbox
+surfaces the same failure on screen.
+
+### Real-Excel verification — done, with one honest caveat
+`BUDGET_XLSX_OUT=C:/tmp/budget.xlsx node scripts/budget-xlsx-harness.js`, then opened over COM
+automation (Excel installed on this machine). **Confirmed by reading the file back through
+Excel itself, not assumed:** opened with **no repair prompt**; **11 columns** on `By ministry`
+matching the spec exactly; header row bold with fill `0x1E1B4B` (`#1E1B4B`); church-total rows
+(`Citipointe, Carindale`, `Grace Point`) bold with fill `#EDE9FE`; the camp total (`All
+ministries`) bold, white text, fill `#4F46E5`; `FreezePanes=True`, `SplitRow=1`; `AutoFilterMode=
+True` with range `$A$1:$K$8`, stopping **before** the blank spacer row and the sponsorship
+heading, exactly as designed.
+
+> ⚠️ **The Summary reconciliation did NOT read "Difference 0 OK" when dumped this way, and that
+> is the harness's fixture, not a defect.** The harness's only `BUDGET_XLSX_OUT` write-out path
+> reuses the same fixture that section 8 uses to prove the mismatch-detection path actually fires
+> (20 people fetched vs. 19 printed → `Difference: 1`, with the "Do not rely on the totals above"
+> warning) — there is no separate "clean" fixture wired to the env-var dump. The reconciliation
+> **mechanism** is fully verified (both in the harness's exact-number checks and by reading the
+> real cells back through Excel above); what was NOT verified in real Excel is the zero-difference
+> rendering, because the one fixture available deliberately isn't zero. If a future session wants
+> to eyeball "Difference 0 OK" in real Excel, it needs a second fixture or a temporary local edit
+> to the harness's people array — not a claim that this was seen and wasn't.
+
 ## Import warnings are grouped and VISIBLE — `code` is an out-of-repo contract — `camp-v108` — 2026-09-04
 
 Backend + SPA. **No schema or migration change** — next migration is still `0023`.
