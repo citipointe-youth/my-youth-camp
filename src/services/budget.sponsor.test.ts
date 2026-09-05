@@ -273,7 +273,7 @@ describe('sponsorAmountFor', () => {
 });
 
 describe('2026-09-05 fix — cancelled, refunded and unclassified places', () => {
-  const tags: DiscountTagMap = { SPON: 'sponsor', HALFOFF: 'discount' };
+  const tags: DiscountTagMap = { SPON: 'sponsor', HALFOFF: 'discount', INP: 'inperson' };
   const prices: BasePrices = { tent: null, classroom: null };
   const base = (over: Partial<BudgetPerson> = {}): BudgetPerson => ({
     churchId: 'c1', churchName: 'Carindale', kind: 'camper',
@@ -314,18 +314,45 @@ describe('2026-09-05 fix — cancelled, refunded and unclassified places', () =>
     ]);
   });
 
-  it('a cancelled person on an untagged discounted code is withdrawn, not unclassified', () => {
+  it('withdrawnCount is scoped to the ASK population, not every cancelled place', () => {
     // Review round 1 (2026-09-05): the cancelled check must be hoisted ahead of the
-    // unclassified check, or this exact person — cancelled AND on a code nobody has tagged
-    // — falls through into unclassifiedTotal instead of withdrawnTotal, which is the
-    // headline "money we still need" figure this feature exists to surface. Reverting that
-    // ordering would report outstanding money for someone who withdrew.
-    const r = computeSponsorSummary(
+    // unclassified check, or a cancelled person on an untagged (but discounted) code falls
+    // through into unclassifiedTotal instead of withdrawnTotal, which is the headline "money
+    // we still need" figure this feature exists to surface. Reverting that ordering would
+    // report outstanding money for someone who withdrew.
+    //
+    // Round 2 (2026-09-05): hoisting the check unconditionally then over-corrected — it also
+    // counted a cancelled `inperson`-tagged place (never an ask to begin with: that money
+    // genuinely arrived, just at the desk) into withdrawnCount, and would have counted a
+    // plain untagged code with no discount evidence too. The Summary sheet renders this as
+    // "Withdrawn (not asked for): N place(s), $X excluded from the total above" — asserting
+    // an exclusion that never happened inflates N against a $0 amount and misleadingly reads
+    // as sponsored places going missing. `withdrawnCount`/`withdrawnTotal` must therefore be
+    // scoped to exactly the population that would otherwise have entered the ask: a
+    // sponsor/discount-tagged code, or an untagged code `isUnclassifiedDiscount` flags.
+
+    // cancelled + sponsor code -> withdrawn (unchanged from round 1)
+    const sponsorCase = computeSponsorSummary(
+      [base({ discountCode: 'SPON', status: 'cancelled' })], { tags, prices });
+    expect(sponsorCase.withdrawnCount).toBe(1);
+
+    // cancelled + untagged discounted code -> withdrawn, never unclassified (unchanged from round 1)
+    const untaggedDiscountedCase = computeSponsorSummary(
       [base({ discountCode: 'UNTAGGED', discountAmount: 190, amountPaid: 0, status: 'cancelled' })],
       { tags, prices });
-    expect(r.unclassifiedCount).toBe(0);
-    expect(r.unclassifiedTotal).toBe(0);
-    expect(r.withdrawnCount).toBe(1);
+    expect(untaggedDiscountedCase.withdrawnCount).toBe(1);
+    expect(untaggedDiscountedCase.unclassifiedCount).toBe(0);
+    expect(untaggedDiscountedCase.unclassifiedTotal).toBe(0);
+
+    // cancelled + inperson code -> NOT withdrawn (new — the regression guard for round 2)
+    const inpersonCase = computeSponsorSummary(
+      [base({ discountCode: 'INP', amountPaid: 190, status: 'cancelled' })], { tags, prices });
+    expect(inpersonCase.withdrawnCount).toBe(0);
+
+    // cancelled + no discount code at all -> NOT withdrawn (new)
+    const noCodeCase = computeSponsorSummary(
+      [base({ discountCode: null, amountPaid: 190, status: 'cancelled' })], { tags, prices });
+    expect(noCodeCase.withdrawnCount).toBe(0);
   });
 
   it('does not flag an untagged code with no discount evidence', () => {

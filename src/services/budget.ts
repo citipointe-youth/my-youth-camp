@@ -700,25 +700,39 @@ export function computeSponsorSummary(
     const code = (p.discountCode ?? '').trim();
     if (!code) continue;
 
+    // The tag is resolved once, up front, via `discountTagFor` rather than a raw `tags[code]`
+    // lookup — the code may legitimately be untagged (tag === null) at this point in the loop,
+    // and `discountTagFor` already validates against the three known tag values, so it is a
+    // drop-in replacement for the `tags[code]` lookup the tagged path used to do on its own.
+    const tag = discountTagFor(p, tags);
+    const unclassified = isUnclassifiedDiscount(p, tags);
+    const inAskPopulation = (tag != null && SPONSOR_TAGS.includes(tag)) || unclassified;
+
     // A withdrawn place is not an ask, regardless of how its code is classified — checked
     // FIRST, before the unclassified check and the tag check, so a cancelled person on an
     // untagged (but discounted) code cannot fall through into unclassifiedTotal, which is
     // exactly the bug this task exists to fix, just relocated to a different bucket
-    // (2026-09-05, review round 1). The tag is resolved here directly via `discountTagFor`
-    // rather than the raw `tags[code]` lookup the code below still uses, because at this
-    // point in the loop the code may legitimately be untagged (tag === null) — `sponsorAmountFor`
-    // handles a null tag correctly, same as the unclassified branch below already does.
+    // (2026-09-05, review round 1).
+    //
+    // ⚠️ SCOPED TO THE ASK POPULATION ONLY (round 2). A cancelled person whose code is
+    // untagged-with-no-discount-evidence, or tagged `inperson`, was never part of any ask to
+    // begin with — `inperson` money genuinely arrived (it was just taken by hand at the desk),
+    // so counting its cancellation as "withdrawn" would assert an exclusion that never
+    // happened and inflate the reported count against a $0 amount, misleadingly implying a
+    // sponsored place went missing. Such a person is skipped entirely below, exactly as they
+    // were before cancellation was ever considered.
     if (p.status === 'cancelled') {
-      const tag = discountTagFor(p, tags);
-      const cls = classifyTicket(p, tags);
-      const { ticketValue, amount } = sponsorAmountFor(
-        p, cls, prices, resolveTicketPrice(p, priceTable), tag);
-      withdrawnCount++;
-      withdrawnTotal += ticketValue == null ? 0 : amount;
+      if (inAskPopulation) {
+        const cls = classifyTicket(p, tags);
+        const { ticketValue, amount } = sponsorAmountFor(
+          p, cls, prices, resolveTicketPrice(p, priceTable), tag);
+        withdrawnCount++;
+        withdrawnTotal += ticketValue == null ? 0 : amount;
+      }
       continue;
     }
 
-    if (isUnclassifiedDiscount(p, tags)) {
+    if (unclassified) {
       const cls = classifyTicket(p, tags);
       const { ticketValue } = sponsorAmountFor(p, cls, prices, resolveTicketPrice(p, priceTable), null);
       const received = receivedBeforeRefund(p, cls, prices, resolveTicketPrice(p, priceTable), null) ?? 0;
@@ -733,7 +747,6 @@ export function computeSponsorSummary(
       continue;
     }
 
-    const tag = tags[code];
     if (!tag || !SPONSOR_TAGS.includes(tag)) continue;
 
     const cls = classifyTicket(p, tags);
