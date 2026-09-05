@@ -247,6 +247,16 @@ console.log('\n0. _budExportRows — grouping and totality');
     P({ accommodationKind: null }),                                // unknown accommodation
     P({ status: 'cancelled' }),                                    // cancelled, still counted
     P({ amountPaid: null, registrationCost: null }),               // nothing recorded
+    P({ amountPaid: 150 }),                                        // same key as the plain pair —
+                                                                     // a GENUINE differing value,
+                                                                     // proving "mixed" means null,
+                                                                     // never 0 (review finding B)
+    P({ discountCode: 'DUPTEST', discountAmount: 0 }),              // shares DUPTEST with the next
+                                                                     // person but carries NO evidence
+                                                                     // itself (amountPaid===cost)
+    P({ discountCode: 'DUPTEST', discountAmount: 190, amountPaid: 0 }), // same code, but THIS one
+                                                                     // is genuinely unclassified —
+                                                                     // the shared row must still flag
   ];
   const rows = ctx._budExportRows(people, tags, prices, new Map());
 
@@ -260,18 +270,39 @@ console.log('\n0. _budExportRows — grouping and totality');
     rows.find((r) => r.code === 'SPON').unclassified === false);
   check('cancelled is counted within its row',
     rows.reduce((s, r) => s + r.cancelled, 0), 1);
-  checkTrue('a mixed-value row reports a null unit price, never 0',
-    rows.every((r) => r.effAmount === null || typeof r.effAmount === 'number'));
+  // Review finding A (2026-09-06): two people can share one untagged code and disagree on whether
+  // EITHER of them individually looks like a discount — the row must flag if ANY member does.
+  // The first DUPTEST person alone would create the bucket with unclassified:false; only the
+  // SECOND person supplies the evidence. If the accumulation were a plain overwrite (or, worse, a
+  // single assignment at bucket-creation time) this would silently read false.
+  checkTrue('a code shared by an evidenced and an unevidenced person is still flagged',
+    rows.find((r) => r.code === 'DUPTEST').unclassified === true);
+  // Review finding B (2026-09-06): the old assertion here (`=== null || typeof === 'number'`)
+  // could never fail — `typeof 0 === 'number'` — so a row that wrongly reported 0 instead of null
+  // would have passed silently. Target two SPECIFIC rows instead: the one with genuinely differing
+  // effective values (some 190, one 150, one missing) must report null, never 0; a row where every
+  // member agrees must report its real number, not null.
+  const mixedRow = rows.find((r) => r.key === 'classroom' && r.code === '');
+  checkTrue('a genuinely mixed row reports a null unit price, never 0',
+    !!mixedRow && mixedRow.effAmount === null,
+    'effAmount=' + JSON.stringify(mixedRow && mixedRow.effAmount));
+  const uniformRow = rows.find((r) => r.code === 'EFT');
+  checkTrue('a uniform row reports its real number, not null',
+    !!uniformRow && uniformRow.effAmount === 190,
+    'effAmount=' + JSON.stringify(uniformRow && uniformRow.effAmount));
   // NOTE (Task 4 adjustment): the brief's arithmetic assumed the EFT (in-person) person values at
   // their overridden amountPaid (0). The real, unchanged `_personValue`/`_personValueBase` cascade
   // deliberately does NOT read amountPaid for an in-person-tagged code — "the money was collected
   // by hand, so no invoice records it" — it substitutes the resolved TICKET PRICE instead. Here
   // that person's `registrationCost` is the P() default (190, never overridden), so
-  // `_resolveTicketPrice` returns 190 and their effective value is 190, not 0. True per-person
-  // values: 190,190,0(sponsor),190(in-person, priced off registrationCost),0(untagged),190
-  // (unknown accommodation, falls through to amountPaid),190(cancelled, same fallback),null(missing).
+  // `_resolveTicketPrice` returns 190 and their effective value is 190, not 0.
+  // Per-person effective values, in fixture order: 190,190,0(sponsor),190(in-person, priced off
+  // registrationCost),0(untagged),190(unknown accommodation, falls through to amountPaid),
+  // 190(cancelled, same fallback),null(missing),150(the new differing-value person),
+  // 190(DUPTEST #1, amountPaid default),0(DUPTEST #2, amountPaid:0).
   checkTrue('effTotal is the exact sum of member values',
-    Math.abs(rows.reduce((s, r) => s + r.effTotal, 0) - (190 + 190 + 0 + 190 + 0 + 190 + 190 + 0)) < 0.001);
+    Math.abs(rows.reduce((s, r) => s + r.effTotal, 0)
+      - (190 + 190 + 0 + 190 + 0 + 190 + 190 + 0 + 150 + 190 + 0)) < 0.001);
 }
 
 (async function run() {

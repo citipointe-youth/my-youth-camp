@@ -4308,6 +4308,12 @@ function _budExportRows(people,tags,prices,ptable){
     if(!b){b={key:cls,code,count:0,cancelled:0,effTotal:0,missing:0,
       effValues:new Map(),rawValues:new Map(),unclassified:_isUnclassifiedDiscount(p,tags)};by.set(key,b);}
     b.count++;
+    // ⚠️ OR-accumulate, never overwrite: _isUnclassifiedDiscount depends on the PERSON
+    // (discountAmount/amountPaid/registrationCost), not the code alone, so two people sharing
+    // one untagged code can disagree — the row must be flagged if ANY member is unclassified.
+    // Over-reporting is safe; a false negative here would print "Full price" on a row that
+    // genuinely holds a discounted person (found in review, 2026-09-06).
+    b.unclassified=b.unclassified||_isUnclassifiedDiscount(p,tags);
     if(p.status==='cancelled')b.cancelled++;
     if(eff==null)b.missing++;else{b.effTotal+=eff;b.effValues.set(eff,(b.effValues.get(eff)||0)+1);}
     if(raw!=null)b.rawValues.set(raw,(b.rawValues.get(raw)||0)+1);
