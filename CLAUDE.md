@@ -53,12 +53,12 @@ failure that produced no alarm at all. Files touched: `public/index.html` (`expo
   0, and the false "Do not rely" warning reappears). Reverting Finding B's fix (restoring the
   `if(diff)`-gated error text) fails section 11's "the fetch error is on the Summary sheet EVEN
   THOUGH Difference is 0" check. Both proofs restored to green afterward — **142 ok**.
-- ⚠️ **`sw.js`'s `CACHE` was deliberately NOT bumped for this wave**, even though `public/
-  index.html` changed and the standing rule in this file says it must be — the fix-wave brief
-  constrained edits to exactly three files (`public/index.html`, `scripts/budget-xlsx-harness.js`,
-  `debug.md`) and `sw.js` was not one of them. **Whoever deploys this must bump `camp-v109` before
-  or alongside the push**, or an already-installed PWA can keep serving the pre-fix `exportBudget`
-  indefinitely on iOS (documented lazy-worker-update behaviour, see the 2026-08-01 section).
+- **`sw.js` stays at `camp-v109` — one bump covers this whole branch, and a second would be
+  churn.** The standing rule is that `public/index.html` changing means `CACHE` must step, and it
+  did: prod (`origin/master`) serves `camp-v108`, this branch ships `camp-v109`. **`v109` has
+  never been deployed**, so the fix wave rides the same unreleased version — an installed PWA
+  goes straight from `v108` to a `v109` that already contains it. Do NOT bump to `v110` before
+  pushing; the rule is one step per DEPLOYED version, not one per commit.
 
 ### The harness had been silently dead for a month, straight through the 2026-09-03 release
 `scripts/budget-xlsx-harness.js`'s `extract()` matched functions by their **full signature**, and
