@@ -5192,8 +5192,13 @@ async function exportBudget(){
        column was added to prevent. */
     if(spon.count){
       rows.push([]);
+      // ⚠ Padded with STYLED blank cells (_xc('',...)), never bare `null` — _xlSheetXml treats a
+      // bare null as "emit nothing", so a null-padded row is 1 cell wide in the real XML no
+      // matter how long the JS array literal is (found in review, 2026-09-06). A styled blank
+      // still emits a real <c/>, which is what actually reaches 11 cells on disk.
       rows.push([_xc('Sponsorship still needed — money that has NOT arrived. Do not add these rows to the totals above.',XS.SECTION),
-        null,null,null,null,null,null,null,null,null,null]);
+        _xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),
+        _xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION)]);
       spon.churches.forEach((c)=>c.codes.forEach((x)=>rows.push([
         _xc(c.name,XS.MUTED),_xc('Sponsor by ministry',XS.MUTED),_xc('',XS.TEXT),_xc('',XS.TEXT),
         _xc(x.code,XS.TEXT),_xc(_SPONSOR_TAG_LABEL[x.tag]||x.tag,XS.TEXT),
@@ -5224,6 +5229,7 @@ async function exportBudget(){
        is guarded so a missing value degrades to "not reported" rather than throwing. */
     const fetched=(window._budgetFetch&&window._budgetFetch.count!=null)
       ?window._budgetFetch.count:null;
+    sum.push([]);   // blank spacer, matching every other section heading on this sheet
     sum.push([_xc('Reconciliation',XS.SECTION)]);
     sum.push([_xc('People fetched from the app',XS.TEXT),_xn(fetched,XS.NUM),_xc('',XS.TEXT)]);
     sum.push([_xc("People on 'By ministry'",XS.TEXT),_xn(printed,XS.NUM),_xc('',XS.TEXT)]);

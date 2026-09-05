@@ -577,6 +577,18 @@ console.log('\n0. _budExportRows — grouping and totality');
     g.slice(1).filter((r) => kind(r) === 'Detail')
       .reduce((t, r) => t + ((cellAt(r, 'J') || {}).num || 0), 0), 2350);
 
+
+  /* EMITTED WIDTH, not source width (2026-09-06). A row padded with bare `null` entries looks
+     11 wide in the JS array literal and emits ONE cell: _xlSheetXml skips a bare null, while
+     _xc('',style)/_xn(null,style) emit a real styled <c/>. That mismatch shipped once and was
+     caught only by counting cells in the unzipped workbook, never by reading the source. These
+     assertions count what actually reaches the file, so the source can no longer lie about it. */
+  console.log('');
+  console.log('7c. Non-detail rows are genuinely 11 cells wide in the emitted XML');
+  const widthOf = (r) => (r || []).length;
+  check('the sponsorship section heading emits 11 cells', widthOf(g[campTotIdx + 2]), 11);
+  check('the camp total row emits 11 cells', widthOf(g[campTotIdx]), 11);
+  check('the header row emits 11 cells', widthOf(g[0]), 11);
   console.log('\n7b. Summary — the rows the owner asked to be removed stay removed');
   const sm = parseSheet(parts['xl/worksheets/sheet1.xml']);
   const smText = sm.map((r) => (cellAt(r, 'A') || {}).text || '');
