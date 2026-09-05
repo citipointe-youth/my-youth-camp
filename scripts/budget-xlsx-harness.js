@@ -41,8 +41,14 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 
  * (), [] and {} together, ending on the first `;` at depth 0.
  */
 function extract(decl) {
-  const i = SRC.indexOf(decl);
-  if (i < 0) throw new Error('not found in index.html: ' + decl);
+  // Match on everything up to the '(' — the NAME is stable, the parameter list is not.
+  // A full-signature match silently rotted for a month when `tag` was appended to
+  // _personValue and _sponsorAmountFor on 2026-08-05, and the harness threw on startup
+  // rather than reporting a failure, so nobody noticed it had stopped running.
+  const paren = decl.indexOf('(');
+  const stem = paren < 0 ? decl : decl.slice(0, paren + 1);
+  const i = SRC.indexOf(stem);
+  if (i < 0) throw new Error('not found in index.html: ' + stem);
   let depth = 0, started = false, prev = '';
   for (let j = i; j < SRC.length; j++) {
     const ch = SRC[j];
@@ -91,9 +97,11 @@ vm.runInContext([
   // The sponsorship path runs for real — it is the only way to prove the differential survives
   // into the spreadsheet, so every function it touches is extracted rather than stubbed.
   'function _normTicketType(t)', 'function _budTicketPrices(regs)', 'function _priceForTicket(table,t)',
-  'function _resolveTicketPrice(p,table)', 'function _personValue(p,cls,prices,ticketPrice)',
+  'function _resolveTicketPrice(p,table)', 'function _discountTagFor(p,tags)',
+  'function _personValue(p,cls,prices,ticketPrice,tag)', 'function _personValueBase(p,cls,prices,ticketPrice,tag)',
   'function _classifyTicket(p,tags)', 'function _budPrices()', 'function _budTags()',
-  'function _sponsorAmountFor(p,cls,prices,ticketPrice)', 'const _SPONSOR_TAGS=',
+  'function _budRowLabel(cls,amount)', 'function _budValueBreakdown(b)', 'function _budScopeRows(people,tags,prices,ptable)',
+  'function _sponsorAmountFor(p,cls,prices,ticketPrice,tag)', 'const _SPONSOR_TAGS=',
   'const _SPONSOR_TAG_LABEL=', 'function _sponsorBands(entries)',
   'function computeSponsorSummaryClient(regs,filterId)', 'function _sponsorByTotal(a,b)',
   // The zip + xlsx writers, real. Nothing here is reimplemented for the test.
@@ -121,6 +129,17 @@ function checkTrue(label, cond, detail) {
   console.log('  FAIL ' + label + (detail ? '\n         ' + detail : ''));
   failures++;
 }
+
+/* The extractor matches on a name prefix, so a renamed FUNCTION still throws (good) while a
+   changed parameter list does not (also good). This asserts the sandbox actually got a callable
+   for each name we depend on — a typo'd name would otherwise surface as a confusing TypeError
+   several hundred lines below.
+   ⚠️ `_budExportRows` is NOT in this list. It doesn't exist yet (Task 4) — adding it now would
+   make this task unable to go green. Add it in Task 4, not before. */
+['_budScopeRows', '_personValue', '_sponsorAmountFor',
+ 'computeSponsorSummaryClient', 'exportBudget', '_xlsxBlob'].forEach((n) => {
+  checkTrue('sandbox exposes ' + n, typeof ctx[n] === 'function');
+});
 
 /* ---- a minimal unzip, so the assertions are made against the REAL bytes the browser saves ---- */
 function unzip(buf) {
@@ -280,29 +299,32 @@ const SPONSOR_REGS = [
   const g = parseSheet(s2);
   check('header text', g[0].map((c) => c.text),
     ['Church', 'Row type', 'Audience', 'Accommodation', 'Payment type', 'Discount code',
-      'People', 'Unit price', 'Line total']);
+      'People', 'Unit price', 'Line total', 'Cancelled']);
   checkTrue('every header cell uses the header style', g[0].every((c) => c.s === ctx.XS.HEAD));
   checkTrue('the header row is frozen', /<pane ySplit="1"/.test(s2));
-  checkTrue('the data range is filterable', /<autoFilter ref="A1:I8"\/>/.test(s2), s2.slice(-200));
+  // The sheet is 10 columns wide since the Cancelled column landed 2026-09-03 (was 9/I).
+  checkTrue('the data range is filterable', /<autoFilter ref="A1:J8"\/>/.test(s2), s2.slice(-200));
 
   /* ⚠ THE CHURCH TOTAL LEADS ITS BLOCK (owner, 2026-08-04 5th-b) — scrolling the sheet reads as
      a list of ministry totals with the working underneath, rather than a total that has to be
      hunted for at the bottom of a block whose length varies. The row indices below ARE the
      layout, deliberately: if someone flips the order back, these fail rather than drift. */
+  // Trailing 0 below is the Cancelled column (2026-09-03) — a per-row/per-block count of
+  // cancelled people, 0 here since none of the fixture's people are cancelled.
   check('the church total comes FIRST in the block',
     g[1].map((c) => c.text != null ? c.text : c.num),
-    ['Citipointe, Carindale', 'Church total', null, null, null, null, 15, null, 2350]);
+    ['Citipointe, Carindale', 'Church total', null, null, null, null, 15, null, 2350, 0]);
   // `null` below means an EMPTY cell — a styled blank carries neither text nor a <v>.
   check('then its detail, a full-price classroom student row',
     g[2].map((c) => c.text != null ? c.text : c.num),
-    ['Citipointe, Carindale', 'Detail', 'Student', 'Classroom', 'Full price', null, 10, 190, 1900]);
+    ['Citipointe, Carindale', 'Detail', 'Student', 'Classroom', 'Full price', null, 10, 190, 1900, 0]);
   check('an in-person tent row carries its code', g[3].map((c) => c.text != null ? c.text : c.num),
-    ['Citipointe, Carindale', 'Detail', 'Student', 'Tent', 'Paid in person', 'YC26CASH', 3, 150, 450]);
+    ['Citipointe, Carindale', 'Detail', 'Student', 'Tent', 'Paid in person', 'YC26CASH', 3, 150, 450, 0]);
   check('a sponsored leader row', g[4].map((c) => c.text != null ? c.text : c.num),
-    ['Citipointe, Carindale', 'Detail', 'Leader', 'Classroom', 'Full sponsor', 'YC26LDR', 2, 0, 0]);
+    ['Citipointe, Carindale', 'Detail', 'Leader', 'Classroom', 'Full sponsor', 'YC26LDR', 2, 0, 0, 0]);
   check('the next ministry starts with its own total',
     g[5].map((c) => c.text != null ? c.text : c.num),
-    ['Grace Point', 'Church total', null, null, null, null, 4, null, 0]);
+    ['Grace Point', 'Church total', null, null, null, null, 4, null, 0, 0]);
   /* The owner's actual complaint: the repeated church label competing with the numbers. It is
      still THERE (the sheet has to stay filterable) but it recedes to the muted style. */
   checkTrue('the repeated church name is muted, not deleted',
@@ -315,7 +337,7 @@ const SPONSOR_REGS = [
     [cellAt(churchTot, 'B').text, cellAt(churchTot, 'G').num, cellAt(churchTot, 'I').num],
     ['Church total', 15, 2350]);
   checkTrue('the subtotal row is bold-on-lavender across every column',
-    churchTot.length === 9 && churchTot.every((c) => [ctx.XS.TOT_T, ctx.XS.TOT_N, ctx.XS.TOT_M].indexOf(c.s) >= 0),
+    churchTot.length === 10 && churchTot.every((c) => [ctx.XS.TOT_T, ctx.XS.TOT_N, ctx.XS.TOT_M].indexOf(c.s) >= 0),
     JSON.stringify(churchTot.map((c) => c.s)));
   /* A styled BLANK still has to be emitted or the fill stops halfway across the row — which is
      exactly the visual cue this change exists to add. */
@@ -326,7 +348,7 @@ const SPONSOR_REGS = [
      would read as "free" while the line total said otherwise. */
   check('unrecorded accommodation, blank unit price (NOT 0)',
     g[6].map((c) => c.text != null ? c.text : c.num),
-    ['Grace Point', 'Detail', 'Student', 'Not recorded', null, null, 4, null, 0]);
+    ['Grace Point', 'Detail', 'Student', 'Not recorded', null, null, 4, null, 0, 0]);
   checkTrue('the blank unit price carries no <v> element at all',
     !/<c r="H7"[^>]*>/.test(s2) || /<c r="H7" s="\d+"\/>/.test(s2));
 
@@ -387,11 +409,13 @@ const SPONSOR_REGS = [
   checkTrue('no band row is printed', g.filter((r) => kind(r) === 'Sponsor band').length === 0);
   /* Biggest ask first, not alphabetical — Victory's 545 outranks Grace Point's 380. This is the
      order a director works down when deciding who to chase. */
+  // Trailing null below is the Cancelled column (2026-09-03) — a sponsor row carries no
+  // cancelled-count value at all (styled blank, no <v>), unlike a Detail/total row's 0.
   check('per-ministry rows, biggest ask first, on the By ministry sheet',
     g.filter((r) => kind(r) === 'Sponsor by ministry').map(val), [
-      ['Victory', 'Sponsor by ministry', null, null, 'Full sponsorship', 'YC26SPON', 4, null, 450],
-      ['Victory', 'Sponsor by ministry', null, null, 'Part sponsored', 'YC26HALF', 1, null, 95],
-      ['Grace Point', 'Sponsor by ministry', null, null, 'Full sponsorship', 'YC26SPON', 2, null, 380],
+      ['Victory', 'Sponsor by ministry', null, null, 'Full sponsorship', 'YC26SPON', 4, null, 450, null],
+      ['Victory', 'Sponsor by ministry', null, null, 'Part sponsored', 'YC26HALF', 1, null, 95, null],
+      ['Grace Point', 'Sponsor by ministry', null, null, 'Full sponsorship', 'YC26SPON', 2, null, 380, null],
     ]);
   const spTot = g.find((r) => kind(r) === 'Sponsor total');
   check('camp sponsor total', [cellAt(spTot, 'G').num, cellAt(spTot, 'I').num], [7, 925]);
@@ -411,7 +435,7 @@ const SPONSOR_REGS = [
   checkTrue('    …and the block is introduced by a heading, not left to be inferred',
     /Sponsorship still needed/.test((cellAt(g[campTotIdx + 2], 'A') || {}).text || ''));
   checkTrue('3/3 — the autofilter stops at the received table',
-    new RegExp('<autoFilter ref="A1:I' + (campTotIdx + 1) + '"').test(s2),
+    new RegExp('<autoFilter ref="A1:J' + (campTotIdx + 1) + '"').test(s2),
     'filter must not span the sponsorship block');
   check('detail rows still sum to the camp total, sponsorship excluded',
     g.slice(1).filter((r) => kind(r) === 'Detail')
