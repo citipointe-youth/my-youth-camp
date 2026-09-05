@@ -4112,6 +4112,18 @@ function _budPayment(cls){
   const tag=String(cls).slice(i+1);
   return tag==='inperson'?'Paid in person':tag==='sponsor'?'Full sponsor':tag==='discount'?'Discounted':tag;
 }
+/* The `Code type` column (2026-09-05), replacing `Payment type`. Derived from the CODE and the
+   admin's tags — not parsed out of the class key — because a row now carries exactly one code.
+   ⚠️ '⚠ Not classified' is a real, loud value, not a blank: it is the entire signal that this
+   row's sponsorship gap is missing from the totals. */
+function _budCodeType(row,tags){
+  if(!row.code)return 'Full price';
+  const tag=tags[row.code];
+  if(tag==='inperson')return 'Paid in person';
+  if(tag==='sponsor')return 'Full sponsor';
+  if(tag==='discount')return 'Discounted';
+  return row.unclassified?'⚠ Not classified':'Full price';
+}
 /** The three tags an admin can put on a discount code, and how they read in the dropdown. */
 const _BUD_TAGS=[['inperson','Paid in person'],['sponsor','Full sponsor'],['discount','Discounted']];
 function _budRowLabel(cls,amount){
@@ -4126,6 +4138,16 @@ function _discountTagFor(p,tags){
   if(!code)return null;
   const tag=(tags||{})[code];
   return (tag==='inperson'||tag==='sponsor'||tag==='discount')?tag:null;
+}
+/* Mirrors budget.ts isUnclassifiedDiscount — read ITS doc comment. ⚠️ DETECTS, NEVER INFERS. The
+   caller reports these and excludes their money from every total. An untagged 100%-off code can
+   be a staff comp or a desk payment; guessing "sponsor" would ask someone for money nobody owes. */
+function _isUnclassifiedDiscount(p,tags){
+  const code=(p.discountCode||'').trim();
+  if(!code)return false;
+  if(_discountTagFor(p,tags)!=null)return false;
+  if(Number(p.discountAmount||0)>0)return true;
+  return p.registrationCost!=null&&p.amountPaid!=null&&Number(p.amountPaid)<Number(p.registrationCost);
 }
 /* Mirrors budget.ts classifyTicket. An unrecognised tag falls back to the plain class.
    ⚠️ DISPLAY BUCKET ONLY (2026-08-05 fix). accommodationKind unknown → 'unknown' regardless of
@@ -4269,6 +4291,56 @@ function _budScopeRows(people,tags,prices,ptable){
       cancelledCount:b.cancelled});
   });
   return rows;
+}
+/* EXPORT-ONLY row builder (2026-09-05). Grouped one level finer than `_budScopeRows`:
+   (ticket class × discount code) rather than ticket class alone.
+
+   ⚠️ WHY THIS IS A SECOND FUNCTION AND NOT A PARAMETER ON `_budScopeRows`.
+   The owner asked on 2026-08-02 for the on-screen card's category rows to be MERGED, after
+   reporting the un-merged version "almost impossible to follow". Splitting by code would
+   silently undo that decision on the screen. The export wants the opposite — a `Code used`
+   column that is true of every person on its row — so the two grains are both correct and
+   they are deliberately kept apart. Do not "DRY" these together.
+
+   ⚠️ TOTALITY IS THE POINT. Every person lands in exactly one bucket by construction: the key
+   is built from the person, not looked up in a fixed list, so there is no `_BUD_CLASSES`-style
+   allow-list that could silently drop a bucket. There is a harness check asserting
+   Σ count === people.length; keep it. */
+function _budExportRows(people,tags,prices,ptable){
+  const by=new Map();
+  (people||[]).forEach(p=>{
+    const cls=_classifyTicket(p,tags);
+    const code=(p.discountCode||'').trim();
+    const tp=_resolveTicketPrice(p,ptable);
+    const eff=_personValue(p,cls,prices,tp,_discountTagFor(p,tags));
+    // Raw = what the invoice recorded arriving, BEFORE override and refund (owner, 2026-09-05).
+    const raw=p.amountPaid==null?null:Number(p.amountPaid);
+    const key=cls+'\u0000'+code;
+    let b=by.get(key);
+    if(!b){b={key:cls,code,count:0,cancelled:0,effTotal:0,missing:0,
+      effValues:new Map(),rawValues:new Map(),unclassified:_isUnclassifiedDiscount(p,tags)};by.set(key,b);}
+    b.count++;
+    // ⚠️ OR-accumulate, never overwrite: _isUnclassifiedDiscount depends on the PERSON
+    // (discountAmount/amountPaid/registrationCost), not the code alone, so two people sharing
+    // one untagged code can disagree — the row must be flagged if ANY member is unclassified.
+    // Over-reporting is safe; a false negative here would print "Full price" on a row that
+    // genuinely holds a discounted person (found in review, 2026-09-06).
+    b.unclassified=b.unclassified||_isUnclassifiedDiscount(p,tags);
+    if(p.status==='cancelled')b.cancelled++;
+    if(eff==null)b.missing++;else{b.effTotal+=eff;b.effValues.set(eff,(b.effValues.get(eff)||0)+1);}
+    if(raw!=null)b.rawValues.set(raw,(b.rawValues.get(raw)||0)+1);
+  });
+  // A uniform value only when EVERY member contributed the same one and none was missing;
+  // otherwise null, which the writer renders as a BLANK cell. Never 0 — a 0 reads as "free"
+  // beside a non-zero line total.
+  const uniform=(m,n)=>(m.size===1&&[...m.values()][0]===n)?[...m.keys()][0]:null;
+  const order=new Map(_BUD_CLASSES.map(([k],i)=>[k,i]));
+  return [...by.values()].map(b=>({
+    key:b.key,code:b.code,count:b.count,cancelled:b.cancelled,
+    rawAmount:uniform(b.rawValues,b.count),
+    effAmount:b.missing?null:uniform(b.effValues,b.count),
+    effTotal:b.effTotal,missing:b.missing,unclassified:b.unclassified,
+  })).sort((a,b)=>(order.get(a.key)-order.get(b.key))||a.code.localeCompare(b.code));
 }
 /* Merged category rows (2026-08-02) — DISPLAY ONLY, and deliberately client-side.
 
@@ -4429,6 +4501,11 @@ function computeBudgetClient(regs,filterId){
   const people=(regs||[]).filter(r=>!filterId||filterId==='all'||r.churchId===filterId)
     .map(r=>({churchId:r.churchId,churchName:r.churchName,kind:r.kind==='leader'?'leader':'camper',
       registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
+      // 🔴 discountAmount (2026-09-05) — the .map() used to DROP it (see the old comment on
+      // discountCodes below). _isUnclassifiedDiscount reads it FIRST; without it every untagged
+      // code silently falls through to the weaker amountPaid<registrationCost branch, which
+      // happens to catch today's prod cases — exactly what makes the omission dangerous.
+      discountAmount:num(r.discountAmount),
       amountPaidOverride:num(r.amountPaidOverride),refundAmount:num(r.refundAmount),
       accommodationKind:r.accommodationKind||null,discountCode:r.discountCode,
       registrationType:r.registrationType||null,status:r.status||null}));
@@ -4451,7 +4528,9 @@ function computeBudgetClient(regs,filterId){
     const discountCodes=computeDiscountSummaryClient(regs,c.churchId).rows;
     // `campers`/`leaders` stay for the CSV export; `categories` is what the card renders.
     return {churchId:c.churchId,churchName:c.churchName,camperCount,leaderCount,total,campers,leaders,
-      categories:_budMergeScopes(campers,leaders),discountCodes};});
+      categories:_budMergeScopes(campers,leaders),discountCodes,
+      // Retained for the export's finer grouping (2026-09-05). The card never reads it.
+      _people:[...c.campers,...c.leaders]};});
   churches.sort((a,b)=>a.churchName.localeCompare(b.churchName));
   return {grandTotal:churches.reduce((s,c)=>s+c.total,0),camperCount:churches.reduce((s,c)=>s+c.camperCount,0),
     leaderCount:churches.reduce((s,c)=>s+c.leaderCount,0),churchCount:churches.length,churches,fullAmount:full};
@@ -4480,7 +4559,9 @@ function _sponsorAmountFor(p,cls,prices,ticketPrice,tag){
   const fb=kind==='tent'?prices.tent:kind==='classroom'?prices.classroom:null;
   const ticketValue=ticketPrice!=null?ticketPrice:fb;
   if(ticketValue==null)return {ticketValue:null,amount:0};
-  const received=_personValue(p,cls,prices,ticketPrice,tag);
+  // ⚠️ _personValueBase (pre-refund), NOT _personValue. Mirrors receivedBeforeRefund in
+  // src/services/budget.ts — a refund must not re-open a sponsorship gap.
+  const received=_personValueBase(p,cls,prices,ticketPrice,tag);
   // Never negative: someone who over-paid against their own ticket is not owed a sponsor.
   return {ticketValue,amount:Math.max(0,ticketValue-(received==null?0:received))};
 }
@@ -4510,18 +4591,54 @@ function computeSponsorSummaryClient(regs,filterId){
   const people=(regs||[])
     .filter(r=>!filterId||filterId==='all'||r.churchId===filterId);
   const byCode=new Map();
+  const unclassifiedBy=new Map();
+  let withdrawnCount=0,withdrawnTotal=0;
   people.forEach(r=>{
     const code=(r.discountCode||'').trim();
     if(!code)return;
-    const tag=tags[code];
-    if(!tag||_SPONSOR_TAGS.indexOf(tag)<0)return;
     const p={churchId:r.churchId,churchName:r.churchName,
       registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
       amountPaidOverride:num(r.amountPaidOverride),refundAmount:num(r.refundAmount),
+      discountAmount:num(r.discountAmount),status:r.status||null,
       accommodationKind:r.accommodationKind||null,discountCode:code,
       registrationType:r.registrationType||null};
+    // The tag/unclassified checks are resolved ONCE, up front, and reused by every branch below —
+    // mirrors computeSponsorSummary in src/services/budget.ts (read its 2026-09-05 control-flow
+    // comment before touching this order).
+    const tag=_discountTagFor(p,tags);
+    const unclassified=_isUnclassifiedDiscount(p,tags);
+    const inAskPopulation=(tag==='sponsor'||tag==='discount')||unclassified;
     const cls=_classifyTicket(p,tags);
-    const v=_sponsorAmountFor(p,cls,prices,_resolveTicketPrice(p,ptable),tag);
+    const tp=_resolveTicketPrice(p,ptable);
+
+    // A withdrawn place is not an ask, regardless of how its code is classified — checked FIRST,
+    // before the unclassified check and the tag check, so a cancelled person on an untagged (but
+    // discounted) code cannot fall through into unclassifiedTotal. Scoped to the ask population
+    // only: a cancelled person tagged 'inperson' (money genuinely arrived) or on an untagged code
+    // with no discount evidence was never part of any ask, so is skipped entirely below, exactly
+    // as before cancellation was ever considered.
+    if(p.status==='cancelled'){
+      if(inAskPopulation){
+        const v=_sponsorAmountFor(p,cls,prices,tp,tag);
+        withdrawnCount++;withdrawnTotal+=v.ticketValue==null?0:v.amount;
+      }
+      return;
+    }
+
+    if(unclassified){
+      const v=_sponsorAmountFor(p,cls,prices,tp,null);
+      const rec=_personValueBase(p,cls,prices,tp,null);
+      const gap=v.ticketValue==null?0:Math.max(0,v.ticketValue-(rec==null?0:rec));
+      let u=unclassifiedBy.get(code);
+      if(!u){u={count:0,total:0,pairs:[]};unclassifiedBy.set(code,u);}
+      u.count++;u.total+=gap;
+      if(p.registrationCost!=null&&p.registrationCost>0&&p.discountAmount!=null)u.pairs.push({cost:p.registrationCost,discount:p.discountAmount});
+      return;
+    }
+
+    if(!tag||_SPONSOR_TAGS.indexOf(tag)<0)return;
+
+    const v=_sponsorAmountFor(p,cls,prices,tp,tag);
     let bucket=byCode.get(code);
     if(!bucket){bucket={tag,entries:[]};byCode.set(code,bucket);}
     bucket.entries.push({churchId:r.churchId,churchName:r.churchName,amount:v.amount,
@@ -4556,7 +4673,14 @@ function computeSponsorSummaryClient(regs,filterId){
   const churches=[...churchAgg.entries()].map(([id,c])=>({id,name:c.name,count:c.count,total:c.total,
     codes:[...c.codes.entries()].map(([code,v])=>({code,tag:v.tag,count:v.count,total:v.total}))
       .sort((a,b)=>b.total-a.total||a.code.localeCompare(b.code))})).sort(_sponsorByTotal);
-  return {total:fullTotal+partialTotal,fullTotal,partialTotal,count,unpricedCount,codes,churches};
+  const unclassified=[...unclassifiedBy.entries()]
+    .map(([code,u])=>({code,count:u.count,total:u.total,avgPercent:_avgDiscountPct(u.pairs)}))
+    .sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
+  return {total:fullTotal+partialTotal,fullTotal,partialTotal,count,unpricedCount,
+    withdrawnCount,withdrawnTotal,
+    unclassifiedCount:unclassified.reduce((s,u)=>s+u.count,0),
+    unclassifiedTotal:unclassified.reduce((s,u)=>s+u.total,0),
+    unclassified,codes,churches};
 }
 function _sponsorByTotal(a,b){return b.total-a.total||a.name.localeCompare(b.name);}
 /* Mirrors FULL_DISCOUNT_PERCENT in src/services/budget.ts — the point at which a discount covers
@@ -4615,13 +4739,25 @@ function computeDiscountSummaryClient(regs,filterId){
 }
 RENDER.budget=async function(){
   if(!['director','admin'].includes(ACTOR.role)){paint('budget','<p class="note-hint" style="margin-top:24px;text-align:center">Budget is available to directors only.</p>','Budget & Costings','');return;}
-  const [regs,camperPage]=await Promise.all([api(_scoped('/registrants?includeCancelled=1')),api(_scoped('/campers?pageSize=1000')).catch(()=>[])]);
+  /* ⚠️ This used to be `.catch(()=>[])` — a failure silently dropped every already-arrived
+     person (all leaders, and every student who has signed in) from the budget, with no error,
+     no toast and nothing on screen. That is indistinguishable from "the camp is smaller than
+     you thought". The reason is now RECORDED and printed on the Summary reconciliation block.
+     ⚠️ NOT paginated: `pageSize` is not implemented server-side (verified 2026-09-05, nothing
+     under src/ reads it), so /campers already returns everything. Adding a `page` loop against
+     an endpoint that ignores it would re-fetch page 1 forever and duplicate every camper. */
+  const regs=await api(_scoped('/registrants?includeCancelled=1'));
+  let campers=[],fetchErr=null;
+  try{
+    const res=await api(_scoped('/campers'));
+    campers=Array.isArray(res)?res:(res.items||[]);
+  }catch(e){fetchErr=(e&&e.message)||String(e);}
   // Anyone already at camp (esp. leaders, bulk-signed-in on the mode switch) has
   // lifecycle !== 'registered' and drops out of /registrants — merge in /campers
   // (deduped by id) so registration fees for arrived people still count.
-  const campers=Array.isArray(camperPage)?camperPage:camperPage.items||[];
   const regIds=new Set((regs||[]).map(r=>r.id));
   window._budgetRegs=[...(regs||[]),...campers.filter(c=>!regIds.has(c.id))];
+  window._budgetFetch={count:window._budgetRegs.length,error:fetchErr};
   const churches=[...new Map((regs||[]).map(r=>[r.churchId,r.churchName])).entries()].map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name));
   const selHtml=`<div class="rowsb" style="gap:8px;margin-bottom:12px">
     <select id="budChurch" onchange="drawBudget()" style="flex:1"><option value="all">All ministries</option>${churches.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>
@@ -4880,6 +5016,8 @@ function drawBudget(){
   // Camp settings is admin-only (see the role map), so a director gets the same facts without a
   // button that would bounce them off a screen they cannot open.
   const isAdmin=ACTOR&&ACTOR.role==='admin';
+  const bf=window._budgetFetch;
+  const fetchWarn=(bf&&bf.error)?`<div class="warnbox">Some people could not be loaded, so every figure below under-reports. ${esc(bf.error)}</div>`:'';
   const priceGate=unpriced.count
     ?`<div class="warnbox" style="margin-bottom:12px">${icSm('alert')} <b>${unpriced.count} ${unpriced.count===1?'person':'people'} paid in person on a ticket with no known price.</b>
        They are counted at <b>$0</b>, so the total below under-reads. Every other ticket type is priced automatically from its invoices — ${esc(unpriced.types.join(', '))} ${unpriced.types.length===1?'has':'have'} none.
@@ -4920,7 +5058,7 @@ function drawBudget(){
         <span class="lbl">Outstanding</span><b>${_money(upg.owedTotal)}</b></div>`:''}
     </div></div>`:'';
   const box=document.getElementById('budgetBody');
-  if(box)box.innerHTML=`${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${sponSection}${upgSection}${priceSection}${discSection}</div></div>`;
+  if(box)box.innerHTML=`${fetchWarn}${priceGate}<div class="bud-grid"><div class="bud-left">${head}${body}</div><div class="bud-right">${sponSection}${upgSection}${priceSection}${discSection}</div></div>`;
 }
 /* Which way the Sponsorship card is sliced. Module-level rather than a DOM read, so the choice
    survives `_budRedraw()` (classifying a code redraws the screen, and a director working down
@@ -4994,75 +5132,60 @@ async function exportBudget(){
     const scopeLabel=scope==='all'?'All ministries':((rep.churches[0]&&rep.churches[0].churchName)||'Selected ministry');
     const year=(SETTINGS&&SETTINGS.year)||'';
 
-    /* ── Sheet 1: Summary ──────────────────────────────────────────────────────────────────
-       The two figures a director carries into a conversation, and the one line that ties them
-       together. The reconciliation is an invariant of the model, not a nicety:
-       sponsor total + grand total = the value of every place (asserted in budget.sponsor.test.ts). */
-    const sum=[
-      [_xc('Youth camp '+year+' — Budget',XS.TITLE)],
-      [_xc('Scope: '+scopeLabel,XS.SUB)],
-      [_xc('Exported '+new Date().toLocaleDateString('en-AU')+' · amounts are MONEY RECEIVED, not the value of every place',XS.SUB)],
-      [],
-      [_xc('Money received',XS.SECTION)],
-      [_xc('Item',XS.HEAD),_xc('People',XS.HEAD),_xc('Amount',XS.HEAD)],
-      [_xc('Students',XS.TEXT),_xn(rep.camperCount,XS.NUM),_xn(null,XS.MONEY)],
-      [_xc('Leaders',XS.TEXT),_xn(rep.leaderCount,XS.NUM),_xn(null,XS.MONEY)],
-      [_xc('Total received',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(rep.grandTotal,XS.GRAND_M)],
-      [],
-    ];
-    if(spon.count){
-      /* No PLACES column here (owner, 2026-08-04 5th-b). A sponsorship headcount answers a
-         different question from the ask, and sitting in the same table it invited the reading
-         "$830 ÷ 6 places" — which is the per-place average the band split exists to avoid.
-         The count still drives the unpriced warning below, it is just not presented as a figure. */
-      sum.push([_xc('Sponsorship still needed',XS.SECTION)]);
-      sum.push([_xc('Item',XS.HEAD),_xc('',XS.HEAD),_xc('Amount',XS.HEAD)]);
-      sum.push([_xc('Full sponsorship',XS.TEXT),_xc('',XS.TEXT),_xn(spon.fullTotal,XS.MONEY)]);
-      sum.push([_xc('Part sponsored',XS.TEXT),_xc('',XS.TEXT),_xn(spon.partialTotal,XS.MONEY)]);
-      sum.push([_xc('Total still needed',XS.TOT_T),_xc('',XS.TOT_T),_xn(spon.total,XS.TOT_M)]);
-      /* ⚠ An unpriceable place is COUNTED AND FLAGGED, never totalled as $0 — a $0 ask reads as
-         "already covered", which is the opposite of "we don't know what this one is worth". */
-      if(spon.unpricedCount)sum.push([_xc(spon.unpricedCount+' sponsored place(s) have no ticket price on record, so the total above UNDER-reads. Set a ticket price or record the invoice to close the gap.',XS.NOTE)]);
-    }
-    sum.push([]);
-    sum.push([_xc('"Money received" counts what has actually come in: a full-sponsor code contributes $0 and a place paid in person is valued at its ticket price. Sponsorship is the gap that must arrive from elsewhere for the camp to be whole.',XS.NOTE)]);
-
-    /* ── Sheet 2: By ministry ─────────────────────────────────────────────────────────────── */
+    /* ── Sheet 2 built FIRST (2026-09-05) — the Summary reconciliation block below reads
+       `printed`, which `detail()` only accumulates while these rows are built. Build order,
+       NOT sheet order: `sheets` further down still lists Summary first, so the tab order in the
+       workbook is unchanged. Get the BUILD order backwards and `printed` stays 0 forever, which
+       makes the reconciliation permanently report "Difference 0 OK" — a false all-clear on the
+       one guarantee this whole feature exists to give. */
     // Task 16 — 'Cancelled' is a COUNT within the row's People, not a filter: cancelled people
     // stay IN every export, marked — one consistent rule (they are hidden from on-screen ops
     // lists only). An export is the audit trail: someone who withdrew after paying is exactly
-    // who a reconciliation needs to see. Their money still counts in Line total (Task 14).
-    const HEAD=['Church','Row type','Audience','Accommodation','Payment type','Discount code','People','Unit price','Line total','Cancelled'];
+    // who a reconciliation needs to see. Their money still counts (Task 14).
+    const HEAD=['Church','Row type','Audience','Accommodation','Code used','Code type','Number',
+      'Raw invoice value','Effective $ to budget per ticket','Effective $ to budget total','Cancelled'];
     const rows=[HEAD.map((h)=>_xc(h,XS.HEAD))];
-    const detail=(church,aud,list)=>(list||[]).forEach((r)=>rows.push([
-      /* The church name repeats on every row so the sheet stays filterable and pivotable — the
-         owner's complaint was that the repetition is what makes it hard to read, and MUTED grey
-         answers that without deleting the fact. Do not blank it instead. */
-      _xc(church,XS.MUTED),_xc('Detail',XS.MUTED),_xc(aud,XS.TEXT),
-      _xc(_budAccom(r.key),XS.TEXT),_xc(_budPayment(r.key),XS.TEXT),_xc(r.codeHint||'',XS.TEXT),
-      _xn(r.count,XS.NUM),_xn(r.amount==null?null:r.amount,XS.MONEY),_xn(r.lineTotal,XS.MONEY),
-      _xn(r.cancelledCount||0,XS.NUM),
-    ]));
+    const tags=_budTags(),prices=_budPrices(),ptable=_budTicketPrices(window._budgetRegs);
+    let printed=0;
+    const detail=(church,aud,list)=>(list||[]).forEach((r)=>{
+      printed+=r.count;
+      rows.push([
+        /* The church name repeats on every row so the sheet stays filterable and pivotable —
+           the owner's complaint was that the repetition is what makes it hard to read, and MUTED
+           grey answers that without deleting the fact. Do not blank it instead. */
+        _xc(church,XS.MUTED),_xc('Detail',XS.MUTED),_xc(aud,XS.TEXT),
+        _xc(_budAccom(r.key),XS.TEXT),_xc(r.code||'',XS.TEXT),_xc(_budCodeType(r,tags),XS.TEXT),
+        // ⚠ rawAmount/effAmount are null on a mixed row — _xn renders null as a BLANK cell, never
+        // 0. A 0 there would read as "free" beside a non-zero Effective $ to budget total.
+        _xn(r.count,XS.NUM),_xn(r.rawAmount,XS.MONEY),_xn(r.effAmount,XS.MONEY),
+        _xn(r.effTotal,XS.MONEY),_xn(r.cancelled,XS.NUM),
+      ]);
+    });
     /* ⚠ THE CHURCH TOTAL LEADS ITS BLOCK, DETAIL SITS UNDER IT (owner, 2026-08-04 5th-b).
        A spreadsheet subtotal conventionally FOLLOWS its rows, which is why it was written that
        way — but the question this sheet is opened to answer is "what did each ministry owe",
        and a total that arrives last has to be hunted for at the bottom of a block whose length
        varies by ministry. Leading with it means scrolling the sheet reads as a list of totals,
        with the working underneath for anyone who wants it. The row keeps its top border, which
-       now separates one ministry's block from the previous one. */
-    const cancelledIn=(list)=>(list||[]).reduce((s,r)=>s+(r.cancelledCount||0),0);
+       now separates one ministry's block from the previous one.
+       ⚠ EVERY non-detail row below is padded to the FULL 11 CELLS — a short row silently shifts
+       the Cancelled column left, and the header check alone cannot catch that. */
+    let campCancelled=0;
     rep.churches.forEach((c)=>{
-      const churchCancelled=cancelledIn(c.campers)+cancelledIn(c.leaders);
+      // Export grain, not card grain — see the note on _budExportRows.
+      const cam=_budExportRows(c._people?c._people.filter(p=>p.kind!=='leader'):[],tags,prices,ptable);
+      const led=_budExportRows(c._people?c._people.filter(p=>p.kind==='leader'):[],tags,prices,ptable);
+      const churchCancelled=cam.reduce((s,r)=>s+r.cancelled,0)+led.reduce((s,r)=>s+r.cancelled,0);
+      campCancelled+=churchCancelled;
       rows.push([_xc(c.churchName,XS.TOT_T),_xc('Church total',XS.TOT_T),_xc('',XS.TOT_T),_xc('',XS.TOT_T),
-        _xc('',XS.TOT_T),_xc('',XS.TOT_T),_xn(c.camperCount+c.leaderCount,XS.TOT_N),_xn(null,XS.TOT_M),_xn(c.total,XS.TOT_M),
-        _xn(churchCancelled,XS.TOT_N)]);
-      detail(c.churchName,'Student',c.campers);
-      detail(c.churchName,'Leader',c.leaders);
+        _xc('',XS.TOT_T),_xc('',XS.TOT_T),_xn(c.camperCount+c.leaderCount,XS.TOT_N),_xn(null,XS.TOT_M),
+        _xn(null,XS.TOT_M),_xn(c.total,XS.TOT_M),_xn(churchCancelled,XS.TOT_N)]);
+      detail(c.churchName,'Student',cam);
+      detail(c.churchName,'Leader',led);
     });
-    const campCancelled=rep.churches.reduce((s,c)=>s+cancelledIn(c.campers)+cancelledIn(c.leaders),0);
     rows.push([_xc(scopeLabel,XS.GRAND_T),_xc('Camp total',XS.GRAND_T),_xc('',XS.GRAND_T),_xc('',XS.GRAND_T),
-      _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(rep.grandTotal,XS.GRAND_M),
-      _xn(campCancelled,XS.GRAND_N)]);
+      _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(null,XS.GRAND_M),
+      _xn(null,XS.GRAND_M),_xn(rep.grandTotal,XS.GRAND_M),_xn(campCancelled,XS.GRAND_N)]);
     // The filter covers the RECEIVED table only — see the sponsorship block below.
     const receivedRows=rows.length;
 
@@ -5083,19 +5206,111 @@ async function exportBudget(){
        column was added to prevent. */
     if(spon.count){
       rows.push([]);
-      rows.push([_xc('Sponsorship still needed — money that has NOT arrived. Do not add these rows to the totals above.',XS.SECTION)]);
+      // ⚠ Padded with STYLED blank cells (_xc('',...)), never bare `null` — _xlSheetXml treats a
+      // bare null as "emit nothing", so a null-padded row is 1 cell wide in the real XML no
+      // matter how long the JS array literal is (found in review, 2026-09-06). A styled blank
+      // still emits a real <c/>, which is what actually reaches 11 cells on disk.
+      rows.push([_xc('Sponsorship still needed — money that has NOT arrived. Do not add these rows to the totals above.',XS.SECTION),
+        _xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),
+        _xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION),_xc('',XS.SECTION)]);
       spon.churches.forEach((c)=>c.codes.forEach((x)=>rows.push([
         _xc(c.name,XS.MUTED),_xc('Sponsor by ministry',XS.MUTED),_xc('',XS.TEXT),_xc('',XS.TEXT),
-        _xc(_SPONSOR_TAG_LABEL[x.tag]||x.tag,XS.TEXT),_xc(x.code,XS.TEXT),
-        _xn(x.count,XS.NUM),_xn(null,XS.MONEY),_xn(x.total,XS.MONEY),_xc('',XS.TEXT)])));
+        _xc(x.code,XS.TEXT),_xc(_SPONSOR_TAG_LABEL[x.tag]||x.tag,XS.TEXT),
+        _xn(x.count,XS.NUM),_xn(null,XS.MONEY),_xn(null,XS.MONEY),_xn(x.total,XS.MONEY),_xc('',XS.TEXT)])));
       rows.push([_xc(scopeLabel,XS.GRAND_T),_xc('Sponsor total',XS.GRAND_T),_xc('',XS.GRAND_T),_xc('',XS.GRAND_T),
-        _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(spon.count,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(spon.total,XS.GRAND_M),
-        _xc('',XS.GRAND_T)]);
+        _xc('',XS.GRAND_T),_xc('',XS.GRAND_T),_xn(spon.count,XS.GRAND_N),_xn(null,XS.GRAND_M),_xn(null,XS.GRAND_M),
+        _xn(spon.total,XS.GRAND_M),_xc('',XS.GRAND_T)]);
     }
+
+    /* ── Sheet 1: Summary — built AFTER 'By ministry' (see the note at the top of this
+       function); the reconciliation block below needs `printed` already populated. ────────── */
+    const sum=[
+      [_xc('Youth camp '+year+' — Budget',XS.TITLE)],
+      [_xc('Scope: '+scopeLabel,XS.SUB)],
+      [_xc('Exported '+new Date().toLocaleDateString('en-AU')+' · amounts are MONEY RECEIVED, not the value of every place',XS.SUB)],
+      [],
+      [_xc('Money received',XS.SECTION)],
+      [_xc('Item',XS.HEAD),_xc('People',XS.HEAD),_xc('Amount',XS.HEAD)],
+      [_xc('Students',XS.TEXT),_xn(rep.camperCount,XS.NUM),_xn(null,XS.MONEY)],
+      [_xc('Leaders',XS.TEXT),_xn(rep.leaderCount,XS.NUM),_xn(null,XS.MONEY)],
+      [_xc('Total received',XS.GRAND_T),_xn(rep.camperCount+rep.leaderCount,XS.GRAND_N),_xn(rep.grandTotal,XS.GRAND_M)],
+    ];
+    /* RECONCILIATION (2026-09-05, re-scoped 2026-09-06 — Finding A). Every person in the app
+       must be traceable to one line of 'By ministry'. Two independent things can break that,
+       and this block separates them: a grouping bug (caught by _budExportRows' totality
+       assertion) and a SHORT FETCH — the campers request failing or truncating, which used to
+       be swallowed entirely.
+       🔴 Finding A (2026-09-06): `fetched` USED TO read `window._budgetFetch.count` directly —
+       the camp-wide population `RENDER.budget` sets once and never re-scopes — while `printed`
+       (via `rep.churches`) correctly covers only `scope`. That false-positived the reconciliation
+       on EVERY single-ministry export: 5 people, 3 at Victory, scope=Victory → "fetched 5,
+       printed 3, Difference 2" on a completely correct export. `fetched` is now filtered from the
+       SAME source array (`window._budgetRegs`) with the IDENTICAL predicate
+       `computeBudgetClient` itself uses (`!scope||scope==='all'||r.churchId===scope`) — never
+       re-derived some other way, or the two can drift again.
+       ⚠ `window._budgetFetch` is produced by a later task and may not exist yet — the read below
+       is guarded so a missing value degrades to "not reported" rather than throwing. */
+    const fetched=(window._budgetFetch&&window._budgetFetch.count!=null)
+      ?(window._budgetRegs||[]).filter((r)=>!scope||scope==='all'||r.churchId===scope).length
+      :null;
+    sum.push([]);   // blank spacer, matching every other section heading on this sheet
+    sum.push([_xc('Reconciliation',XS.SECTION)]);
+    sum.push([_xc('People fetched from the app',XS.TEXT),_xn(fetched,XS.NUM),_xc('',XS.TEXT)]);
+    sum.push([_xc("People on 'By ministry'",XS.TEXT),_xn(printed,XS.NUM),_xc('',XS.TEXT)]);
+    const diff=fetched==null?null:fetched-printed;
+    sum.push([_xc('Difference',XS.TOT_T),_xn(diff,XS.TOT_N),_xc(diff===0?'OK':'',XS.TOT_T)]);
+    if(diff){
+      sum.push([_xc('⚠ '+Math.abs(diff)+' people are missing from this export. Do not rely on the totals above.',XS.NOTE)]);
+    }
+    /* 🔴 Finding B (2026-09-06) — a fetch error must surface on its OWN line, independently of
+       `diff`. `window._budgetFetch.count` is computed from the already-SHRUNK `_budgetRegs`
+       array (RENDER.budget builds it AFTER the campers fetch fails), so an isolated `/campers`
+       failure gives `fetched === printed`, `diff === 0`, and the old code — gated on `if(diff)`
+       — never printed the error at all. The on-screen warnbox in `drawBudget` was never affected
+       by this; this is only about the exported workbook. Both notes can appear TOGETHER (a
+       fetch error AND a non-zero diff are different failures, not alternatives). */
+    if(window._budgetFetch&&window._budgetFetch.error){
+      sum.push([_xc('⚠ The camper list failed to load: '+window._budgetFetch.error,XS.NOTE)]);
+    }
+    sum.push([]);
+    if(spon.count){
+      /* No PLACES column here (owner, 2026-08-04 5th-b). A sponsorship headcount answers a
+         different question from the ask, and sitting in the same table it invited the reading
+         "$830 ÷ 6 places" — which is the per-place average the band split exists to avoid.
+         The count still drives the unpriced warning below, it is just not presented as a figure. */
+      sum.push([_xc('Sponsorship still needed',XS.SECTION)]);
+      sum.push([_xc('Item',XS.HEAD),_xc('',XS.HEAD),_xc('Amount',XS.HEAD)]);
+      sum.push([_xc('Full sponsorship',XS.TEXT),_xc('',XS.TEXT),_xn(spon.fullTotal,XS.MONEY)]);
+      sum.push([_xc('Part sponsored',XS.TEXT),_xc('',XS.TEXT),_xn(spon.partialTotal,XS.MONEY)]);
+      sum.push([_xc('Total still needed',XS.TOT_T),_xc('',XS.TOT_T),_xn(spon.total,XS.TOT_M)]);
+      /* ⚠ An unpriceable place is COUNTED AND FLAGGED, never totalled as $0 — a $0 ask reads as
+         "already covered", which is the opposite of "we don't know what this one is worth". */
+      if(spon.unpricedCount)sum.push([_xc(spon.unpricedCount+' sponsored place(s) have no ticket price on record, so the total above UNDER-reads. Set a ticket price or record the invoice to close the gap.',XS.NOTE)]);
+    }
+    if(spon.unclassifiedCount){
+      /* ⚠️ REPORTED, NOT INFERRED, AND NOT IN ANY TOTAL. An untagged 100%-off code can be a
+         staff comp or a desk payment as easily as a sponsorship; classifying it is a human
+         decision. Measured in prod 2026-09-05: 14 of 19 codes untagged, 85 people,
+         ~$13,000 of gap invisible. */
+      sum.push([]);
+      sum.push([_xc('Unclassified discount codes',XS.SECTION)]);
+      sum.push([_xc('Code',XS.HEAD),_xc('People',XS.HEAD),_xc('Gap not counted',XS.HEAD)]);
+      spon.unclassified.forEach((u)=>sum.push([
+        _xc(u.code+(u.avgPercent==null?'':' ('+Math.round(u.avgPercent)+'% off)'),XS.TEXT),
+        _xn(u.count,XS.NUM),_xn(u.total,XS.MONEY)]));
+      sum.push([_xc('Total not counted',XS.TOT_T),_xn(spon.unclassifiedCount,XS.TOT_N),_xn(spon.unclassifiedTotal,XS.TOT_M)]);
+      sum.push([_xc('⚠ These codes have not been classified, so the sponsorship total above EXCLUDES them. Classify each one on the Budget screen to bring its gap into the total.',XS.NOTE)]);
+    }
+    if(spon.withdrawnCount){
+      sum.push([_xc('Withdrawn (not asked for): '+spon.withdrawnCount+' place(s), '
+        +'$'+spon.withdrawnTotal.toLocaleString('en-AU')+' excluded from the total above.',XS.NOTE)]);
+    }
+    sum.push([]);
+    sum.push([_xc('"Money received" counts what has actually come in: a full-sponsor code contributes $0 and a place paid in person is valued at its ticket price. Sponsorship is the gap that must arrive from elsewhere for the camp to be whole.',XS.NOTE)]);
 
     const sheets=[
       {name:'Summary',cols:[46,10,14],rows:sum},
-      {name:'By ministry',cols:[26,20,10,16,18,16,9,12,13,11],rows:rows,freeze:1,filter:'A1:J'+receivedRows},
+      {name:'By ministry',cols:[26,20,10,16,16,18,9,15,20,20,11],rows:rows,freeze:1,filter:'A1:K'+receivedRows},
     ];
 
     const blob=await _xlsxBlob(sheets);

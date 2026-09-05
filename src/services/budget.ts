@@ -111,6 +111,13 @@ export interface BudgetPerson {
   amountPaidOverride?: number | null;
   /** Refund issued; subtracted from whatever the base value came out as. */
   refundAmount?: number | null;
+  /**
+   * Registration state. Optional because most callers never set it and every existing
+   * fixture predates it. Only the SPONSORSHIP path reads it: a withdrawn place is no longer
+   * an ask. The RECEIVED table deliberately still counts a cancelled person's money
+   * (2026-09-03) — cancelling must not move the money, so do not add a filter there.
+   */
+  status?: 'registered' | 'cancelled';
 }
 
 export interface CategoryRow {
@@ -198,6 +205,26 @@ export function discountTagFor(p: BudgetPerson, tags: DiscountTagMap): DiscountT
 }
 
 /**
+ * A discount code that the admin has never classified, on a person whose invoice shows a real
+ * discount. These are invisible to `computeSponsorSummary` (it only walks sponsor/discount tags),
+ * which is how 85 people and ~$13,000 of sponsorship gap went unreported in prod on 2026-09-05.
+ *
+ * ⚠️ THIS DETECTS, IT DOES NOT INFER. A caller must report the person and EXCLUDE their money
+ * from every total. Do not map "100% discount" onto the `sponsor` tag — an untagged 100% code
+ * can legitimately be a staff comp or a desk payment, and guessing would ask a sponsor for money
+ * nobody owes. Same doctrine as `discountTagConflict`: report, a human decides.
+ */
+export function isUnclassifiedDiscount(p: BudgetPerson, tags: DiscountTagMap): boolean {
+  const code = (p.discountCode ?? '').trim();
+  if (!code) return false;
+  if (discountTagFor(p, tags) != null) return false;
+  if ((p.discountAmount ?? 0) > 0) return true;
+  // Fallback for a code whose discountAmount was never recorded: the invoice settled below
+  // the ticket price, which is itself evidence of a discount.
+  return p.registrationCost != null && p.amountPaid != null && p.amountPaid < p.registrationCost;
+}
+
+/**
  * Which of the nine buckets a registrant falls into.
  *
  * Accommodation kind decides tent vs classroom; the admin's tag on the person's discount code
@@ -281,7 +308,7 @@ export function personValue(
   ticketPrice?: number | null,
   tag?: DiscountTag | null,
 ): number | null {
-  const base = amountPaidBase(p, cls, prices, ticketPrice, tag);
+  const base = receivedBeforeRefund(p, cls, prices, ticketPrice, tag);
   if (base == null) return null; // unknowable stays unknowable — never a bare -refund
   return base - (p.refundAmount ?? 0);
 }
@@ -291,10 +318,14 @@ export function personValue(
  * on the cascade, it IS the person's value once an admin has set it (including a deliberate 0,
  * which is why this tests `!= null` and not truthiness).
  *
- * ⚠️ MIRRORED in public/index.html `_personValueBase`. That copy is what the live Budget screen
- * and its export actually run; this one is dead server-side. Change both together.
+ * EXPORTED 2026-09-05 because the sponsorship ask must be refund-INDEPENDENT: `personValue`
+ * subtracts the refund, and `ask = ticketValue − received` therefore grew by exactly the refund
+ * amount, asking a sponsor to re-fund money the camp chose to give back. There are now two
+ * callers and no third copy of the cascade.
+ *
+ * ⚠️ MIRRORED in public/index.html `_personValueBase`. Change both together.
  */
-function amountPaidBase(
+export function receivedBeforeRefund(
   p: BudgetPerson,
   cls: TicketClass,
   prices: BasePrices,
@@ -553,8 +584,25 @@ export interface SponsorSummary {
    * so the UI can say the total under-reads rather than quietly under-reporting it.
    */
   unpricedCount: number;
+  /** Cancelled places, excluded from every total above. Reported so the exclusion is visible. */
+  withdrawnCount: number;
+  withdrawnTotal: number;
+  /** Untagged codes with a measured discount. NOT in `total` — see `isUnclassifiedDiscount`. */
+  unclassifiedCount: number;
+  unclassifiedTotal: number;
+  unclassified: UnclassifiedCodeRow[];
   codes: SponsorCodeRow[];
   churches: SponsorChurchRow[];
+}
+
+/** An untagged code carrying a measured discount. Reported, never totalled. */
+export interface UnclassifiedCodeRow {
+  code: string;
+  count: number;
+  /** The gap these places represent — what the ask WOULD be if the code were classified. */
+  total: number;
+  /** Measured average discount on the invoices, or null when no invoice carried both figures. */
+  avgPercent: number | null;
 }
 
 /**
@@ -582,7 +630,9 @@ export function sponsorAmountFor(
   const fallback = kind === 'tent' ? prices.tent : kind === 'classroom' ? prices.classroom : null;
   const ticketValue = ticketPrice ?? fallback;
   if (ticketValue == null) return { ticketValue: null, amount: 0 };
-  const received = personValue(p, cls, prices, ticketPrice, tag) ?? 0;
+  // ⚠️ receivedBeforeRefund, NOT personValue — see that function's note. A refund must not
+  // re-open a sponsorship gap; the money was returned deliberately, not left outstanding.
+  const received = receivedBeforeRefund(p, cls, prices, ticketPrice, tag) ?? 0;
   // Never negative: someone who over-paid against their ticket is not owed a sponsor.
   return { ticketValue, amount: Math.max(0, ticketValue - received) };
 }
@@ -643,11 +693,62 @@ export function computeSponsorSummary(
     : people;
 
   const byCode = new Map<string, { tag: SponsorTag; entries: SponsorEntry[] }>();
+  const unclassifiedBy = new Map<string, { count: number; total: number; pairs: { cost: number; discount: number }[] }>();
+  let withdrawnCount = 0;
+  let withdrawnTotal = 0;
   for (const p of scoped) {
     const code = (p.discountCode ?? '').trim();
     if (!code) continue;
-    const tag = tags[code];
+
+    // The tag is resolved once, up front, via `discountTagFor` rather than a raw `tags[code]`
+    // lookup — the code may legitimately be untagged (tag === null) at this point in the loop,
+    // and `discountTagFor` already validates against the three known tag values, so it is a
+    // drop-in replacement for the `tags[code]` lookup the tagged path used to do on its own.
+    const tag = discountTagFor(p, tags);
+    const unclassified = isUnclassifiedDiscount(p, tags);
+    const inAskPopulation = (tag != null && SPONSOR_TAGS.includes(tag)) || unclassified;
+
+    // A withdrawn place is not an ask, regardless of how its code is classified — checked
+    // FIRST, before the unclassified check and the tag check, so a cancelled person on an
+    // untagged (but discounted) code cannot fall through into unclassifiedTotal, which is
+    // exactly the bug this task exists to fix, just relocated to a different bucket
+    // (2026-09-05, review round 1).
+    //
+    // ⚠️ SCOPED TO THE ASK POPULATION ONLY (round 2). A cancelled person whose code is
+    // untagged-with-no-discount-evidence, or tagged `inperson`, was never part of any ask to
+    // begin with — `inperson` money genuinely arrived (it was just taken by hand at the desk),
+    // so counting its cancellation as "withdrawn" would assert an exclusion that never
+    // happened and inflate the reported count against a $0 amount, misleadingly implying a
+    // sponsored place went missing. Such a person is skipped entirely below, exactly as they
+    // were before cancellation was ever considered.
+    if (p.status === 'cancelled') {
+      if (inAskPopulation) {
+        const cls = classifyTicket(p, tags);
+        const { ticketValue, amount } = sponsorAmountFor(
+          p, cls, prices, resolveTicketPrice(p, priceTable), tag);
+        withdrawnCount++;
+        withdrawnTotal += ticketValue == null ? 0 : amount;
+      }
+      continue;
+    }
+
+    if (unclassified) {
+      const cls = classifyTicket(p, tags);
+      const { ticketValue } = sponsorAmountFor(p, cls, prices, resolveTicketPrice(p, priceTable), null);
+      const received = receivedBeforeRefund(p, cls, prices, resolveTicketPrice(p, priceTable), null) ?? 0;
+      const gap = ticketValue == null ? 0 : Math.max(0, ticketValue - received);
+      let u = unclassifiedBy.get(code);
+      if (!u) { u = { count: 0, total: 0, pairs: [] }; unclassifiedBy.set(code, u); }
+      u.count++;
+      u.total += gap;
+      if (p.registrationCost != null && p.registrationCost > 0 && p.discountAmount != null) {
+        u.pairs.push({ cost: p.registrationCost, discount: p.discountAmount });
+      }
+      continue;
+    }
+
     if (!tag || !SPONSOR_TAGS.includes(tag)) continue;
+
     const cls = classifyTicket(p, tags);
     const { ticketValue, amount } = sponsorAmountFor(p, cls, prices, resolveTicketPrice(p, priceTable), tag);
     let bucket = byCode.get(code);
@@ -663,6 +764,12 @@ export function computeSponsorSummary(
       ticketType: (p.registrationType ?? '').trim(),
     });
   }
+
+  const unclassified: UnclassifiedCodeRow[] = [...unclassifiedBy.entries()]
+    .map(([code, u]) => ({
+      code, count: u.count, total: u.total, avgPercent: averageDiscountPercent(u.pairs),
+    }))
+    .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
 
   const churchAgg = new Map<string, { name: string; count: number; total: number; codes: Map<string, { tag: SponsorTag; count: number; total: number }> }>();
   const codes: SponsorCodeRow[] = [];
@@ -731,7 +838,14 @@ export function computeSponsorSummary(
     }))
     .sort(byTotalThenName);
 
-  return { total: fullTotal + partialTotal, fullTotal, partialTotal, count, unpricedCount, codes, churches };
+  return {
+    total: fullTotal + partialTotal, fullTotal, partialTotal, count, unpricedCount,
+    withdrawnCount, withdrawnTotal,
+    unclassifiedCount: unclassified.reduce((s, u) => s + u.count, 0),
+    unclassifiedTotal: unclassified.reduce((s, u) => s + u.total, 0),
+    unclassified,
+    codes, churches,
+  };
 }
 
 export interface DiscountCodeRow {

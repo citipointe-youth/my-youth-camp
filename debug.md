@@ -614,6 +614,17 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-09-06 — budget export traceability
+
+| Symptom | Go to |
+|---|---|
+| "Sponsored students are missing from the export" | Their code is untagged. `computeSponsorSummaryClient` only walks `sponsor`/`discount` tags; everything else lands in `unclassified` and is reported on the Summary sheet, never totalled. Classify the code on the Budget screen. Measured 2026-09-05: 14 of 19 codes untagged. |
+| The Summary reconciliation shows a non-zero Difference | **First suspect the `budChurch` scope dropdown, not a fetch or a grouping bug.** `fetched` and `printed` are both scoped to the SAME ministry selection (2026-09-06, Finding A) — if a non-zero Difference shows up specifically when one ministry is selected but reads 0 with "All ministries", `fetched` has regressed back to reading `window._budgetFetch.count` verbatim (the camp-wide population) instead of filtering `window._budgetRegs` by `scope`. A grouping bug is structurally near-impossible — `_budExportRows` keys on the person, and a harness check asserts Σ count === people.length. A short camper fetch (`window._budgetFetch.error`) is reported on its OWN Summary line regardless of Difference (2026-09-06, Finding B) — it does NOT by itself move Difference, since `window._budgetFetch.count` is derived from the already-shrunk `_budgetRegs` array (`fetched === printed` in that case), so seeing the error line with Difference: 0 is expected, not a contradiction. |
+| A sponsorship figure changed after a refund | It should not, since 2026-09-05. The ask uses `receivedBeforeRefund` / `_personValueBase`. If it moves, someone swapped it back to `personValue`. |
+| A cancelled student is still being asked for | `status==='cancelled'` is skipped in the sponsorship loop and reported as `withdrawnCount`. The RECEIVED table still counts their money — that is correct and deliberate (2026-09-03). |
+| The budget harness throws `not found in index.html` | `extract()` matches on the name prefix, so this now means a genuine RENAME, not a parameter change. It matched full signatures until 2026-09-05 and was dead for a month. |
+| Raw and effective both read $0.00 on a sponsored row | Correct. Raw is `amountPaid`, and a sponsor invoice settles at $0. The gap lives in the Sponsorship block, not on the row. Owner's explicit choice, 2026-09-05. |
+
 ### 2026-09-04 — import warnings: grouped preview + the `code` contract
 
 | Symptom | Go to |

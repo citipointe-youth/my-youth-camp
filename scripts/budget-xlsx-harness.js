@@ -41,8 +41,14 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 
  * (), [] and {} together, ending on the first `;` at depth 0.
  */
 function extract(decl) {
-  const i = SRC.indexOf(decl);
-  if (i < 0) throw new Error('not found in index.html: ' + decl);
+  // Match on everything up to the '(' — the NAME is stable, the parameter list is not.
+  // A full-signature match silently rotted for a month when `tag` was appended to
+  // _personValue and _sponsorAmountFor on 2026-08-05, and the harness threw on startup
+  // rather than reporting a failure, so nobody noticed it had stopped running.
+  const paren = decl.indexOf('(');
+  const stem = paren < 0 ? decl : decl.slice(0, paren + 1);
+  const i = SRC.indexOf(stem);
+  if (i < 0) throw new Error('not found in index.html: ' + stem);
   let depth = 0, started = false, prev = '';
   for (let j = i; j < SRC.length; j++) {
     const ch = SRC[j];
@@ -70,13 +76,18 @@ function extract(decl) {
   throw new Error('unbalanced extraction for ' + decl);
 }
 
-let savedBlob = null, savedName = null;
+let savedBlob = null, savedName = null, lastToast = null;
+// `sel` used to be hardcoded to 'all', which is exactly why the whole-branch review found
+// Finding A and this harness didn't: nothing here could ever exercise a scoped (single-ministry)
+// export. Configurable via SEL_VALUES — set SEL_VALUES.budChurch before an export to simulate the
+// admin picking a ministry from the dropdown, reset to 'all' after (section 10 below does both).
+const SEL_VALUES = { budChurch: 'all' };
 const ctx = {
   console, JSON, Object, String, Number, Math, Array, Date, RegExp, Map, Set, isFinite, Promise,
   Uint8Array, Uint32Array, DataView, ArrayBuffer, Blob, TextEncoder, Response, Error,
   CompressionStream: typeof CompressionStream === 'function' ? CompressionStream : undefined,
-  sel: () => 'all',
-  toast: () => {},
+  sel: (id) => (Object.prototype.hasOwnProperty.call(SEL_VALUES, id) ? SEL_VALUES[id] : 'all'),
+  toast: (msg) => { lastToast = msg; },
   document: { getElementById: () => null },
   _exportName: (base, ext) => base + '.' + ext,
   _rlSaveBlob: (blob, name) => { savedBlob = blob; savedName = name; },
@@ -87,15 +98,23 @@ const ctx = {
 ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext([
-  'const _BUD_CLASSES=', 'function _budAccom(cls)', 'function _budPayment(cls)',
+  'const _BUD_CLASSES=', 'function _budAccom(cls)', 'function _budPayment(cls)', 'function _budCodeType(row,tags)',
   // The sponsorship path runs for real — it is the only way to prove the differential survives
   // into the spreadsheet, so every function it touches is extracted rather than stubbed.
   'function _normTicketType(t)', 'function _budTicketPrices(regs)', 'function _priceForTicket(table,t)',
-  'function _resolveTicketPrice(p,table)', 'function _personValue(p,cls,prices,ticketPrice)',
+  'function _resolveTicketPrice(p,table)', 'function _discountTagFor(p,tags)',
+  'function _isUnclassifiedDiscount(p,tags)',
+  'function _personValue(p,cls,prices,ticketPrice,tag)', 'function _personValueBase(p,cls,prices,ticketPrice,tag)',
   'function _classifyTicket(p,tags)', 'function _budPrices()', 'function _budTags()',
-  'function _sponsorAmountFor(p,cls,prices,ticketPrice)', 'const _SPONSOR_TAGS=',
+  'function _budRowLabel(cls,amount)', 'function _budValueBreakdown(b)', 'function _budScopeRows(people,tags,prices,ptable)',
+  'function _budExportRows(people,tags,prices,ptable)',
+  'function _sponsorAmountFor(p,cls,prices,ticketPrice,tag)', 'const _SPONSOR_TAGS=',
   'const _SPONSOR_TAG_LABEL=', 'function _sponsorBands(entries)',
   'function computeSponsorSummaryClient(regs,filterId)', 'function _sponsorByTotal(a,b)',
+  // Only ever reached through the UNCLASSIFIED branch — dead in every fixture until Task 5 added
+  // one. Its absence here made the second exportBudget() call throw internally, get swallowed by
+  // its own try/catch, and leave every downstream check reading a stale, untagged workbook.
+  'function _avgDiscountPct(pairs)',
   // The zip + xlsx writers, real. Nothing here is reimplemented for the test.
   'const _CRC_T=', 'function _crc32(u8)', 'async function _deflateRaw(u8)',
   'function _dosDateTime(d)', 'async function _zipBlob(entries)',
@@ -121,6 +140,24 @@ function checkTrue(label, cond, detail) {
   console.log('  FAIL ' + label + (detail ? '\n         ' + detail : ''));
   failures++;
 }
+/* exportBudget's own catch swallows every internal error into a toast — found the hard way while
+   building this: a missing extraction (`_avgDiscountPct`) made the SECOND export throw silently,
+   and `_rlSaveBlob` never ran, so every check below kept reading the FIRST (untagged) run's blob
+   and failed with confusing, unrelated-looking diffs instead of the real ReferenceError. Call this
+   after every `await ctx.exportBudget()` so a broken build fails loudly, at the point it broke. */
+function assertExportOk() {
+  checkTrue('exportBudget did not fail internally', !lastToast || !/Could not build/.test(lastToast), lastToast);
+}
+
+/* The extractor matches on a name prefix, so a renamed FUNCTION still throws (good) while a
+   changed parameter list does not (also good). This asserts the sandbox actually got a callable
+   for each name we depend on — a typo'd name would otherwise surface as a confusing TypeError
+   several hundred lines below.
+   ⚠️ `_budExportRows` was added in Task 4 — it did not exist when this list was first written. */
+['_budScopeRows', '_budExportRows', '_budCodeType', '_personValue', '_sponsorAmountFor',
+ 'computeSponsorSummaryClient', 'exportBudget', '_xlsxBlob'].forEach((n) => {
+  checkTrue('sandbox exposes ' + n, typeof ctx[n] === 'function');
+});
 
 /* ---- a minimal unzip, so the assertions are made against the REAL bytes the browser saves ---- */
 function unzip(buf) {
@@ -164,35 +201,56 @@ function parseSheet(xml) {
 const cellAt = (row, col) => (row || []).find((c) => c.col === col) || null;
 const parts0 = (p) => [...p['xl/workbook.xml'].matchAll(/<sheet name="([^"]+)"/g)].map((x) => x[1]);
 
-const row = (key, count, amount, lineTotal, codeHint) =>
-  ({ key, count, amount, lineTotal, codeHint: codeHint || null, label: 'ignored' });
-
-ctx.computeBudgetClient = () => ({
-  churches: [
-    {
-      churchName: 'Citipointe, Carindale',
-      campers: [row('classroom', 10, 190, 1900), row('tent-inperson', 3, 150, 450, 'YC26CASH')],
-      leaders: [row('classroom-sponsor', 2, 0, 0, 'YC26LDR')],
-      camperCount: 13, leaderCount: 2, total: 2350,
-    },
-    {
-      churchName: 'Grace Point',
-      campers: [row('unknown', 4, null, 0)],
-      leaders: [],
-      camperCount: 4, leaderCount: 0, total: 0,
-    },
-  ],
-  camperCount: 17, leaderCount: 2, churchCount: 2, grandTotal: 2350,
-});
+/* `computeBudgetClient` is stubbed (never extracted) — exportBudget's church loop no longer reads
+   `c.campers`/`c.leaders` (2026-09-05: it re-groups from `c._people` via `_budExportRows`), so
+   the stub now carries RAW PEOPLE, exactly what Task 5's `_people:[...c.campers,...c.leaders]`
+   addition to the real `computeBudgetClient` would hand it. `camperCount`/`leaderCount`/`total`
+   stay hand-supplied (computeBudgetClient itself is not extracted, so nothing recomputes them). */
+const budPerson = (o) => Object.assign({
+  churchId: 'c1', churchName: 'Citipointe, Carindale', kind: 'camper', status: 'registered',
+  registrationCost: null, amountPaid: null, amountPaidOverride: null, refundAmount: null,
+  discountCode: null, discountAmount: null, accommodationKind: 'classroom', registrationType: null,
+}, o);
+const CARINDALE_PEOPLE = [
+  ...Array.from({ length: 10 }, () => budPerson({ registrationCost: 190, amountPaid: 190 })),
+  ...Array.from({ length: 3 }, () => budPerson({
+    accommodationKind: 'tent', registrationCost: 150, amountPaid: 0, discountCode: 'YC26CASH' })),
+  ...Array.from({ length: 2 }, () => budPerson({
+    kind: 'leader', registrationCost: 190, amountPaid: 0, discountCode: 'YC26LDR' })),
+];
+const GRACE_PEOPLE = Array.from({ length: 4 }, () => budPerson({
+  churchId: 'c2', churchName: 'Grace Point', accommodationKind: null }));
+const ALL_BUD_CHURCHES = [
+  { churchName: 'Citipointe, Carindale', churchId: 'c1', camperCount: 13, leaderCount: 2, total: 2350, _people: CARINDALE_PEOPLE },
+  { churchName: 'Grace Point', churchId: 'c2', camperCount: 4, leaderCount: 0, total: 0, _people: GRACE_PEOPLE },
+];
+// Scope-aware (2026-09-06, Finding A harness work) — the real `computeBudgetClient` filters
+// `_people` by `!filterId||filterId==='all'||r.churchId===filterId`; this stub applies the
+// IDENTICAL predicate at church granularity so section 10 below can exercise a genuinely scoped
+// export (one ministry only) rather than always the fixed two-church fixture. Every existing
+// call site passes 'all' (via the default SEL_VALUES.budChurch), so this is a no-op for every
+// check above and below that doesn't touch scope.
+ctx.computeBudgetClient = (regs, filterId) => {
+  const churches = (!filterId || filterId === 'all')
+    ? ALL_BUD_CHURCHES : ALL_BUD_CHURCHES.filter((c) => c.churchId === filterId);
+  return {
+    churches,
+    camperCount: churches.reduce((s, c) => s + c.camperCount, 0),
+    leaderCount: churches.reduce((s, c) => s + c.leaderCount, 0),
+    churchCount: churches.length,
+    grandTotal: churches.reduce((s, c) => s + c.total, 0),
+  };
+};
 
 /* The owner's exact sponsorship case, needed before the first export so the whole workbook is
    built once. YC26SPON is a FULL sponsorship spanning two tent prices; YC26HALF is a part
    sponsorship. One place is deliberately unpriceable, to prove it is counted and flagged rather
-   than silently totalled as $0 (which would read as "already covered"). */
+   than silently totalled as $0 (which would read as "already covered"). MYSTERY is a code the
+   admin has never tagged — the report-never-infer case Task 5 exists for. */
 const EARLY = 'EARLY BIRD | Tent Accomodation', STD = 'Tent Accomodation';
 const person = (o) => Object.assign({
   churchId: 'c1', churchName: 'Victory', kind: 'camper', status: 'active',
-  registrationCost: null, amountPaid: null, discountCode: null,
+  registrationCost: null, amountPaid: null, discountCode: null, discountAmount: null,
   accommodationKind: 'tent', registrationType: null,
 }, o);
 const SPONSOR_REGS = [
@@ -203,18 +261,107 @@ const SPONSOR_REGS = [
     churchId: 'c2', churchName: 'Grace Point' }),
   person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26SPON', amountPaid: 0,
     churchId: 'c2', churchName: 'Grace Point' }),
-  person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26HALF', amountPaid: 95 }),
+  person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26SPON', amountPaid: 0,
+    churchId: 'c2', churchName: 'Grace Point' }),
+  person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26SPON', amountPaid: 0,
+    churchId: 'c2', churchName: 'Grace Point' }),
+  person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26HALF', amountPaid: 60 }),
+  person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26HALF', amountPaid: 60 }),
+  person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26HALF', amountPaid: 60 }),
+  person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26HALF', amountPaid: 60 }),
+  person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26HALF', amountPaid: 60 }),
   // No cost, no ticket type, no accommodation kind → no source can price it.
   person({ discountCode: 'YC26SPON', accommodationKind: null, amountPaid: 0 }),
   // In-person money DID arrive; it must never appear as an ask.
   person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26CASH', amountPaid: 0 }),
+  // Untagged. `discountAmount` is what proves the flag survives 2026-09-05's fix — without it
+  // this would still be caught by the weaker amountPaid<registrationCost fallback, which is
+  // exactly the false confidence the fix exists to remove.
+  person({ registrationCost: 190, amountPaid: 50, discountCode: 'MYSTERY', discountAmount: 140 }),
+  person({ registrationCost: 190, amountPaid: 50, discountCode: 'MYSTERY', discountAmount: 140 }),
 ];
+
+console.log('\n0. _budExportRows — grouping and totality');
+{
+  const tags = { SPON: 'sponsor', EFT: 'inperson' };
+  const prices = { tent: null, classroom: null };
+  const P = (o) => Object.assign({
+    churchId: 'c1', churchName: 'Carindale', kind: 'camper',
+    registrationCost: 190, amountPaid: 190, accommodationKind: 'classroom',
+    discountCode: null, discountAmount: null, status: 'registered',
+  }, o);
+  const people = [
+    P({}), P({}),                                                  // plain, no code
+    P({ discountCode: 'SPON', amountPaid: 0, discountAmount: 190 }),// tagged sponsor
+    P({ discountCode: 'EFT', amountPaid: 0, discountAmount: 190 }), // tagged in person
+    P({ discountCode: 'MYSTERY', amountPaid: 0, discountAmount: 190 }), // untagged
+    P({ accommodationKind: null }),                                // unknown accommodation
+    P({ status: 'cancelled' }),                                    // cancelled, still counted
+    P({ amountPaid: null, registrationCost: null }),               // nothing recorded
+    P({ amountPaid: 150 }),                                        // same key as the plain pair —
+                                                                     // a GENUINE differing value,
+                                                                     // proving "mixed" means null,
+                                                                     // never 0 (review finding B)
+    P({ discountCode: 'DUPTEST', discountAmount: 0 }),              // shares DUPTEST with the next
+                                                                     // person but carries NO evidence
+                                                                     // itself (amountPaid===cost)
+    P({ discountCode: 'DUPTEST', discountAmount: 190, amountPaid: 0 }), // same code, but THIS one
+                                                                     // is genuinely unclassified —
+                                                                     // the shared row must still flag
+  ];
+  const rows = ctx._budExportRows(people, tags, prices, new Map());
+
+  checkTrue('every person lands on exactly one row',
+    rows.reduce((s, r) => s + r.count, 0) === people.length,
+    'Σ count=' + rows.reduce((s, r) => s + r.count, 0) + ' people=' + people.length);
+  checkTrue('rows are split by code', rows.some((r) => r.code === 'SPON') && rows.some((r) => r.code === 'MYSTERY'));
+  checkTrue('an untagged discount row is flagged',
+    rows.find((r) => r.code === 'MYSTERY').unclassified === true);
+  checkTrue('a tagged row is not flagged',
+    rows.find((r) => r.code === 'SPON').unclassified === false);
+  check('cancelled is counted within its row',
+    rows.reduce((s, r) => s + r.cancelled, 0), 1);
+  // Review finding A (2026-09-06): two people can share one untagged code and disagree on whether
+  // EITHER of them individually looks like a discount — the row must flag if ANY member does.
+  // The first DUPTEST person alone would create the bucket with unclassified:false; only the
+  // SECOND person supplies the evidence. If the accumulation were a plain overwrite (or, worse, a
+  // single assignment at bucket-creation time) this would silently read false.
+  checkTrue('a code shared by an evidenced and an unevidenced person is still flagged',
+    rows.find((r) => r.code === 'DUPTEST').unclassified === true);
+  // Review finding B (2026-09-06): the old assertion here (`=== null || typeof === 'number'`)
+  // could never fail — `typeof 0 === 'number'` — so a row that wrongly reported 0 instead of null
+  // would have passed silently. Target two SPECIFIC rows instead: the one with genuinely differing
+  // effective values (some 190, one 150, one missing) must report null, never 0; a row where every
+  // member agrees must report its real number, not null.
+  const mixedRow = rows.find((r) => r.key === 'classroom' && r.code === '');
+  checkTrue('a genuinely mixed row reports a null unit price, never 0',
+    !!mixedRow && mixedRow.effAmount === null,
+    'effAmount=' + JSON.stringify(mixedRow && mixedRow.effAmount));
+  const uniformRow = rows.find((r) => r.code === 'EFT');
+  checkTrue('a uniform row reports its real number, not null',
+    !!uniformRow && uniformRow.effAmount === 190,
+    'effAmount=' + JSON.stringify(uniformRow && uniformRow.effAmount));
+  // NOTE (Task 4 adjustment): the brief's arithmetic assumed the EFT (in-person) person values at
+  // their overridden amountPaid (0). The real, unchanged `_personValue`/`_personValueBase` cascade
+  // deliberately does NOT read amountPaid for an in-person-tagged code — "the money was collected
+  // by hand, so no invoice records it" — it substitutes the resolved TICKET PRICE instead. Here
+  // that person's `registrationCost` is the P() default (190, never overridden), so
+  // `_resolveTicketPrice` returns 190 and their effective value is 190, not 0.
+  // Per-person effective values, in fixture order: 190,190,0(sponsor),190(in-person, priced off
+  // registrationCost),0(untagged),190(unknown accommodation, falls through to amountPaid),
+  // 190(cancelled, same fallback),null(missing),150(the new differing-value person),
+  // 190(DUPTEST #1, amountPaid default),0(DUPTEST #2, amountPaid:0).
+  checkTrue('effTotal is the exact sum of member values',
+    Math.abs(rows.reduce((s, r) => s + r.effTotal, 0)
+      - (190 + 190 + 0 + 190 + 0 + 190 + 190 + 0 + 150 + 190 + 0)) < 0.001);
+}
 
 (async function run() {
   console.log('\n0. With nothing to ask for, there is no sponsorship block at all');
   /* A heading over an empty block invites the reader to go looking for a number that does not
      exist. The card on the Budget screen hides itself the same way. */
   await ctx.exportBudget();
+  assertExportOk();
   checkTrue('the export produced a file', !!savedBlob, 'nothing reached _rlSaveBlob');
   check('filename extension', savedName, 'budget-by-church.xlsx');
   check('blob mime type', savedBlob.type,
@@ -231,9 +378,21 @@ const SPONSOR_REGS = [
     parseSheet(bare['xl/worksheets/sheet1.xml'])
       .every((r) => ((cellAt(r, 'A') || {}).text || '') !== 'Sponsorship still needed'));
 
-  ctx.SETTINGS.discountCodeTags = { YC26SPON: 'sponsor', YC26HALF: 'discount', YC26CASH: 'inperson' };
+  // YC26LDR classifies the Carindale sponsor-leader fixture; MYSTERY is deliberately absent —
+  // that is the whole point of it.
+  ctx.SETTINGS.discountCodeTags = { YC26SPON: 'sponsor', YC26HALF: 'discount', YC26CASH: 'inperson', YC26LDR: 'sponsor' };
   ctx.window._budgetRegs = SPONSOR_REGS;
+  // `window._budgetFetch` is a LATER task's field (Task 6); exportBudget's read of it degrades to
+  // null when absent. ⚠ `.count` itself is now VESTIGIAL for the reconciliation's actual number —
+  // Finding A (2026-09-06) changed `fetched` to be derived by filtering `window._budgetRegs`
+  // itself (see exportBudget), so `.count` here only gates the presence check ("has a fetch
+  // happened at all"). The mismatch this section proves the reconciliation can FIRE on comes for
+  // free from the fixture: SPONSOR_REGS (16 people, the population `fetched` now reads) is a
+  // deliberately DIFFERENT array from the fixed church rows `computeBudgetClient` returns (19
+  // people, what `printed` accumulates) — section 8 below pins the exact numbers this produces.
+  ctx.window._budgetFetch = { count: SPONSOR_REGS.length };
   await ctx.exportBudget();
+  assertExportOk();
   const buf = Buffer.from(await savedBlob.arrayBuffer());
   const parts = unzip(buf);
 
@@ -278,60 +437,68 @@ const SPONSOR_REGS = [
 
   console.log('\n3. "By ministry" — the hierarchy the owner asked to be able to see');
   const g = parseSheet(s2);
-  check('header text', g[0].map((c) => c.text),
-    ['Church', 'Row type', 'Audience', 'Accommodation', 'Payment type', 'Discount code',
-      'People', 'Unit price', 'Line total']);
+  const HEAD_EXPECT = ['Church', 'Row type', 'Audience', 'Accommodation', 'Code used', 'Code type',
+    'Number', 'Raw invoice value', 'Effective $ to budget per ticket', 'Effective $ to budget total', 'Cancelled'];
+  check('header text', g[0].map((c) => c.text), HEAD_EXPECT);
   checkTrue('every header cell uses the header style', g[0].every((c) => c.s === ctx.XS.HEAD));
   checkTrue('the header row is frozen', /<pane ySplit="1"/.test(s2));
-  checkTrue('the data range is filterable', /<autoFilter ref="A1:I8"\/>/.test(s2), s2.slice(-200));
+  // The sheet is 11 columns wide since the Code-used/Code-type/raw-vs-effective rewrite
+  // (2026-09-05, was 10/J). The filter range moved J → K.
+  checkTrue('the data range is filterable', /<autoFilter ref="A1:K8"\/>/.test(s2), s2.slice(-200));
 
   /* ⚠ THE CHURCH TOTAL LEADS ITS BLOCK (owner, 2026-08-04 5th-b) — scrolling the sheet reads as
      a list of ministry totals with the working underneath, rather than a total that has to be
      hunted for at the bottom of a block whose length varies. The row indices below ARE the
-     layout, deliberately: if someone flips the order back, these fail rather than drift. */
+     layout, deliberately: if someone flips the order back, these fail rather than drift.
+     ⚠ Detail rows are now sorted by _BUD_CLASSES order (2026-09-05), and `tent-inperson` (index 1)
+     sorts BEFORE `classroom` (index 4) — so the in-person tent row comes FIRST within Carindale's
+     block, not the classroom row. That is a real behaviour change from the old export, not a typo
+     here. */
+  // Trailing 0 below is the Cancelled column — a per-row/per-block count of cancelled people, 0
+  // here since none of the fixture's people are cancelled.
   check('the church total comes FIRST in the block',
     g[1].map((c) => c.text != null ? c.text : c.num),
-    ['Citipointe, Carindale', 'Church total', null, null, null, null, 15, null, 2350]);
+    ['Citipointe, Carindale', 'Church total', null, null, null, null, 15, null, null, 2350, 0]);
   // `null` below means an EMPTY cell — a styled blank carries neither text nor a <v>.
-  check('then its detail, a full-price classroom student row',
+  check('then its detail, an in-person tent row carrying its code',
     g[2].map((c) => c.text != null ? c.text : c.num),
-    ['Citipointe, Carindale', 'Detail', 'Student', 'Classroom', 'Full price', null, 10, 190, 1900]);
-  check('an in-person tent row carries its code', g[3].map((c) => c.text != null ? c.text : c.num),
-    ['Citipointe, Carindale', 'Detail', 'Student', 'Tent', 'Paid in person', 'YC26CASH', 3, 150, 450]);
+    ['Citipointe, Carindale', 'Detail', 'Student', 'Tent', 'YC26CASH', 'Paid in person', 3, 0, 150, 450, 0]);
+  check('a full-price classroom student row', g[3].map((c) => c.text != null ? c.text : c.num),
+    ['Citipointe, Carindale', 'Detail', 'Student', 'Classroom', null, 'Full price', 10, 190, 190, 1900, 0]);
   check('a sponsored leader row', g[4].map((c) => c.text != null ? c.text : c.num),
-    ['Citipointe, Carindale', 'Detail', 'Leader', 'Classroom', 'Full sponsor', 'YC26LDR', 2, 0, 0]);
+    ['Citipointe, Carindale', 'Detail', 'Leader', 'Classroom', 'YC26LDR', 'Full sponsor', 2, 0, 0, 0, 0]);
   check('the next ministry starts with its own total',
     g[5].map((c) => c.text != null ? c.text : c.num),
-    ['Grace Point', 'Church total', null, null, null, null, 4, null, 0]);
+    ['Grace Point', 'Church total', null, null, null, null, 4, null, null, 0, 0]);
   /* The owner's actual complaint: the repeated church label competing with the numbers. It is
      still THERE (the sheet has to stay filterable) but it recedes to the muted style. */
   checkTrue('the repeated church name is muted, not deleted',
     cellAt(g[2], 'A').text === 'Citipointe, Carindale' && cellAt(g[2], 'A').s === ctx.XS.MUTED);
   checkTrue('detail figures use the plain number/money styles',
-    cellAt(g[2], 'G').s === ctx.XS.NUM && cellAt(g[2], 'I').s === ctx.XS.MONEY);
+    cellAt(g[2], 'G').s === ctx.XS.NUM && cellAt(g[2], 'J').s === ctx.XS.MONEY);
 
   const churchTot = g[1];
   check('church subtotal is labelled, not disguised as a detail row',
-    [cellAt(churchTot, 'B').text, cellAt(churchTot, 'G').num, cellAt(churchTot, 'I').num],
+    [cellAt(churchTot, 'B').text, cellAt(churchTot, 'G').num, cellAt(churchTot, 'J').num],
     ['Church total', 15, 2350]);
   checkTrue('the subtotal row is bold-on-lavender across every column',
-    churchTot.length === 9 && churchTot.every((c) => [ctx.XS.TOT_T, ctx.XS.TOT_N, ctx.XS.TOT_M].indexOf(c.s) >= 0),
+    churchTot.length === 11 && churchTot.every((c) => [ctx.XS.TOT_T, ctx.XS.TOT_N, ctx.XS.TOT_M].indexOf(c.s) >= 0),
     JSON.stringify(churchTot.map((c) => c.s)));
   /* A styled BLANK still has to be emitted or the fill stops halfway across the row — which is
      exactly the visual cue this change exists to add. */
   checkTrue('blank cells in a total row are still emitted (so the fill runs the full width)',
     cellAt(churchTot, 'C') != null && cellAt(churchTot, 'C').text == null);
 
-  /* "Accommodation not recorded" has no payment class, and its unit price is UNKNOWN — a 0 there
-     would read as "free" while the line total said otherwise. */
-  check('unrecorded accommodation, blank unit price (NOT 0)',
+  /* "Accommodation not recorded" has no code, and BOTH money columns are UNKNOWN — a 0 there
+     would read as "free" while the effective total said otherwise. */
+  check('unrecorded accommodation, blank raw AND effective values (NOT 0)',
     g[6].map((c) => c.text != null ? c.text : c.num),
-    ['Grace Point', 'Detail', 'Student', 'Not recorded', null, null, 4, null, 0]);
-  checkTrue('the blank unit price carries no <v> element at all',
+    ['Grace Point', 'Detail', 'Student', 'Not recorded', null, 'Full price', 4, null, null, 0, 0]);
+  checkTrue('the blank raw-invoice-value cell carries no <v> element at all',
     !/<c r="H7"[^>]*>/.test(s2) || /<c r="H7" s="\d+"\/>/.test(s2));
 
   const campTot = g[7];
-  check('camp total row', [cellAt(campTot, 'B').text, cellAt(campTot, 'G').num, cellAt(campTot, 'I').num],
+  check('camp total row', [cellAt(campTot, 'B').text, cellAt(campTot, 'G').num, cellAt(campTot, 'J').num],
     ['Camp total', 19, 2350]);
   checkTrue('the camp total is visually distinct from a church total',
     cellAt(campTot, 'A').s === ctx.XS.GRAND_T && cellAt(campTot, 'A').s !== ctx.XS.TOT_T);
@@ -344,10 +511,10 @@ const SPONSOR_REGS = [
     parts['xl/worksheets/sheet1.xml'].indexOf('—') > 0);
 
   console.log('\n4. The arithmetic trap the Row type column exists to keep visible');
-  const lineTotals = g.slice(1).map((r) => (cellAt(r, 'I') || {}).num).map((n) => n || 0);
+  const lineTotals = g.slice(1).map((r) => (cellAt(r, 'J') || {}).num).map((n) => n || 0);
   const detailSum = g.slice(1)
     .filter((r) => (cellAt(r, 'B') || {}).text === 'Detail')
-    .reduce((s, r) => s + ((cellAt(r, 'I') || {}).num || 0), 0);
+    .reduce((s, r) => s + ((cellAt(r, 'J') || {}).num || 0), 0);
   check('detail rows alone sum to the camp total', detailSum, 2350);
   checkTrue('summing EVERY row would have double-counted (this is the trap)',
     lineTotals.reduce((a, b) => a + b, 0) !== 2350,
@@ -369,14 +536,22 @@ const SPONSOR_REGS = [
   const s = ctx.computeSponsorSummaryClient(ctx.window._budgetRegs, 'all');
   check('the two sponsor values stay apart (no average)',
     s.codes.find((c) => c.code === 'YC26SPON').bands.map((b) => [b.amount, b.count, b.total]),
-    [[190, 2, 380], [150, 3, 450]]);
+    [[190, 4, 760], [150, 3, 450]]);
   checkTrue('$170 — the average of the two bands — appears nowhere',
     !s.codes.some((c) => c.bands.some((b) => b.amount === 170)));
   check('full vs part sponsorship are totalled separately',
-    [s.fullTotal, s.partialTotal, s.total], [830, 95, 925]);
+    [s.fullTotal, s.partialTotal, s.total], [1210, 650, 1860]);
   check('an in-person code is not an ask', s.codes.map((c) => c.code).indexOf('YC26CASH'), -1);
   check('the unpriceable place is counted and flagged, never totalled as $0',
-    [s.count, s.unpricedCount], [7, 1]);
+    [s.count, s.unpricedCount], [13, 1]);
+  /* ⚠️ REPORTED, NEVER INFERRED (2026-09-05). MYSTERY is untagged and must never leak into any
+     sponsor total — it can only ever surface in `unclassified`. */
+  checkTrue('an unclassified code never joins the sponsor totals',
+    s.codes.map((c) => c.code).indexOf('MYSTERY') < 0);
+  check('the unclassified code is named with its people and dollar gap',
+    s.unclassified.map((u) => [u.code, u.count, u.total]), [['MYSTERY', 2, 280]]);
+  check('unclassified people and dollars are excluded from the ask',
+    [s.unclassifiedCount, s.unclassifiedTotal], [2, 280]);
 
   /* ⚠ The bands are NOT printed any more (owner, 2026-08-04 5th-b) — the export carries the
      per-ministry, per-code breakdown only. The differential still EXISTS, as the checks above
@@ -385,16 +560,19 @@ const SPONSOR_REGS = [
   const val = (r) => r.map((c) => c.text != null ? c.text : c.num);
   const kind = (r) => (cellAt(r, 'B') || {}).text;
   checkTrue('no band row is printed', g.filter((r) => kind(r) === 'Sponsor band').length === 0);
-  /* Biggest ask first, not alphabetical — Victory's 545 outranks Grace Point's 380. This is the
-     order a director works down when deciding who to chase. */
+  /* Biggest ask first, not alphabetical — Victory's 1100 outranks Grace Point's 760. This is the
+     order a director works down when deciding who to chase. Within a church, its own codes are
+     also biggest-first — YC26HALF's 650 outranks Victory's own YC26SPON share (450). */
+  // Trailing null below is the Cancelled column — a sponsor row carries no cancelled-count value
+  // at all (styled blank, no <v>), unlike a Detail/total row's 0.
   check('per-ministry rows, biggest ask first, on the By ministry sheet',
     g.filter((r) => kind(r) === 'Sponsor by ministry').map(val), [
-      ['Victory', 'Sponsor by ministry', null, null, 'Full sponsorship', 'YC26SPON', 4, null, 450],
-      ['Victory', 'Sponsor by ministry', null, null, 'Part sponsored', 'YC26HALF', 1, null, 95],
-      ['Grace Point', 'Sponsor by ministry', null, null, 'Full sponsorship', 'YC26SPON', 2, null, 380],
+      ['Victory', 'Sponsor by ministry', null, null, 'YC26HALF', 'Part sponsored', 5, null, null, 650, null],
+      ['Victory', 'Sponsor by ministry', null, null, 'YC26SPON', 'Full sponsorship', 4, null, null, 450, null],
+      ['Grace Point', 'Sponsor by ministry', null, null, 'YC26SPON', 'Full sponsorship', 4, null, null, 760, null],
     ]);
   const spTot = g.find((r) => kind(r) === 'Sponsor total');
-  check('camp sponsor total', [cellAt(spTot, 'G').num, cellAt(spTot, 'I').num], [7, 925]);
+  check('camp sponsor total', [cellAt(spTot, 'G').num, cellAt(spTot, 'J').num], [13, 1860]);
 
   /* 🔴 THE LOAD-BEARING ONE. Sponsorship shared a sheet with the received money again from
      2026-08-04 (5th-b), so the separation is no longer structural — it now rests on the three
@@ -411,17 +589,32 @@ const SPONSOR_REGS = [
   checkTrue('    …and the block is introduced by a heading, not left to be inferred',
     /Sponsorship still needed/.test((cellAt(g[campTotIdx + 2], 'A') || {}).text || ''));
   checkTrue('3/3 — the autofilter stops at the received table',
-    new RegExp('<autoFilter ref="A1:I' + (campTotIdx + 1) + '"').test(s2),
+    new RegExp('<autoFilter ref="A1:K' + (campTotIdx + 1) + '"').test(s2),
     'filter must not span the sponsorship block');
   check('detail rows still sum to the camp total, sponsorship excluded',
     g.slice(1).filter((r) => kind(r) === 'Detail')
-      .reduce((t, r) => t + ((cellAt(r, 'I') || {}).num || 0), 0), 2350);
+      .reduce((t, r) => t + ((cellAt(r, 'J') || {}).num || 0), 0), 2350);
 
+
+  /* EMITTED WIDTH, not source width (2026-09-06). A row padded with bare `null` entries looks
+     11 wide in the JS array literal and emits ONE cell: _xlSheetXml skips a bare null, while
+     _xc('',style)/_xn(null,style) emit a real styled <c/>. That mismatch shipped once and was
+     caught only by counting cells in the unzipped workbook, never by reading the source. These
+     assertions count what actually reaches the file, so the source can no longer lie about it. */
+  console.log('');
+  console.log('7a. Non-detail rows are genuinely 11 cells wide in the emitted XML');
+  const widthOf = (r) => (r || []).length;
+  check('the sponsorship section heading emits 11 cells', widthOf(g[campTotIdx + 2]), 11);
+  check('the camp total row emits 11 cells', widthOf(g[campTotIdx]), 11);
+  check('the header row emits 11 cells', widthOf(g[0]), 11);
   console.log('\n7b. Summary — the rows the owner asked to be removed stay removed');
   const sm = parseSheet(parts['xl/worksheets/sheet1.xml']);
   const smText = sm.map((r) => (cellAt(r, 'A') || {}).text || '');
   checkTrue('no "Ministries" row', smText.every((t) => t !== 'Ministries'));
-  checkTrue('no Reconciliation section', smText.every((t) => !/Reconciliation/.test(t)));
+  // ⚠ "no Reconciliation section" was correct on 2026-08-04 and is DELIBERATELY REVERSED here —
+  // 2026-09-05's owner ruling puts a reconciliation block back (see section 8), this time reading
+  // people fetched vs. people printed, not "value of every place". Removed, not just weakened,
+  // so a future reader cannot find a stale assertion arguing the two decisions still agree.
   checkTrue('no "Value of every place" row', smText.every((t) => !/Value of every place/.test(t)));
   /* A headcount beside an ask invites "$830 ÷ 6 places" — the per-place average the band split
      exists to avoid. The count still drives the unpriced warning; it is just not a figure. */
@@ -434,7 +627,47 @@ const SPONSOR_REGS = [
   check('the received table still reports both audiences',
     smText.filter((t) => t === 'Students' || t === 'Leaders'), ['Students', 'Leaders']);
 
-  console.log('\n8. An independent parser can read it back');
+  console.log('\n8. New column set and reconciliation (2026-09-05)');
+  {
+    const HEAD = ['Church','Row type','Audience','Accommodation','Code used','Code type','Number',
+      'Raw invoice value','Effective $ to budget per ticket','Effective $ to budget total','Cancelled'];
+    const head = parseSheet(parts['xl/worksheets/sheet2.xml'])[0];
+    check('By ministry header', head.map((c) => c.text), HEAD);
+    checkTrue('autofilter spans 11 columns and stops at the received table',
+      /A1:K\d+/.test(parts['xl/worksheets/sheet2.xml']));
+
+    const sum = parseSheet(parts['xl/worksheets/sheet1.xml']);
+    const texts = sum.map((r) => (r || []).map((c) => c.text).join(' '));
+    checkTrue('Summary carries a reconciliation block',
+      texts.some((t) => /Reconciliation/.test(t)));
+    checkTrue('Summary reports people fetched and people printed',
+      texts.some((t) => /People fetched/.test(t)) && texts.some((t) => /People on/.test(t)));
+    checkTrue('a mismatch is stated loudly, not as a quiet number',
+      texts.some((t) => /Do not rely on the totals/.test(t)));
+    checkTrue('unclassified codes are named with their people and dollars',
+      texts.some((t) => /not been classified/.test(t)) && texts.some((t) => /MYSTERY/.test(t)));
+    checkTrue('unclassified money is NOT in the sponsorship total',
+      Number(cellAt(sum.find((r) => (r||[]).some((c) => c.text === 'Total still needed')), 'C').num) === 1860);
+    /* Pinned to EXACT numbers, on top of the brief's presence-only checks above. `printed` is
+       accumulated by detail() and nothing here hardcodes it independently — this is what turns
+       "a reconciliation block exists" into "the reconciliation block reflects reality", and it is
+       what a detail()-undercounts-people regression actually breaks (see the revert-proof in the
+       task report: this exact check is the one that fails).
+       ⚠ 16/19/-3 (was 20/19/1 before Finding A) — `fetched` is now `SPONSOR_REGS.length` (the
+       array `computeSponsorSummaryClient` also reads), not the old free-standing `.count: 20`.
+       This scope is 'all', so the filter keeps every entry; the mismatch is the fixture's, by
+       construction (two different populations feed `fetched` and `printed` here) — not a bug. */
+    // Match by PREFIX, not equality — the label's apostrophes round-trip through the XML as
+    // `&apos;` and parseSheet deliberately does not decode entities (see section 7b's own
+    // &quot;-laden check above), so an exact-equality lookup against the literal text would
+    // silently match nothing.
+    const recCell = (prefix) => cellAt(sum.find((r) => ((cellAt(r, 'A') || {}).text || '').indexOf(prefix) === 0), 'B');
+    check('People fetched from the app is exact', recCell('People fetched from the app').num, SPONSOR_REGS.length);
+    check("People on 'By ministry' matches printed", recCell('People on').num, 19);
+    check('Difference is exact', recCell('Difference').num, SPONSOR_REGS.length - 19);
+  }
+
+  console.log('\n9. An independent parser can read it back');
   /* The vendored SheetJS cannot WRITE the styles, but it is a completely separate implementation
      of the READ side — so if it can open the workbook and land the values in the right cells, the
      package is not merely well-formed XML, it is a real xlsx. */
@@ -446,11 +679,70 @@ const SPONSOR_REGS = [
   check('SheetJS sees the same two sheets', wb.SheetNames, ['Summary', 'By ministry']);
   const ws = wb.Sheets['By ministry'];
   check('SheetJS reads the header', ws['A1'].v, 'Church');
-  check('SheetJS reads the leading church total', ws['I2'].v, 2350);
-  check('SheetJS reads a detail line total as a NUMBER', [ws['I3'].v, ws['I3'].t], [1900, 'n']);
-  check('SheetJS reads the camp total', ws['I8'].v, 2350);
+  check('SheetJS reads the leading church total', ws['J2'].v, 2350);
+  check('SheetJS reads a detail line total as a NUMBER', [ws['J3'].v, ws['J3'].t], [450, 'n']);
+  check('SheetJS reads the camp total', ws['J8'].v, 2350);
   check('SheetJS reads the comma-containing church name intact', ws['A2'].v, 'Citipointe, Carindale');
-  check('SheetJS reads the appended sponsorship total', ws['I14'].v, 925);
+  check('SheetJS reads the appended sponsorship total', ws['J14'].v, 1860);
+
+  /* 🔴 FINDING A (whole-branch review, 2026-09-06) — the reconciliation false-positived on EVERY
+     single-ministry export. `fetched` used to read `window._budgetFetch.count` — the CAMP-WIDE
+     population `RENDER.budget` sets once and never re-scopes — while `printed` (via
+     `rep.churches`) correctly covered only the selected church. `sel` was hardcoded to 'all'
+     above, so this harness structurally could not exercise a scoped export at all; that is why
+     `SEL_VALUES` (see the top of this file) exists now. */
+  console.log('\n10. Finding A (2026-09-06) — a SCOPED export scopes `fetched` too, not just `printed`');
+  {
+    const ALL_PEOPLE = [...CARINDALE_PEOPLE, ...GRACE_PEOPLE];
+    ctx.window._budgetRegs = ALL_PEOPLE;
+    // Deliberately the CAMP-WIDE count (19), not the scoped one (15) — this is exactly the value
+    // Finding A's bug used to read verbatim. If the fix regresses back to reading `.count`
+    // directly, "People fetched" below reports 19 again and the two new checks fail.
+    ctx.window._budgetFetch = { count: ALL_PEOPLE.length };
+    SEL_VALUES.budChurch = 'c1';
+    await ctx.exportBudget();
+    assertExportOk();
+    const scopedParts = unzip(Buffer.from(await savedBlob.arrayBuffer()));
+    const scopedSum = parseSheet(scopedParts['xl/worksheets/sheet1.xml']);
+    const scopedTexts = scopedSum.map((r) => (r || []).map((c) => c.text).join(' '));
+    const recCellA = (prefix) => cellAt(scopedSum.find((r) =>
+      ((cellAt(r, 'A') || {}).text || '').indexOf(prefix) === 0), 'B');
+    check('scoped export: People fetched from the app is scoped to the ministry, not camp-wide',
+      recCellA('People fetched from the app').num, CARINDALE_PEOPLE.length);
+    check("scoped export: People on 'By ministry' matches the same ministry",
+      recCellA('People on').num, CARINDALE_PEOPLE.length);
+    check('scoped export: Difference is exactly 0', recCellA('Difference').num, 0);
+    checkTrue('scoped export: NO "Do not rely on the totals above" warning on a correct export',
+      !scopedTexts.some((t) => /Do not rely on the totals/.test(t)));
+    SEL_VALUES.budChurch = 'all';
+  }
+
+  /* 🔴 FINDING B (whole-branch review, 2026-09-06) — an isolated `/campers` failure never reached
+     the Summary sheet. `window._budgetFetch.count` is computed from the already-shrunk
+     `_budgetRegs` array, so `fetched === printed`, `diff === 0`, and the error note — gated on
+     `if(diff)` — never rendered. It must appear on its own line regardless of `diff`, and the two
+     notes must be able to coexist (checked in section 8/10 above: a non-zero diff with no error
+     present prints no error line; here a zero diff with an error present still prints one). */
+  console.log('\n11. Finding B (2026-09-06) — a fetch error surfaces even when Difference is 0');
+  {
+    const ALL_PEOPLE = [...CARINDALE_PEOPLE, ...GRACE_PEOPLE];
+    ctx.window._budgetRegs = ALL_PEOPLE;
+    ctx.window._budgetFetch = { count: ALL_PEOPLE.length, error: 'Network timeout fetching /campers' };
+    SEL_VALUES.budChurch = 'all';
+    await ctx.exportBudget();
+    assertExportOk();
+    const errParts = unzip(Buffer.from(await savedBlob.arrayBuffer()));
+    const errSum = parseSheet(errParts['xl/worksheets/sheet1.xml']);
+    const errTexts = errSum.map((r) => (r || []).map((c) => c.text).join(' '));
+    const recCellB = (prefix) => cellAt(errSum.find((r) =>
+      ((cellAt(r, 'A') || {}).text || '').indexOf(prefix) === 0), 'B');
+    check('fetch-error case: Difference is exactly 0 (fetched === printed, both camp-wide)',
+      recCellB('Difference').num, 0);
+    checkTrue('fetch-error case: the fetch error is on the Summary sheet EVEN THOUGH Difference is 0',
+      errTexts.some((t) => /camper list failed to load/.test(t) && /Network timeout/.test(t)));
+    checkTrue('fetch-error case: no mismatch warning is printed alongside it (diff really is 0)',
+      !errTexts.some((t) => /Do not rely on the totals/.test(t)));
+  }
 
   /* Everything above proves the bytes are what we intended. Only Excel itself proves Excel is
      happy with them, and that cannot run in CI — so it is an opt-in dump rather than a check:
