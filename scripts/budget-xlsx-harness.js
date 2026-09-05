@@ -102,6 +102,7 @@ vm.runInContext([
   'function _personValue(p,cls,prices,ticketPrice,tag)', 'function _personValueBase(p,cls,prices,ticketPrice,tag)',
   'function _classifyTicket(p,tags)', 'function _budPrices()', 'function _budTags()',
   'function _budRowLabel(cls,amount)', 'function _budValueBreakdown(b)', 'function _budScopeRows(people,tags,prices,ptable)',
+  'function _budExportRows(people,tags,prices,ptable)',
   'function _sponsorAmountFor(p,cls,prices,ticketPrice,tag)', 'const _SPONSOR_TAGS=',
   'const _SPONSOR_TAG_LABEL=', 'function _sponsorBands(entries)',
   'function computeSponsorSummaryClient(regs,filterId)', 'function _sponsorByTotal(a,b)',
@@ -135,9 +136,8 @@ function checkTrue(label, cond, detail) {
    changed parameter list does not (also good). This asserts the sandbox actually got a callable
    for each name we depend on — a typo'd name would otherwise surface as a confusing TypeError
    several hundred lines below.
-   ⚠️ `_budExportRows` is NOT in this list. It doesn't exist yet (Task 4) — adding it now would
-   make this task unable to go green. Add it in Task 4, not before. */
-['_budScopeRows', '_personValue', '_sponsorAmountFor',
+   ⚠️ `_budExportRows` was added in Task 4 — it did not exist when this list was first written. */
+['_budScopeRows', '_budExportRows', '_personValue', '_sponsorAmountFor',
  'computeSponsorSummaryClient', 'exportBudget', '_xlsxBlob'].forEach((n) => {
   checkTrue('sandbox exposes ' + n, typeof ctx[n] === 'function');
 });
@@ -229,6 +229,50 @@ const SPONSOR_REGS = [
   // In-person money DID arrive; it must never appear as an ask.
   person({ registrationType: STD, registrationCost: 190, discountCode: 'YC26CASH', amountPaid: 0 }),
 ];
+
+console.log('\n0. _budExportRows — grouping and totality');
+{
+  const tags = { SPON: 'sponsor', EFT: 'inperson' };
+  const prices = { tent: null, classroom: null };
+  const P = (o) => Object.assign({
+    churchId: 'c1', churchName: 'Carindale', kind: 'camper',
+    registrationCost: 190, amountPaid: 190, accommodationKind: 'classroom',
+    discountCode: null, discountAmount: null, status: 'registered',
+  }, o);
+  const people = [
+    P({}), P({}),                                                  // plain, no code
+    P({ discountCode: 'SPON', amountPaid: 0, discountAmount: 190 }),// tagged sponsor
+    P({ discountCode: 'EFT', amountPaid: 0, discountAmount: 190 }), // tagged in person
+    P({ discountCode: 'MYSTERY', amountPaid: 0, discountAmount: 190 }), // untagged
+    P({ accommodationKind: null }),                                // unknown accommodation
+    P({ status: 'cancelled' }),                                    // cancelled, still counted
+    P({ amountPaid: null, registrationCost: null }),               // nothing recorded
+  ];
+  const rows = ctx._budExportRows(people, tags, prices, new Map());
+
+  checkTrue('every person lands on exactly one row',
+    rows.reduce((s, r) => s + r.count, 0) === people.length,
+    'Σ count=' + rows.reduce((s, r) => s + r.count, 0) + ' people=' + people.length);
+  checkTrue('rows are split by code', rows.some((r) => r.code === 'SPON') && rows.some((r) => r.code === 'MYSTERY'));
+  checkTrue('an untagged discount row is flagged',
+    rows.find((r) => r.code === 'MYSTERY').unclassified === true);
+  checkTrue('a tagged row is not flagged',
+    rows.find((r) => r.code === 'SPON').unclassified === false);
+  check('cancelled is counted within its row',
+    rows.reduce((s, r) => s + r.cancelled, 0), 1);
+  checkTrue('a mixed-value row reports a null unit price, never 0',
+    rows.every((r) => r.effAmount === null || typeof r.effAmount === 'number'));
+  // NOTE (Task 4 adjustment): the brief's arithmetic assumed the EFT (in-person) person values at
+  // their overridden amountPaid (0). The real, unchanged `_personValue`/`_personValueBase` cascade
+  // deliberately does NOT read amountPaid for an in-person-tagged code — "the money was collected
+  // by hand, so no invoice records it" — it substitutes the resolved TICKET PRICE instead. Here
+  // that person's `registrationCost` is the P() default (190, never overridden), so
+  // `_resolveTicketPrice` returns 190 and their effective value is 190, not 0. True per-person
+  // values: 190,190,0(sponsor),190(in-person, priced off registrationCost),0(untagged),190
+  // (unknown accommodation, falls through to amountPaid),190(cancelled, same fallback),null(missing).
+  checkTrue('effTotal is the exact sum of member values',
+    Math.abs(rows.reduce((s, r) => s + r.effTotal, 0) - (190 + 190 + 0 + 190 + 0 + 190 + 190 + 0)) < 0.001);
+}
 
 (async function run() {
   console.log('\n0. With nothing to ask for, there is no sponsorship block at all');

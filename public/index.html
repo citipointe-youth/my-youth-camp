@@ -4280,6 +4280,50 @@ function _budScopeRows(people,tags,prices,ptable){
   });
   return rows;
 }
+/* EXPORT-ONLY row builder (2026-09-05). Grouped one level finer than `_budScopeRows`:
+   (ticket class × discount code) rather than ticket class alone.
+
+   ⚠️ WHY THIS IS A SECOND FUNCTION AND NOT A PARAMETER ON `_budScopeRows`.
+   The owner asked on 2026-08-02 for the on-screen card's category rows to be MERGED, after
+   reporting the un-merged version "almost impossible to follow". Splitting by code would
+   silently undo that decision on the screen. The export wants the opposite — a `Code used`
+   column that is true of every person on its row — so the two grains are both correct and
+   they are deliberately kept apart. Do not "DRY" these together.
+
+   ⚠️ TOTALITY IS THE POINT. Every person lands in exactly one bucket by construction: the key
+   is built from the person, not looked up in a fixed list, so there is no `_BUD_CLASSES`-style
+   allow-list that could silently drop a bucket. There is a harness check asserting
+   Σ count === people.length; keep it. */
+function _budExportRows(people,tags,prices,ptable){
+  const by=new Map();
+  (people||[]).forEach(p=>{
+    const cls=_classifyTicket(p,tags);
+    const code=(p.discountCode||'').trim();
+    const tp=_resolveTicketPrice(p,ptable);
+    const eff=_personValue(p,cls,prices,tp,_discountTagFor(p,tags));
+    // Raw = what the invoice recorded arriving, BEFORE override and refund (owner, 2026-09-05).
+    const raw=p.amountPaid==null?null:Number(p.amountPaid);
+    const key=cls+'\u0000'+code;
+    let b=by.get(key);
+    if(!b){b={key:cls,code,count:0,cancelled:0,effTotal:0,missing:0,
+      effValues:new Map(),rawValues:new Map(),unclassified:_isUnclassifiedDiscount(p,tags)};by.set(key,b);}
+    b.count++;
+    if(p.status==='cancelled')b.cancelled++;
+    if(eff==null)b.missing++;else{b.effTotal+=eff;b.effValues.set(eff,(b.effValues.get(eff)||0)+1);}
+    if(raw!=null)b.rawValues.set(raw,(b.rawValues.get(raw)||0)+1);
+  });
+  // A uniform value only when EVERY member contributed the same one and none was missing;
+  // otherwise null, which the writer renders as a BLANK cell. Never 0 — a 0 reads as "free"
+  // beside a non-zero line total.
+  const uniform=(m,n)=>(m.size===1&&[...m.values()][0]===n)?[...m.keys()][0]:null;
+  const order=new Map(_BUD_CLASSES.map(([k],i)=>[k,i]));
+  return [...by.values()].map(b=>({
+    key:b.key,code:b.code,count:b.count,cancelled:b.cancelled,
+    rawAmount:uniform(b.rawValues,b.count),
+    effAmount:b.missing?null:uniform(b.effValues,b.count),
+    effTotal:b.effTotal,missing:b.missing,unclassified:b.unclassified,
+  })).sort((a,b)=>(order.get(a.key)-order.get(b.key))||a.code.localeCompare(b.code));
+}
 /* Merged category rows (2026-08-02) — DISPLAY ONLY, and deliberately client-side.
 
    The card used to print the campers rows and the leaders rows as two separate labelled lists, so
