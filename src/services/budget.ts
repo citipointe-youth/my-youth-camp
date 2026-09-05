@@ -700,6 +700,24 @@ export function computeSponsorSummary(
     const code = (p.discountCode ?? '').trim();
     if (!code) continue;
 
+    // A withdrawn place is not an ask, regardless of how its code is classified — checked
+    // FIRST, before the unclassified check and the tag check, so a cancelled person on an
+    // untagged (but discounted) code cannot fall through into unclassifiedTotal, which is
+    // exactly the bug this task exists to fix, just relocated to a different bucket
+    // (2026-09-05, review round 1). The tag is resolved here directly via `discountTagFor`
+    // rather than the raw `tags[code]` lookup the code below still uses, because at this
+    // point in the loop the code may legitimately be untagged (tag === null) — `sponsorAmountFor`
+    // handles a null tag correctly, same as the unclassified branch below already does.
+    if (p.status === 'cancelled') {
+      const tag = discountTagFor(p, tags);
+      const cls = classifyTicket(p, tags);
+      const { ticketValue, amount } = sponsorAmountFor(
+        p, cls, prices, resolveTicketPrice(p, priceTable), tag);
+      withdrawnCount++;
+      withdrawnTotal += ticketValue == null ? 0 : amount;
+      continue;
+    }
+
     if (isUnclassifiedDiscount(p, tags)) {
       const cls = classifyTicket(p, tags);
       const { ticketValue } = sponsorAmountFor(p, cls, prices, resolveTicketPrice(p, priceTable), null);
@@ -717,16 +735,6 @@ export function computeSponsorSummary(
 
     const tag = tags[code];
     if (!tag || !SPONSOR_TAGS.includes(tag)) continue;
-
-    // A withdrawn place is not an ask. Counted and reported, never totalled.
-    if (p.status === 'cancelled') {
-      const cls = classifyTicket(p, tags);
-      const { ticketValue, amount } = sponsorAmountFor(
-        p, cls, prices, resolveTicketPrice(p, priceTable), tag);
-      withdrawnCount++;
-      withdrawnTotal += ticketValue == null ? 0 : amount;
-      continue;
-    }
 
     const cls = classifyTicket(p, tags);
     const { ticketValue, amount } = sponsorAmountFor(p, cls, prices, resolveTicketPrice(p, priceTable), tag);

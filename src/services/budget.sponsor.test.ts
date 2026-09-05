@@ -314,6 +314,20 @@ describe('2026-09-05 fix — cancelled, refunded and unclassified places', () =>
     ]);
   });
 
+  it('a cancelled person on an untagged discounted code is withdrawn, not unclassified', () => {
+    // Review round 1 (2026-09-05): the cancelled check must be hoisted ahead of the
+    // unclassified check, or this exact person — cancelled AND on a code nobody has tagged
+    // — falls through into unclassifiedTotal instead of withdrawnTotal, which is the
+    // headline "money we still need" figure this feature exists to surface. Reverting that
+    // ordering would report outstanding money for someone who withdrew.
+    const r = computeSponsorSummary(
+      [base({ discountCode: 'UNTAGGED', discountAmount: 190, amountPaid: 0, status: 'cancelled' })],
+      { tags, prices });
+    expect(r.unclassifiedCount).toBe(0);
+    expect(r.unclassifiedTotal).toBe(0);
+    expect(r.withdrawnCount).toBe(1);
+  });
+
   it('does not flag an untagged code with no discount evidence', () => {
     const r = computeSponsorSummary(
       [base({ discountCode: 'PLAIN', discountAmount: 0, amountPaid: 190 })],
