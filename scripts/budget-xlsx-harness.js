@@ -98,6 +98,7 @@ vm.runInContext([
   // into the spreadsheet, so every function it touches is extracted rather than stubbed.
   'function _normTicketType(t)', 'function _budTicketPrices(regs)', 'function _priceForTicket(table,t)',
   'function _resolveTicketPrice(p,table)', 'function _discountTagFor(p,tags)',
+  'function _isUnclassifiedDiscount(p,tags)',
   'function _personValue(p,cls,prices,ticketPrice,tag)', 'function _personValueBase(p,cls,prices,ticketPrice,tag)',
   'function _classifyTicket(p,tags)', 'function _budPrices()', 'function _budTags()',
   'function _budRowLabel(cls,amount)', 'function _budValueBreakdown(b)', 'function _budScopeRows(people,tags,prices,ptable)',

@@ -4127,6 +4127,16 @@ function _discountTagFor(p,tags){
   const tag=(tags||{})[code];
   return (tag==='inperson'||tag==='sponsor'||tag==='discount')?tag:null;
 }
+/* Mirrors budget.ts isUnclassifiedDiscount — read ITS doc comment. ⚠️ DETECTS, NEVER INFERS. The
+   caller reports these and excludes their money from every total. An untagged 100%-off code can
+   be a staff comp or a desk payment; guessing "sponsor" would ask someone for money nobody owes. */
+function _isUnclassifiedDiscount(p,tags){
+  const code=(p.discountCode||'').trim();
+  if(!code)return false;
+  if(_discountTagFor(p,tags)!=null)return false;
+  if(Number(p.discountAmount||0)>0)return true;
+  return p.registrationCost!=null&&p.amountPaid!=null&&Number(p.amountPaid)<Number(p.registrationCost);
+}
 /* Mirrors budget.ts classifyTicket. An unrecognised tag falls back to the plain class.
    ⚠️ DISPLAY BUCKET ONLY (2026-08-05 fix). accommodationKind unknown → 'unknown' regardless of
    the tag — we don't know tent vs classroom, so there's no 'unknown-sponsor' row. That does NOT
@@ -4480,7 +4490,9 @@ function _sponsorAmountFor(p,cls,prices,ticketPrice,tag){
   const fb=kind==='tent'?prices.tent:kind==='classroom'?prices.classroom:null;
   const ticketValue=ticketPrice!=null?ticketPrice:fb;
   if(ticketValue==null)return {ticketValue:null,amount:0};
-  const received=_personValue(p,cls,prices,ticketPrice,tag);
+  // ⚠️ _personValueBase (pre-refund), NOT _personValue. Mirrors receivedBeforeRefund in
+  // src/services/budget.ts — a refund must not re-open a sponsorship gap.
+  const received=_personValueBase(p,cls,prices,ticketPrice,tag);
   // Never negative: someone who over-paid against their own ticket is not owed a sponsor.
   return {ticketValue,amount:Math.max(0,ticketValue-(received==null?0:received))};
 }
@@ -4510,18 +4522,54 @@ function computeSponsorSummaryClient(regs,filterId){
   const people=(regs||[])
     .filter(r=>!filterId||filterId==='all'||r.churchId===filterId);
   const byCode=new Map();
+  const unclassifiedBy=new Map();
+  let withdrawnCount=0,withdrawnTotal=0;
   people.forEach(r=>{
     const code=(r.discountCode||'').trim();
     if(!code)return;
-    const tag=tags[code];
-    if(!tag||_SPONSOR_TAGS.indexOf(tag)<0)return;
     const p={churchId:r.churchId,churchName:r.churchName,
       registrationCost:num(r.registrationCost),amountPaid:num(r.amountPaid),
       amountPaidOverride:num(r.amountPaidOverride),refundAmount:num(r.refundAmount),
+      discountAmount:num(r.discountAmount),status:r.status||null,
       accommodationKind:r.accommodationKind||null,discountCode:code,
       registrationType:r.registrationType||null};
+    // The tag/unclassified checks are resolved ONCE, up front, and reused by every branch below —
+    // mirrors computeSponsorSummary in src/services/budget.ts (read its 2026-09-05 control-flow
+    // comment before touching this order).
+    const tag=_discountTagFor(p,tags);
+    const unclassified=_isUnclassifiedDiscount(p,tags);
+    const inAskPopulation=(tag==='sponsor'||tag==='discount')||unclassified;
     const cls=_classifyTicket(p,tags);
-    const v=_sponsorAmountFor(p,cls,prices,_resolveTicketPrice(p,ptable),tag);
+    const tp=_resolveTicketPrice(p,ptable);
+
+    // A withdrawn place is not an ask, regardless of how its code is classified — checked FIRST,
+    // before the unclassified check and the tag check, so a cancelled person on an untagged (but
+    // discounted) code cannot fall through into unclassifiedTotal. Scoped to the ask population
+    // only: a cancelled person tagged 'inperson' (money genuinely arrived) or on an untagged code
+    // with no discount evidence was never part of any ask, so is skipped entirely below, exactly
+    // as before cancellation was ever considered.
+    if(p.status==='cancelled'){
+      if(inAskPopulation){
+        const v=_sponsorAmountFor(p,cls,prices,tp,tag);
+        withdrawnCount++;withdrawnTotal+=v.ticketValue==null?0:v.amount;
+      }
+      return;
+    }
+
+    if(unclassified){
+      const v=_sponsorAmountFor(p,cls,prices,tp,null);
+      const rec=_personValueBase(p,cls,prices,tp,null);
+      const gap=v.ticketValue==null?0:Math.max(0,v.ticketValue-(rec==null?0:rec));
+      let u=unclassifiedBy.get(code);
+      if(!u){u={count:0,total:0,pairs:[]};unclassifiedBy.set(code,u);}
+      u.count++;u.total+=gap;
+      if(p.registrationCost!=null&&p.registrationCost>0&&p.discountAmount!=null)u.pairs.push({cost:p.registrationCost,discount:p.discountAmount});
+      return;
+    }
+
+    if(!tag||_SPONSOR_TAGS.indexOf(tag)<0)return;
+
+    const v=_sponsorAmountFor(p,cls,prices,tp,tag);
     let bucket=byCode.get(code);
     if(!bucket){bucket={tag,entries:[]};byCode.set(code,bucket);}
     bucket.entries.push({churchId:r.churchId,churchName:r.churchName,amount:v.amount,
@@ -4556,7 +4604,14 @@ function computeSponsorSummaryClient(regs,filterId){
   const churches=[...churchAgg.entries()].map(([id,c])=>({id,name:c.name,count:c.count,total:c.total,
     codes:[...c.codes.entries()].map(([code,v])=>({code,tag:v.tag,count:v.count,total:v.total}))
       .sort((a,b)=>b.total-a.total||a.code.localeCompare(b.code))})).sort(_sponsorByTotal);
-  return {total:fullTotal+partialTotal,fullTotal,partialTotal,count,unpricedCount,codes,churches};
+  const unclassified=[...unclassifiedBy.entries()]
+    .map(([code,u])=>({code,count:u.count,total:u.total,avgPercent:_avgDiscountPct(u.pairs)}))
+    .sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
+  return {total:fullTotal+partialTotal,fullTotal,partialTotal,count,unpricedCount,
+    withdrawnCount,withdrawnTotal,
+    unclassifiedCount:unclassified.reduce((s,u)=>s+u.count,0),
+    unclassifiedTotal:unclassified.reduce((s,u)=>s+u.total,0),
+    unclassified,codes,churches};
 }
 function _sponsorByTotal(a,b){return b.total-a.total||a.name.localeCompare(b.name);}
 /* Mirrors FULL_DISCOUNT_PERCENT in src/services/budget.ts — the point at which a discount covers
