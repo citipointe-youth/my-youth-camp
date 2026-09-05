@@ -271,3 +271,59 @@ describe('sponsorAmountFor', () => {
     });
   });
 });
+
+describe('2026-09-05 fix — cancelled, refunded and unclassified places', () => {
+  const tags: DiscountTagMap = { SPON: 'sponsor', HALFOFF: 'discount' };
+  const prices: BasePrices = { tent: null, classroom: null };
+  const base = (over: Partial<BudgetPerson> = {}): BudgetPerson => ({
+    churchId: 'c1', churchName: 'Carindale', kind: 'camper',
+    registrationCost: 190, amountPaid: 0, accommodationKind: 'classroom',
+    discountCode: 'SPON', ...over,
+  });
+
+  it('excludes a cancelled place from the ask and reports it separately', () => {
+    const r = computeSponsorSummary([base(), base({ status: 'cancelled' })], { tags, prices });
+    expect(r.total).toBe(190);          // one place, not two
+    expect(r.count).toBe(1);
+    expect(r.withdrawnCount).toBe(1);
+    expect(r.withdrawnTotal).toBe(190); // named, not silently dropped
+  });
+
+  it('a refund does not inflate the ask', () => {
+    // A 'discount' code, not 'sponsor': 'sponsor' forces $0 received UNCONDITIONALLY (a
+    // deliberate, documented 2026-08-04 rule — see receivedBeforeRefund), so it can never
+    // exercise the refund-subtracts-from-what-was-actually-received path this test targets.
+    const noRefund = computeSponsorSummary(
+      [base({ discountCode: 'HALFOFF', amountPaid: 190 })], { tags, prices });
+    const refunded = computeSponsorSummary(
+      [base({ discountCode: 'HALFOFF', amountPaid: 190, refundAmount: 190 })], { tags, prices });
+    expect(noRefund.total).toBe(0);
+    expect(refunded.total).toBe(0);     // was 190 before this fix
+  });
+
+  it('reports an untagged code carrying a real discount, and never totals it', () => {
+    const r = computeSponsorSummary(
+      [base({ discountCode: 'UNTAGGED', discountAmount: 190, amountPaid: 0 })],
+      { tags, prices });
+    expect(r.total).toBe(0);            // excluded from the ask
+    expect(r.count).toBe(0);
+    expect(r.unclassifiedCount).toBe(1);
+    expect(r.unclassifiedTotal).toBe(190);
+    expect(r.unclassified).toEqual([
+      { code: 'UNTAGGED', count: 1, total: 190, avgPercent: 100 },
+    ]);
+  });
+
+  it('does not flag an untagged code with no discount evidence', () => {
+    const r = computeSponsorSummary(
+      [base({ discountCode: 'PLAIN', discountAmount: 0, amountPaid: 190 })],
+      { tags, prices });
+    expect(r.unclassifiedCount).toBe(0);
+  });
+
+  it('a tagged code is never reported as unclassified', () => {
+    const r = computeSponsorSummary([base({ discountAmount: 190 })], { tags, prices });
+    expect(r.unclassifiedCount).toBe(0);
+    expect(r.count).toBe(1);
+  });
+});
