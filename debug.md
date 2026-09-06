@@ -614,6 +614,19 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-09-06 (2nd) — budget card clipping, data search, sheet tooltips
+
+| Symptom | Go to |
+|---|---|
+| A budget card shows fewer rows than its header count says | `.budchurch.open .budchurch-body` regained a finite `max-height`. It was `1200px` until 2026-09-06 and silently clipped the Discount codes card past ~15 codes. `overflow:hidden` with no `overflow-y` means the rows are gone, not scrollable to. |
+| A budget card slides open again / someone "restored the animation" | Check they did not reintroduce a fixed `max-height` to do it. The animation was traded away on purpose; a finite cap is the bug. |
+| A sponsored code's money is missing from the Sponsorship total | Read the unclassified warnbox now rendered inside that same card. Untagged codes with invoice evidence of a discount are reported there and excluded from every total by design — classify the code in the Discount codes card. `report, never infer` (CLAUDE.md 2026-09-06). |
+| The Sponsorship card does not render at all | Its gate is `spon.count||spon.unclassifiedCount` since 2026-09-06. If it vanished when every code was untagged, the gate reverted to `spon.count` alone. |
+| Director cannot reach Data Import or Records & Export | The two shortcut buttons in `RENDER.data` are their only route (`navModel` gives director neither). They are gated on `ACTOR.role==='director'` since 2026-09-06 — check the gate was not narrowed further. |
+| The Data search box matches nothing / matches everything | `_dataMatchQuery`. Run `node scripts/data-search-harness.js` first — 28 checks. A throw there means one of the three functions was RENAMED, not that the search is broken. |
+| "Export filtered" hands back more rows than the screen shows | `dataExport` is not going through the same predicate as `dataApply`. See Task 4 Step 8. |
+| A help tooltip is cut off at the top of a bottom sheet | `_clampTip`'s `flip-up` escaping `.sheet`'s `overflow-y:auto`. Fixed 2026-09-06 by measuring the `.sheet` rect; if it is back, check `sheetTop` still defaults to `-Infinity` (using `0` silently changes non-sheet behaviour). |
+
 ### 2026-09-06 — budget export traceability
 
 | Symptom | Go to |
