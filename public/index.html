@@ -256,9 +256,16 @@ h3.sec{font-size:var(--t-xs);font-weight:800;letter-spacing:.08em;text-transform
 .emptyst{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:40px 16px;color:var(--muted);text-align:center;}
 .emptyst .ic-svg{color:var(--lav-2);}
 .emptyst-msg{font-size:var(--t-sm);font-weight:600;max-width:30ch;}
-/* Budget collapsible church rows (H/§5, L3 expander) */
+/* Budget collapsible church rows (H/§5, L3 expander).
+   ⚠️ THE OPEN STATE MUST NOT CARRY A FIXED max-height (2026-09-06). It used to be 1200px, which
+   silently CLIPPED the Discount codes card once prod passed ~15 codes — `overflow:hidden` with no
+   `overflow-y` means the hidden rows were not scrollable to, merely gone. Every `.budchurch` card
+   grows with the data (codes, churches, sponsorship rows), so any finite cap is the same bug
+   waiting on a bigger camp. `max-height:none` is not animatable, so the open/close slide is gone
+   on purpose — hiding data is a correctness bug, not sliding is a cosmetic one. `overflow:visible`
+   is also load-bearing: it un-clips `.htip-pop` tooltips rendered inside an open card. */
 .budchurch-body{max-height:0;overflow:hidden;transition:max-height .26s ease;}
-.budchurch.open .budchurch-body{max-height:1200px;}
+.budchurch.open .budchurch-body{max-height:none;overflow:visible;}
 .budchurch .budchev{display:inline-block;transition:transform .2s;color:var(--lav-2);}
 .budchurch.open .budchev{transform:rotate(90deg);}
 .budcat-l{font-size:var(--t-sm);font-weight:600;}
@@ -1525,9 +1532,28 @@ function _clampTip(btn){const pop=btn.querySelector('.htip-pop');if(!pop)return;
   if(r.right>vw-m)shift=(vw-m)-r.right;
   if(r.left+shift<bl+m)shift=(bl+m)-(r.left+shift);
   if(shift)pop.style.transform=left?`translateX(${shift}px)`:`translateX(calc(-50% + ${shift}px))`;
-  // Vertical: the bubble sits below the "?"; if that runs off the bottom (short laptop
-  // viewport, tip low on the page) and there's more room above, flip it up.
-  if(r.bottom>vh-m){const btnTop=btn.getBoundingClientRect().top;if(btnTop>r.height+m)pop.classList.add('flip-up');}
+  /* Vertical: the bubble sits below the "?"; if that runs off the bottom (short laptop
+     viewport, tip low on the page) and there's more room above, flip it up.
+
+     ⚠️ A BOTTOM SHEET IS A CLIPPING BOX AND flip-up ESCAPES IT (2026-09-06). `.sheet` is
+     `overflow-y:auto`, and `.htip-pop` is position:absolute INSIDE it, so a flipped-up bubble
+     renders above the sheet's own content top edge and is truncated there — even though the
+     arithmetic above correctly says it fits the viewport. A sheet is by definition low on the
+     screen, so this fired on essentially every tip in every sheet; it was reported against the
+     Data screen's "Needs review" sheet, whose helpTip sits in the <h3>, i.e. at the very top of
+     the sheet where there is NO room above it at all.
+     Downward inside a sheet is safe and deliberately left alone: the sheet SCROLLS, so an
+     overflowing bubble lengthens the scroll box and stays reachable. Upward does not — it leaves
+     the box. So inside a sheet, flip up only when the bubble genuinely fits above the "?" WITHIN
+     the sheet's own rect. Outside a sheet (`sheetTop` stays -Infinity) the behaviour is byte-for-
+     byte what it was: `btnTop - (-Infinity)` is Infinity, so the added clause is a no-op. Using
+     0 instead would compare against the VIEWPORT top and silently change ordinary screens. */
+  const sheet=btn.closest('.sheet');
+  const sheetTop=sheet?sheet.getBoundingClientRect().top:-Infinity;
+  if(r.bottom>vh-m){
+    const btnTop=btn.getBoundingClientRect().top;
+    if(btnTop>r.height+m&&btnTop-sheetTop>r.height+m)pop.classList.add('flip-up');
+  }
 }
 // Tapping anywhere else closes any open tooltip.
 document.addEventListener('click',e=>{if(!e.target.closest('.htip'))document.querySelectorAll('.htip.open').forEach(t=>t.classList.remove('open'));});
@@ -4976,7 +5002,10 @@ function drawBudget(){
     <b class="budrow-amt">${_money(c.total)}</b>
     <div class="budrow-det">${c.codes.map(x=>`<div class="buddet"><span class="buddet-k">${esc(x.code)} ${sponTagPill(x.tag)}</span>
       <span class="buddet-n">× ${x.count}</span><b class="buddet-v">${_money(x.total)}</b></div>`).join('')}</div></div>`;
-  const sponSection=spon.count?`<div class="card budchurch" data-cid="sponsor" style="margin-top:14px">
+  /* ⚠️ GATED ON unclassifiedCount TOO (2026-09-06). Gating on `spon.count` alone hid this whole
+     card when every discounted code was untagged — precisely the camp that most needs to be told
+     its sponsorship ask is missing. */
+  const sponSection=(spon.count||spon.unclassifiedCount)?`<div class="card budchurch" data-cid="sponsor" style="margin-top:14px">
     <div class="rowsb budchurch-hd" onclick="_budToggle('sponsor')" style="cursor:pointer">
       <div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="budchev">${icSm('chevron')}</span>
         <div style="min-width:0"><div style="font-weight:700">Sponsorship needed</div>
@@ -4987,6 +5016,11 @@ function drawBudget(){
         spon.partialTotal?`${_money(spon.fullTotal)} in full sponsorships, ${_money(spon.partialTotal)} part sponsored.`
         :'Every one of these is a full sponsorship.'} Codes tagged <b>Paid in person</b> are not counted — that money arrived.</p>
       ${spon.unpricedCount?`<div class="warnbox" style="margin:0 0 8px">${icSm('alert')} ${spon.unpricedCount} ${spon.unpricedCount===1?'place is':'places are'} on a ticket with no known price, so the total above under-reads.</div>`:''}
+      ${spon.unclassifiedCount?`<div class="warnbox" style="margin:0 0 8px">${icSm('alert')}
+        <b>${spon.unclassifiedCount} ${spon.unclassifiedCount===1?'place is':'places are'} on a discount code nobody has classified yet.</b>
+        <span style="display:block;margin-top:2px">${_money(spon.unclassifiedTotal)} is <b>NOT</b> included in the total above. Classify each code in the <b>Discount codes</b> card so its money is counted — the app will not guess, because a 100%-off code can be a staff comp as easily as a sponsorship.</span>
+        ${spon.unclassified.map(u=>`<div class="buddet"><span class="buddet-k">${esc(u.code)}${u.avgPercent==null?'':` <span class="sub">${Math.round(u.avgPercent)}% off on invoices</span>`}</span><span class="buddet-n">× ${u.count}</span><b class="buddet-v">${_money(u.total)}</b></div>`).join('')}
+        <div class="buddet" style="font-weight:700"><span class="buddet-k">Total not counted</span><span class="buddet-n">× ${spon.unclassifiedCount}</span><b class="buddet-v">${_money(spon.unclassifiedTotal)}</b></div></div>`:''}
       <div class="seg" style="margin:0 0 8px">
         <button class="${_sponsorView==='code'?'on':''}" onclick="_setSponsorView('code')">By code</button>
         <button class="${_sponsorView==='church'?'on':''}" onclick="_setSponsorView('church')">By ministry</button>
@@ -8885,15 +8919,18 @@ RENDER.data=async function(){
     (churches||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`)).join('');
   const gradeOpts=['<option value="">All grades</option>','<option value="leader">Leaders</option>']
     .concat([7,8,9,10,11,12].map(g=>`<option value="${g}">Grade ${g}</option>`)).join('');
-  // BUG regression fix: director has import:run + allocation:manage (access-control.ts) and
-  // RENDER.import/RENDER.adminData both already accept director — they were just unreachable
-  // (navModel gives director no 'import' tab and no Records & Export extra in either mode).
-  // These two buttons are the reachable entry point in both pre-camp and at-camp (the at-camp
-  // home "Student Data Table" tile already routes here via go('data')).
-  const navCard=`<div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
+  /* ⚠️ DIRECTOR ONLY — DO NOT DELETE THIS OUTRIGHT (owner, 2026-09-06).
+     BUG regression fix: director has import:run + allocation:manage (access-control.ts) and
+     RENDER.import/RENDER.adminData both already accept director — they were just unreachable
+     (navModel gives director no 'import' tab and no Records & Export extra in either mode).
+     These two buttons are director's ONLY reachable entry point to those screens, in both
+     pre-camp and at-camp. Admin reaches both from the Admin console, so for admin they are
+     duplication and the owner asked for them gone — hence the role gate rather than a delete.
+     If you ever need to remove them for director too, give director a nav route FIRST. */
+  const navCard=(ACTOR&&ACTOR.role==='director')?`<div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn ghost" style="flex:1;min-width:160px" onclick="go('import')">${icSm('upload')} Data Import</button>
     <button class="btn ghost" style="flex:1;min-width:160px" onclick="go('adminData')">${icSm('download')} Records &amp; Export</button>
-  </div>`;
+  </div>`:'';
   paint('data',`${navCard}<div class="card">
     <div class="h3" style="margin-top:0">Registration data</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
@@ -8903,6 +8940,12 @@ RENDER.data=async function(){
       <select class="fld" id="dfGr" style="flex:1;min-width:120px" onchange="dataApply()">${gradeOpts}</select>
       <select class="fld" id="dfReview" style="flex:1;min-width:140px" onchange="dataApply()">
         <option value="">All records</option><option value="1">Needs review only</option></select>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <input class="fld" id="dfQ" type="search" inputmode="search" autocomplete="off" spellcheck="false"
+        placeholder="Search name, mobile, medical, dietary, code…" aria-label="Search the registration table"
+        style="flex:1;min-width:0" oninput="_dataQInput()">
+      <button class="btn ghost sm" style="flex:0 0 auto" onclick="dataClearQ()">Clear</button>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn" onclick="dataExport(true)">Export filtered</button>
@@ -8919,8 +8962,39 @@ function dataFilters(){
     gender:document.getElementById('dfGen')?.value||'',
     grade:document.getElementById('dfGr')?.value||'',
     needsReview:document.getElementById('dfReview')?.value||'',
+    q:document.getElementById('dfQ')?.value||'',
   };
 }
+/* ── Data-table free-text search (2026-09-06) ────────────────────────────────────────────────
+   Kept as three SMALL PURE FUNCTIONS on purpose: `scripts/data-search-harness.js` vm-extracts
+   them by name and runs them for real, which is the only test that can reach browser-only code.
+   Adding a parameter is fine (the harness matches a name prefix); RENAMING one breaks it loudly,
+   which is the intent.
+   ⚠️ _dataNorm/_dataDigits must stay null-safe. A leader row has no grade and an un-imported
+   person has no mobile — letting `undefined` reach String() would put the literal text
+   "undefined" in the haystack, so a search for "define" would match half the camp. */
+function _dataNorm(s){return String(s==null?'':s).toLowerCase().trim();}
+function _dataDigits(s){return String(s==null?'':s).replace(/\D+/g,'');}
+/* Digits-only phone comparison so a typed 0412345 matches a mobile the table renders through
+   fmtPhone as "0412 345 678". Gated at 3+ digits so typing "12" doesn't drag in every number
+   containing 12 — a short numeric query still matches textually via the haystack below. */
+function _dataMatchQuery(r,q){
+  const needle=_dataNorm(q);
+  if(!needle)return true;
+  const digits=_dataDigits(needle);
+  if(digits.length>=3&&_dataDigits(r.mobile).indexOf(digits)>=0)return true;
+  const hay=[r.firstName,r.lastName,(r.firstName||'')+' '+(r.lastName||''),
+    (r.lastName||'')+', '+(r.firstName||''),r.churchName,r.gender,r.grade,r.registrationType,
+    r.discountCode,r.mobile,r.otherMedications,r.blueCardNumber,r.needsReviewReason,
+    r.accommodationKind,(r.medicalConditions||[]).join(' '),(r.dietaryRequirements||[]).join(' ')]
+    .map(_dataNorm).join('   ');
+  return hay.indexOf(needle)>=0;
+}
+/* Debounced so a fast typist doesn't rebuild a 600-row table on every keystroke. Purely a render
+   optimisation — the data is already in _dataCache, nothing is re-fetched. */
+let _dataQT=null;
+function _dataQInput(){clearTimeout(_dataQT);_dataQT=setTimeout(dataApply,120);}
+function dataClearQ(){const el=document.getElementById('dfQ');if(el){el.value='';el.focus();}dataApply();}
 const DATA_COLS=[['Name','name'],['Church','church'],['Gender','gender'],['Grade','grade'],['Reg type','regType'],['Cost','cost'],['Discount code','discount'],['Mobile','mobile'],['Medical','medical'],['Dietary','dietary'],['Other','other'],['Blue card','blueCard'],['Accommodation','accommodation'],['Review','review']];
 function _dataSortVal(r,key){
   switch(key){
@@ -8955,6 +9029,9 @@ function dataApply(){
     if(f.grade==='leader'){if(r.kind!=='leader')return false;}
     else if(f.grade){if(r.kind==='leader'||String(r.grade??'')!==f.grade)return false;}
     if(f.needsReview==='1'&&!r.needsReview)return false;
+    // Search NARROWS the dropdown selection (owner, 2026-09-06) — it never widens it, so it is
+    // the last predicate rather than a separate mode.
+    if(!_dataMatchQuery(r,f.q))return false;
     return true;
   });
   if(_dataSortKey)rows=rows.slice().sort((a,b)=>{
@@ -9006,7 +9083,20 @@ async function _markReviewed(id){
 async function dataExport(filtered){
   try{
     let qs='';
-    if(filtered){const f=dataFilters();const params=new URLSearchParams();
+    if(filtered){const f=dataFilters();
+      /* ⚠️ THE SEARCH BOX IS NOT PART OF THIS EXPORT, AND THAT IS SAID OUT LOUD (2026-09-06).
+         "Export filtered" is a SERVER export — it forwards the four dropdowns as query params
+         (`/export/registrants?churchId=…`) and the server has no free-text parameter, so the
+         search added on 2026-09-06 cannot reach it without a backend change. Saying nothing
+         would hand the owner a file wider than the table they were looking at, which is exactly
+         the "reconciles perfectly but is wrong" failure this repo keeps recording. So: ask.
+         If a search-aware export is ever wanted, add a `q` param server-side rather than
+         re-implementing the predicate here — a second copy of a filter rule is the documented
+         recurring bug class in this codebase (see `dataApply`/`_dataMatchQuery`). */
+      if(f.q&&!await confirmSheet({title:'Search is not included',
+        body:'Export filtered uses the dropdown filters only — your search text is not applied, so this file will be wider than the table on screen. Export the dropdown-filtered set anyway?',
+        confirmLabel:'Export anyway',cancelLabel:'Cancel'}))return;
+      const params=new URLSearchParams();
       if(f.churchId)params.set('churchId',f.churchId);
       if(f.gender)params.set('gender',f.gender);
       if(f.grade==='leader')params.set('kind','leader');

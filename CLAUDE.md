@@ -4,6 +4,124 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Budget card clipping, unclassified sponsorship on screen, director-only shortcuts, Data search, sheet tooltips — `camp-v110` — 2026-09-06
+
+Six-task batch (`docs/superpowers/plans/2026-09-06-budget-data-screen-fixes.md`), five owner-
+reported defects plus the terminal cache/docs task. **SPA-only** (`public/index.html`) for the
+five fixes; this task touches only `sw.js`/`CLAUDE.md`/`debug.md`. **No schema or migration
+change** — next migration is still `0023`. `npm run typecheck` clean, `npx vitest run` **1065
+pass / 64 files** (UNCHANGED from the prior `camp-v109` entry below — no `src/**` file was
+touched by this batch), `node scripts/budget-xlsx-harness.js` **142 ok** (unchanged, same
+reason), `accom-export-harness.js` and `filter-persist-harness.js` both clean, NEW
+`scripts/data-search-harness.js` **28 checks, all ok**. `node --check` OK on the SPA body (range
+**974–10164**, re-derived — do not trust that number on a future edit) and on `public/sw.js`.
+`sw.js` `camp-v109`→**`camp-v110`**.
+
+### The `.budchurch` 1200px cap — clipped, not scrolled, and it was latent in all five card types
+`.budchurch-body` was a max-height accordion: `max-height:0;overflow:hidden` collapsed,
+`.budchurch.open .budchurch-body{max-height:1200px}` open — **with no `overflow-y` at all**. Past
+1200px of content the rows below the cap were simply gone, not reachable by scrolling. This hit
+the Discount codes card first (19 real codes in prod render well past 1200px) but was equally
+latent in the other four `.budchurch` cards — Sponsorship, the ticket-prices gate, upgrade
+tracking, and every per-church card — the moment any of them grew enough rows. Fixed by dropping
+the cap to `max-height:none;overflow:visible` when open, for all five.
+
+> ⚠️ **The open/close ANIMATION WAS DELIBERATELY TRADED AWAY, and this is a one-way door.**
+> `max-height:none` is not an animatable CSS value, so a card now snaps open/closed instead of
+> sliding. This was a conscious choice — a card that hides data past a hardcoded cap is a
+> correctness bug; a card that doesn't slide is cosmetic. **Do NOT "restore the animation" by
+> reintroducing a finite `max-height` cap** (even a much bigger one, e.g. `20000px`) — that
+> recreates the identical clipping bug at a larger N, which is exactly the failure this fix
+> exists to close. If the animation is ever wanted back, it needs a JS-measured height (e.g.
+> `scrollHeight` written into an inline `max-height` on open), not a CSS constant.
+
+### Unclassified sponsorship money is now on screen, not only in the export
+`unclassifiedCount`/`unclassifiedTotal`/`unclassified` (the untagged-but-discounted rows) have
+been computed by `computeSponsorSummaryClient` since the `camp-v109` batch below, but were
+rendered **only** on the export's Summary sheet — a figure deliberately excluded from every
+on-screen total was therefore invisible on the one screen a director actually looks at. A
+warnbox naming the untagged codes and their excluded total now renders inside the Sponsorship
+card itself (`public/index.html:5008` area). This follows the same **REPORT, NEVER INFER**
+doctrine already in this file: the box reports what invoice evidence shows and excludes it from
+every total; it does not map a discount percentage onto a tag.
+
+- **The card's gate widened from `spon.count` to `spon.count||spon.unclassifiedCount`.** Gating
+  on `count` alone meant a camp where every discount code is currently untagged rendered **no
+  Sponsorship card at all** — hiding the warning in exactly the camp that most needs to see it
+  (a camp with zero tagged codes has the whole ask sitting in the unclassified bucket). The
+  widened gate is what makes the warnbox reachable in that state.
+
+### Data screen: director-only shortcuts, and why they must not be deleted outright
+The Data screen's two shortcut buttons (Data Import, Records & Export) are now gated on
+`ACTOR.role==='director'` (`public/index.html:8930-8932`, the `navCard` block) rather than shown
+to everyone who reaches the screen. ⚠️ **These buttons MUST NOT be deleted outright.**
+`navModel` gives director **no `import` tab and no Records & Export extra** in either camp mode
+— admin reaches both from the Admin console, but director's *only* route to either screen is
+this pair of buttons. If they are ever removed (e.g. as "redundant with admin's console tiles"),
+give director a real nav route to both screens FIRST, or director loses the ability to import
+data or pull exports entirely, with nothing in `tsc`/`vitest` able to catch the gap.
+
+### `_dataNorm`/`_dataDigits`/`_dataMatchQuery` are extracted BY NAME — never rename them
+New free-text search box on the Data table (`public/index.html:8973-8990`), debounced and ANDed
+with the existing dropdown filters, matching name/church/gender/grade/reg type/discount
+code/mobile/medical/dietary/other-medications/blue-card/review-reason. Phone matching compares
+digits only (`_dataDigits`), so `0412345` matches a mobile displayed as `0412 345 678`. These
+three functions are extracted **by their literal names** in the new
+`scripts/data-search-harness.js`, the same contract the budget harness already has with
+`_budScopeRows`/`_budExportRows`/etc. — that harness was silently dead for a month after a
+rename-shaped change (see the `camp-v109` section below). **Add parameters to these three
+freely; NEVER rename them**, or the harness throws instead of testing anything, with no signal
+on the Data screen itself that the search regressed.
+
+### "Export filtered" is a SERVER export and has no free-text parameter — it now asks, not silently widens
+`dataExport(true)` forwards the four dropdowns as query params to `/export/registrants` — it has
+no `q` parameter, so it **cannot** honour the new search box. Silently exporting the
+dropdown-filtered set (wider than what the search box shows on screen) would be exactly the
+"reconciles perfectly but is wrong" failure this repo keeps recording. It now calls
+`confirmSheet` to ask before exporting whenever a search term is active, rather than silently
+handing back a wider file. ⚠️ **If a search-aware export is ever wanted, add a `q` param
+SERVER-side and forward it** — do not re-implement `_dataMatchQuery`'s predicate a second time
+against the export path, which is the fourth-copy-of-a-rule failure this file already warns
+about elsewhere (`dataApply`/`_dataMatchQuery` is the second copy already; a third in the export
+path would be the third).
+
+### `.htip-pop` clipped by `.sheet`'s `overflow-y:auto` — and why `sheetTop` defaults to `-Infinity`, not `0`
+`.htip-pop` is `position:absolute` inside `.sheet`, which is `overflow-y:auto` — so `_clampTip`'s
+existing `flip-up` branch, which nudges a tooltip bubble upward when it would overflow the
+bottom of the viewport, could push the bubble **above** the sheet's own content top edge, where
+the sheet's scroll container clips it. Reported on the Data screen's Needs-review sheet, whose
+`helpTip` sits in the `<h3>` with no room above it inside the sheet at all. **Downward overflow
+was never a problem — the sheet itself scrolls** to reveal a tooltip that runs off the bottom;
+only the upward `flip-up` case escapes the box, because flipping up moves the bubble toward the
+sheet's fixed (non-scrolling-past) top edge rather than into more scrollable space.
+
+`_clampTip` (`public/index.html:1548-1552`) now also measures the nearest `.sheet`'s
+`getBoundingClientRect().top` and folds it into the flip-up decision.
+
+> ⚠️ **`sheetTop` defaults to `-Infinity`, and this is deliberate — do not "simplify" it to `0`.**
+> With `-Infinity`, the added `sheet`-aware clause (`btnTop-sheetTop>r.height+m`) is a **no-op**
+> for any tooltip outside a sheet, because no real `btnTop` can be more than infinitely far below
+> `-Infinity` — so behaviour on every ordinary (non-sheet) screen is byte-for-byte the original
+> condition. If the default were `0` instead, the clause would silently start comparing every
+> non-sheet tooltip's button position against the **viewport top**, changing ordinary screens'
+> flip-up behaviour as an unintended side effect of a fix that was only supposed to touch sheets.
+
+### Needs on-device eyeballing — `tsc`/`vitest` cannot prove any of this
+- All five `.budchurch` card types open/close **without an animation** (the traded-off cosmetic)
+  and, more importantly, that every row in a long card (19 discount codes) is actually reachable
+  now — a phone or a laptop needs to scroll a genuinely long open card and see the last row.
+- The Sponsorship card's new unclassified warnbox, in a camp where every code is untagged (the
+  widened-gate case) and in a camp where some codes are tagged and some are not.
+- Director login: the two Data-screen shortcut buttons are present and both navigate. Admin/
+  church/zoneLeader/firstAid logins: confirm nothing changed for them (the buttons were never
+  role-gated any other way before this).
+- The Data search box: type a partial name, a partial phone with and without spaces, and confirm
+  it narrows the table live and combines correctly with the existing dropdown filters.
+- "Export filtered" with an active search term: confirm the new confirm-sheet appears and that
+  cancelling it does not download anything.
+- The Needs-review sheet's `?` tooltip, specifically near the top of the sheet on a phone screen
+  — confirm it no longer renders cut off above the sheet's visible area.
+
 ## Budget export traceability — the harness was dead for a month, ~$13,000 of sponsorship was invisible — `camp-v109` — 2026-09-06
 
 7-task branch (`budget-export-traceability`). **No schema or migration change** — next migration
@@ -53,12 +171,17 @@ failure that produced no alarm at all. Files touched: `public/index.html` (`expo
   0, and the false "Do not rely" warning reappears). Reverting Finding B's fix (restoring the
   `if(diff)`-gated error text) fails section 11's "the fetch error is on the Summary sheet EVEN
   THOUGH Difference is 0" check. Both proofs restored to green afterward — **142 ok**.
-- **`sw.js` stays at `camp-v109` — one bump covers this whole branch, and a second would be
-  churn.** The standing rule is that `public/index.html` changing means `CACHE` must step, and it
-  did: prod (`origin/master`) serves `camp-v108`, this branch ships `camp-v109`. **`v109` has
-  never been deployed**, so the fix wave rides the same unreleased version — an installed PWA
-  goes straight from `v108` to a `v109` that already contains it. Do NOT bump to `v110` before
-  pushing; the rule is one step per DEPLOYED version, not one per commit.
+- **`sw.js` stayed at `camp-v109` for this whole branch — one bump per DEPLOYED version, not per
+  commit.** The standing rule is that `public/index.html` changing means `CACHE` must step, and it
+  did: prod (`origin/master`) served `camp-v108` when this branch started, and it shipped
+  `camp-v109`. ⚠️ **CORRECTED 2026-09-06 — the claim that `v109` "has never been deployed" was
+  stale the moment it was written and is now verified false**: `curl -s
+  https://my-youth-camp.vercel.app/sw.js | head -1` returned `const CACHE = 'camp-v109';` on
+  2026-09-06, i.e. prod had already picked it up. The very next batch (the budget-card-clipping /
+  data-search / sheet-tooltip fixes, same day — see the section at the top of this file) therefore
+  correctly steps to **`camp-v110`**, per the same rule this bullet states: one step per deployed
+  version. Do not read an old "not yet deployed" note as still current — always `curl` prod before
+  choosing the next version number.
 
 ### The harness had been silently dead for a month, straight through the 2026-09-03 release
 `scripts/budget-xlsx-harness.js`'s `extract()` matched functions by their **full signature**, and
@@ -71,15 +194,24 @@ script depends on is ever renamed or absent — see the `['_budScopeRows', '_bud
 list in the script, which itself had to be updated when `_budExportRows` was added in Task 4.
 
 ### Untagged discount codes were invisible to the sponsorship ask — measured, not estimated
-Only **5 of 19** discount codes in prod use are classified in `settings.discount_code_tags`
-(`KH100`, `YC26YP`, `YC26EFT`, `YC26CASH`, `VICTORY50`). The other 14 were silently excluded from
-`computeSponsorSummary`/`computeSponsorSummaryClient`, which only ever walked `sponsor`/`discount`
-tags — an untagged code, however deep the discount on its invoices, contributed **nothing** to the
-reported sponsorship gap.
+**Measurement taken 2026-09-05:** only **5 of 19** discount codes in prod use were classified in
+`settings.discount_code_tags` (`KH100`, `YC26YP`, `YC26EFT`, `YC26CASH`, `VICTORY50`). The other
+14 were silently excluded from `computeSponsorSummary`/`computeSponsorSummaryClient`, which only
+ever walked `sponsor`/`discount` tags — an untagged code, however deep the discount on its
+invoices, contributed **nothing** to the reported sponsorship gap.
+
+⚠️ **CORRECTED 2026-09-06 — `YC26BNESPONSOR` was classified on or before 2026-09-06 and is no
+longer one of the untagged rows.** Prod's `settings.discount_code_tags` now holds **six** entries
+— the original five above, plus `YC26BNESPONSOR: sponsor`. **13 codes remain untagged** (the table
+below, minus that row). Prod was also re-queried directly on 2026-09-06: the `people` table
+carries **33** rows with `YC26BNESPONSOR` (not the 30 measured on 2026-09-05), all with a discount
+recorded, the code stored as exactly `YC26BNESPONSOR` (length 14, no whitespace or case variance)
+— so the classification now correctly picks up all 33. The row below is kept for the historical
+2026-09-05 measurement, not deleted, and is marked **CLASSIFIED** rather than removed.
 
 | Code | People | $ gap | Discount |
 |---|---|---|---|
-| `YC26BNESPONSOR` | 30 | $5,700 | 100% |
+| `YC26BNESPONSOR` — **CLASSIFIED 2026-09-06 as `sponsor`; 33 people, not 30** | ~~30~~ | ~~$5,700~~ | 100% |
 | `ALIVE100` | 11 | $1,730 | 100% |
 | `YC26ELEVATION` | 8 | $1,480 | 100% |
 | `YC26STAFF` | 5 | $950 | 100% |
