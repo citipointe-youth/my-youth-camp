@@ -572,3 +572,146 @@ describe('invoice-import: blank padding rows (item 12)', () => {
     expect(res.skipped).toBe(1);
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * 2026-09-08 — Tier-1 invoice matching must index EVERY invoice number the Ticket List
+ * recorded for a person (`invoiceNumbers`), not just the scalar `invoiceNumber`. A person with
+ * two tickets has two invoices; the scalar only keeps the LAST one, so the other invoice used to
+ * fall through to the billing-contact-name tier and was LOST whenever the payer wasn't the
+ * registrant themselves (real case: Dylan Foo, $40, 2026-09). The billing contact on BOTH rows
+ * below is set to someone who is NOT a registrant, so the billing-name tier cannot rescue a
+ * match that the invoice-number tier fails to find — this isolates tier 1 specifically.
+ * ------------------------------------------------------------------------- */
+describe('invoice-import: tier-1 matching uses invoiceNumbers, not just the scalar invoiceNumber (2026-09-08)', () => {
+  const twoTicketInvoices = [
+    HDR,
+    '022394,Darlene,Tan,,150,,150,,,',
+    '022422,Darlene,Tan,,190,150,40,,,YC26CLASS',
+  ].join('\n');
+
+  it('matches BOTH invoices via invoiceNumbers, sums amountPaid, and warns multiple-invoices-summed', async () => {
+    const { svc, personRepo } = await build([
+      person({ id: 'p1', invoiceNumber: '022394', invoiceNumbers: ['022394', '022422'] }),
+    ]);
+    const res = await svc.importInvoicesCsv(actor('admin'), { csvData: twoTicketInvoices });
+
+    expect(res.unmatchedInvoices).toEqual([]);
+    const p = (await personRepo.findAll()).find((x) => x.id === 'p1')!;
+    expect(p.amountPaid).toBe(190); // 150 + 40, summed
+    expect(res.warnings.some((w) => w.code === 'multiple-invoices-summed')).toBe(true);
+  });
+
+  it('REGRESSION — the same fixture with invoiceNumbers absent leaves invoice 022422 unmatched', async () => {
+    // Pins the exact bug this fixes: a scalar-only invoiceNumber can carry only the LAST ticket's
+    // invoice, so the earlier ticket's invoice number is invisible to tier 1 and, since the
+    // billing contact is not a registrant, tier 2 (billing name) cannot rescue it either.
+    const { svc, personRepo } = await build([
+      person({ id: 'p1', invoiceNumber: '022394' }), // invoiceNumbers absent/null
+    ]);
+    const res = await svc.importInvoicesCsv(actor('admin'), { csvData: twoTicketInvoices });
+
+    expect(res.unmatchedInvoices).toHaveLength(1);
+    expect(res.unmatchedInvoices[0]).toMatchObject({ invoiceNumber: '022422' });
+    const p = (await personRepo.findAll()).find((x) => x.id === 'p1')!;
+    expect(p.amountPaid).toBe(150); // only the first invoice ever reached them
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * 2026-09-08 — the shared-invoice (deferred) pass must SUM into a person's existing money,
+ * never overwrite it. Modelled on the real "Ava Riverstone" shape (see invoice-import.service.ts
+ * around `deferredGroups`): she has her OWN invoice (matched via the billing-contact-name tier,
+ * since it isn't on her Person.invoiceNumber) AND shares a family invoice with two others
+ * (matched via tier 1, since all three carry `invoiceNumber: '022161'`).
+ *
+ * The shared invoice's Discount Total is explicitly "0" (not blank) — this is what reproduces
+ * the bug: `parseMoney('0')` is 0, which is NOT null, so `share(0)` returns real zeros rather
+ * than an all-null array. Before the fix, the deferred pass ASSIGNED
+ * `incoming.discountAmount = discountParts[m]` directly (guarded only by `!= null`, and 0 passes
+ * that guard) — so her share's $0 discount OVERWROTE the $190 the singles pass had already
+ * written for her personal invoice, landing at $0. The fix routes the shared pass through the
+ * same `accumulate()` the singles pass uses, which SUMS: prior(190) + share(0) = 190. If this
+ * regressed back to a direct assignment, `expect(ava.discountAmount).toBe(190)` below would read
+ * 0 instead — that is the exact failure this test is built to catch.
+ * ------------------------------------------------------------------------- */
+describe('invoice-import: the shared-invoice pass SUMS into existing money, never overwrites (Ava Riverstone shape, 2026-09-08)', () => {
+  it("Ava's own $190 discount survives being folded into the shared $570 family invoice", async () => {
+    const ava = person({
+      id: 'ava', firstName: 'Ava', lastName: 'Riverstone',
+      invoiceNumber: '022161', // shares this with her two siblings — tier-1 GROUP match
+    });
+    const sibA = person({ id: 'sibA', firstName: 'Noah', lastName: 'Riverstone', invoiceNumber: '022161' });
+    const sibB = person({ id: 'sibB', firstName: 'Liam', lastName: 'Riverstone', invoiceNumber: '022161' });
+    const { svc, personRepo } = await build([ava, sibA, sibB]);
+
+    const csvData = [
+      HDR,
+      // Ava's own invoice — no invoiceNumber recorded on her Person, so this resolves via the
+      // billing-contact-name tier (tier 2), processed in the SINGLES pass.
+      '023088,Ava,Riverstone,,190,190,0,,,YC26BNEINTERN',
+      // The shared family invoice — matched via tier 1 (3 candidates -> deferred group pass).
+      '022161,Family,Riverstone,,570,0,570,,,',
+    ].join('\n');
+
+    const res = await svc.importInvoicesCsv(actor('admin'), { csvData });
+
+    const all = await personRepo.findAll();
+    const avaAfter = all.find((x) => x.id === 'ava')!;
+    // The load-bearing assertion: her personal $190 discount must NOT be wiped to 0 by the
+    // shared invoice's own (zero) discount total.
+    expect(avaAfter.discountAmount).toBe(190);
+    expect(res.warnings.some(
+      (w) => w.code === 'multiple-invoices-summed' && w.message.includes('Ava Riverstone'),
+    )).toBe(true);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * 2026-09-08 — `refund-likely`: someone paid for their spot and was LATER comped. Reporting
+ * only — must never move money or set needsReview itself (that flag is owned by the unrelated
+ * multiple-invoices-summed check, which fires independently whenever a person has 2+ invoices in
+ * one run — refund-likely never touches it).
+ * ------------------------------------------------------------------------- */
+describe('invoice-import: refund-likely (2026-09-08)', () => {
+  it('paid in full on one invoice, then comped on a second → exactly one refund-likely warning naming them and $190, and it does not move money', async () => {
+    const target = person({ id: 'p1', firstName: 'Jordan', lastName: 'Casey' });
+    const { svc, personRepo } = await build([target]);
+    const csvData = [
+      HDR,
+      'INV-R1,Jordan,Casey,,190,,190,,,',
+      'INV-R2,Jordan,Casey,,190,190,0,,,YC26BNEINTERN',
+    ].join('\n');
+    const res = await svc.importInvoicesCsv(actor('admin'), { csvData });
+
+    const refundWarnings = res.warnings.filter((w) => w.code === 'refund-likely');
+    expect(refundWarnings).toHaveLength(1);
+    expect(refundWarnings[0]!.message).toContain('Jordan Casey');
+    expect(refundWarnings[0]!.message).toContain('190');
+
+    const p = (await personRepo.findAll()).find((x) => x.id === 'p1')!;
+    // The warning reports — it must not move money: the $190 actually paid is still $190.
+    expect(p.amountPaid).toBe(190);
+    /* refund-likely never sets needsReview ITSELF — but a person cannot BE a refund-likely case
+       without holding two invoices, and `multiple-invoices-summed` (2026-07-28) flags anyone who
+       does, for its own unrelated reason. So the flag is genuinely expected here and asserting
+       `needsReview === false` would be asserting the wrong thing. What actually has to hold is
+       ATTRIBUTION: the flag must come from the multi-invoice rule and carry ITS reason, never a
+       refund one. If refund-likely ever starts writing needsReviewReason, this fails. */
+    expect(p.needsReview).toBe(true);
+    expect(p.needsReviewReason).toMatch(/Multiple invoices/i);
+    expect(p.needsReviewReason).not.toMatch(/refund/i);
+  });
+
+  it('NEGATIVE — a second invoice that is simply UNPAID (no discount) produces NO refund-likely warning', async () => {
+    const target = person({ id: 'p1', firstName: 'Morgan', lastName: 'Blake' });
+    const { svc } = await build([target]);
+    const csvData = [
+      HDR,
+      'INV-U1,Morgan,Blake,,190,,190,,,',
+      'INV-U2,Morgan,Blake,,190,0,0,,,', // owed, not comped — Discount Total is 0, not the ticket total
+    ].join('\n');
+    const res = await svc.importInvoicesCsv(actor('admin'), { csvData });
+
+    expect(res.warnings.some((w) => w.code === 'refund-likely')).toBe(false);
+  });
+});

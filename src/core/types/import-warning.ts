@@ -11,6 +11,9 @@
  *   'critical' — silent data loss or a wrong number if ignored (deletes, blank care columns)
  *   'review'   — imported, but a human should confirm it (sets or implies needsReview)
  *   'info'     — a normal, expected outcome worth reporting (a church created, a row skipped)
+ *   'note'     — a standing fact this import cannot resolve and is not asking anyone to fix.
+ *                Ranks BELOW 'info' so it always sorts last; use it only where 'undetermined'
+ *                is the correct final answer, never as a quieter 'info'.
  */
 export type ImportWarningCode =
   // ---- Form import (import.service.ts) ----
@@ -42,7 +45,8 @@ export type ImportWarningCode =
   | 'multiple-invoices-summed'
   | 'shared-invoice-split-by-price'
   | 'shared-invoice-split-residual'
-  | 'shared-invoice-split-equally';
+  | 'shared-invoice-split-equally'
+  | 'refund-likely';
 
 export interface ImportWarning {
   /** 1-based CSV row. 0 = a whole-file warning with no single source row. */
@@ -58,7 +62,7 @@ export interface ImportWarning {
  */
 export const IMPORT_WARNING_META: Record<
   ImportWarningCode,
-  { label: string; severity: 'critical' | 'review' | 'info' }
+  { label: string; severity: 'critical' | 'review' | 'info' | 'note' }
 > = {
   'missing-care-column': {
     label: 'Care column missing from the export — imports blank',
@@ -75,9 +79,14 @@ export const IMPORT_WARNING_META: Record<
     label: 'Church forced by manual allocation',
     severity: 'info',
   },
+  /* ⚠️ CODE STRING UNCHANGED ON PURPOSE — the owner's upload machine groups its emailed
+     summary by it. Only the label, severity and message moved (all three are explicitly
+     free to change; the code is the contract). This group IS the tent-ticket/classroom-bed
+     cohort: a blanket church override put them indoors, so whether an upgrade is owed
+     depends on each family's arrangement and NO import can decide it. 'note' ranks last. */
   'accommodation-church-override': {
-    label: 'Accommodation overridden by church override',
-    severity: 'info',
+    label: 'Upgrade status undetermined (church override)',
+    severity: 'note',
   },
   'duplicate-submission': {
     label: 'Duplicate submission — most recent won',
@@ -130,6 +139,10 @@ export const IMPORT_WARNING_META: Record<
   },
   'shared-invoice-split-equally': {
     label: 'Shared invoice — price unknown, split EQUALLY and flagged',
+    severity: 'review',
+  },
+  'refund-likely': {
+    label: 'Paid, then given a free place — refund likely',
     severity: 'review',
   },
 };

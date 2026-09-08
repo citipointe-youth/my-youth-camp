@@ -103,6 +103,16 @@ export function makeTicketImportService(
       // Item A/B: how many Active ticket rows in THIS file resolved to each person (see the
       // duplicate-ticket note in the matched branch below).
       const ticketRowsByPerson = new Map<string, number>();
+      /* EVERY invoice number this file gives each person, in row order. `Person.invoiceNumber`
+         is a scalar, so on a two-ticket person the second ticket's number used to overwrite the
+         first and became unreachable — the Invoice import matches on invoice number, so that
+         invoice then fell through to the billing-contact-name tier and was LOST whenever the
+         payer was a parent rather than the registrant (real case: Dylan Foo, $40, 2026-09).
+         ⚠️ Rebuilt from THIS file every run, never appended to the stored array — same rule as
+         `moneyByPerson` in the Invoice import. A ticket that disappears from the export (or is
+         no longer Active) must drop its invoice back off, or a cancelled ticket keeps pulling
+         money in forever. */
+      const invoicesByPerson = new Map<string, string[]>();
 
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]!;
@@ -191,6 +201,9 @@ export function makeTicketImportService(
                check before it's trusted. */
             const dupTickets = (ticketRowsByPerson.get(match.person.id) ?? 0) + 1;
             ticketRowsByPerson.set(match.person.id, dupTickets);
+            const seenInvoices = invoicesByPerson.get(match.person.id) ?? [];
+            if (invoiceNumber && !seenInvoices.includes(invoiceNumber)) seenInvoices.push(invoiceNumber);
+            invoicesByPerson.set(match.person.id, seenInvoices);
             // Bug 2: the church accommodation override applies to EVERYONE in the church
             // (students AND leaders), not just youth — matches import.service + allocate.
             const churchOverride = churchOverrideById.get(existing.churchId);
@@ -208,10 +221,22 @@ export function makeTicketImportService(
               finalKind = churchOverride;
               finalConfidence = 'confirmed';
               if (parsedKind && parsedKind !== churchOverride) {
+                /* Severity 'note', so this group always sorts LAST. A blanket church override
+                   is the ONLY thing separating "bought a tent ticket, sleeping in a classroom"
+                   from "paid for an upgrade" — and it cannot tell them apart, because the
+                   override applies to the whole church regardless of what anyone paid. Whether
+                   a difference is owed depends on each family's arrangement, so this reports
+                   the fact and asserts nothing about the money in either direction.
+                   ⚠️ The message NAMES the person: the old wording ("Accommodation \"tent\"
+                   overridden to \"classroom\"") identified nobody, which made the list
+                   unusable as something to work through. */
+                const isUpgradeQuestion = parsedKind === 'tent' && churchOverride === 'classroom';
                 warnings.push({
                   code: 'accommodation-church-override',
                   row: rowNum,
-                  message: `Accommodation "${parsedKind}" overridden to "${churchOverride}" (church override)`,
+                  message: isUpgradeQuestion
+                    ? `${firstName} ${lastName} holds a "${ticketTypeRaw}" ticket but their church houses everyone in classrooms — whether an upgrade is owed depends on their arrangement, so no amount is assumed either way.`
+                    : `${firstName} ${lastName}: accommodation "${parsedKind}" overridden to "${churchOverride}" by the church override`,
                 });
               }
             } else if (parsedKind != null) {
@@ -232,6 +257,7 @@ export function makeTicketImportService(
 
             const merged: Person = {
               ...mergedOwned,
+              invoiceNumbers: seenInvoices.length > 0 ? [...seenInvoices] : null,
               accommodationKind: finalKind,
               accommodationKindRaw: finalKind,
               accommodationKindConfidence: finalConfidence,
@@ -296,6 +322,7 @@ export function makeTicketImportService(
               discountCode: null,
               ticketNumber: ticketNumber || null,
               invoiceNumber: invoiceNumber || null,
+              invoiceNumbers: invoiceNumber ? [invoiceNumber] : null,
               accommodationKindConfidence: parsedKind ? 'confirmed' : null,
               discountAmount: null,
               amountPaid: null,

@@ -73,6 +73,10 @@ export interface CampSettings {
    */
   discountCodeOverrides?: Record<string, number>;
   /**
+   * 'upgrade' marks a code that covers the difference on a re-bought ticket: the money was
+   * already collected on the first ticket, so it is NOT revenue foregone and contributes $0 to
+   * the sponsorship ask (see DiscountTag in src/services/budget.ts).
+   *
    * How the admin has classified each discount code, code -> 'inperson' | 'sponsor' |
    * 'discount'. This is the payment half of a ticket's budget classification (the other half
    * is the person's accommodationKind) — see `src/services/budget.ts`. A code that is absent
@@ -80,7 +84,7 @@ export interface CampSettings {
    * Optional (like the checkinWindow* fields above) so existing fixtures compile; defaults to
    * {} wherever read.
    */
-  discountCodeTags?: Record<string, 'inperson' | 'sponsor' | 'discount'>;
+  discountCodeTags?: Record<string, 'inperson' | 'sponsor' | 'discount' | 'upgrade'>;
   /**
    * Admin-set reference prices for a full-price ticket, in dollars. These are the "no-code
    * invoice" prices every discount code is defined against: they value a ticket whose code is

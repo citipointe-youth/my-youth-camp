@@ -368,3 +368,52 @@ describe('2026-09-05 fix — cancelled, refunded and unclassified places', () =>
     expect(r.count).toBe(1);
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * 2026-09-08 — the `upgrade` tag contributes $0 to the sponsorship ask.
+ * `SPONSOR_TAGS` is `['sponsor', 'discount']` only — `upgrade` is excluded on purpose, because
+ * its "discount" offsets a ticket the camp was already paid for in full, so there is no gap for
+ * anyone to fund. Because `discountTagFor` recognises `upgrade`, `isUnclassifiedDiscount` also
+ * returns false for it, so an upgrade-tagged person is skipped by BOTH branches of the ask loop
+ * — never asked for, and never reported as an unaccounted-for gap either.
+ * ------------------------------------------------------------------------- */
+describe('computeSponsorSummary — the upgrade tag contributes $0 to the ask (2026-09-08)', () => {
+  const tags: DiscountTagMap = { UPG: 'upgrade' };
+  const upgradePerson = () =>
+    p({
+      accommodationKind: 'classroom',
+      registrationCost: 190,
+      discountAmount: 150,
+      amountPaid: 40,
+      discountCode: 'UPG',
+    });
+
+  it('an upgrade-tagged $190 classroom place with a real discountAmount asks for $0 and is not unclassified', () => {
+    const s = computeSponsorSummary([upgradePerson()], { tags, prices: NO_PRICES });
+    expect(s.total).toBe(0);
+    expect(s.fullTotal).toBe(0);
+    expect(s.partialTotal).toBe(0);
+    expect(s.unclassifiedCount).toBe(0);
+    expect(s.unclassifiedTotal).toBe(0);
+    // The person must not appear in the unclassified rows at all.
+    expect(s.unclassified).toEqual([]);
+    // Nor in the tagged sponsor/discount codes — 'upgrade' is excluded from SPONSOR_TAGS.
+    expect(s.codes).toEqual([]);
+  });
+
+  it('CONTRAST — the identical person on an UNTAGGED code DOES land in unclassified (the whole reason the tag exists)', () => {
+    const untaggedPerson = p({
+      accommodationKind: 'classroom',
+      registrationCost: 190,
+      discountAmount: 150,
+      amountPaid: 40,
+      discountCode: 'SOMEOTHERCODE',
+    });
+    const s = computeSponsorSummary([untaggedPerson], { tags, prices: NO_PRICES });
+    expect(s.unclassifiedCount).toBe(1);
+    expect(s.unclassifiedTotal).toBe(150); // ticketValue(190) - amountPaid(40)
+    expect(s.unclassified).toEqual([
+      { code: 'SOMEOTHERCODE', count: 1, total: 150, avgPercent: expect.closeTo(78.95, 1) },
+    ]);
+  });
+});

@@ -111,7 +111,7 @@ describe('people mapper encryption', () => {
       consents: { medical: { granted: true, timestamp: null }, media: { granted: false, timestamp: null }, supervision: { granted: false, timestamp: null } },
       payment_status: 'unpaid', accommodation_kind: null, accommodation_label: null,
       registration_type: null, registration_cost: null, discount_code: null,
-      ticket_number: null, invoice_number: null, accommodation_kind_confidence: null,
+      ticket_number: null, invoice_number: null, invoice_numbers: null, accommodation_kind_confidence: null,
       discount_amount: null, amount_paid: null, fees_amount: null, tax_amount: null,
       needs_review: false, needs_review_reason: null,
       lifecycle: 'registered', at_camp: false,
@@ -141,7 +141,7 @@ describe('individual accommodation override (0022)', () => {
       consents: { medical: { granted: false, timestamp: null }, media: { granted: false, timestamp: null }, supervision: { granted: false, timestamp: null } },
       payment_status: 'unpaid', accommodation_kind: null, accommodation_label: null,
       registration_type: null, registration_cost: null, discount_code: null,
-      ticket_number: null, invoice_number: null, accommodation_kind_confidence: null,
+      ticket_number: null, invoice_number: null, invoice_numbers: null, accommodation_kind_confidence: null,
       discount_amount: null, amount_paid: null, fees_amount: null, tax_amount: null,
       accommodation_override: null, amount_paid_override: null,
       refund_amount: null, refunded_at: null, cancelled_at: null,
@@ -265,5 +265,18 @@ describe('individual accommodation override (0022)', () => {
     const saved = { ...p, accommodationKind: forced, accommodationKindRaw: forced };
     const cols = personColumns(saved);
     expect(cols['accommodation_kind']).toBe('classroom'); // not the stale 'tent' raw
+  });
+});
+
+describe('invoice numbers (0023)', () => {
+  // A person who bought two tickets has two invoice numbers; the scalar `invoiceNumber` can
+  // only ever hold one. This proves the new text[] column round-trips both, in order.
+  it('round-trips a text[] through personColumns -> toPerson, preserving order', () => {
+    const p = { ...samplePerson(), invoiceNumbers: ['022394', '022422'] };
+    const cols = personColumns(p);
+    expect(cols['invoice_numbers']).toEqual(['022394', '022422']);
+    const row = { ...cols, created_at: new Date(cols['created_at'] as string), updated_at: new Date(cols['updated_at'] as string) };
+    const back = toPerson(row, [], []);
+    expect(back.invoiceNumbers).toEqual(['022394', '022422']);
   });
 });

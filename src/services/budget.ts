@@ -20,6 +20,7 @@ import { buildTicketPriceTable, priceForTicket, type TicketPrice } from './ticke
 //   tag 'inperson'            → "Tent in person"          / "Classroom in person"
 //   tag 'sponsor'             → "Tent full sponsor"       / "Classroom full sponsor"
 //   tag 'discount'            → "Discounted tent"         / "Discounted classroom"
+//   tag 'upgrade'             → "Tent upgrade"            / "Classroom upgrade"
 //   accommodationKind == null → "Accommodation not recorded"   (flagged, never dropped)
 //
 // The tag lives on the code rather than the person because the codes ARE the mechanism the
@@ -36,8 +37,19 @@ import { buildTicketPriceTable, priceForTicket, type TicketPrice } from './ticke
 //  - Grand total = Σ church totals, and MUST equal the sum of every category line total.
 //    Nobody is ever silently dropped — that is what makes the grand total honest.
 
-/** How an admin has classified a discount code on the Budget screen. */
-export type DiscountTag = 'inperson' | 'sponsor' | 'discount';
+/**
+ * How an admin has classified a discount code on the Budget screen.
+ *
+ * ⚠️ `'upgrade'` IS NOT A CONCESSION, AND THAT IS THE WHOLE POINT OF IT. When someone buys the
+ * wrong ticket and is told to re-buy the right one with a code covering the difference, Elvanto
+ * writes a SECOND ticket whose "discount" offsets a first ticket that was already paid in full.
+ * Measured 2026-09-08: YC26CLASS + YC26CLASSFULL reported $770 of discount against $0 of actually
+ * foregone revenue. So an upgrade code contributes NOTHING to the sponsorship ask — but it is
+ * still deliberately classified rather than left untagged, because an untagged code with invoice
+ * evidence of a discount lands in `unclassified` and gets reported as money nobody can account
+ * for. "Recognised and worth zero" and "unknown" are different answers.
+ */
+export type DiscountTag = 'inperson' | 'sponsor' | 'discount' | 'upgrade';
 
 /** code → tag. A code that is absent (or maps to an unknown value) is a plain ticket. */
 export type DiscountTagMap = Record<string, DiscountTag>;
@@ -48,10 +60,12 @@ export type TicketClass =
   | 'tent-inperson'
   | 'tent-sponsor'
   | 'tent-discount'
+  | 'tent-upgrade'
   | 'classroom'
   | 'classroom-inperson'
   | 'classroom-sponsor'
   | 'classroom-discount'
+  | 'classroom-upgrade'
   | 'unknown';
 
 /** Admin-set reference prices (settings.tentPrice / settings.classroomPrice). */
@@ -63,10 +77,12 @@ export interface BasePrices {
 /** Fixed display order — also the row order within a scope, so the table reads consistently. */
 const CLASS_ORDER: readonly TicketClass[] = [
   'tent',
+  'tent-upgrade',
   'tent-inperson',
   'tent-discount',
   'tent-sponsor',
   'classroom',
+  'classroom-upgrade',
   'classroom-inperson',
   'classroom-discount',
   'classroom-sponsor',
@@ -75,10 +91,12 @@ const CLASS_ORDER: readonly TicketClass[] = [
 
 const CLASS_LABEL: Record<TicketClass, string> = {
   tent: 'Tent',
+  'tent-upgrade': 'Tent upgrade',
   'tent-inperson': 'Tent in person',
   'tent-discount': 'Discounted tent',
   'tent-sponsor': 'Tent full sponsor',
   classroom: 'Classroom',
+  'classroom-upgrade': 'Classroom upgrade',
   'classroom-inperson': 'Classroom in person',
   'classroom-discount': 'Discounted classroom',
   'classroom-sponsor': 'Classroom full sponsor',
@@ -201,7 +219,9 @@ export function discountTagFor(p: BudgetPerson, tags: DiscountTagMap): DiscountT
   const code = (p.discountCode ?? '').trim();
   if (!code) return null;
   const tag = tags[code];
-  return tag === 'inperson' || tag === 'sponsor' || tag === 'discount' ? tag : null;
+  return tag === 'inperson' || tag === 'sponsor' || tag === 'discount' || tag === 'upgrade'
+    ? tag
+    : null;
 }
 
 /**
@@ -524,6 +544,11 @@ export function computeBudget(
 /** The two tags that mean money did not arrive. `inperson` is not one of them — see above. */
 export type SponsorTag = Extract<DiscountTag, 'sponsor' | 'discount'>;
 
+/* ⚠️ `'upgrade'` IS EXCLUDED ON PURPOSE — see the DiscountTag doc. Its "discount" offsets a
+   ticket the camp was already paid for, so there is no gap for anyone to fund. Because
+   `discountTagFor` now recognises it, `isUnclassifiedDiscount` returns false for it too, so an
+   upgrade code is skipped by both branches of the loop below and contributes exactly $0 to the
+   ask — recognised and worth nothing, rather than reported as unaccounted-for money. */
 const SPONSOR_TAGS: readonly DiscountTag[] = ['sponsor', 'discount'];
 
 /** One distinct sponsor amount within a code — the unit a sponsor is actually asked for. */

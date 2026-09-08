@@ -4113,10 +4113,12 @@ function _money(n){return '$'+Number(n||0).toLocaleString('en-AU',{maximumFracti
    the same way every time. Adding a class = one entry here + one in budget.ts. */
 const _BUD_CLASSES=[
   ['tent','Tent'],
+  ['tent-upgrade','Tent upgrade'],
   ['tent-inperson','Tent in person'],
   ['tent-discount','Discounted tent'],
   ['tent-sponsor','Tent full sponsor'],
   ['classroom','Classroom'],
+  ['classroom-upgrade','Classroom upgrade'],
   ['classroom-inperson','Classroom in person'],
   ['classroom-discount','Discounted classroom'],
   ['classroom-sponsor','Classroom full sponsor'],
@@ -4136,7 +4138,7 @@ function _budPayment(cls){
   const i=String(cls).indexOf('-');
   if(i<0)return 'Full price';
   const tag=String(cls).slice(i+1);
-  return tag==='inperson'?'Paid in person':tag==='sponsor'?'Full sponsor':tag==='discount'?'Discounted':tag;
+  return tag==='inperson'?'Paid in person':tag==='sponsor'?'Full sponsor':tag==='discount'?'Discounted':tag==='upgrade'?'Upgrade':tag;
 }
 /* The `Code type` column (2026-09-05), replacing `Payment type`. Derived from the CODE and the
    admin's tags — not parsed out of the class key — because a row now carries exactly one code.
@@ -4148,10 +4150,14 @@ function _budCodeType(row,tags){
   if(tag==='inperson')return 'Paid in person';
   if(tag==='sponsor')return 'Full sponsor';
   if(tag==='discount')return 'Discounted';
+  if(tag==='upgrade')return 'Upgrade (already paid)';
   return row.unclassified?'⚠ Not classified':'Full price';
 }
-/** The three tags an admin can put on a discount code, and how they read in the dropdown. */
-const _BUD_TAGS=[['inperson','Paid in person'],['sponsor','Full sponsor'],['discount','Discounted']];
+/** The four tags an admin can put on a discount code, and how they read in the dropdown.
+    ⚠ 'upgrade' is NOT a concession — it offsets a ticket already paid for in full, so it adds
+    $0 to the sponsorship ask. Tagging it anyway is what keeps it OUT of '⚠ Not classified'.
+    Mirrors DiscountTag in src/services/budget.ts — read its doc before changing this. */
+const _BUD_TAGS=[['inperson','Paid in person'],['sponsor','Full sponsor'],['discount','Discounted'],['upgrade','Upgrade (already paid)']];
 function _budRowLabel(cls,amount){
   const base=_BUD_CLASS_LABEL[cls]||cls;
   return amount==null?base:(base+' — '+_money(amount));
@@ -4163,7 +4169,7 @@ function _discountTagFor(p,tags){
   const code=(p.discountCode||'').trim();
   if(!code)return null;
   const tag=(tags||{})[code];
-  return (tag==='inperson'||tag==='sponsor'||tag==='discount')?tag:null;
+  return (tag==='inperson'||tag==='sponsor'||tag==='discount'||tag==='upgrade')?tag:null;
 }
 /* Mirrors budget.ts isUnclassifiedDiscount — read ITS doc comment. ⚠️ DETECTS, NEVER INFERS. The
    caller reports these and excludes their money from every total. An untagged 100%-off code can
@@ -4467,7 +4473,14 @@ function _budUpgrades(regs,filterId){
         accommodationKind:r.accommodationKind||null,discountCode:r.discountCode,
         registrationType:r.registrationType||null};
       const cls=_classifyTicket(p,tags);
-      if(cls!=='classroom')return;                      // sponsored/discounted — not an upgrade case
+      /* 'classroom-upgrade' is INCLUDED. That tag means the person re-bought with a
+         difference-covering code, which is precisely this card's subject — excluding every
+         tagged class (the rule before 2026-09-09) emptied the "paid" list of the only two
+         people in prod who verifiably HAD paid, while leaving three who had paid invisibly
+         sitting in "outstanding". Sponsor / discount / in-person stay excluded for the reason
+         below: a sponsored classroom place is $0 by design, and listing it as unpaid puts a
+         real person on a debtors list wrongly. */
+      if(cls!=='classroom'&&cls!=='classroom-upgrade')return;
       const value=_personValue(p,cls,prices,_resolveTicketPrice(p,ptable),_discountTagFor(p,tags));
       // What THEIR tent ticket cost — their own recorded cost first, else the learned price for
       // that exact ticket type. This is what makes early-bird vs standard tent work per person.
@@ -4591,6 +4604,12 @@ function _sponsorAmountFor(p,cls,prices,ticketPrice,tag){
   // Never negative: someone who over-paid against their own ticket is not owed a sponsor.
   return {ticketValue,amount:Math.max(0,ticketValue-(received==null?0:received))};
 }
+/* ⚠ 'upgrade' is EXCLUDED, mirroring SPONSOR_TAGS in budget.ts. Its "discount" offsets a ticket
+   the camp was already paid for, so there is no gap for anyone to fund. And because
+   `_discountTagFor` now RECOGNISES the tag, `_isUnclassifiedDiscount` returns false for it too —
+   so an upgrade code is skipped by both branches below and contributes exactly $0, rather than
+   being reported as unaccounted-for money. Measured 2026-09-08: YC26CLASS + YC26CLASSFULL were
+   showing $770 of "discount given" against $0 of actually foregone revenue. */
 const _SPONSOR_TAGS=['sponsor','discount'];
 /** How each tag reads on screen. A full place and a half place are not the same ask. */
 const _SPONSOR_TAG_LABEL={sponsor:'Full sponsorship',discount:'Part sponsored'};
@@ -7721,7 +7740,7 @@ const IMPORT_WARN_LABELS={
   'unknown-grade':['Unrecognised school grade — left blank','review'],
   'manual-allocation-ambiguous':['Manual allocation skipped — duplicate name/mobile','review'],
   'manual-allocation-church-forced':['Church forced by manual allocation','info'],
-  'accommodation-church-override':['Accommodation overridden by church override','info'],
+  'accommodation-church-override':['Upgrade status undetermined (church override)','note'],
   'duplicate-submission':['Duplicate submission — most recent won','review'],
   'duplicate-submission-order-undetermined':['Duplicate submission — most recent COULD NOT be determined','critical'],
   'absent-but-retained':['Absent from file but KEPT (cancellation/refund/override)','info'],
@@ -7742,9 +7761,13 @@ const IMPORT_WARN_LABELS={
   'shared-invoice-split-by-price':['Shared invoice — split cleanly by ticket price','info'],
   'shared-invoice-split-residual':['Shared invoice — split by the only resolvable price combination','info'],
   'shared-invoice-split-equally':['Shared invoice — price unknown, split EQUALLY and flagged','review'],
+  'refund-likely':['Paid, then given a free place — refund likely','review'],
 };
-const _WARN_SEV_ORDER={critical:0,review:1,info:2};
-const _WARN_SEV_COLOR={critical:'var(--danger)',review:'var(--warn,#b45309)',info:'var(--muted)'};
+/* 'note' ranks BELOW 'info' so its group always sorts LAST — it is a standing fact the import
+   cannot resolve and is not asking anyone to fix, not a quieter 'info'. Mirrors the severity
+   union in src/core/types/import-warning.ts. */
+const _WARN_SEV_ORDER={critical:0,review:1,info:2,note:3};
+const _WARN_SEV_COLOR={critical:'var(--danger)',review:'var(--warn,#b45309)',info:'var(--muted)',note:'var(--muted)'};
 const WARN_ROW_CAP=25;
 function _warnMeta(code){
   const m=IMPORT_WARN_LABELS[code];
