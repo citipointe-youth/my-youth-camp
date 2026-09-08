@@ -4,6 +4,146 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Two-ticket money, the shared-invoice overwrite, the `upgrade` tag & a refund warning — migration `0023` — `camp-v111` — 2026-09-09
+
+Backend + SPA + **migration `0023`** (`people.invoice_numbers text[]`, additive/nullable, **no
+backfill** — the nightly Ticket List import repopulates it). Found by an audit of the 2026-09-06
+warnings email against the 2026-09-08 exports, prompted by the owner: *"Dylan Foo should be
+tracked in the budget as having spent the standard $190."* He was tracked at **$150**.
+`npm run typecheck` clean, `npx vitest run` **1076 pass / 64 files** (was 1065/64; **+11**), `node --check` OK on the SPA body
+(range **974–10187**, re-derived — do not trust that number on a future edit) and `sw.js`.
+`sw.js` `camp-v110`→**`camp-v111`**.
+
+### 🔴 A PERSON HELD ONE `invoice_number`, AND A SECOND TICKET OVERWROTE IT
+The "bought the wrong ticket, re-buy the right one with a difference-covering code" flow makes
+**two tickets with two invoices**. `ticket-import.service.ts` merges `invoiceNumber` through
+`mergeOwnedFields` (last non-blank wins), so one of the two numbers was simply gone — and tier 1
+of the Invoice import matches on exactly that field. The orphaned invoice fell to tier 2, the
+**billing-contact name**, which only works when the payer IS the registrant.
+
+> ⚠️ **THAT IS WHY ONLY ONE PERSON WAS VISIBLY BROKEN, AND IT MADE THE BUG LOOK LIKE AN EDGE
+> CASE.** Of the seven two-ticket people in the 2026-09-08 export, Froneman / Nel / Gao paid
+> under their own names, so tier 2 caught both invoices and summed them; **Blom and Daniel were
+> saved by a DIFFERENT bug** — the `+61` phone split duplicates them into two person records, so
+> each record carries one invoice (see STILL OPEN below); Riverstone is the shared-invoice case
+> below. **Dylan Foo was the only one with a parent-paid upgrade and no duplicate to hide it**,
+> and his $40 invoice `022422` is the "1 unmatched invoice" that had been sitting in the nightly
+> email for days.
+
+Fixed by recording **every** invoice number the Ticket List gives a person into the new
+`invoiceNumbers`, and indexing all of them in tier 1 (the scalar is still indexed as a fallback
+for rows written before the column existed). Rebuilt from the file each run, never appended to
+the stored array — a ticket that goes away must drop its invoice back off, the same rule as
+`moneyByPerson`.
+
+### 🔴 THE SHARED-INVOICE PASS ASSIGNED MONEY, WHILE THE SINGLES PASS ACCUMULATED IT
+The two passes exist for a good reason (prices are learned from single-person invoices before
+family ones are split — do **not** fold them back into one). But the singles loop folded money
+into `moneyByPerson` while the deferred loop did `incoming.amountPaid = paidParts[m]`, a plain
+assignment. **A person on their own invoice AND a family invoice silently lost the single one,
+with no `multiple-invoices-summed` warning — because the two passes counted in different
+structures, so neither ever saw a second row.**
+
+Prod fingerprint (Ava Riverstone): `amount_paid 190, discount_amount 0, discount_code
+YC26BNEINTERN`. The **code** survived from the singles pass; the **$190 discount it granted was
+overwritten** by her share of a $570 family invoice. A code with no value against it is the only
+trace this bug leaves. Both passes now go through one `accumulate()`.
+
+### The `upgrade` tag — a code that is recognised and worth exactly zero
+An upgrade code discounts a **second** ticket to offset a **first** that was paid in full, so
+nothing was foregone. Measured 2026-09-08: `YC26CLASS` (4 uses) + `YC26CLASSFULL` (1) reported
+**$770 of "discount given" against $0 of actually foregone revenue**, and both were tagged
+`discount`.
+
+- `DiscountTag` gains `'upgrade'`; `TicketClass` gains `tent-upgrade`/`classroom-upgrade`.
+- ⚠️ **It changes REPORTING, never the money.** `receivedBeforeRefund`'s cascade was always
+  right for these people (amountPaid → registrationCost). Only `sponsor` ever needed a forcing
+  rule; adding a second would re-open the 2026-08-05 class of bug.
+- ⚠️ **Tagging it is what keeps it OUT of `unclassified`.** `isUnclassifiedDiscount` returns
+  false the moment `discountTagFor` recognises a tag, and `SPONSOR_TAGS` excludes `upgrade`, so
+  it is skipped by both branches and contributes $0. *"Recognised and worth zero"* and
+  *"unknown"* are different answers — leaving these codes untagged would report them as money
+  nobody can account for, which is the 2026-09-06 unclassified-codes problem in new clothes.
+- The upgrade card's `if(cls!=='classroom')return` now also admits `classroom-upgrade`. It had
+  excluded every tagged class, which **emptied "Upgrade paid" of the only two people in prod who
+  verifiably had paid**, while leaving three who had paid invisibly under "outstanding".
+
+### `refund-likely` — paid, then given a free place
+An intern or leader who registers and pays, and only afterwards learns their ticket is covered.
+Elvanto writes a second, fully-discounted ticket; the first payment sits there with nothing
+pointing at it. Prod: **Ava Riverstone and Jake Nel, $190 each.**
+
+- Detected from a per-person **ledger of every invoice that resolved to them, recorded in BOTH
+  passes** — Ava's paid place is a share of a family invoice, so a singles-only check misses her.
+- A free place is one whose **discount covers the whole ticket**, not merely `amountPaid === 0`.
+  An invoice that is simply unpaid is money still owed, not a comp, and must not read as one.
+- ⚠️ **It does not set `needsReview`, and it does not touch the money.** That flag means *"this
+  import is unsure what it imported"*; this import is certain — it is the **camp** that has a
+  decision to make. The payment really did arrive and keeps counting until someone records a real
+  refund (`refundAmount`, migration `0022`).
+- ⚠️ **A refund-likely person IS still `needsReview`, and that is not this warning doing it.**
+  You cannot be a refund-likely case without holding two invoices, and `multiple-invoices-summed`
+  (2026-07-28) flags anyone who does, for its own unrelated reason. The two are structurally
+  coupled, so a test asserting `needsReview === false` on this shape asserts the wrong thing —
+  it cost a round trip during this build. What the test pins instead is ATTRIBUTION: the flag
+  carries the multi-invoice REASON and never a refund one.
+
+### `accommodation-church-override` is now the "undetermined upgrade" group, and sorts LAST
+New severity **`'note'`**, ranked below `info`: *a standing fact the import cannot resolve and is
+not asking anyone to fix.* Use it only where "undetermined" is the correct final answer, never as
+a quieter `info`.
+
+A blanket church override (`Citipointe Brisbane (Carindale)` → classroom) is the only thing
+separating *"bought a tent ticket, sleeping in a classroom"* from *"paid for an upgrade"*, and it
+**cannot tell them apart** — it applies to the whole church regardless of what anyone paid. All 12
+of the tent-ticket/classroom-bed cohort are at that one church. Owner's call: *"they may or may
+not pay an upgrade depending on their situation, so don't lock it to either."*
+
+- ⚠️ **THE CODE STRING IS UNCHANGED ON PURPOSE.** Only the label, severity and message moved —
+  all three are explicitly free to change; the code is the out-of-repo contract with the upload
+  machine. A new parallel code would have double-reported the same rows.
+- The message now **names the person**. The old one (`Accommodation "tent" overridden to
+  "classroom"`) identified nobody, which made the list unusable as something to work through.
+- ⚠️ **`ticket-import.service.test.ts` asserted on the WORD "overridden"** and broke on the
+  reword — pattern-matching the prose is exactly the coupling `code` exists to remove. It now
+  asserts the code.
+
+### Verified against the real 2026-09-08 exports, not only unit tests
+An offline harness replayed the three real CSVs through a model of the fixed pipeline
+(a simulation, **not** a live import):
+
+| | before | after |
+|---|---|---|
+| unmatched invoices | 1 (`022422`, $40, Dylan Foo) | **0** |
+| money landing on people | $102,040 | **$102,080** |
+| tier-2 (billing-name) matches | 4 | **0** |
+| `refund-likely` | — | **2** (Nel, Riverstone) |
+
+$102,080 is the Billing Contacts file's own `Amount Paid` total, so the app now accounts for
+every dollar in the export. **Tier 2 falling to zero is the quiet win**: every invoice matches on
+the authoritative number, so the billing-name heuristic — which can attribute a payment to the
+wrong sibling — no longer runs at all on real data.
+
+### ⚠️ STILL OPEN — read this before touching the phone matching
+- **`+61` vs `0` splits one person into two.** `phoneKey`/`phoneDigits` are
+  `replace(/\D/g,'')`, so `+61424498183` and `0424498183` do not match; Chloe Blom and Daniella
+  Daniel are two person records each (+2 headcount, +2 phantom classroom beds, neither flagged).
+  **FIXING THIS ALONE DESTROYS MONEY** — their payments land today *because* the split gives each
+  record its own invoice number. Merged, the second number is overwritten exactly as Dylan's was.
+  It is safe **only** on top of this push's `invoiceNumbers` fix; verified by file order that the
+  surviving numbers would be `022293`/`022267`, orphaning both $40 upgrade invoices, both
+  parent-billed. Deploy 2. **No data operation needed** — the delete-absent sweep removes the
+  loser (checked: 0 notes, nothing `isProtected`).
+- **`Total Due` is never read.** Invoice `022709` (Sebastian Hans) is $340 of tickets with $170
+  paid and **$170 still due**; the split writes $85/$85 across two people, unflagged, and the debt
+  appears nowhere. 1 of 614 — but it is the only invoice in the file where
+  `tickets − discount ≠ paid`.
+- **The upgrade card still shows the Carindale cohort as "outstanding"** ($320 across 10 people).
+  The owner chose to surface this as the last warning group rather than as a Budget bucket, so the
+  card is unchanged — but it still asserts money is owed that may not be.
+- **`NOOSASPONSOR100`** appeared in the 2026-09-08 export untagged — $190 excluded from the
+  sponsorship total until someone classifies it on the Budget screen. Data, not code.
+
 ## Budget card clipping, unclassified sponsorship on screen, director-only shortcuts, Data search, sheet tooltips — `camp-v110` — 2026-09-06
 
 Six-task batch (`docs/superpowers/plans/2026-09-06-budget-data-screen-fixes.md`), five owner-

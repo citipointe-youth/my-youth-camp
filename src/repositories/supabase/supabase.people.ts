@@ -150,6 +150,7 @@ export function toPerson(
     discountCode: (row['discount_code'] as string | null) ?? null,
     ticketNumber: (row['ticket_number'] as string | null) ?? null,
     invoiceNumber: (row['invoice_number'] as string | null) ?? null,
+    invoiceNumbers: (row['invoice_numbers'] as string[] | null) ?? null,
     /* An override is a human decision, so it reads as 'confirmed'. This is also what stops the
        Invoice import's price-guessing from touching an overridden person
        (invoice-import.service.ts:434-439 only guesses when nothing better exists). */
@@ -372,6 +373,7 @@ export function personColumns(p: Person): Record<string, unknown> {
     discount_code: p.discountCode ?? null,
     ticket_number: p.ticketNumber ?? null,
     invoice_number: p.invoiceNumber ?? null,
+    invoice_numbers: p.invoiceNumbers ?? null,
     /* ⚠️ Same write-back trap as accommodation_kind, on the sibling column. `toPerson` forces
        p.accommodationKindConfidence to 'confirmed' whenever an override is present, REGARDLESS
        of what is actually stored — so writing it straight back would overwrite a genuine
@@ -412,6 +414,8 @@ const PERSON_UPDATE_COLS = [
   'amount_paid', 'fees_amount', 'tax_amount', 'needs_review', 'needs_review_reason',
   // Individual overrides + cancel/refund (0022). Never written by any importer.
   'accommodation_override', 'amount_paid_override', 'refund_amount', 'refunded_at', 'cancelled_at',
+  // Every invoice number seen for this person (0023).
+  'invoice_numbers',
 ] as const;
 
 /**

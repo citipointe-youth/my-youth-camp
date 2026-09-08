@@ -139,6 +139,12 @@ export interface Person {
   /** Owned by the Ticket List import; also read by the Invoice import to cross-reference rows to the same person. */
   invoiceNumber?: string | null;
   /**
+   * Every invoice number seen for this person, written by the Ticket List import.
+   * `invoiceNumber` above remains the single most-recent one for display; this array is what
+   * invoice matching looks up against, so a person who bought two tickets keeps both invoices.
+   */
+  invoiceNumbers?: string[] | null;
+  /**
    * How `accommodationKind` was determined. `null`/absent = no value yet, OR set the
    * old way (CSV/manual) before this feature existed — deliberately NOT retroactively
    * treated as a guess. Ticket List import always sets `'confirmed'`. Invoice-inference

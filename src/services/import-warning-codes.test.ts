@@ -86,7 +86,7 @@ describe('import warning codes — the out-of-repo API contract', () => {
   it('every declared code has a non-empty label and a valid severity', () => {
     for (const [code, meta] of Object.entries(IMPORT_WARNING_META)) {
       expect(meta.label.length, `${code} has an empty label`).toBeGreaterThan(0);
-      expect(['critical', 'review', 'info'], `${code} has severity "${meta.severity}"`).toContain(
+      expect(['critical', 'review', 'info', 'note'], `${code} has severity "${meta.severity}"`).toContain(
         meta.severity,
       );
     }

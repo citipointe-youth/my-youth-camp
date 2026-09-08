@@ -249,7 +249,15 @@ describe('TicketImportService.importTicketsCsv — church override', () => {
     const all = await personRepo.findAll();
     expect(all[0]!.accommodationKind).toBe('classroom');
     expect(all[0]!.accommodationKindConfidence).toBe('confirmed');
-    expect(res.warnings.some((w) => w.message.includes('overridden'))).toBe(true);
+    /* Asserts the CODE, not the prose. The message is deliberately free-text (it was reworded
+       on 2026-09-09 to name the person and to stop implying an upgrade is owed), and matching
+       on a word in it is exactly the coupling `code` exists to remove. */
+    expect(res.warnings.some((w) => w.code === 'accommodation-church-override')).toBe(true);
+    // A tent ticket under a classroom override is the undetermined-upgrade case: the message
+    // must name the person and must NOT assert that money is owed.
+    const ovr = res.warnings.find((w) => w.code === 'accommodation-church-override')!;
+    expect(ovr.message).toContain('Ada Lovelace');
+    expect(ovr.message).toContain('no amount is assumed either way');
   });
 
   it('overrides a leader too (Bug 2) — a church override forces everyone', async () => {

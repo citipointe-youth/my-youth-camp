@@ -5,6 +5,7 @@ import {
   labelForRow,
   classifyTicket,
   discountTagFor,
+  isUnclassifiedDiscount,
   personValue,
   budgetToCsv,
   computeDiscountCodeSummary,
@@ -704,5 +705,60 @@ describe('personValue: individual overrides (0022)', () => {
   it('leaves the existing cascade untouched when neither field is set', () => {
     const person = { ...p({}), amountPaid: 100, registrationCost: 300 };
     expect(personValue(person, 'unknown', prices, null, null)).toBe(100);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * 2026-09-08 — the `upgrade` discount tag. NOT a concession: a second ticket whose
+ * "discount" offsets a first ticket the camp was already paid for in full. It is still
+ * deliberately classified (never left untagged), because an untagged code with invoice
+ * evidence of a discount lands in `isUnclassifiedDiscount`/`unclassified` and gets reported
+ * as money nobody can account for. "Recognised and worth zero" vs "unknown" are different
+ * answers — see the DiscountTag doc comment in budget.ts.
+ * ------------------------------------------------------------------------- */
+describe('upgrade discount tag', () => {
+  const tags: DiscountTagMap = { UPG: 'upgrade' };
+
+  it('discountTagFor resolves "upgrade", and isUnclassifiedDiscount is FALSE for the same person even with a real recorded discount', () => {
+    const person = p({
+      discountCode: 'UPG',
+      registrationCost: 190,
+      discountAmount: 150,
+      amountPaid: 40,
+    });
+    expect(discountTagFor(person, tags)).toBe('upgrade');
+    // The whole point of the tag: recognised, not unknown — must NOT land in "unclassified"
+    // despite carrying a real, non-zero discountAmount.
+    expect(isUnclassifiedDiscount(person, tags)).toBe(false);
+  });
+
+  it('classifyTicket buckets an upgrade-tagged classroom code as "classroom-upgrade", labelled "Classroom upgrade"', () => {
+    const person = p({ accommodationKind: 'classroom', discountCode: 'UPG' });
+    expect(classifyTicket(person, tags)).toBe('classroom-upgrade');
+    expect(labelForClass('classroom-upgrade')).toBe('Classroom upgrade');
+  });
+
+  it('personValue is UNCHANGED by the upgrade tag — identical to the same person tagged "discount" (both fall through the amountPaid cascade)', () => {
+    const upgradePerson = p({
+      accommodationKind: 'classroom',
+      discountCode: 'UPG',
+      registrationCost: 190,
+      discountAmount: 150,
+      amountPaid: 40,
+    });
+    const discountPerson = p({
+      accommodationKind: 'classroom',
+      discountCode: 'DISC',
+      registrationCost: 190,
+      discountAmount: 150,
+      amountPaid: 40,
+    });
+    const upgradeValue = personValue(upgradePerson, 'classroom-upgrade', NO_PRICES, null, 'upgrade');
+    const discountValue = personValue(discountPerson, 'classroom-discount', NO_PRICES, null, 'discount');
+    // Assert the actual value, not just equality between the two — the cascade must still land
+    // on amountPaid (40), not registrationCost (190) or 0.
+    expect(upgradeValue).toBe(40);
+    expect(discountValue).toBe(40);
+    expect(upgradeValue).toBe(discountValue);
   });
 });

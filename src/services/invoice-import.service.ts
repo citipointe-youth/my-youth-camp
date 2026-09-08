@@ -240,12 +240,22 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
         discountCode: string | null;
       }> = [];
 
+      /* Tier 1 indexes EVERY invoice number the Ticket List recorded for a person, not just the
+         scalar `invoiceNumber`. A two-ticket person has two invoices; the scalar keeps only the
+         last one, so the other invoice used to fall through to the billing-contact-name tier and
+         went UNMATCHED whenever a parent paid (Dylan Foo, $40, 2026-09). `invoiceNumbers` is
+         written by ticket-import.service.ts; the scalar is still indexed as a fallback so this
+         keeps working for anyone imported before that column existed. */
       const byInvoiceNumber = new Map<string, Person[]>();
       for (const p of allPeople) {
-        if (!p.invoiceNumber) continue;
-        const pool = byInvoiceNumber.get(p.invoiceNumber);
-        if (pool) pool.push(p);
-        else byInvoiceNumber.set(p.invoiceNumber, [p]);
+        const numbers = new Set<string>();
+        if (p.invoiceNumber) numbers.add(p.invoiceNumber);
+        for (const n of p.invoiceNumbers ?? []) if (n) numbers.add(n);
+        for (const n of numbers) {
+          const pool = byInvoiceNumber.get(n);
+          if (pool) pool.push(p);
+          else byInvoiceNumber.set(n, [p]);
+        }
       }
 
       const nameIndex = buildNameIndex(allPeople);
@@ -257,6 +267,52 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
         amountPaid: number | null; discountAmount: number | null;
         feesAmount: number | null; taxAmount: number | null; rows: number;
       }>();
+
+      /* ⚠️ THE ACCUMULATOR MUST SPAN BOTH PASSES. It used to be read and written only by the
+         singles loop, while the shared-invoice pass below ASSIGNED `incoming.amountPaid`
+         outright — so a person on their own invoice AND a family invoice silently lost the
+         single one, with no `multiple-invoices-summed` warning, because the two passes were
+         counting in different structures. Real case: Ava Riverstone, 2026-09 — her $190
+         intern discount was overwritten by her share of a $570 family invoice, and the only
+         surviving trace was the discount CODE the shared row had no value for.
+         Both passes now go through `accumulate()`. Do not reintroduce a direct assignment. */
+      const sum = (a: number | null | undefined, b: number | null): number | null =>
+        b === null ? (a ?? null) : (a ?? 0) + b;
+
+      /* Every invoice that resolved to a person in this run, for the refund check after both
+         passes. Reporting only — it never decides a number. */
+      const ledgerByPerson = new Map<string, Array<{
+        row: number; invoiceNumber: string | null; amountPaid: number | null;
+        ticketTotal: number | null; discountAmount: number | null; discountCode: string | null;
+      }>>();
+      const recordLedger = (
+        personId: string,
+        entry: { row: number; invoiceNumber: string | null; amountPaid: number | null;
+                 ticketTotal: number | null; discountAmount: number | null; discountCode: string | null },
+      ): void => {
+        const list = ledgerByPerson.get(personId);
+        if (list) list.push(entry);
+        else ledgerByPerson.set(personId, [entry]);
+      };
+
+      /** Fold one invoice's money into a person's running total. Returns the new total plus the
+       *  prior one, so the caller can warn on the second and later invoices. */
+      const accumulate = (
+        personId: string,
+        parts: { amountPaid: number | null; discountAmount: number | null;
+                 feesAmount: number | null; taxAmount: number | null },
+      ) => {
+        const prior = moneyByPerson.get(personId);
+        const acc = {
+          amountPaid: sum(prior?.amountPaid, parts.amountPaid),
+          discountAmount: sum(prior?.discountAmount, parts.discountAmount),
+          feesAmount: sum(prior?.feesAmount, parts.feesAmount),
+          taxAmount: sum(prior?.taxAmount, parts.taxAmount),
+          rows: (prior?.rows ?? 0) + 1,
+        };
+        moneyByPerson.set(personId, acc);
+        return { acc, prior };
+      };
 
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]!;
@@ -409,17 +465,12 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
              ticket total (the corrected ticket is the one they're actually attending on).
              Accumulation starts from the rows in THIS file, never from the stored value — so
              re-importing the same export is idempotent and cannot double-count. */
-          const prior = moneyByPerson.get(person.id);
-          const sum = (a: number | null | undefined, b: number | null) =>
-            b === null ? (a ?? null) : (a ?? 0) + b;
-          const acc = {
-            amountPaid: sum(prior?.amountPaid, amountPaid),
-            discountAmount: sum(prior?.discountAmount, discountAmount),
-            feesAmount: sum(prior?.feesAmount, feesAmount),
-            taxAmount: sum(prior?.taxAmount, taxAmount),
-            rows: (prior?.rows ?? 0) + 1,
-          };
-          moneyByPerson.set(person.id, acc);
+          const { acc, prior } = accumulate(person.id, {
+            amountPaid, discountAmount, feesAmount, taxAmount,
+          });
+          recordLedger(person.id, {
+            row: rowNum, invoiceNumber, amountPaid, ticketTotal, discountAmount, discountCode,
+          });
           if (prior) {
             warnings.push({
               code: 'multiple-invoices-summed',
@@ -538,13 +589,42 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
 
             for (let m = 0; m < matchedPeople.length; m++) {
               const person = touched.get(matchedPeople[m]!.id) ?? matchedPeople[m]!;
+              /* Through `accumulate`, NOT a direct assignment — see the note at its definition.
+                 A person can be on a family invoice AND hold one of their own; assigning here
+                 discarded whichever the singles pass had already recorded. */
+              const { acc, prior } = accumulate(matchedPeople[m]!.id, {
+                amountPaid: paidParts[m] ?? null,
+                discountAmount: discountParts[m] ?? null,
+                feesAmount: feeParts[m] ?? null,
+                taxAmount: taxParts[m] ?? null,
+              });
+              recordLedger(matchedPeople[m]!.id, {
+                row: rowNum, invoiceNumber,
+                amountPaid: paidParts[m] ?? null,
+                ticketTotal: costParts[m] ?? null,
+                discountAmount: discountParts[m] ?? null,
+                discountCode,
+              });
               const incoming: Partial<Person> = {};
+              // registrationCost is the TICKET PRICE, not money in — latest row wins, never summed.
               if (costParts[m] != null) incoming.registrationCost = costParts[m]!;
-              if (paidParts[m] != null) incoming.amountPaid = paidParts[m]!;
-              if (discountParts[m] != null) incoming.discountAmount = discountParts[m]!;
-              if (feeParts[m] != null) incoming.feesAmount = feeParts[m]!;
-              if (taxParts[m] != null) incoming.taxAmount = taxParts[m]!;
+              if (acc.amountPaid !== null) incoming.amountPaid = acc.amountPaid;
+              if (acc.discountAmount !== null) incoming.discountAmount = acc.discountAmount;
+              if (acc.feesAmount !== null) incoming.feesAmount = acc.feesAmount;
+              if (acc.taxAmount !== null) incoming.taxAmount = acc.taxAmount;
               if (discountCode) incoming.discountCode = discountCode;
+              if (prior) {
+                warnings.push({
+                  code: 'multiple-invoices-summed',
+                  row: rowNum,
+                  message:
+                    `${person.firstName} ${person.lastName} has ${acc.rows} invoices in this file ` +
+                    `(this one is shared) — amounts summed (paid ${acc.amountPaid ?? 0}, ` +
+                    `discount ${acc.discountAmount ?? 0}). Flagged for review.`,
+                });
+                incoming.needsReview = true;
+                incoming.needsReviewReason = `Multiple invoices found (${acc.rows}) — amounts were summed`;
+              }
               if (split.needsReview) {
                 incoming.needsReview = true;
                 incoming.needsReviewReason =
@@ -562,6 +642,50 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             skipped++;
           }
         }
+      }
+
+      /* ── PAID, THEN GIVEN A FREE PLACE ───────────────────────────────────────────────
+         Someone paid for their spot and was LATER comped — an intern or leader who only
+         learned after registering that their ticket was covered. Elvanto records that as a
+         second, fully-discounted ticket, and the first payment simply sits there with nothing
+         pointing at it. Real cases 2026-09: Ava Riverstone and Jake Nel, $190 each.
+
+         REPORTING ONLY, and deliberately so on two counts:
+          · It does NOT set `needsReview`. That flag means "this import is unsure what it
+            imported". This import is certain — it is the CAMP that has a decision to make,
+            and putting it on the Data tab's review queue would bury a finance action among
+            data-quality ones.
+          · It does NOT touch the money. The payment genuinely arrived and must keep counting
+            until someone records a real refund (`refundAmount`, migration 0022). Inferring
+            the refund here would remove money the camp still holds.
+         Runs after BOTH passes, so a place paid for on a shared family invoice still counts
+         as paid — that is exactly Ava's shape, and a singles-only check would miss her. */
+      const peopleById = new Map(allPeople.map((pp) => [pp.id, pp]));
+      for (const [personId, entries] of ledgerByPerson) {
+        if (entries.length < 2) continue;
+        const paidFor = entries.filter((e) => (e.amountPaid ?? 0) > 0);
+        /* A free place is one whose DISCOUNT covers the whole ticket — not merely one with
+           `amountPaid === 0`. An invoice that is simply unpaid (money still owed, e.g. the
+           part-paid shared invoice case) is not a comp, and must not read as one. */
+        const free = entries.find(
+          (e) => (e.amountPaid ?? 0) === 0
+            && (e.ticketTotal ?? 0) > 0
+            && (e.discountAmount ?? 0) >= (e.ticketTotal ?? 0),
+        );
+        if (paidFor.length === 0 || !free) continue;
+        const person = touched.get(personId) ?? peopleById.get(personId);
+        if (!person) continue;
+        const refundable = paidFor.reduce((t, e) => t + (e.amountPaid ?? 0), 0);
+        const paidOn = paidFor.map((e) => e.invoiceNumber ?? '(no number)').join(', ');
+        warnings.push({
+          code: 'refund-likely',
+          row: free.row,
+          message:
+            `${person.firstName} ${person.lastName} paid $${refundable.toFixed(2)} on invoice ` +
+            `${paidOn}, then invoice ${free.invoiceNumber ?? '(no number)'} gave them a free ` +
+            `place${free.discountCode ? ` (${free.discountCode})` : ''} — $${refundable.toFixed(2)} ` +
+            'may be refundable. Nothing has been changed; record a refund on their profile if it is owed.',
+        });
       }
 
       if (!opts.dryRun && touched.size > 0) {
