@@ -155,7 +155,12 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
       for (const [code, tag] of Object.entries(tags ?? {})) {
         const key = code.trim();
         if (!key) continue;
-        if (tag === 'inperson' || tag === 'sponsor' || tag === 'discount') clean[key] = tag;
+        /* ⚠️ THIS LIST IS A WHITELIST AND `clean` REPLACES THE WHOLE MAP, so a tag value
+           missing here is not merely rejected on its own edit — it is ERASED FROM EVERY CODE
+           the next time anyone changes any tag on the Budget screen, silently. Adding a value
+           to DiscountTag REQUIRES adding it here. 'upgrade' was added 2026-09-09 and this line
+           was missed; the tags survived only because nothing had been re-tagged yet. */
+        if (tag === 'inperson' || tag === 'sponsor' || tag === 'discount' || tag === 'upgrade') clean[key] = tag;
       }
       const current = await get();
       const saved = await repo.saveSingleton({ ...current, discountCodeTags: clean, updatedAt: nowISO() });

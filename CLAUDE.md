@@ -64,6 +64,14 @@ nothing was foregone. Measured 2026-09-08: `YC26CLASS` (4 uses) + `YC26CLASSFULL
   it is skipped by both branches and contributes $0. *"Recognised and worth zero"* and
   *"unknown"* are different answers — leaving these codes untagged would report them as money
   nobody can account for, which is the 2026-09-06 unclassified-codes problem in new clothes.
+- 🔴 ⚠️ **`settings.service.ts` `updateDiscountCodeTags` HAS ITS OWN WHITELIST, AND IT WAS
+  MISSED ON THE FIRST PASS.** It filters submitted tags against a hard-coded list and rebuilds
+  `clean` as the WHOLE map — so a value it does not know is not merely rejected on its own edit,
+  it is **erased from every code** the next time anyone changes any tag on the Budget screen,
+  silently. The prod re-tag survived only because nothing had been re-tagged in between.
+  **Adding a value to `DiscountTag` REQUIRES adding it there too.** Pinned by
+  `settings.service.test.ts` and verified by reverting: removing `'upgrade'` from the whitelist
+  fails that test.
 - The upgrade card's `if(cls!=='classroom')return` now also admits `classroom-upgrade`. It had
   excluded every tagged class, which **emptied "Upgrade paid" of the only two people in prod who
   verifiably had paid**, while leaving three who had paid invisibly under "outstanding".

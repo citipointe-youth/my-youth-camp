@@ -52,21 +52,28 @@ describe('SettingsService — updateDiscountCodeTags', () => {
   });
 
   it('a valid tag map round-trips onto settings.discountCodeTags', async () => {
+    /* ⚠️ EVERY DiscountTag value must appear here. `clean` REPLACES the whole map, so a value
+       the whitelist does not know is erased from every code on the next unrelated tag edit —
+       silently. 'upgrade' (2026-09-09) was missed on the first pass and this test is what
+       pins it: drop it from the whitelist in settings.service.ts and this fails. */
     const saved = await svc.updateDiscountCodeTags(actor('admin'), {
       EFTPOS: 'inperson',
       ALIVE100: 'sponsor',
       SIBLING20: 'discount',
+      YC26CLASS: 'upgrade',
     });
     expect(saved.discountCodeTags).toEqual({
       EFTPOS: 'inperson',
       ALIVE100: 'sponsor',
       SIBLING20: 'discount',
+      YC26CLASS: 'upgrade',
     });
     const reloaded = await repo.getSingleton();
     expect(reloaded?.discountCodeTags).toEqual({
       EFTPOS: 'inperson',
       ALIVE100: 'sponsor',
       SIBLING20: 'discount',
+      YC26CLASS: 'upgrade',
     });
   });
 
