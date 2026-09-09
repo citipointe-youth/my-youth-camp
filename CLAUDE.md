@@ -4,6 +4,74 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## AU phone normalisation — two people were two records each — 2026-09-09 (2nd)
+
+Deploy 2 of the import-money batch; **Deploy 1 (`camp-v111`, migration `0023`) is a hard
+prerequisite — see the warning below.** Backend only: `person-matching.ts` + `import.service.ts`.
+**No schema, no migration, no SPA change, so NO `sw.js` bump** (still `camp-v111`).
+`npm run typecheck` clean, `npx vitest run` **1083 pass / 64 files** (was 1076; **+7**).
+
+### `replace(/\D/g,'')` is not a normalisation, it is punctuation-stripping
+`phoneKey` (Form import) and `phoneDigits` (Ticket/Invoice imports) were both a bare digits
+filter. Elvanto's export contains the same person's number written both ways, so
+`+61424498183` reduced to `61424498183` while `0424498183` reduced to itself. They never
+compared equal, `pickMatch` found no phone match, and the create branch made a **second
+person**.
+
+Measured on the real 2026-09-08 export: **708 person records from 706 humans.** Chloe Blom and
+Daniella Daniel were duplicated exactly this way — +2 headcount, **+2 phantom classroom beds** in
+the allocation — and **neither carried a review flag**, because every importer believed it had
+found a clean unique match. The bug's own symptom is the thing that hides it.
+
+> 🔴 **THIS FIX ALONE WOULD HAVE DESTROYED MONEY, AND THE DEPENDENCY RUNS THE OPPOSITE WAY TO
+> INTUITION.** Their payments landed *because* they were split: one person record, one
+> `invoice_number`, so each record held one of their two invoices and both matched tier 1.
+> Merge them without `Person.invoiceNumbers` (Deploy 1, migration `0023`) and the second number
+> is overwritten exactly as Dylan Foo's was — verified by ticket-file order that the survivors
+> would be `022293`/`022267`, orphaning **both $40 upgrade invoices, both parent-billed**, so
+> tier 2 could not rescue either. **$80, silently.** The "obviously correct" fix was the
+> dangerous one; the ordering is the whole story.
+
+### The rules are the ones in the file, not hypotheticals
+Measured across all three 2026-09-08 CSVs before writing any of it:
+
+| shape | rows | → |
+|---|---|---|
+| `04xxxxxxxx` | 2058 | unchanged (already canonical) |
+| `+61 4xx xxx xxx` | 35 | `04xx xxx xxx` |
+| `61xxxxxxxxx` (no `+`) | 4 | same |
+| `+61 (0) 4xx xxx xxx` | 4 | the bracketed `0` **is** the national prefix |
+| bare 9-digit `4xxxxxxxx` | 23 | leading zero restored |
+
+- ⚠️ **The 9-digit rule changes NO current grouping** — 706 records with or without it, verified
+  over all 713 form rows. It is in anyway because a 9-digit string starting `4` is unambiguously
+  an AU mobile, so leaving it is the identical bug lying in wait for the first of those 23 people
+  to re-register. That is the only speculative line here and it is deliberately the only one.
+- ⚠️ **`046633296` (9 digits, starts `04`) is NOT normalised.** It is malformed, not a mobile
+  missing its zero, and inventing a digit for it would be guessing at a real person's identity.
+  Junk (`123`, `0402`) stays junk for the same reason.
+
+### One copy of the rule, at last
+`import.service.ts` no longer carries its own `phoneKey`; it imports `phoneDigits`. The two were
+already documented as *"same semantics as import.service.ts's phoneKey"* — a comment is not a
+mechanism, and two copies of a matching rule is how one importer starts matching a person
+differently from another.
+
+### No data operation, and that was checked, not assumed
+The delete-absent sweep removes the loser by itself: both rows key to the same normalised
+number, so only one is in `seenIds`. Confirmed against prod before relying on it — both
+duplicates had **0 notes**, `lifecycle: registered`, and no `accommodationOverride`,
+`amountPaidOverride` or `refundAmount`, so `isProtected` is false and nothing blocks the delete.
+Their `allocation_overrides` rows are pruned by the same sweep.
+
+**It takes effect on the next Form import, not on deploy** — no code change rewrites stored data.
+
+### Verified by reverting, not asserted
+Restoring the naive `replace(/\D/g,'')` fails **5 tests** across `person-matching.test.ts` and
+`import.service.test.ts`. The integration tests seed prod's exact two-record state and assert the
+pair collapses to one with `deleted: 1`, plus a negative case proving two genuinely different
+people sharing a name still stay apart.
+
 ## Two-ticket money, the shared-invoice overwrite, the `upgrade` tag & a refund warning — migration `0023` — `camp-v111` — 2026-09-09
 
 Backend + SPA + **migration `0023`** (`people.invoice_numbers text[]`, additive/nullable, **no
@@ -133,7 +201,8 @@ the authoritative number, so the billing-name heuristic — which can attribute 
 wrong sibling — no longer runs at all on real data.
 
 ### ⚠️ STILL OPEN — read this before touching the phone matching
-- **`+61` vs `0` splits one person into two.** `phoneKey`/`phoneDigits` are
+- ✅ **FIXED in the 2026-09-09 (2nd) entry above — read its ordering warning before touching
+  this again.** `+61` vs `0` splits one person into two: `phoneKey`/`phoneDigits` were
   `replace(/\D/g,'')`, so `+61424498183` and `0424498183` do not match; Chloe Blom and Daniella
   Daniel are two person records each (+2 headcount, +2 phantom classroom beds, neither flagged).
   **FIXING THIS ALONE DESTROYS MONEY** — their payments land today *because* the split gives each

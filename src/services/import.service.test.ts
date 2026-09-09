@@ -586,3 +586,65 @@ describe('ImportService.importCsv — blank padding rows (item 12)', () => {
     expect(res.errors.some((e) => /Missing firstName or lastName/.test(e.message))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AU phone normalisation — the duplicate-person bug (2026-09-09)
+//
+// `phoneKey` here and `phoneDigits` in person-matching.ts were both a bare
+// `replace(/\D/g,'')`, which strips punctuation but does NOT normalise. Elvanto's export
+// carries the same person's number written both ways, so `+61424498183` reduced to
+// `61424498183` while `0424498183` reduced to itself, `pickMatch` found no phone match, and
+// the create branch made a SECOND person. Measured on the real 2026-09-08 export: Chloe Blom
+// and Daniella Daniel were duplicated exactly this way (+2 headcount, +2 phantom classroom
+// beds), and neither carried a review flag because every importer believed it had a clean
+// unique match.
+//
+// 🔴 This fix is only safe on top of `Person.invoiceNumbers` (migration 0023). Before that,
+// their money landed BECAUSE they were split — one invoice number per record — and merging
+// them would have orphaned a $40 upgrade invoice each.
+// ---------------------------------------------------------------------------
+
+describe('ImportService.importCsv — AU phone normalisation (2026-09-09)', () => {
+  const HDR = 'First Name,Last Name,Church,Mobile Number,Date Submitted';
+
+  it('two submissions spelling ONE number differently update ONE person, not two', async () => {
+    const h = await build();
+    const csv = `${HDR}\nChloe,Blom,Victory,0424498183,14/07/2026\nChloe,Blom,Victory,+61424498183,12/08/2026`;
+    const res = await h.svc.importCsv(actor('admin'), { csvData: csv, updateExisting: true });
+
+    const all = await h.personRepo.findAll();
+    expect(all).toHaveLength(1);
+    expect(res.created).toBe(1);
+    // Both rows resolve to the same person, so the run reports a duplicate submission.
+    expect(res.warnings.some((w) => w.code === 'duplicate-submission')).toBe(true);
+  });
+
+  it('an ALREADY-DUPLICATED pair collapses on the next import, and the stale record is DELETED', async () => {
+    const h = await build();
+    // Seed prod's exact state: two person records for one human, split by phone spelling.
+    const seed = `${HDR}\nChloe,Blom,Victory,0424498183,14/07/2026`;
+    await h.svc.importCsv(actor('admin'), { csvData: seed });
+    const first = (await h.personRepo.findAll())[0]!;
+    await h.personRepo.save({ ...first, id: 'p-dup', mobile: '+61424498183' });
+    expect(await h.personRepo.findAll()).toHaveLength(2);
+
+    // The real export contains both submissions; both now key to the same normalised number.
+    const csv = `${HDR}\nChloe,Blom,Victory,0424498183,14/07/2026\nChloe,Blom,Victory,+61424498183,12/08/2026`;
+    const res = await h.svc.importCsv(actor('admin'), { csvData: csv, updateExisting: true });
+
+    const all = await h.personRepo.findAll();
+    expect(all).toHaveLength(1);
+    // The loser is removed by the delete-absent sweep — no data operation is needed to merge
+    // these. Verified against prod first: neither duplicate had notes or anything `isProtected`.
+    expect(res.deleted).toBe(1);
+    expect(res.retained).toBe(0);
+    expect(res.warnings.some((w) => w.code === 'absent-will-delete')).toBe(true);
+  });
+
+  it('does NOT merge two genuinely different people who share a name', async () => {
+    const h = await build();
+    const csv = `${HDR}\nChloe,Blom,Victory,0424498183,14/07/2026\nChloe,Blom,Victory,0499999999,12/08/2026`;
+    await h.svc.importCsv(actor('admin'), { csvData: csv, updateExisting: true });
+    expect(await h.personRepo.findAll()).toHaveLength(2);
+  });
+});

@@ -614,6 +614,16 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-09-09 (2nd) — AU phone normalisation
+
+| Symptom | Go to |
+|---|---|
+| **One human appears twice in the roster / headcount is higher than the export's row count** | `phoneDigits` (`person-matching.ts`) — the SINGLE copy, also used by the Form import. If the same number is spelled `+61…` in one submission and `0…` in another and they key differently, `pickMatch` cannot match and the create branch makes a second person. Check `phoneDigits('+61424498183') === phoneDigits('0424498183')`. |
+| **A duplicate person did not disappear after the fix deployed** | Expected until the next FORM import: no code change rewrites stored data. The delete-absent sweep collapses the pair when both rows key to the same normalised number. If it survives a real import, one of the two is `isProtected` (cancelled / has an accommodation, amountPaid or refund override) and was deliberately retained — look for an `absent-but-retained` warning naming them. |
+| **Two genuinely different people with the same name got merged** | The normalisation is too aggressive. Only three `61` forms plus a bare 9-digit `4…` are normalised; anything else must pass through untouched. A 9-digit number starting `04` is malformed and is deliberately NOT touched — inventing a digit there guesses at someone's identity. There is a negative test for the same-name/different-number case. |
+| **Money vanished after a phone-matching change** | 🔴 You almost certainly deployed a phone fix WITHOUT `Person.invoiceNumbers` (migration `0023`). A duplicated person's payments land precisely BECAUSE they are split — one invoice number per record. Merging them first orphans the second invoice, and if the payer was a parent, tier 2 cannot rescue it. Deploy `0023` first, always. |
+| **`phoneKey` reappears in import.service.ts** | It was deleted on 2026-09-09; that file imports `phoneDigits` now. Two copies of a matching rule is how one importer starts matching a person differently from another — the previous comment claiming "same semantics" was not a mechanism. |
+
 ### 2026-09-09 — two-ticket money, shared-invoice overwrite, `upgrade` tag, `refund-likely`
 
 | Symptom | Go to |

@@ -223,7 +223,39 @@ export function mergeOwnedFields<T extends object, K extends keyof T>(
 
 // ---------- Phone helper ----------
 
-/** Digits-only of a phone string, or '' if none. Same semantics as import.service.ts's phoneKey. */
+/**
+ * A phone string reduced to a CANONICAL Australian mobile: digits only, in national `04…` form.
+ * Returns '' when there are no digits.
+ *
+ * ⚠️ THE SINGLE COPY. `import.service.ts` used to carry an identical `phoneKey` and both were
+ * plain `replace(/\D/g,'')`, which is not a normalisation — it just strips punctuation. Elvanto's
+ * export contains the same person's number written both ways, so `+61424498183` reduced to
+ * `61424498183` and `0424498183` to itself, the two never compared equal, and the Form import
+ * created a SECOND person record for them. Measured on the 2026-09-08 export: Chloe Blom and
+ * Daniella Daniel were duplicated exactly this way — +2 headcount, +2 phantom classroom beds,
+ * and neither was flagged, because every importer thought it had found a clean unique match.
+ *
+ * 🔴 **DO NOT DEPLOY A CHANGE HERE WITHOUT `Person.invoiceNumbers` (migration 0023) IN PLACE.**
+ * Merging those duplicates is only safe once one person record can hold BOTH their invoice
+ * numbers. Before that fix their money landed precisely BECAUSE they were split — one invoice
+ * per record — and merging them would have orphaned a 0 upgrade invoice each.
+ *
+ * The three `61` forms below are the ones the real export actually contains (35 + 4 + 4 rows on
+ * 2026-09-08), not hypotheticals. The 9-digit rule is a leading zero the export dropped
+ * (`434885718`); it changes NO current grouping — verified against all 713 form rows, which
+ * produce 706 person records with or without it — and is included because a 9-digit string
+ * starting with 4 is unambiguously an AU mobile, so leaving it is the same bug lying in wait.
+ */
 export function phoneDigits(raw: string | null | undefined): string {
-  return (raw ?? '').replace(/\D/g, '');
+  const digits = (raw ?? '').replace(/\D/g, '');
+  if (digits.startsWith('61')) {
+    const rest = digits.slice(2);
+    // +61 4xx xxx xxx  →  04xx xxx xxx
+    if (rest.length === 9) return `0${rest}`;
+    // +61 (0) 4xx xxx xxx  →  the bracketed 0 is already the national prefix
+    if (rest.length === 10 && rest.startsWith('0')) return rest;
+  }
+  // A bare 9-digit mobile whose leading 0 was lost somewhere upstream.
+  if (digits.length === 9 && digits.startsWith('4')) return `0${digits}`;
+  return digits;
 }

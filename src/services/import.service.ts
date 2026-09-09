@@ -10,6 +10,10 @@ import type { Actor } from '../core/entities/user';
 import type { ConsentType } from '../core/types/enums';
 import type { ImportWarning } from '../core/types/import-warning';
 import { assertCan } from './access-control';
+// ⚠️ ONE copy of the phone rule, shared with the Ticket List / Invoice importers. This file
+// used to carry its own identical digits-only copy; two copies of a matching rule is how the
+// same person ends up matched differently by different importers.
+import { phoneDigits } from './person-matching';
 import { BadRequestError } from '../core/errors/app-error';
 import { parseCsv } from '../utils/csv';
 import { newId } from '../utils/id';
@@ -146,8 +150,6 @@ export function makeImportService(
       const allPersons = await personRepo.findAll();
       const nameChurchKey = (churchId: string, first: string, last: string): string =>
         `${churchId}::${first.toLowerCase()}::${last.toLowerCase()}`;
-      const phoneKey = (mobile: string | null | undefined): string =>
-        (mobile ?? '').replace(/\D/g, '');
       const poolByNameChurch = new Map<string, Person[]>();
       for (const p of allPersons) {
         const k = nameChurchKey(p.churchId, p.firstName, p.lastName);
@@ -170,9 +172,9 @@ export function makeImportService(
       function pickMatch(pool: Person[] | undefined, phone: string): Person | undefined {
         if (!pool || pool.length === 0) return undefined;
         if (phone) {
-          const byPhone = pool.find((p) => phoneKey(p.mobile) === phone);
+          const byPhone = pool.find((p) => phoneDigits(p.mobile) === phone);
           if (byPhone) return byPhone;
-          if (pool.length === 1 && !phoneKey(pool[0]!.mobile)) return pool[0];
+          if (pool.length === 1 && !phoneDigits(pool[0]!.mobile)) return pool[0];
           return undefined;
         }
         return pool.length === 1 ? pool[0] : undefined;
@@ -387,7 +389,7 @@ export function makeImportService(
             });
           }
 
-          const rowPhone = phoneKey(mobile);
+          const rowPhone = phoneDigits(mobile);
           const pool = poolByNameChurch.get(nck);
           const match = pickMatch(pool, rowPhone);
           const isExisting = match !== undefined && !createdIds.has(match.id);
