@@ -274,6 +274,34 @@ describe('phoneDigits', () => {
   it('returns empty string when there are no digits', () => {
     expect(phoneDigits('n/a')).toBe('');
   });
+
+  /* The +61 forms are the ones the REAL 2026-09-08 Elvanto export contains (35 + 4 + 4 rows),
+     not hypotheticals. Before this normalisation these compared UNEQUAL to the same person's
+     0-prefixed number, so the Form import created a second person record — Chloe Blom and
+     Daniella Daniel were each duplicated exactly this way. */
+  it('normalises every +61 form in the real export to national 04 form', () => {
+    expect(phoneDigits('+61424498183')).toBe('0424498183');
+    expect(phoneDigits('+61 493 735 052')).toBe('0493735052');
+    expect(phoneDigits('61460712914')).toBe('0460712914'); // no leading +
+    expect(phoneDigits('+61 (0) 449 524 224')).toBe('0449524224'); // bracketed national prefix
+  });
+
+  it('THE POINT: the two spellings of one number are the same key', () => {
+    expect(phoneDigits('+61 459 194 938')).toBe(phoneDigits('0459194938'));
+    expect(phoneDigits('+61424498183')).toBe(phoneDigits('0424498183'));
+  });
+
+  it('restores a leading zero the export dropped from a 9-digit mobile', () => {
+    expect(phoneDigits('434885718')).toBe('0434885718');
+  });
+
+  it('leaves anything that is not an AU mobile shape alone', () => {
+    expect(phoneDigits('0411928301')).toBe('0411928301'); // already canonical
+    expect(phoneDigits('0730001234')).toBe('0730001234'); // landline, untouched
+    expect(phoneDigits('046633296')).toBe('046633296'); // 9 digits but starts 04 — malformed, not a mobile missing its 0
+    expect(phoneDigits('123')).toBe('123'); // junk stays junk rather than being invented into a number
+    expect(phoneDigits('61123')).toBe('61123'); // starts 61 but no valid remainder length
+  });
 });
 
 // ---------------------------------------------------------------------------
