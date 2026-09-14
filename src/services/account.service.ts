@@ -100,6 +100,11 @@ function genderUsername(base: string, gender: GenderScope): string {
   return `${gender === 'male' ? 'b' : 'g'}-${base}`;
 }
 
+/** `all-<slug>` for the optional dual-gender login (2026-09-14). */
+function dualGenderUsername(base: string): string {
+  return `all-${base}`;
+}
+
 export interface AccountService {
   listUsers(actor: Actor): Promise<SafeUser[]>;
   createUser(actor: Actor, input: unknown): Promise<SafeUser>;
@@ -137,6 +142,17 @@ export interface AccountService {
    * invariant of the church branch of `randomizeChurchPasswords` — see `rotateChurchLogins`.
    */
   randomizeChurchOnlyPasswords(actor: Actor): Promise<ChurchCredential[]>;
+  /**
+   * 2026-09-14: create the OPTIONAL third login for a church — `all-<slug>`, gender-scoped to
+   * NEITHER gender (`genderScope: null`, exactly what `canAccessPerson` already treats as "see
+   * both") — in addition to, and without touching, the existing `b-`/`g-` accounts or their
+   * passwords. One per church; throws if the church already has one. Excluded from
+   * `saveDefaults()`'s scaffold snapshot, so it does not survive new-year rollover.
+   */
+  createDualGenderLogin(
+    actor: Actor,
+    churchId: string,
+  ): Promise<{ user: SafeUser; credential: ChurchCredential }>;
   /** Set passwords from an uploaded credentials sheet — the reverse of the export above. */
   importPasswords(actor: Actor, input: unknown): Promise<PasswordImportResult>;
   listChurches(actor: Actor): Promise<Church[]>;
@@ -223,11 +239,22 @@ export function makeAccountService(
     return { user, credential: { username, church: church.name, gender, password } };
   }
 
-  /** Delete any legacy combined (non-gender-scoped) church login for a church. Returns count removed. */
+  /**
+   * Delete any legacy combined (non-gender-scoped) church login for a church. Returns count
+   * removed. ⚠ The optional dual-gender login (2026-09-14) is ALSO `role:'church'` with
+   * `genderScope: null` — it is a deliberate account, not a legacy one, so it is excluded here
+   * via `isDualGenderLogin`. Without this exclusion, every "Randomise & export passwords" /
+   * "Split church accounts" run would silently delete it as if it were the old combined login.
+   */
   async function retireLegacyChurchLogins(churchId: string, allUsers: User[]): Promise<number> {
     let removed = 0;
     for (const u of allUsers) {
-      if (u.role === 'church' && u.churchId === churchId && (u.genderScope === null || u.genderScope === undefined)) {
+      if (
+        u.role === 'church'
+        && u.churchId === churchId
+        && (u.genderScope === null || u.genderScope === undefined)
+        && !u.isDualGenderLogin
+      ) {
         await userRepo.delete(u.id);
         removed++;
       }
@@ -271,6 +298,22 @@ export function makeAccountService(
           const { credential } = await createGenderAccount(church, gender, slugBase, allUsers);
           rows.push(credential);
         }
+      }
+      // 2026-09-14: rotate an existing dual-gender login too (owner's explicit choice — include
+      // it in bulk rotation, same as b-/g-). It is NEVER created here — only via
+      // createDualGenderLogin — this only refreshes the password of one that already exists.
+      const dual = allUsers.find(
+        (u) => u.role === 'church' && u.churchId === church.id && u.isDualGenderLogin,
+      );
+      if (dual) {
+        const password = memorablePassword();
+        await userRepo.save({
+          ...dual,
+          passwordHash: await hashPassword(password),
+          mustChangePassword: false,
+          updatedAt: nowISO(),
+        });
+        rows.push({ username: dual.username, church: church.name, gender: null, password });
       }
       await retireLegacyChurchLogins(church.id, allUsers);
     }
@@ -450,6 +493,49 @@ export function makeAccountService(
 
       invalidateDashboardCache();
       return { created, retired, churches: churches.length };
+    },
+
+    /**
+     * 2026-09-14: create the church's OPTIONAL dual-gender login (`all-<slug>`). Does not touch
+     * the existing `b-`/`g-` accounts or their passwords — it is purely additive. One per
+     * church; call again after deleting the existing one (via the ordinary
+     * `DELETE /accounts/users/:id`) to re-add it.
+     */
+    async createDualGenderLogin(actor, churchId) {
+      assertCan(actor, 'admin:manage');
+      const church = await churchRepo.findById(churchId);
+      if (!church) throw new NotFoundError('Church not found');
+      const allUsers = await userRepo.findAll();
+      const existing = allUsers.find(
+        (u) => u.role === 'church' && u.churchId === churchId && u.isDualGenderLogin,
+      );
+      if (existing) throw new BadRequestError('This church already has a dual-gender login');
+
+      const slugBase = slugifyUsername(church.name);
+      const username = await uniqueUsername(dualGenderUsername(slugBase), allUsers);
+      const password = memorablePassword();
+      const now = nowISO();
+      const user: User = {
+        id: newId('user'),
+        firstName: church.name,
+        lastName: 'All',
+        username,
+        role: 'church',
+        churchId: church.id,
+        churchName: church.name,
+        zone: church.zone,
+        genderScope: null,
+        isDualGenderLogin: true,
+        status: 'active',
+        passwordHash: await hashPassword(password),
+        createdAt: now,
+        updatedAt: now,
+      };
+      await userRepo.save(user);
+      return {
+        user: toSafeUser(user),
+        credential: { username, church: church.name, gender: null, password },
+      };
     },
 
     async randomizeChurchPasswords(actor) {

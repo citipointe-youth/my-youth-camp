@@ -528,6 +528,12 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .ch-g{font-size:var(--t-micro);font-weight:800;text-transform:uppercase;letter-spacing:.05em;}
 .ch-u{font-size:var(--t-2xs);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;}
 .ch-half .iconbtn{background:rgba(255,255,255,.72);}
+/* 2026-09-14: the OPTIONAL third per-church login that sees both genders. Deliberately NOT a
+   third .ch-half inside .ch-halves (that grid is fixed 1fr 1fr for the b-/g- pair) — a full-width
+   row underneath instead. */
+.ch-dual{padding:9px 10px 10px;border-top:1px solid var(--line);background:var(--paper);}
+.ch-dual .ch-g{color:var(--ink-2);}
+.ch-dual .iconbtn{background:rgba(255,255,255,.72);}
 /* First-aid "Signed in only" filter (bug 20, 2026-07-28) */
 .fa-signedin{display:flex;align-items:center;gap:8px;margin:10px 0 4px;font-size:var(--t-sm);font-weight:600;color:var(--ink-2);}
 .fa-signedin input{width:18px;height:18px;accent-color:var(--blue);flex:0 0 auto;margin:0;}
@@ -6745,10 +6751,16 @@ RENDER.adminAccounts=async function(){
   // girls' username silently rewrote the boys' one and the pair collided. They are now drawn as
   // ONE joined card per church (shared name/zone/username/delete at the top, a blue "Boys" half
   // and a pink "Girls" half below for the per-account actions), matching how they must be edited.
-  const churchUsers=users.filter(u=>u.role==='church');
+  // isDualGenderLogin (2026-09-14): the optional third per-church login. Excluded from
+  // churchUsers/_churchAccts on purpose — it must never enter the b-/g- pair-rename machinery
+  // (editChurchName/bulkChurchUpdate), which re-applies a b-/g- prefix to every account it finds
+  // and would silently strip this account's "all-" prefix if it were included there.
+  const churchUsers=users.filter(u=>u.role==='church'&&!u.isDualGenderLogin);
+  const churchDualUsers=users.filter(u=>u.role==='church'&&u.isDualGenderLogin);
   const churchCards=churches.map(c=>{
     const accts=churchUsers.filter(u=>u.churchId===c.id)
       .sort((a,b)=>String(a.genderScope||'').localeCompare(String(b.genderScope||'')));
+    const dual=churchDualUsers.find(u=>u.churchId===c.id);
     const head=`<div class="ch-head">
         <div style="min-width:0">
           <div class="ch-name">${esc(c.name)}</div>
@@ -6767,7 +6779,21 @@ RENDER.adminAccounts=async function(){
           <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="changePassword('${cu.id}')">${ic('key')}</button>
           ${cu.status!=='inactive'?`<button class="iconbtn" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="confirmEnterAccountPreview('${cu.id}')">${ic('preview')}</button>`:''}
         </div></div>`;};
-    return `<div class="ch-pair">${head}<div class="ch-halves">${accts.map(half).join('')}</div></div>`;
+    // The optional dual-gender login: a slim add button when absent, a small account row
+    // (password/preview/delete — the SAME generic changePassword/confirmEnterAccountPreview/
+    // delAcct functions the b-/g- halves use) when present. Never touches the b-/g- accounts
+    // above; deleting it does not delete the church or either gender login.
+    const dualBlock=dual
+      ?`<div class="ch-dual">
+          <div class="ch-g">${icSm('users')} All — both genders${dual.status==='inactive'?' · inactive':''}</div>
+          <div class="ch-u">@${esc(dual.username||'—')}</div>
+          <div style="display:flex;gap:4px;margin-top:8px">
+            <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="changePassword('${dual.id}')">${ic('key')}</button>
+            ${dual.status!=='inactive'?`<button class="iconbtn" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="confirmEnterAccountPreview('${dual.id}')">${ic('preview')}</button>`:''}
+            <button class="iconbtn danger" style="flex:1 1 0;min-width:0" title="Remove dual-gender login" aria-label="Remove dual-gender login" onclick="delAcct('${dual.id}')">${ic('trash')}</button>
+          </div></div>`
+      :`<div class="ch-dual"><button class="btn ghost sm" style="width:100%;margin-top:0" onclick="addDualLogin('${c.id}')">${icSm('users')} Add dual-gender login (sees both boys &amp; girls)</button></div>`;
+    return `<div class="ch-pair">${head}<div class="ch-halves">${accts.map(half).join('')}</div>${dualBlock}</div>`;
   });
   const cr=churches.length?`<div class="ch-grid">${churchCards.join('')}</div>`:'<p class="note-hint">None yet.</p>';
   // Item 2: Admin is selectable. A secondary admin is a full peer of the original — it can do
@@ -6828,8 +6854,13 @@ const _findChurch=id=>(window._allChurches||[]).find(c=>c.id===id)||{};
    only ever edits the BASE; the prefixes are re-applied on save so the pair can never collide or
    lose its gender split. `_churchUserBase` tolerates a legacy un-prefixed username. */
 const _churchUserBase=u=>String(u||'').replace(/^[bg]-/,'');
-const _churchAccts=churchId=>(window._allUsers||[]).filter(u=>u.role==='church'&&u.churchId===churchId)
+/* Excludes the optional dual-gender login (isDualGenderLogin, 2026-09-14) — it must never enter
+   this pair-rename machinery, or editChurchName/bulkChurchUpdate would re-apply a b-/g- prefix
+   to it (via _churchPrefix, below, which returns '' for a non-gender-scoped account) and
+   silently strip its "all-" username. Managed separately via addDualLogin/delAcct. */
+const _churchAccts=churchId=>(window._allUsers||[]).filter(u=>u.role==='church'&&u.churchId===churchId&&!u.isDualGenderLogin)
   .sort((a,b)=>String(a.genderScope||'').localeCompare(String(b.genderScope||'')));
+const _churchDualAcct=churchId=>(window._allUsers||[]).find(u=>u.role==='church'&&u.churchId===churchId&&u.isDualGenderLogin);
 const _churchPrefix=cu=>cu.genderScope==='male'?'b-':cu.genderScope==='female'?'g-':'';
 const _OVERRIDE_TIP='When set, EVERYONE from this church — students and leaders — is switched to this accommodation type on the next registration upload — use it to correct wrong ticket purchases. Leave as "No override" if this ministry deliberately splits ticket types (e.g. seniors buy classroom).';
 function editLeaderName(id){const u=_findUser(id);
@@ -6912,6 +6943,21 @@ async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter churc
   // export passwords" to retrieve them.
   const body={churchName:name,zone:sel('ncZone'),accountUsername:username};
   try{await api('/accounts/churches',{method:'POST',body});toast('Church created — boys/girls logins added. Use “Randomise & export passwords” to get their passwords.');await _rAccts();}catch(e){toast(e.message);}}
+/* 2026-09-14: the OPTIONAL third per-church login (username "all-<slug>") that sees both
+   genders — additive to, and independent of, the church's existing b-/g- logins. This is the
+   only place its password is ever shown outright (there is no bulk CSV for a single ad-hoc
+   account); it also rotates through "Randomise & export passwords" like any other church login. */
+async function addDualLogin(churchId){
+  let res;
+  try{res=await api('/accounts/churches/'+churchId+'/dual-login',{method:'POST',body:{}});}
+  catch(e){toast(e.message||'Could not create dual-gender login');return;}
+  await _rAccts();
+  modal(`<h3>Dual-gender login created</h3>
+    <p class="sub" style="margin:2px 0 10px">Sees both boys and girls for this church. The existing logins are untouched. Write this down now — “Randomise &amp; export passwords” will regenerate it later, but this is the only time it's shown here.</p>
+    <label>Username</label><input class="fld" value="${esc(res.credential.username)}" readonly onclick="this.select()">
+    <label>Password</label><input class="fld" value="${esc(res.credential.password)}" readonly onclick="this.select()">
+    <button class="btn" style="margin-top:10px" onclick="closeModal()">Done</button>`);
+}
 /* Feature 6: re-randomise EVERY church login's password and download the list as a CSV
    (username, church, gender, password). Also creates any missing b-/g- account and retires the
    old combined login, so one click both migrates and re-issues. Passwords are memorable (Word.##). */
@@ -7058,12 +7104,13 @@ async function _pwUpConfirm(){
    and a password field. Save applies all changed usernames + any entered passwords at once;
    a blank password leaves that church's password unchanged. */
 function bulkChurchUpdate(){
-  const churches=(window._allChurches||[]);const users=(window._allUsers||[]);
+  const churches=(window._allChurches||[]);
   const rows=churches.map(c=>{
     // Bug 13: ONE username field per church (the shared base) — the b-/g- prefixes are re-applied
     // per account on save. Passwords stay per account, so each gender keeps its own field.
-    const accts=users.filter(u=>u.role==='church'&&u.churchId===c.id)
-      .sort((a,b)=>String(a.genderScope||'').localeCompare(String(b.genderScope||'')));
+    // _churchAccts() (not a second inline filter) so the dual-gender login exclusion lives in
+    // exactly one place.
+    const accts=_churchAccts(c.id);
     if(!accts.length)return `<div style="padding:8px 0;border-top:1px solid var(--line)"><div style="font-weight:700;font-size:.82rem;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div><div class="sub" style="color:var(--danger)">No login account — add one first.</div></div>`;
     const base=_churchUserBase(accts[0].username);
     const pw=cu=>`<input class="fld ${cu.genderScope==='male'?'ch-m':'ch-f'}" data-bcp="${cu.id}" type="text" placeholder="${cu.genderScope==='male'?'boys':'girls'} password (blank = keep)" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" style="flex:1;margin:0">`;

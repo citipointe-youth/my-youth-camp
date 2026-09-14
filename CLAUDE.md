@@ -4,6 +4,60 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Optional per-church dual-gender login (`all-<slug>`) — migration `0024` — 2026-09-14
+
+Owner request: in addition to the existing `b-`/`g-` gender-scoped church logins, let an admin
+add ONE optional third login per church that sees **both** genders — without touching the
+existing pair's passwords, and without it surviving new-year rollover. Backend + SPA +
+**migration `0024`**. `npm run typecheck` clean, `npx vitest run` **1089 pass / 64 files** (was
+1083/64; **+6**). `node --check` OK on the SPA body and `sw.js`. `sw.js`
+`camp-v111`→**`camp-v112`**.
+
+> ⚠️ **NOT YET APPLIED TO PROD, NOT YET LIVE-TESTED — DELIBERATELY.** Camp starts 2026-09-28 and
+> real leaders are already using their `b-`/`g-` logins pre-camp; the owner asked that nothing
+> touching account rotation be exercised against the live system until after the current camp
+> cycle finishes. Migration `0024` must be applied to prod BEFORE this code deploys (standing
+> rule — see below), but do not run "Randomise & export passwords" against prod to verify the
+> dual-login row until then.
+
+### It needed almost no new RBAC — `genderScope: null` already means "see both"
+`canAccessPerson` (`person.service.ts`) only narrows by gender when `actor.genderScope` is
+truthy; capabilities (`checkin:write`, `note:write`, …) are granted by `role:'church'` alone,
+never by gender scope. So the dual login is just a normal `role:'church'` user with
+`genderScope: null` — every read/write path already does the right thing for it with **zero**
+RBAC code change. The only genuinely new piece is telling it apart from a genuine legacy
+pre-split combined login, which is `role:'church'` + `genderScope: null` too.
+
+### `is_dual_gender_login` — one boolean, and two existing functions had to learn about it
+`retireLegacyChurchLogins()` deletes any `role:'church'` account with a null `genderScope` for a
+church, on the theory that it's the old un-split combined login (2026-07-17). **The dual login
+matches that exact shape.** Without excluding it, the FIRST "Randomise & export passwords" or
+"Split church accounts" run after creating one would have silently deleted it as "legacy" — found
+by reading `retireLegacyChurchLogins` before writing to it, not by a test failing after the fact.
+`rotateChurchLogins()` (shared by both randomise endpoints) now also rotates an existing dual
+login's password and includes it in the CSV, per the owner's explicit choice — it is never
+*created* there, only refreshed if already present.
+
+### New-year rollover — the guard is ONE line, at the snapshot, not at the restore
+`newYear()` already deletes every non-admin account and restores only from the `saveDefaults()`
+scaffold snapshot. So excluding `isDualGenderLogin` users from that snapshot is the *entire*
+guarantee — the dual login cannot survive rollover regardless of when in the year it was
+created relative to the last Save Defaults, because `newYear()` never sees it at all. `reset()`
+needed no change (it wipes every non-admin account unconditionally already).
+
+### SPA — deliberately kept OUT of the b-/g- pair-rename machinery
+`_churchAccts()`/`editChurchName`/`bulkChurchUpdate` treat a church's login(s) as a base username
+with a `b-`/`g-` prefix re-applied on save (`_churchPrefix`). The dual login's username has an
+`all-` "prefix" that `_churchPrefix` doesn't know about (it returns `''` for a non-gender-scoped
+account) — leaving it inside `_churchAccts()` would have meant the very next church rename
+silently rewrote `all-<slug>` down to bare `<slug>`, losing the prefix. It's excluded from
+`_churchAccts()` and rendered as its own `.ch-dual` row underneath the `.ch-halves` pair (an
+"Add dual-gender login" ghost button when absent; username + change-password/preview/delete when
+present) — reusing the existing generic `changePassword`/`confirmEnterAccountPreview`/`delAcct`
+functions, so removal is just the ordinary `DELETE /accounts/users/:id`, no dedicated route.
+Deleting the whole church (`deleteChurch`) still removes every login for it, dual included, since
+that loop is keyed on `churchId` alone.
+
 ## AU phone normalisation — two people were two records each — 2026-09-09 (2nd)
 
 Deploy 2 of the import-money batch; **Deploy 1 (`camp-v111`, migration `0023`) is a hard

@@ -30,6 +30,14 @@ export interface User {
    * for every other role. See {@link GenderScope}. Enforced in `canAccessPerson`.
    */
   genderScope?: GenderScope | null;
+  /**
+   * True ONLY for the optional third per-church login (2026-09-14) that sees both genders —
+   * `genderScope` is null on this row too, exactly like a legacy pre-split combined login, so
+   * this flag is what tells the two apart. Set only via `createDualGenderLogin`; excluded from
+   * `saveDefaults()`'s scaffold snapshot so it never survives new-year rollover, and skipped by
+   * `retireLegacyChurchLogins` so a church-login rotation/split never deletes it.
+   */
+  isDualGenderLogin?: boolean;
   status: 'active' | 'inactive';
   passwordHash?: string;
   /**

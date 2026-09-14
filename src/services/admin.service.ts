@@ -213,7 +213,13 @@ export function makeAdminService(
       await snapshotRepo.saveDefaults({
         id: 'defaults',
         churches,
-        users: users.map((u) => {
+        // The optional dual-gender login (2026-09-14) is deliberately EXCLUDED from the
+        // scaffold — it's a same-season convenience, not part of what a new year starts from.
+        // This is the ONLY guard needed to keep it out of new-year rollover: newYear() below
+        // deletes every non-admin account unconditionally and restores only from this
+        // snapshot, so a login never captured here simply cannot come back, regardless of
+        // when in the year it was created relative to the last Save Defaults.
+        users: users.filter((u) => !u.isDualGenderLogin).map((u) => {
           const { passwordHash: _pw, ...rest } = u;
           return rest;
         }),

@@ -1,0 +1,17 @@
+-- 0024: a third, optional per-church login that sees BOTH genders (2026-09-14).
+--
+-- Every church already has two gender-scoped logins (b-<slug>/g-<slug>, migration 0006). This
+-- adds a way for an admin to create ONE additional login per church, username `all-<slug>`,
+-- with `gender_scope` left NULL (the existing rule already treats a null gender_scope as "no
+-- narrowing, see both genders" — see `canAccessPerson`). This column exists ONLY to mark that
+-- account so it can be told apart from a genuine legacy/never-split combined login, which is
+-- also `gender_scope IS NULL` on a `role='church'` row:
+--   - `account.service.ts`'s `retireLegacyChurchLogins` must NOT delete this account as
+--     "legacy" during a church-login rotation/split.
+--   - `admin.service.ts`'s `saveDefaults()` must exclude it from the year's baseline snapshot,
+--     so it never survives a new-year rollover — the dual login is deliberately a same-season
+--     convenience, not part of the scaffold.
+--
+-- Not-null default false: every existing church-role row (all genuinely gender-scoped or
+-- legacy-combined) is unaffected.
+alter table users add column is_dual_gender_login boolean not null default false;

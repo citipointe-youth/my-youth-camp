@@ -226,6 +226,9 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/accounts/churches/randomize-passwords', auth: true, handler: (r) => account.randomizeChurchPasswords(r) },
     { method: 'POST', path: '/accounts/churches/randomize-church-passwords', auth: true, handler: (r) => account.randomizeChurchOnlyPasswords(r) },
     { method: 'POST', path: '/accounts/passwords/import', auth: true, handler: (r) => account.importPasswords(r) },
+    // 2026-09-14: the optional per-church dual-gender login. Removal reuses the ordinary
+    // DELETE /accounts/users/:id — no dedicated route needed there.
+    { method: 'POST', path: '/accounts/churches/:id/dual-login', auth: true, handler: (r) => account.createDualGenderLogin(r) },
     // Contacts-only edit. Reachable by a CHURCH login for its own church (2026-07-31), so it
     // must stay a separate route from the admin-only PATCH above — routing both through one
     // handler is how a church ends up able to rename itself.

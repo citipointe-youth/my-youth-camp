@@ -415,6 +415,20 @@ describe('AdminService.saveDefaults', () => {
     expect((defaults!.devotionals as Devotional[]).map((d) => d.id)).toEqual(['d1']);
   });
 
+  it('excludes an optional dual-gender login from the snapshot (2026-09-14) — the guard that keeps it out of new-year rollover', async () => {
+    const svc = build(repos);
+    await repos.userRepo.save(user({
+      id: 'u3', username: 'all-victory', role: 'church', churchId: 'c1',
+      isDualGenderLogin: true,
+    }));
+    await svc.saveDefaults(actor('admin'));
+    const defaults = await repos.snapshotRepo.getDefaults();
+    const savedUsers = defaults!.users as Array<Record<string, unknown>>;
+    // Still only the 2 seeded (non-dual) users — the dual login never reaches the scaffold.
+    expect(savedUsers).toHaveLength(2);
+    expect(savedUsers.some((u) => u.username === 'all-victory')).toBe(false);
+  });
+
   it('does NOT snapshot registrants, campers, notifications or notes', async () => {
     const svc = build(repos);
     await svc.saveDefaults(actor('admin'));

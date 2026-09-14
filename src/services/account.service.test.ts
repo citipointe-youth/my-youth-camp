@@ -453,6 +453,85 @@ describe('AccountService — gender-scoped church accounts', () => {
       expect(u.passwordHash).toBe(hashBefore);
     }
   });
+
+  // -------------------------------------------------------------------------
+  // createDualGenderLogin — 2026-09-14: the optional third per-church login that sees both
+  // genders, additive to the existing b-/g- pair.
+  // -------------------------------------------------------------------------
+
+  it('createDualGenderLogin creates an all-<slug> login with genderScope null, without touching the b-/g- accounts', async () => {
+    const created = await svc.createChurchWithAccount(admin(), {
+      churchName: 'Victory', zone: 'Yellow', accountUsername: 'victory',
+    });
+    const churchId = created.church.id;
+    const beforeHashes = new Map(
+      (await users.findAll()).filter((u) => u.role === 'church').map((u) => [u.id, u.passwordHash]),
+    );
+
+    const res = await svc.createDualGenderLogin(admin(), churchId);
+    expect(res.user.username).toBe('all-victory');
+    expect(res.user.isDualGenderLogin).toBe(true);
+    expect(res.user.genderScope ?? null).toBeNull();
+    expect(res.credential.password).toMatch(/^[A-Z][a-z]+\.\d{3}$/);
+
+    const all = await users.findAll();
+    const churchUsers = all.filter((u) => u.role === 'church' && u.churchId === churchId);
+    expect(churchUsers).toHaveLength(3);
+    // The original two accounts' hashes are byte-for-byte unchanged.
+    for (const [id, hashBefore] of beforeHashes) {
+      expect(all.find((u) => u.id === id)!.passwordHash).toBe(hashBefore);
+    }
+  });
+
+  it('createDualGenderLogin refuses a second dual login for the same church', async () => {
+    const created = await svc.createChurchWithAccount(admin(), {
+      churchName: 'Victory', zone: 'Yellow', accountUsername: 'victory',
+    });
+    await svc.createDualGenderLogin(admin(), created.church.id);
+    await expect(svc.createDualGenderLogin(admin(), created.church.id)).rejects.toThrow(
+      'This church already has a dual-gender login',
+    );
+  });
+
+  it('createDualGenderLogin is admin-only', async () => {
+    const created = await svc.createChurchWithAccount(admin(), {
+      churchName: 'Victory', zone: 'Yellow', accountUsername: 'victory',
+    });
+    const director: Actor = { id: 'd', role: 'director', churchId: null, churchName: null, zone: null, displayName: 'Director' };
+    await expect(svc.createDualGenderLogin(director, created.church.id)).rejects.toThrow();
+  });
+
+  it('randomizeChurchPasswords rotates an existing dual-gender login too, without deleting it', async () => {
+    const created = await svc.createChurchWithAccount(admin(), {
+      churchName: 'Victory', zone: 'Yellow', accountUsername: 'victory',
+    });
+    const dual = await svc.createDualGenderLogin(admin(), created.church.id);
+    const dualHashBefore = (await users.findById(dual.user.id))!.passwordHash;
+
+    const rows = await svc.randomizeChurchPasswords(admin());
+    expect(rows).toHaveLength(3); // boys, girls, all
+    const dualRow = rows.find((r) => r.username === 'all-victory');
+    expect(dualRow).toBeDefined();
+    expect(dualRow!.gender).toBeNull();
+    expect(dualRow!.password).toMatch(/^[A-Z][a-z]+\.\d{3}$/);
+
+    const after = await users.findById(dual.user.id);
+    expect(after).not.toBeNull(); // NOT deleted as "legacy"
+    expect(after!.isDualGenderLogin).toBe(true);
+    expect(after!.passwordHash).not.toBe(dualHashBefore);
+    expect(await verifyPassword(dualRow!.password, after!.passwordHash!)).toBe(true);
+  });
+
+  it('splitChurchAccounts does not delete an existing dual-gender login', async () => {
+    const created = await svc.createChurchWithAccount(admin(), {
+      churchName: 'Victory', zone: 'Yellow', accountUsername: 'victory',
+    });
+    const dual = await svc.createDualGenderLogin(admin(), created.church.id);
+
+    const r = await svc.splitChurchAccounts(admin());
+    expect(r.retired).toBe(0);
+    expect(await users.findById(dual.user.id)).not.toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -72,6 +72,14 @@ export function makeAccountController(services: AccountControllerServices) {
       return services.account.randomizeChurchOnlyPasswords(req.ctx.actor);
     },
 
+    /** 2026-09-14: create the optional dual-gender login for one church. */
+    async createDualGenderLogin(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      const id = req.params['id'];
+      if (!id) throw new BadRequestError('Missing id');
+      return services.account.createDualGenderLogin(req.ctx.actor, id);
+    },
+
     async importPasswords(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.account.importPasswords(req.ctx.actor, req.body);
