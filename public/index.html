@@ -3209,8 +3209,23 @@ function _medConsentRow(p,kvCls){
   const pill=p.consentMedical
     ? `<span class="pill ok">${icSm('check')} Granted</span>`
     : `<span class="pill warn">Not granted</span>`;
-  return `<div class="${kvCls||'kv'}"><span class="k">Medical consent ${tip}</span><span class="v">${pill}</span></div>`
+  return `<div class="${kvCls||'kv'}"><span class="k">Emergency medical consent ${tip}</span><span class="v">${pill}</span></div>`
     +(p.consentMedical?'':`<p class="note-hint" style="text-align:left;margin:2px 0 0">No medical consent on file — contact the parent/guardian before any treatment.</p>`);
+}
+/* Panadol/ibuprofen/antihistamine "as needed" consent (2026-09-16) — a separate question from
+   the emergency-medical-treatment consent above, added late to the Form export. `null` means
+   "not specified" (every pre-existing registrant, plus anyone the question genuinely wasn't
+   answered for) and is deliberately NOT treated as "no" in the label — see
+   `Person.medicationConsent`. STUDENTS ONLY, same convention as `_medConsentRow`: a leader
+   consents for themselves, so the row is meaningless on a leader's profile. */
+function _medicationConsentRow(p,kvCls){
+  const v=p.medicationConsent;
+  const pill=v==='yes'
+    ? `<span class="pill ok">${icSm('check')} Yes</span>`
+    : v==='no'
+      ? `<span class="pill warn">No</span>`
+      : `<span class="pill amb">Not specified</span>`;
+  return `<div class="${kvCls||'kv'}"><span class="k">Panadol/Ibuprofen/Antihistamine</span><span class="v">${pill}</span></div>`;
 }
 // Item 7a: registrationCost is the ticket price, not what was actually paid — an Invoice
 // import can record a real amountPaid (partial payment/discount cases where the two differ).
@@ -3232,6 +3247,7 @@ function _paintPerson(s){
       <div class="kv2"><span class="k">Medical</span><span class="v">${esc((s.medicalConditions||[]).join(', ')||'—')}</span></div>
       <div class="kv2"><span class="k">Parent</span><span class="v">${esc(s.parentGuardianName||'—')}</span></div>
       ${_medConsentRow(s,'kv2')}
+      ${_medicationConsentRow(s,'kv2')}
       ${s.registrationType?`<div class="kv2"><span class="k">Reg type</span><span class="v">${esc(s.registrationType)}</span></div>`:''}
       ${_paidOrCostRow(s)}`}
       ${isL?`<div class="kv2"><span class="k">Blue card (WWC) ${helpTip(_BLUE_CARD_HELP)}</span><span class="v">${s.blueCardCollected?`<span class="pill ok">${icSm('check')} Collected</span>`:'<span class="pill warn">Outstanding</span>'}</span></div>`:''}
@@ -3802,8 +3818,18 @@ async function openStudentInfo(id){
      `_MED_CONSENT_CLAUSE`, shared with the student profile (2026-08-04) so the two cannot drift. */
   const consentTip=helpTip(_MED_CONSENT_CLAUSE);
   const consent=c.consentMedical
-    ? `<div class="fa-consent yes">${ic('check')}<div>Medical consent — Granted ${consentTip}<div class="sub">OK to administer first aid</div></div></div>`
-    : `<div class="fa-consent no">${ic('alert')}<div>Medical consent — Not granted ${consentTip}<div class="sub">Reach the leader / parent before treating</div></div></div>`;
+    ? `<div class="fa-consent yes">${ic('check')}<div>Emergency medical consent — Granted ${consentTip}<div class="sub">OK to administer first aid</div></div></div>`
+    : `<div class="fa-consent no">${ic('alert')}<div>Emergency medical consent — Not granted ${consentTip}<div class="sub">Reach the leader / parent before treating</div></div></div>`;
+  /* Panadol/ibuprofen/antihistamine "as needed" consent — a separate question from the
+     emergency-medical-treatment consent above (2026-09-16). 'not specified' (no answer on file,
+     incl. every pre-existing registrant) reuses the same cautionary styling as 'no' — a
+     first-aider must check before giving these medications either way — but the pill text
+     still says "Not specified" rather than misrepresenting it as a refusal. */
+  const medsConsent=c.medicationConsent==='yes'
+    ? `<div class="fa-consent yes">${ic('check')}<div>Panadol/Ibuprofen/Antihistamine — Yes<div class="sub">OK to administer as needed</div></div></div>`
+    : c.medicationConsent==='no'
+      ? `<div class="fa-consent no">${ic('alert')}<div>Panadol/Ibuprofen/Antihistamine — No<div class="sub">Do not administer — contact the parent/guardian first</div></div></div>`
+      : `<div class="fa-consent no">${ic('alert')}<div>Panadol/Ibuprofen/Antihistamine — Not specified<div class="sub">No answer on file — contact the parent/guardian before giving these medications</div></div></div>`;
   const leadBtn=(ct,cls)=>ct?`<div class="who"><span class="nm">${esc(ct.name)}</span><span class="ptag${cls==='sec'?' sec':''}">${cls==='sec'?'Secondary':'Primary'}</span></div>
       <div class="sub">${esc(c.churchName)} · ${ct.gender==='female'?'Female':'Male'} ${ct.type==='backup'?'backup':'leader'}</div>
       <a class="btn fa-call" href="tel:${esc(ct.phone)}">${icSm('phone')} ${esc(fmtPhone(ct.phone))}</a>`:'';
@@ -3825,7 +3851,7 @@ async function openStudentInfo(id){
     <div class="fa-id">${_faBubble(c)}<div><h2>${esc(c.firstName+' '+c.lastName)}</h2>
       <div class="meta">${c.kind==='leader'?'Leader':'Student'+(c.grade?' · Grade '+c.grade:'')} · ${esc(c.churchName)} · ${esc(c.zone)} Zone</div>
       ${CAMP_MODE==='at-camp'?`<span class="fa-status ${c.atCamp?'on':'off'}">${c.atCamp?'On site':'Not on site'}</span>`:''}</div></div>
-    ${alert}${consent}${leadCard}${medicare}${dietCard}
+    ${alert}${consent}${medsConsent}${leadCard}${medicare}${dietCard}
     <button class="btn" onclick="openFirstAidLog('${c.id}')">${icSm('plus')} Log first-aid action</button>
     <div id="faRecent"></div>
     ${parent}`,'Student Info','');
@@ -6141,7 +6167,8 @@ async function openCamper(id,push=true){
       ${lead?'':`<div class="kv"><span class="k">Medical</span><span class="v">${esc((p.medicalConditions||[]).join(', ')||'—')}</span></div>
       <div class="kv"><span class="k">Dietary</span><span class="v">${esc((p.dietaryRequirements||[]).join(', ')||'—')}</span></div>
       ${p.otherMedications?`<div class="kv"><span class="k">Medication</span><span class="v">${esc(p.otherMedications)}</span></div>`:''}
-      ${_medConsentRow(p)}`}
+      ${_medConsentRow(p)}
+      ${_medicationConsentRow(p)}`}
       <!-- AC-6 removed the whole consents line from this card; MEDICAL consent came back on
            2026-08-04 (see _medConsentRow). Media and supervision consent stay off — they are
            paperwork questions for the office, not something a leader acts on at camp. -->
@@ -9065,7 +9092,9 @@ function _dataMatchQuery(r,q){
 let _dataQT=null;
 function _dataQInput(){clearTimeout(_dataQT);_dataQT=setTimeout(dataApply,120);}
 function dataClearQ(){const el=document.getElementById('dfQ');if(el){el.value='';el.focus();}dataApply();}
-const DATA_COLS=[['Name','name'],['Church','church'],['Gender','gender'],['Grade','grade'],['Reg type','regType'],['Cost','cost'],['Discount code','discount'],['Mobile','mobile'],['Medical','medical'],['Dietary','dietary'],['Other','other'],['Blue card','blueCard'],['Accommodation','accommodation'],['Review','review']];
+const DATA_COLS=[['Name','name'],['Church','church'],['Gender','gender'],['Grade','grade'],['Reg type','regType'],['Cost','cost'],['Discount code','discount'],['Mobile','mobile'],['Medical','medical'],['Dietary','dietary'],['Other','other'],['Panadol/Ibuprofen/Antihistamine','medsConsent'],['Blue card','blueCard'],['Accommodation','accommodation'],['Review','review']];
+// 'yes'|'no'|null -> display label, shared by the Data table cell + its sort key.
+function _medsConsentLabel(v){return v==='yes'?'Yes':v==='no'?'No':'Not specified';}
 function _dataSortVal(r,key){
   switch(key){
     case 'name':return (r.lastName+', '+r.firstName).toLowerCase();
@@ -9079,6 +9108,7 @@ function _dataSortVal(r,key){
     case 'medical':return (r.medicalConditions||[]).join(', ').toLowerCase();
     case 'dietary':return (r.dietaryRequirements||[]).join(', ').toLowerCase();
     case 'other':return (r.otherMedications||'').toLowerCase();
+    case 'medsConsent':return r.medicationConsent==='yes'?2:r.medicationConsent==='no'?0:1;
     case 'blueCard':return (r.blueCardNumber||'').toLowerCase();
     case 'accommodation':return (r.accommodationKind||'')+'|'+(r.accommodationKindConfidence||'');
     case 'review':return r.needsReview?1:0;
@@ -9114,14 +9144,14 @@ function dataApply(){
   const body=rows.map(r=>{
     const grade=r.kind==='leader'?'Leader':(r.grade??'—');
     const cost=r.registrationCost!=null?'$'+r.registrationCost.toLocaleString():'—';
-    return `<tr>${td(r.lastName+', '+r.firstName)}${td(r.churchName)}${td(r.gender)}${td(grade)}${td(r.registrationType)}${td(cost)}${td(r.discountCode)}${tdRaw(r.mobile?telLink(r.mobile):'')}${td((r.medicalConditions||[]).join(', '))}${td((r.dietaryRequirements||[]).join(', '))}${td(r.otherMedications)}${td(r.blueCardNumber)}${tdRaw(accomCell(r))}${tdRaw(reviewCell(r))}</tr>`;
+    return `<tr>${td(r.lastName+', '+r.firstName)}${td(r.churchName)}${td(r.gender)}${td(grade)}${td(r.registrationType)}${td(cost)}${td(r.discountCode)}${tdRaw(r.mobile?telLink(r.mobile):'')}${td((r.medicalConditions||[]).join(', '))}${td((r.dietaryRequirements||[]).join(', '))}${td(r.otherMedications)}${td(_medsConsentLabel(r.medicationConsent))}${td(r.blueCardNumber)}${tdRaw(accomCell(r))}${tdRaw(reviewCell(r))}</tr>`;
   }).join('');
   const t=document.getElementById('dataTbl');
   const thead=DATA_COLS.map(([label,key])=>{
     const arrow=_dataSortKey===key?(_dataSortDir===1?' ▲':' ▼'):'';
     return `<th style="text-align:left;border-bottom:2px solid var(--line);padding:6px 8px;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap" onclick="dataSort('${key}')">${label}${arrow}</th>`;
   }).join('');
-  if(t)t.innerHTML=`<thead><tr>${thead}</tr></thead><tbody>${body||'<tr><td colspan="14" style="padding:10px;color:var(--muted)">No matching registrants</td></tr>'}</tbody>`;
+  if(t)t.innerHTML=`<thead><tr>${thead}</tr></thead><tbody>${body||'<tr><td colspan="15" style="padding:10px;color:var(--muted)">No matching registrants</td></tr>'}</tbody>`;
   const c=document.getElementById('dataCount');if(c)c.textContent=`${rows.length} of ${(_dataCache||[]).length} registrants`;
 }
 function accomCell(r){

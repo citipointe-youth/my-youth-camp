@@ -357,6 +357,53 @@ describe('ImportService.importCsv — blank-cell guard on update (no clobbering)
     expect(p.gender).toBe('male');
   });
 
+  it('parses the panadol/ibuprofen/antihistamine consent column, and a later blank re-import never clobbers a recorded yes/no', async () => {
+    const created = await h.svc.importCsv(actor('admin'), {
+      csvData:
+        'First Name,Last Name,Church,Do you consent to your child being given these medications as needed?\n' +
+        'Ada,Lovelace,Victory,"Yes, I consent to my child being given these medications as needed."',
+    });
+    expect(created.created).toBe(1);
+    expect((await h.personRepo.findAll())[0]!.medicationConsent).toBe('yes');
+
+    // A re-import where the column is missing entirely (e.g. an older export) must not reset
+    // the recorded answer back to "not specified".
+    const res = await h.svc.importCsv(actor('admin'), {
+      csvData: 'First Name,Last Name,Church,Grade\nAda,Lovelace,Victory,9',
+      updateExisting: true,
+    });
+    expect(res).toMatchObject({ created: 0, updated: 1 });
+    const p = (await h.personRepo.findAll())[0]!;
+    expect(p.medicationConsent).toBe('yes');
+    expect(p.grade).toBe(9);
+  });
+
+  it('a brand-new person with the medication-consent column blank imports as "not specified" (null), not "no"', async () => {
+    const res = await h.svc.importCsv(actor('admin'), {
+      csvData:
+        'First Name,Last Name,Church,Do you consent to your child being given these medications as needed?\n' +
+        'Grace,Hopper,Victory,',
+    });
+    expect(res.created).toBe(1);
+    expect((await h.personRepo.findAll())[0]!.medicationConsent).toBeNull();
+  });
+
+  it('a non-blank medication-consent cell on re-import still overwrites as before', async () => {
+    await h.svc.importCsv(actor('admin'), {
+      csvData:
+        'First Name,Last Name,Church,Do you consent to your child being given these medications as needed?\n' +
+        'Ada,Lovelace,Victory,"Yes, I consent to my child being given these medications as needed."',
+    });
+    const res = await h.svc.importCsv(actor('admin'), {
+      csvData:
+        'First Name,Last Name,Church,Do you consent to your child being given these medications as needed?\n' +
+        'Ada,Lovelace,Victory,"No, I do not consent to my child being given these medications."',
+      updateExisting: true,
+    });
+    expect(res).toMatchObject({ created: 0, updated: 1 });
+    expect((await h.personRepo.findAll())[0]!.medicationConsent).toBe('no');
+  });
+
   it('blank Mobile/Email/Suburb/State cells on re-import preserve existing values', async () => {
     await h.svc.importCsv(actor('admin'), {
       csvData:

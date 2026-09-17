@@ -79,6 +79,20 @@ describe('people mapper encryption', () => {
     expect(p.consents.medical.granted).toBe(true);
   });
 
+  it('encrypts medicationConsent (panadol/ibuprofen/antihistamine) in place and round-trips it, incl. the null "not specified" case', () => {
+    const withConsent = { ...samplePerson(), medicationConsent: 'yes' as const };
+    const cols = personColumns(withConsent);
+    expect(String(cols['medication_consent']).startsWith('v1.')).toBe(true);
+    const row = { ...cols, created_at: new Date(cols['created_at'] as string), updated_at: new Date(cols['updated_at'] as string) };
+    expect(toPerson(row, [], []).medicationConsent).toBe('yes');
+
+    const withoutConsent = { ...samplePerson(), medicationConsent: null };
+    const cols2 = personColumns(withoutConsent);
+    expect(cols2['medication_consent']).toBeNull();
+    const row2 = { ...cols2, created_at: new Date(cols2['created_at'] as string), updated_at: new Date(cols2['updated_at'] as string) };
+    expect(toPerson(row2, [], []).medicationConsent).toBeNull();
+  });
+
   it('preserves null / empty (never stores ciphertext for them)', () => {
     const p = samplePerson();
     p.otherMedications = null; p.blueCardNumber = null; p.blueCardExpiry = null;

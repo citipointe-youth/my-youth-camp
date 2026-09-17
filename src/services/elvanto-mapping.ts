@@ -198,6 +198,21 @@ export function yesToConsent(raw?: string | null): boolean {
 }
 
 /**
+ * Tri-state consent for the "Do you consent to your child being given these medications
+ * (panadol/ibuprofen) as needed?" question, added to the Form export after most students had
+ * already registered. Blank (old entries, or the column genuinely absent) is NOT "no" — it is
+ * "no answer on file", a distinct state a first-aider must treat as "check before giving".
+ * Matches on the leading word rather than the exact sentence, so minor rewording of the option
+ * text doesn't silently stop parsing.
+ */
+export function parseMedicationConsent(raw?: string | null): 'yes' | 'no' | null {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v.startsWith('yes')) return 'yes';
+  if (v.startsWith('no')) return 'no';
+  return null;
+}
+
+/**
  * First non-empty value among the given header aliases (values are pre-trimmed by parseCsv).
  *
  * Item 12 (2026-07-28): the exact-key lookup is tried first (fast path, unchanged), then a

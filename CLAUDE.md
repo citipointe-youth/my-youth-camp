@@ -4,6 +4,61 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Panadol/Ibuprofen/Antihistamine "as needed" consent — migration `0025` — 2026-09-16
+
+Elvanto added a late Form-export column, `"Do you consent to your child being given these
+medications as needed?"` — after most registrants had already been imported, so the great
+majority of existing people have no answer at all. Backend + SPA + **migration `0025`**
+(`people.medication_consent text`, additive/nullable, encrypted at rest like `other_medications`
+— **must be applied to prod before this code deploys**, same standing rule as every prior
+`people` column addition). `npm run typecheck` clean, `npx vitest run` **1097 pass / 64 files**
+(was 1089; **+8**). `node --check` OK on the SPA body and `sw.js`. `sw.js`
+`camp-v112`→**`camp-v113`**.
+
+### `null` means "not specified", and is NOT "no" — the whole design turns on that
+`Person.medicationConsent: 'yes' | 'no' | null`. A blank cell is the expected state for every
+registrant imported before this question existed (and for anyone the question genuinely wasn't
+answered for) — it is not a refusal, and must never be presented or treated as one.
+`parseMedicationConsent()` (`elvanto-mapping.ts`) parses the two real Elvanto sentences by
+leading word (`'yes'`/`'no'`), case-insensitive; anything else, including blank, is `null`.
+Follows the same blank-never-clobbers rule as every other care field in `import.service.ts`: a
+re-import missing the column (or with a blank cell) preserves a previously-recorded yes/no rather
+than resetting it to "not specified".
+
+**Deliberately NOT added to `CARE_COLUMNS`** (the row-1 "missing column" warning list) — unlike
+Medical Conditions, a blank/absent cell here is the *expected* majority state, not a data-quality
+error, so warning about it on every import would be a permanent false positive.
+
+### This is a SEPARATE question from the pre-existing "medical consent" field
+The app already had a field from a different Elvanto question — *"I give medical consent for my
+child as listed above"* (`consents.medical` / `consentMedical` on the DTOs) — covering emergency
+medical/hospital treatment. That field is unchanged in substance but **relabeled "Emergency
+medical consent"** everywhere it renders (`_medConsentRow`, the first-aid Student Info card), to
+stop it reading as if it were about these specific medications. The two consent rows now render
+side by side on every screen that shows either.
+
+### Where it shows
+- **Data table** (`RENDER.data`): new sortable "Panadol/Ibuprofen/Antihistamine" column
+  (`DATA_COLS`/`_dataSortVal`/`_medsConsentLabel`), Yes/No/Not specified.
+- **Student profile**, students only (leaders never see it — same convention as the emergency
+  consent row, since the Elvanto question is a parent answering about a minor): `_paintPerson`
+  (pre-camp) and `openCamper` (at-camp), via new `_medicationConsentRow`.
+- **First-aid Student Info card** (`openStudentInfo`): a new consent block beside the (relabeled)
+  emergency-consent block. `'no'` and `null` ("not specified") both render with the same
+  cautionary styling — a first-aider must check before giving these medications either way — but
+  the pill text still says "Not specified" rather than misrepresenting a missing answer as a
+  refusal.
+- **Deliberately NOT added** to the registrant CSV export, the compliance audit workbook, or the
+  Data table's free-text search box — owner's explicit call, out of scope for this change.
+
+### `redactSensitive()` needed a line too — found by an independent review pass
+`search.service.ts`'s `redactSensitive()` blanks every sensitive field on a cross-scope "All
+churches" search hit (medical, dietary, parent contact, etc.) before it reaches a church/
+zoneLeader login outside that person's `canAccessPerson` scope. `medicationConsent` was missed on
+the first pass — it round-tripped in plaintext through that one path. Fixed same day, before
+deploy. **Any new sensitive `Person` field must be added here too** — this is the second time a
+field has needed adding to this specific function's blank-list; it does not happen automatically.
+
 ## Optional per-church dual-gender login (`all-<slug>`) — migration `0024` — 2026-09-14
 
 Owner request: in addition to the existing `b-`/`g-` gender-scoped church logins, let an admin

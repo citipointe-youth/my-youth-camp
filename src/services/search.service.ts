@@ -132,6 +132,7 @@ function redactSensitive(person: Person): Person {
     medicalConditions: [],
     dietaryRequirements: [],
     otherMedications: null,
+    medicationConsent: null,
     medicareNumber: null,
     parentGuardianName: null,
     parentPhone: null,

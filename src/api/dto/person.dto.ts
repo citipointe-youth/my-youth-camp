@@ -45,6 +45,8 @@ export interface RegistrantDto {
   postcode: string | null;
   state: string | null;
   otherMedications: string | null;
+  /** Panadol/ibuprofen/antihistamine consent — 'yes'|'no'|null ('not specified', incl. every pre-existing registrant). */
+  medicationConsent: 'yes' | 'no' | null;
   /** Whether a medicare number is on file — the value itself is only available via the audited reveal endpoint. */
   hasMedicare: boolean;
   churchUnlistedNote: string | null;
@@ -112,6 +114,8 @@ export interface CamperDto {
   medicalConditions: string[];
   dietaryRequirements: string[];
   otherMedications: string | null;
+  /** Panadol/ibuprofen/antihistamine consent — 'yes'|'no'|null ('not specified', incl. every pre-existing registrant). */
+  medicationConsent: 'yes' | 'no' | null;
   /** Whether a medicare number is on file — the value itself is only available via the audited reveal endpoint. */
   hasMedicare: boolean;
   parentGuardianName: string | null;
@@ -180,6 +184,7 @@ export function toRegistrantDto(p: Person): RegistrantDto {
     postcode: p.postcode ?? null,
     state: p.state ?? null,
     otherMedications: p.otherMedications ?? null,
+    medicationConsent: p.medicationConsent ?? null,
     hasMedicare: p.medicareNumber != null,
     churchUnlistedNote: p.churchUnlistedNote ?? null,
     parentRelation: p.parentRelation ?? null,
@@ -236,6 +241,7 @@ export function toCamperDto(p: Person): CamperDto {
     medicalConditions: p.medicalConditions,
     dietaryRequirements: p.dietaryRequirements,
     otherMedications: p.otherMedications ?? null,
+    medicationConsent: p.medicationConsent ?? null,
     hasMedicare: p.medicareNumber != null,
     parentGuardianName: p.parentGuardianName ?? null,
     parentPhone: p.parentPhone ?? null,

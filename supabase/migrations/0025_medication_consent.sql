@@ -1,0 +1,13 @@
+-- 0025: panadol/ibuprofen/antihistamine "as needed" medication consent (2026-09-16).
+--
+-- A late addition to the Elvanto Form export: "Do you consent to your child being given these
+-- medications as needed?". Old registrants (imported before the question existed) have no
+-- answer at all — that is a genuine third state ("not specified"), not "no" — so the column is
+-- a nullable text scalar, same tri-state shape as the rest of the app's yes/no/unknown fields.
+--
+-- Stored encrypted at rest, exactly like `other_medications` / `medicare_number` (a plain text
+-- column whose value is an AES-256-GCM envelope, no `_enc` suffix needed since this is a brand
+-- new column, not a retrofit onto an existing plaintext one).
+--
+-- Nullable with no default, so applying this changes nothing about existing rows.
+alter table people add column medication_consent text;

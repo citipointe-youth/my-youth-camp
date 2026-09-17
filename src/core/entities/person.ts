@@ -82,6 +82,15 @@ export interface Person {
   medicalConditions: string[];
   dietaryRequirements: string[];
   otherMedications?: string | null;
+  /**
+   * Consent to give the student panadol/ibuprofen/antihistamine as needed, from the Form
+   * import's "Do you consent to your child being given these medications as needed?" column
+   * (added late — most existing registrants have no answer). `null` = not specified, and is
+   * NOT the same as `'no'`: it means the question was never answered, not that consent was
+   * refused. Leaders never have a meaningful value here (the question is a parent answering
+   * about a minor) — same convention as `consents.medical`.
+   */
+  medicationConsent?: 'yes' | 'no' | null;
   medicareNumber?: string | null;
   churchUnlistedNote?: string | null;
   parentGuardianName?: string | null;

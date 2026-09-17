@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ELVANTO_HEADERS, cleanCareText, normalizeDate, formatDateAU,
   parseGradeOrLeader, yesToConsent, field, titleCaseName, submissionSortKey,
-  isPlaceholderCareText, missingColumns, CARE_COLUMNS,
+  isPlaceholderCareText, missingColumns, CARE_COLUMNS, parseMedicationConsent,
 } from './elvanto-mapping';
 
 describe('elvanto-mapping', () => {
@@ -115,6 +115,26 @@ describe('elvanto-mapping — dates, grades, consent, names', () => {
     expect(field(row, 'First Name', 'firstName')).toBe('Ada');
     expect(field(row, 'firstName', 'First Name')).toBe('Ada');
     expect(field(row, 'Missing')).toBe('');
+  });
+
+  describe('parseMedicationConsent', () => {
+    it('reads the real yes/no sentences from the Elvanto export', () => {
+      expect(parseMedicationConsent('Yes, I consent to my child being given these medications as needed.')).toBe('yes');
+      expect(parseMedicationConsent('No, I do not consent to my child being given these medications.')).toBe('no');
+    });
+    it('treats blank/missing as "not specified", never as no', () => {
+      expect(parseMedicationConsent('')).toBeNull();
+      expect(parseMedicationConsent('   ')).toBeNull();
+      expect(parseMedicationConsent(undefined)).toBeNull();
+      expect(parseMedicationConsent(null)).toBeNull();
+    });
+    it('is case-insensitive and matches on the leading word', () => {
+      expect(parseMedicationConsent('YES')).toBe('yes');
+      expect(parseMedicationConsent('no thanks')).toBe('no');
+    });
+    it('falls back to null for unrecognised text rather than guessing', () => {
+      expect(parseMedicationConsent('maybe')).toBeNull();
+    });
   });
 
   describe('titleCaseName', () => {

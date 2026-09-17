@@ -20,7 +20,7 @@ import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import {
   CARE_COLUMNS, cleanCareText, field, isBlankRow, missingColumns, normalizeDate,
-  parseGradeOrLeader, submissionSortKey, titleCaseName, yesToConsent,
+  parseGradeOrLeader, parseMedicationConsent, submissionSortKey, titleCaseName, yesToConsent,
 } from './elvanto-mapping';
 import { invalidateDashboardCache } from './dashboard-cache';
 import { z } from 'zod';
@@ -302,6 +302,9 @@ export function makeImportService(
           const dietary = cleanCareText(field(row, 'Dietary Requirements', 'dietary', 'Dietary'));
           const otherMedications =
             cleanCareText(field(row, 'List Other Medical Conditions or Medication Taken')) || null;
+          const medicationConsent = parseMedicationConsent(
+            field(row, 'Do you consent to your child being given these medications as needed?'),
+          );
           const blueCardNumber = field(row, 'Blue Card/Working with Children Card Number') || null;
           const blueCardExpiry = normalizeDate(field(row, 'Blue Card/Working with Children Card Expiry'));
           const parentName = field(row, 'Parent/Guardian Name', 'parentGuardianName', 'parent_name', 'Parent') || null;
@@ -426,6 +429,7 @@ export function makeImportService(
               medicalConditions: medical ? [medical] : match.medicalConditions,
               dietaryRequirements: dietary ? [dietary] : match.dietaryRequirements,
               otherMedications: otherMedications ?? match.otherMedications,
+              medicationConsent: medicationConsent ?? match.medicationConsent,
               blueCardNumber: blueCardNumber ?? match.blueCardNumber,
               blueCardExpiry: blueCardExpiry ?? match.blueCardExpiry,
               churchUnlistedNote: churchUnlistedNote ?? match.churchUnlistedNote,
@@ -477,6 +481,7 @@ export function makeImportService(
               medicalConditions: medical ? [medical] : [],
               dietaryRequirements: dietary ? [dietary] : [],
               otherMedications,
+              medicationConsent,
               medicareNumber,
               churchUnlistedNote,
               elvantoMeta,
