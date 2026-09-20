@@ -9,6 +9,12 @@ import type { UserRole, ZoneName } from '../types/enums';
  */
 export type GenderScope = 'male' | 'female';
 
+/**
+ * How many recent login timestamps are kept per account (newest first). A short activity
+ * trail, not a full audit log — see auth.service.ts's login() for where it's written.
+ */
+export const MAX_LOGIN_HISTORY = 15;
+
 export interface User {
   id: ID;
   firstName: string;
@@ -47,6 +53,13 @@ export interface User {
    * changing their own password until this clears.
    */
   mustChangePassword?: boolean;
+  /**
+   * Recent login timestamps (ISO strings), newest first, capped at {@link MAX_LOGIN_HISTORY}.
+   * Written by `auth.service.ts`'s `login()` on every successful login — never by anything
+   * else. Absent/empty means "never logged in". This is a short activity trail for the admin
+   * (see the "Login activity" screen), not a full audit log.
+   */
+  loginHistory?: string[];
   createdAt: ISODateString;
   updatedAt: ISODateString;
 }
