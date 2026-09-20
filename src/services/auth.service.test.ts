@@ -123,6 +123,7 @@ describe('AuthService.login', () => {
     await svc.login({ username: 'victory', password: 'demo1234' });
     const saved = await repo.findById(user.id);
     expect(saved?.loginHistory).toHaveLength(1);
+    expect(saved?.passwordHash).toBe(user.passwordHash);
     const recordedMs = Date.parse(saved!.loginHistory![0]!);
     expect(recordedMs).toBeGreaterThanOrEqual(before);
     expect(recordedMs).toBeLessThanOrEqual(Date.now());

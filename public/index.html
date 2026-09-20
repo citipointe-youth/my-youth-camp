@@ -1795,8 +1795,9 @@ function brisbaneNowTime(){
   return h+':'+m;
 }
 // "3m ago" / "5h ago" / "2d ago" style relative time, for the Login activity screen. Falls
-// back to a short absolute date once it's more than 6 days ago (a relative count in weeks is
-// less useful for "did this church log in before camp" than a real date at that distance).
+// back to the existing dtFmt() absolute-timestamp helper (already used for every other
+// admin-facing timestamp in this file — notes, incidents, first-aid log, settings
+// import/export) once it's more than 6 days ago.
 function _relTime(iso){
   const ms=Date.now()-Date.parse(iso);
   if(!(ms>=0))return 'just now';
@@ -1807,14 +1808,7 @@ function _relTime(iso){
   if(h<24)return h+'h ago';
   const d=Math.floor(h/24);
   if(d<7)return d+'d ago';
-  return _fmtLoginAt(iso);
-}
-// Absolute Brisbane-local timestamp for the expanded login-history dropdown, e.g. "20 Sep, 2:14 pm".
-function _fmtLoginAt(iso){
-  const d=new Date(iso);
-  const datePart=new Intl.DateTimeFormat('en-AU',{timeZone:'Australia/Brisbane',day:'numeric',month:'short'}).format(d);
-  const timePart=new Intl.DateTimeFormat('en-AU',{timeZone:'Australia/Brisbane',hour:'numeric',minute:'2-digit',hour12:true}).format(d).toLowerCase();
-  return datePart+', '+timePart;
+  return dtFmt(iso);
 }
 // Which face the unified Sign-in/Check-in surface shows. 'signin' = Day-1 arrival before the
 // switchover; 'checkin' = daily roll-call. Manual override (admin) wins; otherwise time-driven.
@@ -6908,9 +6902,9 @@ RENDER.loginActivity=async function(){
     const history=u.loginHistory||[];
     const last=history.length?_relTime(history[0]):'Never logged in';
     const sub=[roleLabel(u.role),u.churchName||u.zone||'',u.status==='inactive'?'inactive':''].filter(Boolean).join(' · ');
-    const dropdown=history.length>1?`<details style="margin-top:4px">
+    const dropdown=history.length>0?`<details style="margin-top:4px">
         <summary class="row" style="cursor:pointer;color:var(--muted);font-size:var(--t-micro);padding:2px 0">History (${history.length})</summary>
-        <div style="padding:4px 0 2px;color:var(--muted);font-size:var(--t-micro)">${history.map(h=>esc(_fmtLoginAt(h))).join('<br>')}</div>
+        <div style="padding:4px 0 2px;color:var(--muted);font-size:var(--t-micro)">${history.map(h=>esc(dtFmt(h))).join('<br>')}</div>
       </details>`:'';
     return `<div class="card" style="margin-bottom:8px;padding:12px 14px">
         <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">

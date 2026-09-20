@@ -8,8 +8,10 @@
 
 Admin-only screen showing per-church login activity ahead of camp. Backend records the last ~15
 login timestamps per account into a new `users.login_history` JSONB column (migration `0026`,
-additive/nullable, no backfill needed — **must be applied to prod before this code deploys**, same
-standing rule as every prior column addition). Failures during the write are fail-open and never
+additive/nullable, no backfill needed — **must be applied to prod before this code deploys**: `save()`
+upserts `login_history` on every user write, so a pre-migration deploy 500s every account edit,
+password reset and church creation (login itself stays up — the write is fail-open). Failures during
+the write are fail-open and never
 block a successful login. `npm run typecheck` clean, `npx vitest run` **1101 pass / 64 files**
 (was 1097; **+4**, all in `auth.service.test.ts`). `node --check` OK on the SPA body and `sw.js`.
 `sw.js` `camp-v113`→**`camp-v114`**.
