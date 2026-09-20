@@ -4,6 +4,7 @@ import { makeAuthService, toActor, assertSessionSecret } from './auth.service';
 import { InMemoryUserRepository } from '../repositories/in-memory';
 import { hashPassword } from '../utils/crypto';
 import type { User } from '../core/entities/user';
+import { MAX_LOGIN_HISTORY } from '../core/entities/user';
 import type { CampSettings } from '../core/entities/settings';
 import { SETTINGS_ID } from '../core/entities/settings';
 import type { ISettingsRepository } from '../repositories/interfaces/entity-repositories';
@@ -113,6 +114,59 @@ describe('AuthService.login', () => {
   it('rejects malformed input without throwing a non-auth error', async () => {
     const svc = makeAuthService(repo);
     await expect(svc.login({ username: '' })).rejects.toBeInstanceOf(UnauthorizedError);
+  });
+
+  it('records a login timestamp on successful login', async () => {
+    const user = await seedUser(repo, { username: 'victory' });
+    const svc = makeAuthService(repo);
+    const before = Date.now();
+    await svc.login({ username: 'victory', password: 'demo1234' });
+    const saved = await repo.findById(user.id);
+    expect(saved?.loginHistory).toHaveLength(1);
+    const recordedMs = Date.parse(saved!.loginHistory![0]!);
+    expect(recordedMs).toBeGreaterThanOrEqual(before);
+    expect(recordedMs).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('keeps login history newest-first and caps it at MAX_LOGIN_HISTORY', async () => {
+    const user = await seedUser(repo, { username: 'victory' });
+    const svc = makeAuthService(repo);
+    for (let i = 0; i < MAX_LOGIN_HISTORY + 3; i++) {
+      await svc.login({ username: 'victory', password: 'demo1234' });
+    }
+    const saved = await repo.findById(user.id);
+    expect(saved?.loginHistory).toHaveLength(MAX_LOGIN_HISTORY);
+    // newest-first: each entry's timestamp is >= the one after it
+    const times = saved!.loginHistory!.map((iso) => Date.parse(iso));
+    for (let i = 0; i < times.length - 1; i++) {
+      expect(times[i]!).toBeGreaterThanOrEqual(times[i + 1]!);
+    }
+  });
+
+  it('does not record a login on a failed password attempt', async () => {
+    const user = await seedUser(repo, { username: 'victory' });
+    const svc = makeAuthService(repo);
+    await expect(
+      svc.login({ username: 'victory', password: 'wrong-password' }),
+    ).rejects.toThrow();
+    const saved = await repo.findById(user.id);
+    expect(saved?.loginHistory ?? []).toHaveLength(0);
+  });
+
+  it('still succeeds if recording the login history throws (fail-open)', async () => {
+    const user = await seedUser(repo, { username: 'victory' });
+    const originalSave = repo.save.bind(repo);
+    let saveCalls = 0;
+    repo.save = (async (_u: User) => {
+      saveCalls++;
+      throw new Error('simulated DB write failure');
+    }) as typeof repo.save;
+    const svc = makeAuthService(repo);
+    const result = await svc.login({ username: 'victory', password: 'demo1234' });
+    expect(result.token).toBeTruthy();
+    expect(result.user.id).toBe(user.id);
+    expect(saveCalls).toBe(1);
+    repo.save = originalSave;
   });
 });
 
