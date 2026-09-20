@@ -1,12 +1,14 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { verifyPassword } from '../utils/crypto';
 import type { IUserRepository, ISettingsRepository } from '../repositories/interfaces/entity-repositories';
+import { MAX_LOGIN_HISTORY } from '../core/entities/user';
 import type { Actor, User, SafeUser } from '../core/entities/user';
 import type { ZoneName } from '../core/types/enums';
 import { UnauthorizedError } from '../core/errors/app-error';
 import { LoginInputSchema } from '../core/validation/auth.schema';
 import type { LoginInput } from '../core/validation/auth.schema';
 import { ResponseCache } from '../utils/response-cache';
+import { nowISO } from '../utils/date';
 
 const TOKEN_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours — church leaders use this as an installed
 // PWA at camp, where iOS AutoFill is unreliable, so every expiry means hand-typing a password.
@@ -232,6 +234,19 @@ export function makeAuthService(users: IUserRepository, settings?: ISettingsRepo
               : 'Zone leader logins are currently disabled by the camp administrator.',
           );
         }
+      }
+
+      // Login activity tracking (owner request, 2026-09-20): a short per-account history so
+      // the admin can see who hasn't logged in yet ahead of camp. Fail-open — a write failure
+      // here must never block or fail an otherwise-successful login (mirrors the fail-open
+      // philosophy of isSessionRevoked above). Uses the ordinary read-modify-write `save()`
+      // every other account mutation in this codebase already uses, not a dedicated atomic
+      // method — see the plan doc's "Design notes" for why that's a deliberate choice here.
+      try {
+        const history = [nowISO(), ...(user.loginHistory ?? [])].slice(0, MAX_LOGIN_HISTORY);
+        await users.save({ ...user, loginHistory: history });
+      } catch {
+        // Never let a tracking failure block a successful login.
       }
 
       const token = signSession(toActor(user), Date.now() + TOKEN_TTL_MS);

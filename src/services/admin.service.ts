@@ -219,8 +219,10 @@ export function makeAdminService(
         // deletes every non-admin account unconditionally and restores only from this
         // snapshot, so a login never captured here simply cannot come back, regardless of
         // when in the year it was created relative to the last Save Defaults.
+        // loginHistory is excluded for the same class of reason: it's per-year login activity,
+        // not part of what a new year starts from.
         users: users.filter((u) => !u.isDualGenderLogin).map((u) => {
-          const { passwordHash: _pw, ...rest } = u;
+          const { passwordHash: _pw, loginHistory: _lh, ...rest } = u;
           return rest;
         }),
         classrooms,

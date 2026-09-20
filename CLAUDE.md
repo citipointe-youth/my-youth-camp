@@ -4,6 +4,32 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Login activity tracking — migration `0026` — 2026-09-20
+
+Admin-only screen showing per-church login activity ahead of camp. Backend records the last ~15
+login timestamps per account into a new `users.login_history` JSONB column (migration `0026`,
+additive/nullable, no backfill needed — **must be applied to prod before this code deploys**: `save()`
+upserts `login_history` on every user write, so a pre-migration deploy 500s every account edit,
+password reset and church creation (login itself stays up — the write is fail-open). Failures during
+the write are fail-open and never
+block a successful login. `npm run typecheck` clean, `npx vitest run` **1101 pass / 64 files**
+(was 1097; **+4**, all in `auth.service.test.ts`). `node --check` OK on the SPA body and `sw.js`.
+`sw.js` `camp-v113`→**`camp-v114`**.
+
+### Who sees it and what it shows
+The new "Login activity" screen is **admin-only**, reachable from the admin console's "People &
+churches" group. It shows: a summary "N of M church logins haven't logged in yet" (sorted worst-
+first by days-since-last-login), and for each account, its last login time or "Never logged in",
+with an expandable dropdown showing the last up-to-15 login timestamps (newest-first). Owner's
+stated purpose: seeing which churches haven't logged in yet ahead of camp (2026-09-28) so they can
+reach out and help.
+
+### New tests in `auth.service.test.ts`
+- A login records a timestamp
+- History is capped at `MAX_LOGIN_HISTORY` (15) newest-first
+- A failed login does not record anything
+- A `save()` failure during the write never blocks a successful login
+
 ## Panadol/Ibuprofen/Antihistamine "as needed" consent — migration `0025` — 2026-09-16
 
 Elvanto added a late Form-export column, `"Do you consent to your child being given these

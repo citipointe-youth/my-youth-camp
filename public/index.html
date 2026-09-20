@@ -907,6 +907,7 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="accom"></section>
     <section class="screen" id="admin"></section>
     <section class="screen" id="adminAccounts"></section>
+    <section class="screen" id="loginActivity"></section>
     <section class="screen" id="adminAccom"></section>
     <section class="screen" id="adminSettings"></section>
     <section class="screen" id="adminData"></section>
@@ -1792,6 +1793,22 @@ function brisbaneNowTime(){
   const m=(parts.find(p=>p.type==='minute')||{}).value||'00';
   if(h==='24')h='00';
   return h+':'+m;
+}
+// "3m ago" / "5h ago" / "2d ago" style relative time, for the Login activity screen. Falls
+// back to the existing dtFmt() absolute-timestamp helper (already used for every other
+// admin-facing timestamp in this file — notes, incidents, first-aid log, settings
+// import/export) once it's more than 6 days ago.
+function _relTime(iso){
+  const ms=Date.now()-Date.parse(iso);
+  if(!(ms>=0))return 'just now';
+  const m=Math.floor(ms/60000);
+  if(m<1)return 'just now';
+  if(m<60)return m+'m ago';
+  const h=Math.floor(m/60);
+  if(h<24)return h+'h ago';
+  const d=Math.floor(h/24);
+  if(d<7)return d+'d ago';
+  return dtFmt(iso);
 }
 // Which face the unified Sign-in/Check-in surface shows. 'signin' = Day-1 arrival before the
 // switchover; 'checkin' = daily roll-call. Manual override (admin) wins; otherwise time-driven.
@@ -6704,6 +6721,7 @@ RENDER.admin=function(){
     <div class="h3" style="margin:16px 0 6px">People &amp; churches</div>
     <div class="tiles">
       ${_adminTile('key','Accounts &amp; churches',"go('adminAccounts')")}
+      ${isAdmin?_adminTile('clock','Login activity',"go('loginActivity')"):''}
       ${_adminTile('phone','Ministry contacts',"go('adminContacts')")}
     </div>
     <div class="h3" style="margin:16px 0 6px">Data</div>
@@ -6861,6 +6879,43 @@ RENDER.adminAccounts=async function(){
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Username</label><input class="fld" id="ncUser" placeholder="e.g. northside (letters, numbers, . _ -)" style="flex:1" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off"></div>
       <p class="note-hint" style="margin:6px 0 0">Two logins are created — <b>b-username</b> (boys) and <b>g-username</b> (girls). Passwords are auto-generated; use “Randomise &amp; export passwords” at the top of this screen to retrieve them.</p>
       <button class="btn" onclick="addChurch()" style="margin-top:10px;width:100%">Create church + accounts</button></div>`,'Accounts & churches','Admin');
+};
+/* ===== LOGIN ACTIVITY ===== */
+// Owner request 2026-09-20: see which accounts (especially churches) haven't logged in yet
+// ahead of camp (2026-09-28), so the admin can reach out and help. Reuses GET /accounts/users
+// (already admin:manage-gated) — loginHistory rides along on SafeUser for free, no new route.
+RENDER.loginActivity=async function(){
+  const users=await api('/accounts/users');
+  const roleLabel=r=>r==='zoneLeader'?'Zone leader':r==='firstAid'?'First aid':r==='director'?'Director':r==='admin'?'Admin':'Church';
+  const lastLoginMs=u=>(u.loginHistory&&u.loginHistory.length)?Date.parse(u.loginHistory[0]):-Infinity;
+  const sorted=[...users].sort((a,b)=>{
+    const d=lastLoginMs(a)-lastLoginMs(b);
+    if(d!==0)return d;
+    return (a.churchName||a.lastName||'').localeCompare(b.churchName||b.lastName||'');
+  });
+  const churchAccts=users.filter(u=>u.role==='church');
+  const churchNotIn=churchAccts.filter(u=>!(u.loginHistory&&u.loginHistory.length));
+  const summary=churchAccts.length
+    ?`<p class="sub" style="margin:0 0 12px">${churchNotIn.length} of ${churchAccts.length} church logins haven't logged in yet</p>`
+    :'';
+  const row=u=>{
+    const history=u.loginHistory||[];
+    const last=history.length?_relTime(history[0]):'Never logged in';
+    const sub=[roleLabel(u.role),u.churchName||u.zone||'',u.status==='inactive'?'inactive':''].filter(Boolean).join(' · ');
+    const dropdown=history.length>0?`<details style="margin-top:4px">
+        <summary class="row" style="cursor:pointer;color:var(--muted);font-size:var(--t-micro);padding:2px 0">History (${history.length})</summary>
+        <div style="padding:4px 0 2px;color:var(--muted);font-size:var(--t-micro)">${history.map(h=>esc(dtFmt(h))).join('<br>')}</div>
+      </details>`:'';
+    return `<div class="card" style="margin-bottom:8px;padding:12px 14px">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+          <div style="font-weight:700;font-size:var(--t-sm)">${esc(u.firstName+' '+u.lastName)}</div>
+          <div style="font-size:var(--t-micro);color:${history.length?'var(--muted)':'var(--ink-2,#555)'}">${esc(last)}</div>
+        </div>
+        <div class="sub" style="margin-top:2px">${esc(sub)}</div>
+        ${dropdown}
+      </div>`;
+  };
+  paint('loginActivity',`${summary}${sorted.length?sorted.map(row).join(''):emptyState('users','No accounts yet.')}`,'Login activity','Who has logged in, and when');
 };
 function aRoleChange(){
   const r=document.getElementById('aR').value;
