@@ -907,7 +907,7 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="accom"></section>
     <section class="screen" id="admin"></section>
     <section class="screen" id="adminAccounts"></section>
-    <section class="screen" id="loginactivity"></section>
+    <section class="screen" id="loginActivity"></section>
     <section class="screen" id="adminAccom"></section>
     <section class="screen" id="adminSettings"></section>
     <section class="screen" id="adminData"></section>
@@ -6727,7 +6727,7 @@ RENDER.admin=function(){
     <div class="h3" style="margin:16px 0 6px">People &amp; churches</div>
     <div class="tiles">
       ${_adminTile('key','Accounts &amp; churches',"go('adminAccounts')")}
-      ${isAdmin?_adminTile('clock','Login activity',"go('loginactivity')"):''}
+      ${isAdmin?_adminTile('clock','Login activity',"go('loginActivity')"):''}
       ${_adminTile('phone','Ministry contacts',"go('adminContacts')")}
     </div>
     <div class="h3" style="margin:16px 0 6px">Data</div>
@@ -6921,7 +6921,7 @@ RENDER.loginActivity=async function(){
         ${dropdown}
       </div>`;
   };
-  paint('loginactivity',`${summary}${sorted.length?sorted.map(row).join(''):emptyState('users','No accounts yet.')}`,'Login activity','Who has logged in, and when');
+  paint('loginActivity',`${summary}${sorted.length?sorted.map(row).join(''):emptyState('users','No accounts yet.')}`,'Login activity','Who has logged in, and when');
 };
 function aRoleChange(){
   const r=document.getElementById('aR').value;
