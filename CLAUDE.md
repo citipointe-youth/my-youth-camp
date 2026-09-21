@@ -4,6 +4,42 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Pre-camp student profile: mobile + parent phone — 2026-09-21
+
+Owner: the at-camp profile (`openCamper`, `/campers`) already shows the student's own mobile and
+a parent phone row, but the pre-camp profile (`_paintPerson`, `/registrants`) showed neither.
+**SPA-only** (`public/index.html`) — no backend, DTO, schema or migration change. `npm run
+typecheck` clean, `npx vitest run` **1101 pass / 64 files** (unchanged — this is browser-only).
+`node --check` OK on the SPA body and `sw.js`. `sw.js` `camp-v114`→**`camp-v115`**.
+
+### The data was already on the wire — this was a display gap, not an access gap
+`RegistrantDto` has always carried `mobile` and `parentPhone` (`person.dto.ts`), and both routes
+funnel through the same `canAccessPerson()` — church scope + the `b-`/`g-` gender scope — so
+there is **no** gating divergence between the pre-camp and at-camp views to reconcile. Two rows
+added to `_paintPerson`, both mirroring `openCamper`'s existing markup exactly:
+- **`${isL?'Mobile':'Student mobile'}`** — plain `tel:` link, unmasked. Matches at-camp: the
+  student's own mobile has never been masked for any role, in either view.
+- **`Phone`** (parent/guardian) — reuses **`_parentPhoneCell(s,s.id)`** verbatim, the same helper
+  `openCamper` calls. It decides plain-link vs. masked-Reveal-button by looking for `*` in the
+  value, not by role — so if the DTO's masking ever changes (see the gap below), this row needs
+  **no further edit** to pick up the Reveal flow.
+
+### ⚠️ `parentPhone` is UNMASKED in `/registrants` and `/registrants/:id` — a pre-existing gap, left open on purpose
+Unlike `camper.controller.ts` (which applies `maskParentPhone` for `firstAid`/`church` via
+`PARENT_PHONE_MASKED_ROLES`), **`registrant.controller.ts`'s `list`/`get` apply no masking at
+all.** The parent's phone number has always travelled in cleartext in the pre-camp JSON to every
+church/first-aid login — this was true before today's change and is unchanged by it; today's
+change only makes it *visible on screen* where it was previously sitting unrendered in the
+response body. **The owner was asked and explicitly declined closing this for now** — do not
+"fix" it unasked; check with the owner first if it resurfaces (e.g. in a security review).
+- The reveal audit infrastructure would need **no backend change** to close this if asked:
+  `search.service.ts`'s `resolveContacts`/`revealContact` already gate on `canAccessPerson`
+  alone (not `isCamper`/lifecycle — fixed 2026-07-28, bug 21), so `GET /search/contact/:id/parent`
+  already works for a pre-camp registrant today. Closing the gap would be: apply the same
+  `maskParentPhone`-shaped boundary function to `registrant.controller.ts`'s `list`/`get` (best
+  extracted to a shared helper rather than duplicated) — the SPA needs no change at all, since
+  `_parentPhoneCell` already branches on the mask character.
+
 ## Login activity tracking — migration `0026` — 2026-09-20
 
 Admin-only screen showing per-church login activity ahead of camp. Backend records the last ~15

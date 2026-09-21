@@ -3260,9 +3260,11 @@ function _paintPerson(s){
     <div style="color:#cfe0ff;font-size:.82rem">${esc(s.churchName)} · ${esc(s.zone)} Zone · ${isL?'Leader (18+)':'Grade '+(s.grade||'—')}</div></div>
     <div class="card">
       <div class="kv2"><span class="k">Accommodation</span><span class="v">${esc(accDisplay(s))}</span></div>
+      <div class="kv2"><span class="k">${isL?'Mobile':'Student mobile'}</span><span class="v"><a href="tel:${esc(s.mobile||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(s.mobile)||'—')}</a></span></div>
       ${isL?'':`<div class="kv2"><span class="k">Dietary</span><span class="v">${esc((s.dietaryRequirements||[]).join(', ')||'—')}</span></div>
       <div class="kv2"><span class="k">Medical</span><span class="v">${esc((s.medicalConditions||[]).join(', ')||'—')}</span></div>
       <div class="kv2"><span class="k">Parent</span><span class="v">${esc(s.parentGuardianName||'—')}</span></div>
+      <div class="kv2"><span class="k">Phone</span><span class="v">${_parentPhoneCell(s,s.id)}</span></div>
       ${_medConsentRow(s,'kv2')}
       ${_medicationConsentRow(s,'kv2')}
       ${s.registrationType?`<div class="kv2"><span class="k">Reg type</span><span class="v">${esc(s.registrationType)}</span></div>`:''}
