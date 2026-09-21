@@ -3261,6 +3261,7 @@ function _paintPerson(s){
     <div class="card">
       <div class="kv2"><span class="k">Accommodation</span><span class="v">${esc(accDisplay(s))}</span></div>
       <div class="kv2"><span class="k">${isL?'Mobile':'Student mobile'}</span><span class="v"><a href="tel:${esc(s.mobile||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(s.mobile)||'—')}</a></span></div>
+      <div class="kv2"><span class="k">${isL?'Email':'Student email'}</span><span class="v">${s.email?`<a href="mailto:${esc(s.email)}" style="color:var(--blue);text-decoration:none">${esc(s.email)}</a>`:'—'}</span></div>
       ${isL?'':`<div class="kv2"><span class="k">Dietary</span><span class="v">${esc((s.dietaryRequirements||[]).join(', ')||'—')}</span></div>
       <div class="kv2"><span class="k">Medical</span><span class="v">${esc((s.medicalConditions||[]).join(', ')||'—')}</span></div>
       <div class="kv2"><span class="k">Parent name</span><span class="v">${esc(s.parentGuardianName||'—')}</span></div>

@@ -10,7 +10,8 @@ Owner: the at-camp profile (`openCamper`, `/campers`) already shows the student'
 a parent phone row, but the pre-camp profile (`_paintPerson`, `/registrants`) showed neither.
 **SPA-only** (`public/index.html`) — no backend, DTO, schema or migration change. `npm run
 typecheck` clean, `npx vitest run` **1101 pass / 64 files** (unchanged — this is browser-only).
-`node --check` OK on the SPA body and `sw.js`. `sw.js` `camp-v114`→**`camp-v115`**.
+`node --check` OK on the SPA body and `sw.js`. `sw.js` `camp-v114`→`camp-v115`→(labels)
+`camp-v116`→(email row, below) **`camp-v117`**.
 
 ### The data was already on the wire — this was a display gap, not an access gap
 `RegistrantDto` has always carried `mobile` and `parentPhone` (`person.dto.ts`), and both routes
@@ -39,6 +40,25 @@ response body. **The owner was asked and explicitly declined closing this for no
   `maskParentPhone`-shaped boundary function to `registrant.controller.ts`'s `list`/`get` (best
   extracted to a shared helper rather than duplicated) — the SPA needs no change at all, since
   `_parentPhoneCell` already branches on the mask character.
+
+### Follow-ups, same day
+- **Labels relabelled** on the two new pre-camp rows: `Parent`→**`Parent name`**,
+  `Phone`→**`Parent number`** — disambiguates from the new mobile/email rows added alongside them.
+  The at-camp profile's `Name`/`Phone` pair (under its own "Parent / guardian" card heading) was
+  deliberately left as-is; that heading already disambiguates, so relabelling there would be
+  redundant. `sw.js` → `camp-v116`.
+- **Student email added, same pattern as mobile** (`${isL?'Email':'Student email'}`, `mailto:`
+  link, unmasked). ⚠️ **Confirmed which email this is before adding it — it is the REGISTRANT'S
+  OWN email, not a parent email.** `import.service.ts` parses it from the canonical Elvanto
+  column `Email Address` (`ELVANTO_HEADERS` in `elvanto-mapping.ts`), which sits between `Mobile
+  Number` and `Suburb`/`Postcode`/`State` — i.e. in the block of columns describing the person
+  being registered, not the `Parent/Guardian Name`/`Relation to Child`/`Parent/Guardian Phone
+  Number` block that follows it. **There is no parent-email column in the Elvanto export at
+  all** — only one `email` field exists on `Person`, and it is the student's (or the leader's,
+  for an 18+ registrant). Like `mobile`, it has never been masked for any role in either the
+  pre-camp or at-camp DTO, and the at-camp `/campers` DTO doesn't carry `email` at all (it's
+  `RegistrantDto`-only) — so this row is pre-camp-only by definition, not a gap to port to
+  `openCamper`. `sw.js` → **`camp-v117`**.
 
 ## Login activity tracking — migration `0026` — 2026-09-20
 
