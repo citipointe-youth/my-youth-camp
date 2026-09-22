@@ -3120,6 +3120,27 @@ function telLink(phone){
 /* ===== PRE-CAMP MY YOUTH ===== */
 let ALLREG=[],CHURCHES=[];
 function _isWideRole(){return ACTOR!=null&&['director','admin','zoneLeader'].includes(ACTOR.role);}
+
+/* My Youth "Export student contact" (2026-09-22). Everyone in scopeRegs() minus cancelled —
+   students AND leaders despite the button's wording (owner's call). Pure so
+   scripts/contact-export-harness.js can run it; that harness extracts it BY NAME. */
+function _contactExportRows(regs,withChurch){
+  const s=v=>String(v||'');
+  const people=(regs||[]).filter(r=>r.status!=='cancelled').slice().sort((a,b)=>
+    (withChurch?s(a.churchName).localeCompare(s(b.churchName)):0)||
+    ((a.kind==='leader')-(b.kind==='leader'))||
+    s(a.lastName).localeCompare(s(b.lastName))||s(a.firstName).localeCompare(s(b.firstName)));
+  const head=['Type','First name','Last name','Grade','Email','Phone'];
+  const rows=[withChurch?['Church',...head]:head];
+  people.forEach(r=>{
+    const isL=r.kind==='leader';
+    // String(fmtPhone(..)) — a text cell, so Excel keeps the leading 0.
+    const row=[isL?'Leader':'Student',s(r.firstName),s(r.lastName),isL||r.grade==null?'':r.grade,s(r.email),String(fmtPhone(r.mobile)||'')];
+    rows.push(withChurch?[s(r.churchName),...row]:row);
+  });
+  return rows;
+}
+
 RENDER.people=async function renderPeople(){
   ALLREG=await api(_scoped('/registrants'));
   const map={};ALLREG.forEach(r=>{if(r.churchId)map[r.churchId]=r.churchName;});
