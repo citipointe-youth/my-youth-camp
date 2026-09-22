@@ -249,6 +249,14 @@ h3.sec{font-size:var(--t-xs);font-weight:800;letter-spacing:.08em;text-transform
 .la-row>summary .la-when::after{content:' ⌄';opacity:.6;}
 .la-row[open]>summary .la-when::after{content:' ⌃';}
 .la-hist{padding:0 12px 8px;color:var(--muted);font-size:var(--t-micro);line-height:1.6;}
+/* Notification delivery: phones nested inside an account row, each opening its own history. */
+.la-devs{padding:0 8px 8px;}
+.la-devline{display:block;padding:6px 8px;font-size:var(--t-micro);color:var(--ink-2);line-height:1.45;border-top:1px solid var(--line);}
+.la-dev>summary{list-style:none;cursor:pointer;}
+.la-dev>summary::-webkit-details-marker{display:none;}
+.la-dev>summary::after{content:' ⌄';opacity:.6;}
+.la-dev[open]>summary::after{content:' ⌃';}
+.la-devhist{padding:2px 8px 8px 20px;color:var(--muted);font-size:var(--t-micro);line-height:1.6;}
 .setg[open]>summary{border-bottom:1px solid var(--line);}
 .setg .card{border:none;box-shadow:none;border-radius:0;margin:0;}
 .setg .pill.ok{background:#dcfce7;color:#166534;}
@@ -7044,11 +7052,17 @@ RENDER.pushActivity=async function(){
   const summary=`<p class="sub" style="margin:0 0 4px">${churchAccts.length?`${churchNot.length} of ${churchAccts.length} church logins have no phone receiving alerts yet · `:''}${phoneTotal} phone${phoneTotal===1?'':'s'} registered</p>
     <p class="note-hint" style="margin:0 0 12px">Only urgent notices, high-priority incidents and check-in warnings are sent to phones. "Delivered" means Apple/Google accepted the alert — phones can't confirm it was seen. Phones that stop working are removed automatically.</p>`;
   const plural=n=>n+' phone'+(n===1?'':'s');
+  // Account row → phones (one nested dropdown each) → that phone's delivery history. A phone
+  // with no deliveries yet is a plain line: nothing to open, so no dead chevron.
   const devLine=d=>{
-    const bits=[esc(d.device||'Unknown device'),'added '+esc(dtFmt(d.addedAt)),
+    const bits=[`<b>${esc(d.device||'Unknown device')}</b>`,'added '+esc(dtFmt(d.addedAt)),
       d.lastSuccessAt?'last delivered '+esc(_relTime(d.lastSuccessAt)):'not yet delivered'];
     if(d.failureCount)bits.push(`<b>${d.failureCount} failed in a row</b>`);
-    return bits.join(' · ');
+    const line=bits.join(' · ');
+    const h=d.history||[];
+    if(!h.length)return `<div class="la-devline">${line}</div>`;
+    return `<details class="la-dev"><summary class="la-devline">${line}</summary>
+        <div class="la-devhist">${h.map(t=>esc(dtFmt(t))).join('<br>')}</div></details>`;
   };
   const row=({u,label})=>{
     const devs=devsOf(u);
@@ -7057,7 +7071,7 @@ RENDER.pushActivity=async function(){
     const failing=devs.some(d=>d.failureCount>0);
     const when=`${plural(devs.length)} · ${last?'delivered '+_relTime(last):'not yet delivered'}${failing?' · ⚠':''}`;
     return `<details class="la-row"><summary class="la-line"><span class="la-name">${esc(label)}</span><span class="la-when">${esc(when)}</span></summary>
-        <div class="la-hist">${devs.map(devLine).join('<br>')}</div></details>`;
+        <div class="la-devs">${devs.map(devLine).join('')}</div></details>`;
   };
   const all=_loginActivityOrder(users);
   const missing=r=>!_pushReached(devsOf(r.u));

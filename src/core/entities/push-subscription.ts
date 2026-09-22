@@ -9,6 +9,9 @@ import type { ID, ISODateString } from '../types/common';
 export const PUSH_DEVICE_LABELS = ['iPhone', 'iPad', 'Android', 'Mac', 'Windows', 'Other'] as const;
 export type PushDeviceLabel = (typeof PUSH_DEVICE_LABELS)[number];
 
+/** Cap on `deliveryHistory` — mirrors MAX_LOGIN_HISTORY (users.login_history). */
+export const MAX_DELIVERY_HISTORY = 15;
+
 /**
  * A single browser install's Web Push registration.
  *
@@ -36,4 +39,11 @@ export interface PushSubscription {
   failureCount: number;
   /** See PUSH_DEVICE_LABELS. Optional so every pre-existing construction site still compiles. */
   deviceLabel?: PushDeviceLabel | null;
+  /**
+   * Recent successful deliveries (ISO, newest first, ≤ MAX_DELIVERY_HISTORY). Written ONLY by
+   * `IPushSubscriptionRepository.recordSuccess` — ordinary `save()` never overwrites it on
+   * Supabase (a stale snapshot would drop a concurrent append), except to CLEAR it when the
+   * row moves to a different account. Optional so pre-existing construction sites compile.
+   */
+  deliveryHistory?: string[];
 }

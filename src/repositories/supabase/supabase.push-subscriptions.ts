@@ -1,5 +1,5 @@
 import type { SqlClient } from './client';
-import type { PushSubscription, PushDeviceLabel } from '../../core/entities/push-subscription';
+import { MAX_DELIVERY_HISTORY, type PushSubscription, type PushDeviceLabel } from '../../core/entities/push-subscription';
 import type { IPushSubscriptionRepository } from '../interfaces/entity-repositories';
 import { encryptField, maybeDecrypt } from '../../utils/field-crypto';
 
@@ -17,6 +17,7 @@ export function toPushSub(r: Record<string, unknown>): PushSubscription {
     lastFailureAt: r['last_failure_at'] ? new Date(r['last_failure_at'] as string | Date).toISOString() : null,
     failureCount: Number(r['failure_count'] ?? 0),
     deviceLabel: (r['device_label'] as PushDeviceLabel | null) ?? null,
+    deliveryHistory: (r['delivery_history'] as string[] | null) ?? [],
   };
 }
 
@@ -35,6 +36,9 @@ export function pushSubColumns(s: PushSubscription): Record<string, unknown> {
     last_failure_at: s.lastFailureAt ?? null,
     failure_count: s.failureCount,
     device_label: s.deviceLabel ?? null,
+    // Passed as an object, NOT JSON.stringify + ::jsonb — that double-encodes (the 2026-08-04
+    // new-year wipe). postgres.js serialises a plain array into jsonb itself.
+    delivery_history: s.deliveryHistory ?? [],
   };
 }
 
@@ -76,9 +80,33 @@ export class SupabasePushSubscriptionRepository implements IPushSubscriptionRepo
         last_success_at = excluded.last_success_at,
         last_failure_at = excluded.last_failure_at,
         failure_count = excluded.failure_count,
-        device_label = excluded.device_label
+        device_label = excluded.device_label,
+        -- History is owned by recordSuccess(); an ordinary save carries a possibly-stale
+        -- snapshot and must not clobber a concurrent append. The one exception: the phone
+        -- was re-subscribed under a DIFFERENT account, so take the incoming (cleared) value.
+        delivery_history = case
+          when push_subscriptions.user_id is distinct from excluded.user_id then excluded.delivery_history
+          else push_subscriptions.delivery_history
+        end
     `;
     return s;
+  }
+
+  async recordSuccess(endpoint: string, at: string): Promise<void> {
+    // One statement, so two concurrent successes on the same phone both land (row lock
+    // serialises them; each re-reads the committed history). Newest first, capped.
+    await this.sql`
+      update push_subscriptions set
+        last_success_at = ${at},
+        failure_count = 0,
+        delivery_history = (
+          select coalesce(jsonb_agg(v order by ord), '[]'::jsonb)
+          from jsonb_array_elements(jsonb_build_array(${at}::text) || delivery_history)
+            with ordinality as t(v, ord)
+          where ord <= ${MAX_DELIVERY_HISTORY}
+        )
+      where endpoint = ${endpoint}
+    `;
   }
 
   async saveMany(subs: PushSubscription[]): Promise<PushSubscription[]> {

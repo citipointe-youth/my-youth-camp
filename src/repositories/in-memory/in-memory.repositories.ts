@@ -14,7 +14,7 @@ import type { StudentNote } from '../../core/entities/note';
 import type { Notification } from '../../core/entities/notification';
 import type { Incident } from '../../core/entities/incident';
 import type { RevealAudit } from '../../core/entities/reveal-audit';
-import type { PushSubscription } from '../../core/entities/push-subscription';
+import { MAX_DELIVERY_HISTORY, type PushSubscription } from '../../core/entities/push-subscription';
 import type { ScheduleItem } from '../../core/entities/schedule';
 import type { Devotional } from '../../core/entities/devotional';
 import type { FaqItem } from '../../core/entities/content';
@@ -570,5 +570,23 @@ export class InMemoryPushSubscriptionRepository
     const hits = Array.from(this.store.values()).filter((s) => s.userId === userId);
     for (const h of hits) await this.delete(h.id);
     return hits.length;
+  }
+
+  /**
+   * Mirrors the Supabase on-conflict rule so tests exercise the real semantics: an ordinary
+   * save never overwrites deliveryHistory (only recordSuccess writes it), EXCEPT that moving
+   * the row to a different account takes the incoming (cleared) history.
+   */
+  override async save(s: PushSubscription): Promise<PushSubscription> {
+    const prev = this.store.get(s.id);
+    const keep = prev && prev.userId === s.userId;
+    return super.save({ ...s, deliveryHistory: keep ? prev.deliveryHistory ?? [] : s.deliveryHistory ?? [] });
+  }
+
+  async recordSuccess(endpoint: string, at: string): Promise<void> {
+    const hit = Array.from(this.store.values()).find((s) => s.endpoint === endpoint);
+    if (!hit) return;
+    const history = [at, ...(hit.deliveryHistory ?? [])].slice(0, MAX_DELIVERY_HISTORY);
+    await super.save({ ...hit, lastSuccessAt: at, failureCount: 0, deliveryHistory: history });
   }
 }

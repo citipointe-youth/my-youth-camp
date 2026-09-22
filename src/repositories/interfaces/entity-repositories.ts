@@ -101,6 +101,12 @@ export interface IPushSubscriptionRepository extends IRepository<PushSubscriptio
   findByEndpoint(endpoint: string): Promise<PushSubscription | null>;
   deleteByEndpoint(endpoint: string): Promise<boolean>;
   deleteByUser(userId: string): Promise<number>;
+  /**
+   * A push to this phone was accepted: set lastSuccessAt, reset failureCount, and prepend `at`
+   * to deliveryHistory (capped). Must be ATOMIC per row — two notices in one tick can succeed
+   * against the same phone at once, and a read-modify-write would lose one entry.
+   */
+  recordSuccess(endpoint: string, at: string): Promise<void>;
 }
 
 export interface IScheduleRepository extends IRepository<ScheduleItem> {

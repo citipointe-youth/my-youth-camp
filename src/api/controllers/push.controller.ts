@@ -111,6 +111,10 @@ export function makePushController(services: PushControllerServices) {
         failureCount: 0,
         // A subscribe that omits the type (an older cached SPA) must not wipe a known one.
         deviceLabel: data.device ?? existing?.deviceLabel ?? null,
+        // Same phone, different account (one phone, several logins): the row MOVES to the
+        // caller, and the old account's deliveries must not appear under the new one. The
+        // repo's save() only honours this value when user_id actually changes.
+        deliveryHistory: existing && existing.userId === actor.id ? existing.deliveryHistory ?? [] : [],
       };
       await services.subscriptions.save(row);
       return { ok: true as const };

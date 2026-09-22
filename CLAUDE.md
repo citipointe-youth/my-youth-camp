@@ -12,8 +12,8 @@ are getting push alerts and how many phones each. Backend + SPA + **migration `0
 BEFORE this code deploys** — `supabase.push-subscriptions` `save()` names `device_label` in its
 insert AND on-conflict list, so without the column every subscribe AND every post-send
 `lastSuccessAt`/`failureCount` write fails. `npm run typecheck` clean, `npx vitest run`
-**1108 pass / 65 files** (was 1101/64; +7, +1 file). New `scripts/push-activity-harness.js`
-(14 checks). `node --check` OK on the SPA body (range **996–10473**, re-derived) and `sw.js`.
+**1113 pass / 65 files** (was 1101/64; +12, +1 file). New `scripts/push-activity-harness.js`
+(14 checks). `node --check` OK on the SPA body (range **1004–10487**, re-derived) and `sw.js`.
 `sw.js` `camp-v119`→**`camp-v120`**.
 
 - **Current state only, by owner choice.** It reads the existing `push_subscriptions` rows (one
@@ -40,6 +40,27 @@ insert AND on-conflict list, so without the column every subscribe AND every pos
   (`_loginActivityOrder`, `.la-row`); a row reads `3 phones · delivered 2h ago` (⚠ if any phone is
   failing) and expands to one line per phone. `_pushReached`/`_pushLastSuccess`/`_deviceLabel`
   are extracted **by name** by the harness — never rename them.
+- **Per-phone delivery history** (same migration, `push_subscriptions.delivery_history jsonb`,
+  newest first, capped at `MAX_DELIVERY_HISTORY` = 15 — the `login_history` shape). Owner chose
+  this over a per-notice history table (declined for this camp: it would add writes to the
+  30s-budget send path). Three rules, all tested:
+  - ⚠ **Only `recordSuccess(endpoint, at)` writes it, as ONE SQL statement.** The same phone can
+    be in one tick's task list twice (two notices), so a read-modify-write `save()` would drop an
+    entry. Both success branches in `push.service` (real sends AND `sendTestToUser`) call it.
+  - ⚠ **`save()` never overwrites `delivery_history`** (on-conflict keeps the stored value) — the
+    failure branch saves a stale snapshot. **Except** when `user_id` changes: re-subscribing a
+    phone under a different account MOVES the row and clears its history, so an account never
+    shows deliveries made to another login. The in-memory repo's `save` override mirrors this.
+  - ⚠ Written as a plain array through `this.sql(cols)`, **never `JSON.stringify` + `::jsonb`**
+    (the 2026-08-04 double-encoding wipe). Verified against prod's `login_history` (all `array`).
+  - SPA: account row → one nested `<details class="la-dev">` per phone → its timestamps
+    (`.la-devs`/`.la-devline`/`.la-devhist`). A phone with no deliveries is a plain line.
+- **One phone, two accounts (answered for the owner):** a subscription is per phone
+  (`endpoint`), not per login, and it belongs to whichever account last turned alerts on. Logging
+  out does NOT unsubscribe (`logout()` never touches push), so a phone switched from `b-x` to
+  `g-x` keeps getting `b-x`'s alerts — and `_renderPushCard` still says "Alerts are on for this
+  device" to `g-x`, because it only checks the phone's local subscription. The phone moves to
+  `g-x` only if `g-x` turns alerts off then on. Not changed in this release.
 - **Filter on BOTH screens** (`_missingSeg`, `setLaFilter`/`setPaFilter`, module-level
   `_laOnlyMissing`/`_paOnlyMissing`): a `.seg` **All | Not logged in (N)** / **All | Not
   receiving (N)**. "Not receiving" = no phone with a `lastSuccessAt` (includes no phones at all).

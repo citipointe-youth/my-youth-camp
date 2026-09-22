@@ -86,6 +86,48 @@ describe('POST /push/label', () => {
   });
 });
 
+describe('delivery history', () => {
+  it('recordSuccess prepends newest-first, caps at 15, and resets the failure count', async () => {
+    const { repo } = await setup([sub({ failureCount: 4 })]);
+    for (let i = 1; i <= 17; i++) {
+      await repo.recordSuccess(sub().endpoint, `2026-09-${String(i).padStart(2, '0')}T00:00:00.000Z`);
+    }
+    const row = (await repo.findByEndpoint(sub().endpoint))!;
+    expect(row.deliveryHistory).toHaveLength(15);
+    expect(row.deliveryHistory![0]).toBe('2026-09-17T00:00:00.000Z');
+    expect(row.deliveryHistory![14]).toBe('2026-09-03T00:00:00.000Z');
+    expect(row.lastSuccessAt).toBe('2026-09-17T00:00:00.000Z');
+    expect(row.failureCount).toBe(0);
+  });
+
+  it('a stale-snapshot save (the failure branch) does not wipe history', async () => {
+    const { repo } = await setup([sub()]);
+    const snapshot = (await repo.findByEndpoint(sub().endpoint))!;
+    await repo.recordSuccess(sub().endpoint, '2026-09-20T00:00:00.000Z');
+    await repo.save({ ...snapshot, failureCount: 1, lastFailureAt: '2026-09-20T00:01:00.000Z' });
+    expect((await repo.findByEndpoint(sub().endpoint))!.deliveryHistory).toEqual(['2026-09-20T00:00:00.000Z']);
+  });
+
+  it('re-subscribing the SAME account keeps history; a DIFFERENT account moves the phone and clears it', async () => {
+    const { repo, ctrl } = await setup([]);
+    const body = { endpoint: 'https://x/shared', keys: { p256dh: 'p', auth: 'a' }, device: 'iPhone' };
+    await ctrl.subscribe(req(actor('church', 'usr_b'), body));
+    await repo.recordSuccess('https://x/shared', '2026-09-20T00:00:00.000Z');
+    await ctrl.subscribe(req(actor('church', 'usr_b'), body));
+    expect((await repo.findByEndpoint('https://x/shared'))!.deliveryHistory).toHaveLength(1);
+    await ctrl.subscribe(req(actor('church', 'usr_g'), body));
+    const moved = (await repo.findByEndpoint('https://x/shared'))!;
+    expect(moved.userId).toBe('usr_g');
+    expect(moved.deliveryHistory).toEqual([]);
+    expect(await repo.findByUser('usr_b')).toHaveLength(0);
+  });
+
+  it('summariseDevices carries the history', () => {
+    const out = summariseDevices([sub({ deliveryHistory: ['2026-09-20T00:00:00.000Z'] })]);
+    expect(out['usr_church']![0]!.history).toEqual(['2026-09-20T00:00:00.000Z']);
+  });
+});
+
 describe('POST /push/subscribe device label', () => {
   it('stores the label, and a label-less re-subscribe keeps the known one', async () => {
     const { repo, ctrl } = await setup([]);

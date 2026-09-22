@@ -55,6 +55,16 @@ describe('push_subscriptions mapper encryption', () => {
     expect(old.deviceLabel).toBeNull();
   });
 
+  it('writes delivery_history as a real array (never a JSON string) and reads it back', () => {
+    const cols = pushSubColumns(sub({ deliveryHistory: ['2026-09-20T00:00:00.000Z'] }));
+    // A string here is the double-encoding bug that wiped prod on 2026-08-04.
+    expect(Array.isArray(cols['delivery_history'])).toBe(true);
+    const back = toPushSub({ ...cols, created_at: new Date('2026-09-29T01:00:00.000Z') } as Record<string, unknown>);
+    expect(back.deliveryHistory).toEqual(['2026-09-20T00:00:00.000Z']);
+    const { delivery_history: _h, ...legacy } = cols;
+    expect(toPushSub({ ...legacy, created_at: new Date() } as Record<string, unknown>).deliveryHistory).toEqual([]);
+  });
+
   it('rejects ciphertext decrypted under the wrong AAD (bound to column)', () => {
     // Swapping the two ciphertexts must fail to decrypt, proving the AAD is per-column.
     // A value encrypted under p256dh AAD cannot decrypt under auth AAD.

@@ -639,11 +639,9 @@ export function makePushService(deps: PushServiceDeps) {
             const outcome = await sendOne(task.sub, task.payload, cfg);
             if (outcome === 'ok') {
               succeeded += 1;
-              await deps.subscriptions.save({
-                ...task.sub,
-                lastSuccessAt: nowISO(),
-                failureCount: 0,
-              });
+              // Atomic — the same phone can be in `tasks` twice (two notices this tick), and a
+              // snapshot save would drop one delivery-history entry. See recordSuccess.
+              await deps.subscriptions.recordSuccess(task.sub.endpoint, nowISO());
             } else if (outcome === 'gone') {
               pruned += 1;
               await deps.subscriptions.deleteByEndpoint(task.sub.endpoint);
@@ -775,7 +773,9 @@ export function makePushService(deps: PushServiceDeps) {
         const outcome = await sendOne(sub, payload, cfg);
         if (outcome === 'ok') {
           sent += 1;
-          await deps.subscriptions.save({ ...sub, lastSuccessAt: nowISO(), failureCount: 0 });
+          // A test that reached the phone is a real delivery, so it goes in the history too —
+          // it is the only way to populate the admin's delivery screen before a real alert.
+          await deps.subscriptions.recordSuccess(sub.endpoint, nowISO());
         } else if (outcome === 'gone') {
           pruned += 1;
           await deps.subscriptions.deleteByEndpoint(sub.endpoint);
@@ -821,6 +821,8 @@ export interface PushDeviceSummary {
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   failureCount: number;
+  /** Recent accepted deliveries, newest first (≤ MAX_DELIVERY_HISTORY). */
+  history: string[];
 }
 
 /**
@@ -848,6 +850,7 @@ export function summariseDevices(subs: PushSubscription[]): Record<string, PushD
       lastSuccessAt: s.lastSuccessAt ?? null,
       lastFailureAt: s.lastFailureAt ?? null,
       failureCount: s.failureCount,
+      history: s.deliveryHistory ?? [],
     });
   }
   return out;
