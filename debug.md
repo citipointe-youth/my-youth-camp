@@ -475,6 +475,7 @@ then **parallel-loads** `/home`+`/registrants`+`/notifications`, pre-camp home (
 | Screen / fn | ~Line |
 |---|---|
 | `RENDER.people` (My Youth) | 841 |
+| `_contactExportRows` / `exportStudentContacts` (My Youth "Export student contact", 2026-09-22) | grep the name — just above `RENDER.people`. Button `#contactExportBtn` in `buildPeopleSnap`. Wrong people/columns → `_contactExportRows` (+ `node scripts/contact-export-harness.js`); button missing/overlapping → `.snaphead`/`.snapx` CSS near `.accbadge`. |
 | `scopeRegs / drawPeople / personRow` | 878 / 879 / 892 |
 | `openPerson / markReg` | 906 / 925 |
 | `RENDER.help` | 929 |

@@ -4,6 +4,28 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## My Youth: "Export student contact" — 2026-09-22
+
+Owner request. A button in the top-middle of the My Youth snapshot card (`buildPeopleSnap`,
+between the Students count and the accommodation badge; wraps to its own centred row ≤420px)
+downloads `youth-camp-<year>-contacts-<date>.xlsx`, one sheet `Contacts`. **SPA-only** — no
+backend/DTO/schema change; `RegistrantDto` already carried every field and none is masked for
+any role. `sw.js` → **`camp-v118`**.
+
+- **Who:** `scopeRegs()` (login scope + director/admin Church dropdown; Gender/Grade/search
+  ignored), **cancelled excluded**, **students AND leaders** despite the button label — owner's
+  explicit choice, don't "fix" the label or drop leaders.
+- **Columns:** `Type, First name, Last name, Grade (blank for leaders), Email, Phone` +
+  a leading `Church` column when `_isWideRole()` (director/admin/zoneLeader).
+- **Phone** goes through `fmtPhone` and is written as a TEXT cell so the leading 0 survives.
+- `_contactExportRows` is pure and extracted **BY NAME** by `scripts/contact-export-harness.js`
+  (also round-trips through vendored SheetJS to prove phones stay text). Never rename it without
+  updating the harness. Run: `node scripts/contact-export-harness.js`.
+- **Not verified in a browser** (repo convention — no dev server). Owner to eyeball on-device:
+  button centred between the count and the badge (and with no badge); on a phone ≤420px it drops
+  to its own centred row; tapping it downloads the .xlsx, including from the installed iOS PWA
+  (same `_rlSaveBlob` path as the accommodation export).
+
 ## Pre-camp student profile: mobile + parent phone — 2026-09-21
 
 Owner: the at-camp profile (`openCamper`, `/campers`) already shows the student's own mobile and
