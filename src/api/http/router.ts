@@ -55,7 +55,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const settingsCtrl = makeSettingsController({ settings: services.settings });
   const admin = makeAdminController({ admin: services.admin, cron: services.cron });
   const cronCtrl = makeCronController({ tick: services.cron });
-  const pushCtrl = makePushController({ subscriptions: services.pushSubscriptionRepo, push: services.push });
+  const pushCtrl = makePushController({ subscriptions: services.pushSubscriptionRepo, push: services.push, users: services.users });
 
   return [
     // ----- First-run admin setup (permanently disabled once admin has a password) -----

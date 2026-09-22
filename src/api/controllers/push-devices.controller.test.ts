@@ -80,6 +80,16 @@ describe('POST /push/label', () => {
     expect((await ctrl.label(req(actor('church'), { endpoint: 'https://x/none', device: 'Android' }))).updated).toBe(false);
   });
 
+  it('reports which account the phone belongs to (for the "from <account>" card)', async () => {
+    const repo = new InMemoryPushSubscriptionRepository();
+    await repo.save(sub({ deviceLabel: 'iPhone' }));
+    const users = { findById: async (id: string) => (id === 'usr_church' ? ({ username: 'b-victory' } as never) : null) };
+    const ctrl = makePushController({ subscriptions: repo, users });
+    const res = await ctrl.label(req(actor('church', 'usr_other'), { endpoint: sub().endpoint, device: 'iPhone' }));
+    expect(res.owner).toBe('b-victory');
+    expect((await repo.findByEndpoint(sub().endpoint))!.userId).toBe('usr_church');
+  });
+
   it('rejects a free-text device (only the fixed list is stored)', async () => {
     const { ctrl } = await setup([sub()]);
     await expect(ctrl.label(req(actor('church'), { endpoint: sub().endpoint, device: 'Mozilla/5.0 (iPhone…' }))).rejects.toThrow();

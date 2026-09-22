@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { HttpRequest } from '../http/types';
-import type { IPushSubscriptionRepository } from '../../repositories/interfaces/entity-repositories';
+import type { IPushSubscriptionRepository, IUserRepository } from '../../repositories/interfaces/entity-repositories';
 import { readPushConfig, summariseDevices, type PushService } from '../../services/push.service';
 import { PUSH_DEVICE_LABELS } from '../../core/entities/push-subscription';
 import { assertCan } from '../../services/access-control';
@@ -50,6 +50,8 @@ export interface PushControllerServices {
    * a push service; POST /push/test then reports `configured: false` instead of throwing.
    */
   push?: Pick<PushService, 'sendTestToUser'>;
+  /** Optional: lets POST /push/label tell a phone which account its alerts are from. */
+  users?: Pick<IUserRepository, 'findById'>;
 }
 
 export function makePushController(services: PushControllerServices) {
@@ -128,16 +130,23 @@ export function makePushController(services: PushControllerServices) {
      * to another just because someone else signed in on it. This touches `deviceLabel` only.
      * Keyed on the endpoint alone for the same reason as `unsubscribe` (only the phone that
      * owns it holds it). Only fills a blank label, so it can't be used to relabel a device.
+     *
+     * Also returns `owner` — the USERNAME the phone's alerts belong to — so the Notices card
+     * can say "Alerts on this phone are from b-victory" when a different login is using the
+     * phone (a subscription follows whoever last turned alerts on, not whoever is signed in).
+     * Only the phone holding the endpoint can ask, and it was that account's phone.
      */
     async label(req: HttpRequest) {
       const actor = req.ctx?.actor;
       if (!actor) throw new UnauthorizedError();
       const data = LabelSchema.parse(req.body);
       const existing = await services.subscriptions.findByEndpoint(data.endpoint);
-      if (!existing) return { ok: true as const, updated: false };
-      if (existing.deviceLabel) return { ok: true as const, updated: false };
+      if (!existing) return { ok: true as const, updated: false, owner: null };
+      const ownerUser = services.users ? await services.users.findById(existing.userId) : null;
+      const owner = ownerUser?.username ?? null;
+      if (existing.deviceLabel) return { ok: true as const, updated: false, owner };
       await services.subscriptions.save({ ...existing, deviceLabel: data.device });
-      return { ok: true as const, updated: true };
+      return { ok: true as const, updated: true, owner };
     },
 
     /**

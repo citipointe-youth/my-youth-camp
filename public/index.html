@@ -7008,6 +7008,7 @@ RENDER.loginActivity=async function(){
 // _pushReached/_pushLastSuccess/_deviceLabel are pure and extracted BY NAME by
 // scripts/push-activity-harness.js — never rename them.
 const _PUSH_LABELLED_KEY='ycp_push_labelled';
+const _PUSH_OWNER_KEY='ycp_push_owner'; // username this phone's alerts belong to (see _renderPushCard)
 function _pushReached(devs){return (devs||[]).some(d=>d&&d.lastSuccessAt);}
 function _pushLastSuccess(devs){
   let best=null;
@@ -7038,8 +7039,9 @@ async function _pushLabelSync(){
     const reg=await navigator.serviceWorker.getRegistration();
     const sub=reg&&await reg.pushManager.getSubscription();
     if(!sub)return;
-    await api('/push/label',{method:'POST',body:{endpoint:sub.endpoint,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints)}});
-    try{localStorage.setItem(_PUSH_LABELLED_KEY,'1');}catch(_){}
+    const r=await api('/push/label',{method:'POST',body:{endpoint:sub.endpoint,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints)}});
+    // Also learns which account this (pre-existing) phone's alerts are from.
+    try{localStorage.setItem(_PUSH_LABELLED_KEY,'1');if(r&&r.owner)localStorage.setItem(_PUSH_OWNER_KEY,r.owner);}catch(_){}
   }catch(_){}
 }
 RENDER.pushActivity=async function(){
@@ -10219,7 +10221,17 @@ async function _renderPushCard(){
            device can be proven working, and an admin diagnosing a leader's phone may still want
            it reachable. Trade-off accepted by the owner: a leader can no longer self-test. */
         const _testBtn=(ACTOR&&ACTOR.role==='admin')?`<button class="btn ghost sm" onclick="_pushTest()">Send a test</button>`:'';
-        body=`<div class="rowsb" style="align-items:center"><span class="sub" style="margin:0">${icSm('check')} Alerts are on for this device</span>
+        /* One phone, several logins (2026-09-22): a subscription belongs to whichever account
+           last turned alerts on — logging out does not move it. If that was a different login,
+           say so ("from b-victory") instead of the misleading "Alerts are on". Owner is
+           remembered on the phone (_PUSH_OWNER_KEY); unknown (older phone, not yet synced by
+           _pushLabelSync) falls back to the old wording rather than guessing. */
+        let owner=null;try{owner=localStorage.getItem(_PUSH_OWNER_KEY);}catch(_){}
+        const other=owner&&ACTOR&&ACTOR.username&&owner!==ACTOR.username;
+        body=other
+          ?`<div class="rowsb" style="align-items:center"><span class="sub" style="margin:0">${icSm('bell')} Alerts on this phone are from <b>${esc(owner)}</b></span>
+          <span style="display:flex;gap:6px"><button class="btn ghost sm" onclick="_pushSwitch()">Switch to this account</button><button class="btn ghost sm" onclick="_pushOff()">Turn off</button></span></div>`
+          :`<div class="rowsb" style="align-items:center"><span class="sub" style="margin:0">${icSm('check')} Alerts are on for this device</span>
           <span style="display:flex;gap:6px">${_testBtn}<button class="btn ghost sm" onclick="_pushOff()">Turn off</button></span></div>`;
       }else{
         body=`<button class="btn ghost sm" onclick="_pushOn()">${icSm('bell')} Turn on alerts for this device</button>`;
@@ -10363,7 +10375,7 @@ async function _pushFinish(permP){
     }
     const j=sub.toJSON();
     await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg.keyId,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints)}});
-    try{localStorage.setItem(_PUSH_LABELLED_KEY,'1');}catch(_){}
+    try{localStorage.setItem(_PUSH_LABELLED_KEY,'1');if(ACTOR&&ACTOR.username)localStorage.setItem(_PUSH_OWNER_KEY,ACTOR.username);}catch(_){}
     toast('Alerts are on for this device');
   }catch(e){
     _pushFail(e);
@@ -10383,6 +10395,28 @@ function _pushFail(e){
   toast('Could not turn on alerts — '+n);
 }
 
+// Move this phone's alerts to the signed-in account. Permission is already granted, so this is
+// just the ordinary upsert with the phone's existing subscription — no OS prompt, no activation
+// rule. The server clears the phone's delivery history as it changes hands.
+async function _pushSwitch(){
+  if(_pushBusy)return;
+  _pushBusy=true;
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.getSubscription();
+    if(sub){
+      const j=sub.toJSON();
+      await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg&&_pushCfg.keyId,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints)}});
+      try{if(ACTOR&&ACTOR.username)localStorage.setItem(_PUSH_OWNER_KEY,ACTOR.username);}catch(_){}
+      toast('Alerts on this phone are now from '+ACTOR.username);
+    }
+  }catch(e){
+    _pushFail(e);
+  }finally{
+    _pushBusy=false;
+    _renderPushCard();
+  }
+}
 async function _pushOff(){
   if(_pushBusy)return;
   _pushBusy=true;
@@ -10395,6 +10429,7 @@ async function _pushOff(){
       // fails; the row is then pruned server-side on the next 404/410 regardless.
       try{await sub.unsubscribe();}catch(_){}
       try{await api('/push/subscribe',{method:'DELETE',body:{endpoint:endpoint}});}catch(_){}
+      try{localStorage.removeItem(_PUSH_OWNER_KEY);}catch(_){}
     }
     toast('Alerts turned off for this device');
   }catch(_){

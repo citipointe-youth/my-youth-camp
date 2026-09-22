@@ -12,8 +12,8 @@ are getting push alerts and how many phones each. Backend + SPA + **migration `0
 BEFORE this code deploys** — `supabase.push-subscriptions` `save()` names `device_label` in its
 insert AND on-conflict list, so without the column every subscribe AND every post-send
 `lastSuccessAt`/`failureCount` write fails. `npm run typecheck` clean, `npx vitest run`
-**1113 pass / 65 files** (was 1101/64; +12, +1 file). New `scripts/push-activity-harness.js`
-(14 checks). `node --check` OK on the SPA body (range **1004–10487**, re-derived) and `sw.js`.
+**1114 pass / 65 files** (was 1101/64; +13, +1 file). New `scripts/push-activity-harness.js`
+(14 checks). `node --check` OK on the SPA body (range **1004–10522**, re-derived) and `sw.js`.
 `sw.js` `camp-v119`→**`camp-v120`**.
 
 - **Current state only, by owner choice.** It reads the existing `push_subscriptions` rows (one
@@ -60,7 +60,14 @@ insert AND on-conflict list, so without the column every subscribe AND every pos
   out does NOT unsubscribe (`logout()` never touches push), so a phone switched from `b-x` to
   `g-x` keeps getting `b-x`'s alerts — and `_renderPushCard` still says "Alerts are on for this
   device" to `g-x`, because it only checks the phone's local subscription. The phone moves to
-  `g-x` only if `g-x` turns alerts off then on. Not changed in this release.
+  `g-x` only if `g-x` turns alerts off then on. **Now surfaced, minimally (owner, same day):**
+  the Notices card reads **"Alerts on this phone are from `b-x`"** with **Switch to this account**
+  (`_pushSwitch` — the ordinary `/push/subscribe` upsert with the phone's existing subscription;
+  no OS prompt, history cleared server-side) + Turn off. Wording is "from", not "to" — owner's
+  call. The owner is remembered ON THE PHONE (`ycp_push_owner`), set by `_pushFinish`/
+  `_pushSwitch`, cleared by `_pushOff`, and learned once for pre-existing phones from the
+  `owner` field `POST /push/label` now returns. Unknown owner ⇒ old wording (never guesses).
+  Logout behaviour itself is unchanged — alerts still follow the phone, not the session.
 - **Filter on BOTH screens** (`_missingSeg`, `setLaFilter`/`setPaFilter`, module-level
   `_laOnlyMissing`/`_paOnlyMissing`): a `.seg` **All | Not logged in (N)** / **All | Not
   receiving (N)**. "Not receiving" = no phone with a `lastSuccessAt` (includes no phones at all).
