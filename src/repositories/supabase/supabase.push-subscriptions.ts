@@ -18,6 +18,7 @@ export function toPushSub(r: Record<string, unknown>): PushSubscription {
     failureCount: Number(r['failure_count'] ?? 0),
     deviceLabel: (r['device_label'] as PushDeviceLabel | null) ?? null,
     deliveryHistory: (r['delivery_history'] as string[] | null) ?? [],
+    leaderInitials: (r['leader_initials'] as string | null) ?? null,
   };
 }
 
@@ -39,6 +40,7 @@ export function pushSubColumns(s: PushSubscription): Record<string, unknown> {
     // Passed as an object, NOT JSON.stringify + ::jsonb — that double-encodes (the 2026-08-04
     // new-year wipe). postgres.js serialises a plain array into jsonb itself.
     delivery_history: s.deliveryHistory ?? [],
+    leader_initials: s.leaderInitials ?? null,
   };
 }
 
@@ -81,6 +83,8 @@ export class SupabasePushSubscriptionRepository implements IPushSubscriptionRepo
         last_failure_at = excluded.last_failure_at,
         failure_count = excluded.failure_count,
         device_label = excluded.device_label,
+        -- Latest wins: a different leader taking the device re-sends their own initials.
+        leader_initials = excluded.leader_initials,
         -- History is owned by recordSuccess(); an ordinary save carries a possibly-stale
         -- snapshot and must not clobber a concurrent append. The one exception: the phone
         -- was re-subscribed under a DIFFERENT account, so take the incoming (cleared) value.

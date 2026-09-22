@@ -138,6 +138,40 @@ describe('delivery history', () => {
   });
 });
 
+describe('leader initials (pulled from the device, never prompted)', () => {
+  it('subscribe stores them, and a later leader replaces them', async () => {
+    const { repo, ctrl } = await setup([]);
+    const body = { endpoint: 'https://x/9', keys: { p256dh: 'p', auth: 'a' }, device: 'iPhone' };
+    await ctrl.subscribe(req(actor('church'), { ...body, initials: 'SD' }));
+    expect((await repo.findByEndpoint('https://x/9'))!.leaderInitials).toBe('SD');
+    await ctrl.subscribe(req(actor('church'), { ...body, initials: 'TW' }));
+    expect((await repo.findByEndpoint('https://x/9'))!.leaderInitials).toBe('TW');
+  });
+
+  it('a login with no initials (non-church) stores none', async () => {
+    const { repo, ctrl } = await setup([]);
+    await ctrl.subscribe(req(actor('director'), { endpoint: 'https://x/d', keys: { p256dh: 'p', auth: 'a' }, device: 'Mac' }));
+    expect((await repo.findByEndpoint('https://x/d'))!.leaderInitials).toBeNull();
+  });
+
+  it('label updates changed initials even when the device type is already known', async () => {
+    const { repo, ctrl } = await setup([sub({ deviceLabel: 'iPhone', leaderInitials: 'SD' })]);
+    const r = await ctrl.label(req(actor('church'), { endpoint: sub().endpoint, device: 'iPhone', initials: 'TW' }));
+    expect(r.updated).toBe(true);
+    expect((await repo.findByEndpoint(sub().endpoint))!.leaderInitials).toBe('TW');
+  });
+
+  it('label without initials never clears the ones on record', async () => {
+    const { repo, ctrl } = await setup([sub({ deviceLabel: 'iPhone', leaderInitials: 'SD' })]);
+    await ctrl.label(req(actor('church'), { endpoint: sub().endpoint, device: 'iPhone' }));
+    expect((await repo.findByEndpoint(sub().endpoint))!.leaderInitials).toBe('SD');
+  });
+
+  it('summariseDevices carries them', () => {
+    expect(summariseDevices([sub({ leaderInitials: 'SD' })])['usr_church']![0]!.initials).toBe('SD');
+  });
+});
+
 describe('POST /push/subscribe device label', () => {
   it('stores the label, and a label-less re-subscribe keeps the known one', async () => {
     const { repo, ctrl } = await setup([]);

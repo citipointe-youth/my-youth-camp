@@ -28,6 +28,9 @@ const SubscribeSchema = z.object({
   }),
   keyId: z.string().max(100).nullish(),
   device: z.enum(PUSH_DEVICE_LABELS).nullish(),
+  // Read from the device's existing initials — never prompted for. Capped to match
+  // _saveLeaderInitials' own 6-char slice.
+  initials: z.string().trim().max(6).nullish(),
 });
 
 const UnsubscribeSchema = z.object({
@@ -37,6 +40,7 @@ const UnsubscribeSchema = z.object({
 const LabelSchema = z.object({
   endpoint: z.string().url().max(2000),
   device: z.enum(PUSH_DEVICE_LABELS),
+  initials: z.string().trim().max(6).nullish(),
 });
 
 const TestSchema = z.object({
@@ -117,6 +121,9 @@ export function makePushController(services: PushControllerServices) {
         // caller, and the old account's deliveries must not appear under the new one. The
         // repo's save() only honours this value when user_id actually changes.
         deliveryHistory: existing && existing.userId === actor.id ? existing.deliveryHistory ?? [] : [],
+        // Whoever is using the phone now owns the row, so their initials replace the previous
+        // leader's. A login with no initials (every non-church role) sends none.
+        leaderInitials: data.initials || null,
       };
       await services.subscriptions.save(row);
       return { ok: true as const };
@@ -144,8 +151,18 @@ export function makePushController(services: PushControllerServices) {
       if (!existing) return { ok: true as const, updated: false, owner: null };
       const ownerUser = services.users ? await services.users.findById(existing.userId) : null;
       const owner = ownerUser?.username ?? null;
-      if (existing.deviceLabel) return { ok: true as const, updated: false, owner };
-      await services.subscriptions.save({ ...existing, deviceLabel: data.device });
+      // The device type is filled once (it cannot change); the INITIALS can — a different
+      // leader taking the device saves new ones and the phone re-sends them here. Both come
+      // from what the device already holds, so neither asks the user anything.
+      const initials = data.initials || null;
+      const fillLabel = !existing.deviceLabel;
+      const changeInitials = initials !== null && initials !== existing.leaderInitials;
+      if (!fillLabel && !changeInitials) return { ok: true as const, updated: false, owner };
+      await services.subscriptions.save({
+        ...existing,
+        deviceLabel: fillLabel ? data.device : existing.deviceLabel,
+        leaderInitials: changeInitials ? initials : existing.leaderInitials ?? null,
+      });
       return { ok: true as const, updated: true, owner };
     },
 

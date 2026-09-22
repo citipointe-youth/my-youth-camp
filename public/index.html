@@ -1310,6 +1310,12 @@ function _saveLeaderInitials(v){
   try{if(LEADER_INITIALS)localStorage.setItem(_initialsKey(),LEADER_INITIALS);else localStorage.removeItem(_initialsKey());}catch(_){}
   if(LEADER_INITIALS)LAST_LEADER=LEADER_INITIALS; // keep the shared prefill in step
   _updateInitialsBadge();
+  /* Keep this phone's push registration tagged with whoever is using it (2026-09-23). Asks
+     NOTHING of the leader — it reuses the initials they have just saved here, so the admin's
+     Notification delivery screen can say "SD · iPhone" instead of a nameless "iPhone". Rare
+     (once per login, or when the device changes hands), self-guarded, and a no-op when this
+     phone has no subscription. Declared before _pushLabelSync, which is hoisted. */
+  _pushLabelSync(true);
 }
 // Change/switch initials (header ✎ badge) — the "a different leader took the device" path.
 // Skippable. The login-time gate is enforceInitials() below.
@@ -7030,16 +7036,18 @@ function _deviceLabel(ua,touchPoints){
 // Back-fill the phone type for a device subscribed before migration 0027. Once per device
 // (flag set on success), silent, and via /push/label rather than /push/subscribe — the latter
 // would move the row onto whichever account is signed in now. Never throws.
-async function _pushLabelSync(){
+async function _pushLabelSync(force){
   try{
     if(PREVIEW_MODE||ACCOUNT_PREVIEW)return;
     if(!('serviceWorker' in navigator)||!('PushManager' in window)||typeof Notification==='undefined')return;
     if(Notification.permission!=='granted')return;
-    try{if(localStorage.getItem(_PUSH_LABELLED_KEY))return;}catch(_){return;}
+    // `force` is the "a different leader just took this device" path (_saveLeaderInitials) —
+    // the once-per-device flag only gates the login-time run, which exists for the phone type.
+    try{if(!force&&localStorage.getItem(_PUSH_LABELLED_KEY))return;}catch(_){return;}
     const reg=await navigator.serviceWorker.getRegistration();
     const sub=reg&&await reg.pushManager.getSubscription();
     if(!sub)return;
-    const r=await api('/push/label',{method:'POST',body:{endpoint:sub.endpoint,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints)}});
+    const r=await api('/push/label',{method:'POST',body:{endpoint:sub.endpoint,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints),initials:LEADER_INITIALS||null}});
     // Also learns which account this (pre-existing) phone's alerts are from.
     try{localStorage.setItem(_PUSH_LABELLED_KEY,'1');if(r&&r.owner)localStorage.setItem(_PUSH_OWNER_KEY,r.owner);}catch(_){}
   }catch(_){}
@@ -7057,7 +7065,10 @@ RENDER.pushActivity=async function(){
   // Account row → phones (one nested dropdown each) → that phone's delivery history. A phone
   // with no deliveries yet is a plain line: nothing to open, so no dead chevron.
   const devLine=d=>{
-    const bits=[`<b>${esc(d.device||'Unknown device')}</b>`,'added '+esc(dtFmt(d.addedAt)),
+    // Initials lead when the leader has set them (church logins always have); otherwise the
+    // phone type carries the row. Never "Unknown device" when we know whose phone it is.
+    const who=d.initials?`${esc(d.initials)} · ${esc(d.device||'phone')}`:esc(d.device||'Unknown device');
+    const bits=[`<b>${who}</b>`,'added '+esc(dtFmt(d.addedAt)),
       d.lastSuccessAt?'last delivered '+esc(_relTime(d.lastSuccessAt)):'not yet delivered'];
     if(d.failureCount)bits.push(`<b>${d.failureCount} failed in a row</b>`);
     const line=bits.join(' · ');
@@ -10374,7 +10385,7 @@ async function _pushFinish(permP){
       });
     }
     const j=sub.toJSON();
-    await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg.keyId,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints)}});
+    await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg.keyId,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints),initials:LEADER_INITIALS||null}});
     try{localStorage.setItem(_PUSH_LABELLED_KEY,'1');if(ACTOR&&ACTOR.username)localStorage.setItem(_PUSH_OWNER_KEY,ACTOR.username);}catch(_){}
     toast('Alerts are on for this device');
   }catch(e){
@@ -10406,7 +10417,7 @@ async function _pushSwitch(){
     const sub=await reg.pushManager.getSubscription();
     if(sub){
       const j=sub.toJSON();
-      await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg&&_pushCfg.keyId,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints)}});
+      await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg&&_pushCfg.keyId,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints),initials:LEADER_INITIALS||null}});
       try{if(ACTOR&&ACTOR.username)localStorage.setItem(_PUSH_OWNER_KEY,ACTOR.username);}catch(_){}
       toast('Alerts on this phone are now from '+ACTOR.username);
     }

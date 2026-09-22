@@ -4,6 +4,32 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Phones identified by the leader's OWN initials — migration `0028` — 2026-09-23
+
+Owner, on seeing the screen below: *"they shouldn't have a new notification and field to fill out
+as that adds user workload. It should just pull the existing initials from the app."* Backend +
+SPA + **migration `0028`** (`push_subscriptions.leader_initials text`, additive/nullable, **apply
+to prod BEFORE this code deploys** — the mapper names it in its insert and on-conflict list).
+`npm run typecheck` clean, `npx vitest run` **1119 pass / 65 files** (+5). `node --check` OK on
+the SPA body (range **1004–10533**) and `sw.js`. `sw.js` `camp-v120`→**`camp-v121`**.
+
+- ⚠ **NOTHING IS PROMPTED FOR, AND THAT IS THE REQUIREMENT — do not add a field here.** The
+  initials already exist on the device (`ycp_initials_<username>`, enforced once per login for
+  church accounts since 2026-07-23) and are simply sent alongside the subscription the phone
+  already registers. A phone row now reads `SD · iPhone`; with no initials (every non-church
+  login) it falls back to the phone type alone.
+- **Three send points, all existing calls:** `/push/subscribe` on turn-on and on `_pushSwitch`,
+  and `/push/label` on the once-per-device login sync. Plus **`_saveLeaderInitials` calls
+  `_pushLabelSync(true)`** — the "a different leader took this device" path; `force` bypasses the
+  once-per-device flag, which only ever gated the phone TYPE.
+- **Initials can change, the phone type cannot.** `label` fills the type only when blank but
+  updates initials whenever they differ; a call carrying no initials never clears stored ones
+  (so a non-church login opening the app cannot blank a church leader's tag). On Supabase,
+  `save()`'s on-conflict takes `leader_initials` from `excluded` — latest wins, by design.
+- ⚠ The owner's message also read as a complaint about a new prompt in the previous release.
+  There was none: the phone type is detected, and the "Alerts on this phone are from …" line
+  only renders when that phone's alerts belong to a different login. Stated, not assumed.
+
 ## Notification delivery screen + "not logged in / not receiving" filters — migration `0027` — 2026-09-22 (3rd)
 
 Owner request: a second admin-only screen like Login activity, showing which accounts' phones

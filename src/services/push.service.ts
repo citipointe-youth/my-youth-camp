@@ -816,6 +816,8 @@ export type PushService = ReturnType<typeof makePushService>;
 
 /** One phone as the admin's "Notification delivery" screen sees it (2026-09-22). */
 export interface PushDeviceSummary {
+  /** The leader's own initials, from the device — never prompted for. Null for non-church logins. */
+  initials: string | null;
   device: string | null;
   addedAt: string;
   lastSuccessAt: string | null;
@@ -845,6 +847,7 @@ export function summariseDevices(subs: PushSubscription[]): Record<string, PushD
   const sorted = [...subs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   for (const s of sorted) {
     (out[s.userId] ??= []).push({
+      initials: s.leaderInitials ?? null,
       device: s.deviceLabel ?? null,
       addedAt: s.createdAt,
       lastSuccessAt: s.lastSuccessAt ?? null,

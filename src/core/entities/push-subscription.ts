@@ -46,4 +46,12 @@ export interface PushSubscription {
    * row moves to a different account. Optional so pre-existing construction sites compile.
    */
   deliveryHistory?: string[];
+  /**
+   * The leader's initials as already stored on that phone for this login (migration 0028).
+   * Never prompted for — read from the device's existing initials, so it is null for every
+   * role that doesn't use them (only church logins do) and for phones not yet re-synced.
+   * Latest write wins: when a different leader takes the device and changes the initials,
+   * the phone re-sends them.
+   */
+  leaderInitials?: string | null;
 }

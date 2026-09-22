@@ -1,0 +1,12 @@
+-- Notification delivery screen, follow-up (owner, 2026-09-23): identify a phone by the LEADER'S
+-- INITIALS rather than only its type, so a shared church login's four phones read "SD · iPhone"
+-- instead of four identical "iPhone" rows.
+--
+-- ⚠ NO NEW USER WORKLOAD BY DESIGN — nothing prompts for this. The initials already exist on the
+-- device (`ycp_initials_<username>`, enforced once per login for church accounts since 2026-07-23)
+-- and are simply sent along with the subscription the phone already registers.
+--
+-- Additive/nullable: null for every non-church login (those roles never set initials) and for any
+-- phone that has not reopened the app since this shipped. Must be applied to prod BEFORE the code
+-- deploys — supabase.push-subscriptions names it in its insert and on-conflict list.
+alter table push_subscriptions add column if not exists leader_initials text;
