@@ -515,6 +515,7 @@ then **parallel-loads** `/home`+`/registrants`+`/notifications`, pre-camp home (
 ### Admin screens (admin role; identical in both modes)
 | Screen / fn | ~Line |
 |---|---|
+| `RENDER.loginActivity` / `_loginActivityOrder` (Login activity, 2026-09-20; relaid out 2026-09-22) | grep the name — `/* ===== LOGIN ACTIVITY ===== */`. Wrong order or label → `_loginActivityOrder` (pure; `node scripts/login-activity-harness.js`); row too tall / won't expand → `.la-row`/`.la-line`/`.la-hist` CSS beside `.setg`. |
 | `RENDER.admin` (console) | 1611 | **(2026-07-04)** tiles grouped under three headings — grep `RENDER.admin=function` for the current tile→heading mapping and order (re-ordered once already the same day per follow-up feedback; don't trust a remembered list). |
 | `switchMode` | 1631 |
 | `RENDER.adminAccounts` — **rewritten**: one row per login (leadership + churches) with icon actions | 1649 |

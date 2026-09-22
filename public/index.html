@@ -237,6 +237,18 @@ h3.sec{font-size:var(--t-xs);font-weight:800;letter-spacing:.08em;text-transform
 .setg>summary::-webkit-details-marker{display:none;}
 .setg>summary::after{content:'⌄';margin-left:auto;opacity:.5;font-weight:700;}
 .setg[open]>summary::after{content:'⌃';}
+/* Login activity (2026-09-22): one compact line per account; a logged-in row is a <details>
+   whose summary IS the row, so tapping it expands the history. */
+.la-row{margin-bottom:5px;border:1px solid var(--line);border-radius:12px;background:#fff;}
+.la-line{display:flex;align-items:center;gap:10px;padding:7px 12px;font-size:var(--t-sm);}
+.la-name{flex:1;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.la-when{flex:0 0 auto;font-size:var(--t-micro);color:var(--muted);white-space:nowrap;}
+.la-row.never .la-when{color:var(--ink-2);}
+.la-row>summary{list-style:none;cursor:pointer;}
+.la-row>summary::-webkit-details-marker{display:none;}
+.la-row>summary .la-when::after{content:' ⌄';opacity:.6;}
+.la-row[open]>summary .la-when::after{content:' ⌃';}
+.la-hist{padding:0 12px 8px;color:var(--muted);font-size:var(--t-micro);line-height:1.6;}
 .setg[open]>summary{border-bottom:1px solid var(--line);}
 .setg .card{border:none;box-shadow:none;border-radius:0;margin:0;}
 .setg .pill.ok{background:#dcfce7;color:#166534;}
@@ -6930,38 +6942,36 @@ RENDER.adminAccounts=async function(){
 // Owner request 2026-09-20: see which accounts (especially churches) haven't logged in yet
 // ahead of camp (2026-09-28), so the admin can reach out and help. Reuses GET /accounts/users
 // (already admin:manage-gated) — loginHistory rides along on SafeUser for free, no new route.
+// Order + label (2026-09-22 owner request): leadership/first-aid accounts first (Admin →
+// Director → Zone leader → First aid), then church logins by church name then username, so a
+// church's b-/g-/all- logins sit together. Leadership rows read "<Role>: <username>"; church rows
+// are the bare username (the church is already in it). Pure, and extracted BY NAME by
+// scripts/login-activity-harness.js — never rename it.
+function _loginActivityOrder(users){
+  const RANK={admin:0,director:1,zoneLeader:2,firstAid:3};
+  const LBL={admin:'Admin',director:'Director',zoneLeader:'Zone leader',firstAid:'First aid'};
+  const isL=u=>u.role!=='church';
+  return [...(users||[])].sort((a,b)=>{
+    if(isL(a)!==isL(b))return isL(a)?-1:1;
+    if(isL(a))return ((RANK[a.role]??9)-(RANK[b.role]??9))||String(a.username).localeCompare(String(b.username));
+    return String(a.churchName||'').localeCompare(String(b.churchName||''))||String(a.username).localeCompare(String(b.username));
+  }).map(u=>({u,leader:isL(u),label:(isL(u)?(LBL[u.role]||u.role)+': ':'')+u.username+(u.status==='inactive'?' · inactive':'')}));
+}
 RENDER.loginActivity=async function(){
   const users=await api('/accounts/users');
-  const roleLabel=r=>r==='zoneLeader'?'Zone leader':r==='firstAid'?'First aid':r==='director'?'Director':r==='admin'?'Admin':'Church';
-  const lastLoginMs=u=>(u.loginHistory&&u.loginHistory.length)?Date.parse(u.loginHistory[0]):-Infinity;
-  const sorted=[...users].sort((a,b)=>{
-    const d=lastLoginMs(a)-lastLoginMs(b);
-    if(d!==0)return d;
-    return (a.churchName||a.lastName||'').localeCompare(b.churchName||b.lastName||'');
-  });
   const churchAccts=users.filter(u=>u.role==='church');
   const churchNotIn=churchAccts.filter(u=>!(u.loginHistory&&u.loginHistory.length));
   const summary=churchAccts.length
     ?`<p class="sub" style="margin:0 0 12px">${churchNotIn.length} of ${churchAccts.length} church logins haven't logged in yet</p>`
     :'';
-  const row=u=>{
+  const row=({u,label})=>{
     const history=u.loginHistory||[];
-    const last=history.length?_relTime(history[0]):'Never logged in';
-    const sub=[roleLabel(u.role),u.churchName||u.zone||'',u.status==='inactive'?'inactive':''].filter(Boolean).join(' · ');
-    const dropdown=history.length>0?`<details style="margin-top:4px">
-        <summary class="row" style="cursor:pointer;color:var(--muted);font-size:var(--t-micro);padding:2px 0">History (${history.length})</summary>
-        <div style="padding:4px 0 2px;color:var(--muted);font-size:var(--t-micro)">${history.map(h=>esc(dtFmt(h))).join('<br>')}</div>
-      </details>`:'';
-    return `<div class="card" style="margin-bottom:8px;padding:12px 14px">
-        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
-          <div style="font-weight:700;font-size:var(--t-sm)">${esc(u.firstName+' '+u.lastName)}</div>
-          <div style="font-size:var(--t-micro);color:${history.length?'var(--muted)':'var(--ink-2,#555)'}">${esc(last)}</div>
-        </div>
-        <div class="sub" style="margin-top:2px">${esc(sub)}</div>
-        ${dropdown}
-      </div>`;
+    if(!history.length)return `<div class="la-row never"><div class="la-line"><span class="la-name">${esc(label)}</span><span class="la-when">Never logged in</span></div></div>`;
+    return `<details class="la-row"><summary class="la-line"><span class="la-name">${esc(label)}</span><span class="la-when">${esc(_relTime(history[0]))}</span></summary>
+        <div class="la-hist">${history.map(h=>esc(dtFmt(h))).join('<br>')}</div></details>`;
   };
-  paint('loginActivity',`${summary}${sorted.length?sorted.map(row).join(''):emptyState('users','No accounts yet.')}`,'Login activity','Who has logged in, and when');
+  const rows=_loginActivityOrder(users);
+  paint('loginActivity',`${summary}${rows.length?rows.map(row).join(''):emptyState('users','No accounts yet.')}`,'Login activity','Who has logged in, and when');
 };
 function aRoleChange(){
   const r=document.getElementById('aR').value;

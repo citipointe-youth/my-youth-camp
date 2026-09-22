@@ -4,6 +4,28 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Login activity: leadership first, one-line rows — 2026-09-22 (2nd)
+
+Owner request against the 2026-09-20 screen below. **SPA-only** (`public/index.html`) — no
+backend, DTO, schema or migration change. `npm run typecheck` clean, `npx vitest run` **1101 pass**
+(unchanged — browser-only), `node --check` OK on the SPA body (range **994–10376**, re-derived) and
+`sw.js`. New `scripts/login-activity-harness.js` (6 checks). `sw.js` `camp-v118`→**`camp-v119`**.
+
+- **Order** is now `_loginActivityOrder(users)` (pure, extracted **by name** by the harness — never
+  rename it): leadership/first-aid first (Admin → Director → Zone leader → First aid, then
+  username), then church logins **by church name, then username**, so each church's
+  `b-`/`g-`/`all-` logins sit together. ⚠️ This **replaces** the old worst-first
+  (never-logged-in-first) sort; the "N of M church logins haven't logged in yet" line is kept.
+- **Labels:** leadership rows read `<Role>: <username>` (`Admin: admin`, `First aid: firstaid`);
+  church rows are the bare username — the church is in it, so the "Church · <church name>" line
+  is gone. An inactive account gets a `· inactive` suffix (it used to be on that removed line).
+  Display name (first/last) is no longer shown.
+- **One line per account** (`.la-row`/`.la-line`, ~7px padding). A logged-in row is a
+  `<details>` whose `<summary>` **is** the row — tap it to expand the timestamp list; the separate
+  "History (n)" link is gone. A never-logged-in row is a plain, non-expandable div.
+- **Not verified on a device** (repo convention). Owner to eyeball: row height, the ⌄/⌃ cue on the
+  right, and that tapping a logged-in row expands it.
+
 ## My Youth: "Export student contact" — 2026-09-22
 
 Owner request. A button in the top-middle of the My Youth snapshot card (`buildPeopleSnap`,
@@ -97,8 +119,8 @@ block a successful login. `npm run typecheck` clean, `npx vitest run` **1101 pas
 
 ### Who sees it and what it shows
 The new "Login activity" screen is **admin-only**, reachable from the admin console's "People &
-churches" group. It shows: a summary "N of M church logins haven't logged in yet" (sorted worst-
-first by days-since-last-login), and for each account, its last login time or "Never logged in",
+churches" group. It shows: a summary "N of M church logins haven't logged in yet" (rows were
+sorted worst-first by days-since-last-login — **superseded 2026-09-22, see the section above**), and for each account, its last login time or "Never logged in",
 with an expandable dropdown showing the last up-to-15 login timestamps (newest-first). Owner's
 stated purpose: seeing which churches haven't logged in yet ahead of camp (2026-09-28) so they can
 reach out and help.
