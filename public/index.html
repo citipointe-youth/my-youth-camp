@@ -9256,8 +9256,12 @@ RENDER.data=async function(){
   // itself returns alphabetical (last name), so re-sort here rather than trust the API order.
   _dataCache=merged.slice().sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
   _dataSortKey=null;_dataSortDir=1;
-  const chOpts=['<option value="">All churches</option>'].concat(
-    (churches||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`)).join('');
+  // "Unallocated" (2026-09-23): only offered when someone is actually unallocated. The sentinel id
+  // works unchanged in both dataApply's client filter and the server's /export/registrants churchId.
+  const unallocN=_dataCache.filter(r=>r.churchId===UNALLOCATED_ID).length;
+  const chOpts=['<option value="">All churches</option>']
+    .concat(unallocN?[`<option value="${UNALLOCATED_ID}">Unallocated (${unallocN})</option>`]:[])
+    .concat((churches||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`)).join('');
   const gradeOpts=['<option value="">All grades</option>','<option value="leader">Leaders</option>']
     .concat([7,8,9,10,11,12].map(g=>`<option value="${g}">Grade ${g}</option>`)).join('');
   /* ⚠️ DIRECTOR ONLY — DO NOT DELETE THIS OUTRIGHT (owner, 2026-09-06).

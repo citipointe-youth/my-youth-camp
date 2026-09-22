@@ -22,6 +22,10 @@ has the church override baked in at import; the original ticket type is not stor
   file would write codes back. No extra header may collide with a name the importer reads.
 - `makeExportService` takes the allocation-override repo as an **optional** third arg; both
   `container.ts` paths pass it. Omit it and column 1 is silently blank.
+- **Follow-up, same day (`sw.js` → `camp-v123`, SPA-only):** the Data tab's Church dropdown
+  gains **"Unallocated (N)"** (value `UNALLOCATED_ID`), shown only when someone is unallocated.
+  No backend change — the sentinel already works in `dataApply` and in `/export/registrants`'s
+  `churchId` filter, so "Export filtered" on it yields just the unallocated people.
 
 ## Phones identified by the leader's OWN initials — migration `0028` — 2026-09-23
 
