@@ -26,6 +26,13 @@ the SPA body (range **1004–10533**) and `sw.js`. `sw.js` `camp-v120`→**`camp
   updates initials whenever they differ; a call carrying no initials never clears stored ones
   (so a non-church login opening the app cannot blank a church leader's tag). On Supabase,
   `save()`'s on-conflict takes `leader_initials` from `excluded` — latest wins, by design.
+- **Leadership phones are named from the ACCOUNT, same day** (`sw.js` → **`camp-v122`**, SPA-only,
+  no schema change). Those roles never set initials, so `devLine(d, fallbackName)` falls back to
+  the holder's `firstName` (then `username`) for a `leader` row — prod reads `Liam · iPhone`,
+  `Youth · iPhone`, `clees · iPhone`. ⚠ **Never applied to a church row**: its holder name is the
+  CHURCH, already the row heading, and it would name four leaders' phones identically — the exact
+  problem initials exist to solve. Two phones on ONE leadership account (prod: `lbarlow` has 2)
+  still read alike; only the added date and history separate them, and the owner was told so.
 - ⚠ The owner's message also read as a complaint about a new prompt in the previous release.
   There was none: the phone type is detected, and the "Alerts on this phone are from …" line
   only renders when that phone's alerts belong to a different login. Stated, not assumed.

@@ -7064,10 +7064,19 @@ RENDER.pushActivity=async function(){
   const plural=n=>n+' phone'+(n===1?'':'s');
   // Account row → phones (one nested dropdown each) → that phone's delivery history. A phone
   // with no deliveries yet is a plain line: nothing to open, so no dead chevron.
-  const devLine=d=>{
-    // Initials lead when the leader has set them (church logins always have); otherwise the
-    // phone type carries the row. Never "Unknown device" when we know whose phone it is.
-    const who=d.initials?`${esc(d.initials)} · ${esc(d.device||'phone')}`:esc(d.device||'Unknown device');
+  /* Naming a phone, best first (2026-09-23):
+       1. the leader's own initials — the only thing that separates four leaders sharing one
+          church login, and already on their device, so nothing is ever prompted for;
+       2. the ACCOUNT HOLDER'S first name, for leadership logins (admin/director/zone leader/
+          first aid). Those are one person each and never set initials, so the account itself
+          names the phone. ⚠ Not used for a church login: its holder name is the CHURCH, which
+          is already the row heading and would name all four leaders' phones identically;
+       3. the phone type alone.
+     Two phones on ONE leadership account still read alike — only the added date and history
+     separate them. Said plainly to the owner rather than papered over. */
+  const devLine=(d,fallbackName)=>{
+    const named=d.initials||fallbackName||'';
+    const who=named?`${esc(named)} · ${esc(d.device||'phone')}`:esc(d.device||'Unknown device');
     const bits=[`<b>${who}</b>`,'added '+esc(dtFmt(d.addedAt)),
       d.lastSuccessAt?'last delivered '+esc(_relTime(d.lastSuccessAt)):'not yet delivered'];
     if(d.failureCount)bits.push(`<b>${d.failureCount} failed in a row</b>`);
@@ -7077,14 +7086,17 @@ RENDER.pushActivity=async function(){
     return `<details class="la-dev"><summary class="la-devline">${line}</summary>
         <div class="la-devhist">${h.map(t=>esc(dtFmt(t))).join('<br>')}</div></details>`;
   };
-  const row=({u,label})=>{
+  const row=({u,label,leader})=>{
     const devs=devsOf(u);
+    // Leadership only — see devLine. Falls back to the username when the account has no first
+    // name recorded, which still beats a bare "iPhone".
+    const fallbackName=leader?((u.firstName||'').trim()||u.username):'';
     if(!devs.length)return `<div class="la-row never"><div class="la-line"><span class="la-name">${esc(label)}</span><span class="la-when">No phones</span></div></div>`;
     const last=_pushLastSuccess(devs);
     const failing=devs.some(d=>d.failureCount>0);
     const when=`${plural(devs.length)} · ${last?'delivered '+_relTime(last):'not yet delivered'}${failing?' · ⚠':''}`;
     return `<details class="la-row"><summary class="la-line"><span class="la-name">${esc(label)}</span><span class="la-when">${esc(when)}</span></summary>
-        <div class="la-devs">${devs.map(devLine).join('')}</div></details>`;
+        <div class="la-devs">${devs.map(d=>devLine(d,fallbackName)).join('')}</div></details>`;
   };
   const all=_loginActivityOrder(users);
   const missing=r=>!_pushReached(devsOf(r.u));
