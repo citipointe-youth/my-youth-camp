@@ -4,6 +4,52 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Notification delivery screen + "not logged in / not receiving" filters — migration `0027` — 2026-09-22 (3rd)
+
+Owner request: a second admin-only screen like Login activity, showing which accounts' phones
+are getting push alerts and how many phones each. Backend + SPA + **migration `0027`**
+(`push_subscriptions.device_label text`, additive/nullable). **⚠ `0027` must be applied to prod
+BEFORE this code deploys** — `supabase.push-subscriptions` `save()` names `device_label` in its
+insert AND on-conflict list, so without the column every subscribe AND every post-send
+`lastSuccessAt`/`failureCount` write fails. `npm run typecheck` clean, `npx vitest run`
+**1108 pass / 65 files** (was 1101/64; +7, +1 file). New `scripts/push-activity-harness.js`
+(14 checks). `node --check` OK on the SPA body (range **996–10473**, re-derived) and `sw.js`.
+`sw.js` `camp-v119`→**`camp-v120`**.
+
+- **Current state only, by owner choice.** It reads the existing `push_subscriptions` rows (one
+  per phone), so it adds **no write to the send path** — `push.service` send logic, the cron tick
+  and the claim are untouched. A per-notice delivery history was offered and declined.
+- **`GET /push/devices`** (`admin:manage`) → `{byUser:{[userId]:PushDeviceSummary[]}}` via the
+  pure **`summariseDevices()`** (`push.service.ts`). ⚠ **Never returns an endpoint or key** — an
+  endpoint alone can unsubscribe that phone. There's a test asserting neither reaches the wire.
+- **Two limits the screen states on itself — don't "fix" them into claims:** "delivered" =
+  Apple/Google ACCEPTED the push (Web Push has no read receipts); and a dead phone is **pruned**
+  (404/410, 10 failures, 90 days), so it shows as a lower count, never a red row.
+- **Phone type (`deviceLabel`)** — `iPhone/iPad/Android/Mac/Windows/Other` (`PUSH_DEVICE_LABELS`),
+  computed client-side by `_deviceLabel(ua,touchPoints)` (iPadOS sends a Mac UA; touch ⇒ iPad)
+  and sent on subscribe. Never the raw UA (a fingerprint). A label-less re-subscribe keeps a
+  known label. The harness checks every label the SPA can produce is in the server list — a label
+  outside it fails Zod and **breaks the whole subscribe**.
+- **Back-fill for the ~98 phones subscribed before `0027`:** `_pushLabelSync()` runs once per
+  device (flag `ycp_push_labelled`) from `_offerAlertsAfterLogin` (top, before the church
+  early-return — so all three sign-in paths) and calls **`POST /push/label`**, which ONLY fills a
+  blank label. ⚠ **Deliberately NOT a re-call of `/push/subscribe`** — that re-assigns the row to
+  whoever is signed in now, which would silently move a phone's alerts between accounts.
+- **SPA:** `RENDER.pushActivity` (+ `<section id="pushActivity">`, admin console tile
+  "Notification delivery" under People & churches). Same order/labels/rows as Login activity
+  (`_loginActivityOrder`, `.la-row`); a row reads `3 phones · delivered 2h ago` (⚠ if any phone is
+  failing) and expands to one line per phone. `_pushReached`/`_pushLastSuccess`/`_deviceLabel`
+  are extracted **by name** by the harness — never rename them.
+- **Filter on BOTH screens** (`_missingSeg`, `setLaFilter`/`setPaFilter`, module-level
+  `_laOnlyMissing`/`_paOnlyMissing`): a `.seg` **All | Not logged in (N)** / **All | Not
+  receiving (N)**. "Not receiving" = no phone with a `lastSuccessAt` (includes no phones at all).
+- ⚠ **At ship time nothing had ever been pushed** (98 phones, 0 `lastSuccessAt`, 0 urgent
+  notices since the first subscribe on 2026-08-07), so every row reads "not yet delivered" until
+  the first urgent push — or the admin's **Send test check-in alert** button, which pushes to every
+  church login's phones through the real pipeline (and drops a "(test)" notice in their feeds).
+- **Not verified on a device** (repo convention). Owner to eyeball both screens' filter bar and
+  the expanded per-phone lines at phone width.
+
 ## Login activity: leadership first, one-line rows — 2026-09-22 (2nd)
 
 Owner request against the 2026-09-20 screen below. **SPA-only** (`public/index.html`) — no

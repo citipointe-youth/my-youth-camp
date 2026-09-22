@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { HttpRequest } from '../http/types';
 import type { IPushSubscriptionRepository } from '../../repositories/interfaces/entity-repositories';
-import { readPushConfig, type PushService } from '../../services/push.service';
+import { readPushConfig, summariseDevices, type PushService } from '../../services/push.service';
+import { PUSH_DEVICE_LABELS } from '../../core/entities/push-subscription';
+import { assertCan } from '../../services/access-control';
 import { UnauthorizedError } from '../../core/errors/app-error';
 import { newId } from '../../utils/id';
 import { nowISO } from '../../utils/date';
@@ -25,10 +27,16 @@ const SubscribeSchema = z.object({
     auth: z.string().min(1).max(500),
   }),
   keyId: z.string().max(100).nullish(),
+  device: z.enum(PUSH_DEVICE_LABELS).nullish(),
 });
 
 const UnsubscribeSchema = z.object({
   endpoint: z.string().url().max(2000),
+});
+
+const LabelSchema = z.object({
+  endpoint: z.string().url().max(2000),
+  device: z.enum(PUSH_DEVICE_LABELS),
 });
 
 const TestSchema = z.object({
@@ -101,9 +109,43 @@ export function makePushController(services: PushControllerServices) {
         // Re-subscribing is a fresh start — a device that failed 9 times and has just
         // re-registered must not be pruned on its next hiccup.
         failureCount: 0,
+        // A subscribe that omits the type (an older cached SPA) must not wipe a known one.
+        deviceLabel: data.device ?? existing?.deviceLabel ?? null,
       };
       await services.subscriptions.save(row);
       return { ok: true as const };
+    },
+
+    /**
+     * POST /push/label — back-fill the phone type on a subscription made before migration 0027.
+     *
+     * Separate from `subscribe` on purpose: re-subscribing re-assigns the row to the CALLING
+     * account, and a silent background call must never move a phone's alerts from one login
+     * to another just because someone else signed in on it. This touches `deviceLabel` only.
+     * Keyed on the endpoint alone for the same reason as `unsubscribe` (only the phone that
+     * owns it holds it). Only fills a blank label, so it can't be used to relabel a device.
+     */
+    async label(req: HttpRequest) {
+      const actor = req.ctx?.actor;
+      if (!actor) throw new UnauthorizedError();
+      const data = LabelSchema.parse(req.body);
+      const existing = await services.subscriptions.findByEndpoint(data.endpoint);
+      if (!existing) return { ok: true as const, updated: false };
+      if (existing.deviceLabel) return { ok: true as const, updated: false };
+      await services.subscriptions.save({ ...existing, deviceLabel: data.device });
+      return { ok: true as const, updated: true };
+    },
+
+    /**
+     * GET /push/devices — admin-only "Notification delivery" screen (2026-09-22).
+     * Returns `{ byUser: { [userId]: PushDeviceSummary[] } }`; the SPA joins it to
+     * /accounts/users. Never carries an endpoint or key — see `summariseDevices`.
+     */
+    async devices(req: HttpRequest) {
+      const actor = req.ctx?.actor;
+      if (!actor) throw new UnauthorizedError();
+      assertCan(actor, 'admin:manage');
+      return { byUser: summariseDevices(await services.subscriptions.findAll()) };
     },
 
     /**

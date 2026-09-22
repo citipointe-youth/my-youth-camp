@@ -1,5 +1,5 @@
 import type { SqlClient } from './client';
-import type { PushSubscription } from '../../core/entities/push-subscription';
+import type { PushSubscription, PushDeviceLabel } from '../../core/entities/push-subscription';
 import type { IPushSubscriptionRepository } from '../interfaces/entity-repositories';
 import { encryptField, maybeDecrypt } from '../../utils/field-crypto';
 
@@ -16,6 +16,7 @@ export function toPushSub(r: Record<string, unknown>): PushSubscription {
     lastSuccessAt: r['last_success_at'] ? new Date(r['last_success_at'] as string | Date).toISOString() : null,
     lastFailureAt: r['last_failure_at'] ? new Date(r['last_failure_at'] as string | Date).toISOString() : null,
     failureCount: Number(r['failure_count'] ?? 0),
+    deviceLabel: (r['device_label'] as PushDeviceLabel | null) ?? null,
   };
 }
 
@@ -33,6 +34,7 @@ export function pushSubColumns(s: PushSubscription): Record<string, unknown> {
     last_success_at: s.lastSuccessAt ?? null,
     last_failure_at: s.lastFailureAt ?? null,
     failure_count: s.failureCount,
+    device_label: s.deviceLabel ?? null,
   };
 }
 
@@ -73,7 +75,8 @@ export class SupabasePushSubscriptionRepository implements IPushSubscriptionRepo
         consent_version = excluded.consent_version,
         last_success_at = excluded.last_success_at,
         last_failure_at = excluded.last_failure_at,
-        failure_count = excluded.failure_count
+        failure_count = excluded.failure_count,
+        device_label = excluded.device_label
     `;
     return s;
   }

@@ -241,6 +241,8 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'GET', path: '/push/config', auth: true, handler: (r) => pushCtrl.config(r) },
     { method: 'POST', path: '/push/subscribe', auth: true, handler: (r) => pushCtrl.subscribe(r) },
     { method: 'DELETE', path: '/push/subscribe', auth: true, handler: (r) => pushCtrl.unsubscribe(r) },
+    { method: 'POST', path: '/push/label', auth: true, handler: (r) => pushCtrl.label(r) },
+    { method: 'GET', path: '/push/devices', auth: true, handler: (r) => pushCtrl.devices(r) },
     // Self-test only — reaches the caller's own devices and nobody else's.
     { method: 'POST', path: '/push/test', auth: true, handler: (r) => pushCtrl.test(r) },
 

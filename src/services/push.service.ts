@@ -813,3 +813,42 @@ export function makePushService(deps: PushServiceDeps) {
 }
 
 export type PushService = ReturnType<typeof makePushService>;
+
+/** One phone as the admin's "Notification delivery" screen sees it (2026-09-22). */
+export interface PushDeviceSummary {
+  device: string | null;
+  addedAt: string;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  failureCount: number;
+}
+
+/**
+ * Group subscriptions by account for the admin delivery screen — CURRENT STATE ONLY.
+ *
+ * ⚠ The endpoint and keys are deliberately NOT in the output. An endpoint is an unguessable
+ * URL that is itself enough to unsubscribe that phone (see push.controller `unsubscribe`), so
+ * even an admin screen must never receive it. Counts, a coarse phone type and timestamps are
+ * all the screen needs.
+ *
+ * "Last success" means Apple/Google/Mozilla ACCEPTED the push — Web Push has no delivery or
+ * read receipt, so this can never prove the phone showed it. And a dead phone is pruned rather
+ * than kept as a failure (404/410, PUSH_FAILURE_LIMIT, PUSH_STALE_DAYS), so a broken device
+ * shows up as a LOWER count, not a red row. Both are stated on the screen itself.
+ *
+ * Newest-added first within an account.
+ */
+export function summariseDevices(subs: PushSubscription[]): Record<string, PushDeviceSummary[]> {
+  const out: Record<string, PushDeviceSummary[]> = {};
+  const sorted = [...subs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  for (const s of sorted) {
+    (out[s.userId] ??= []).push({
+      device: s.deviceLabel ?? null,
+      addedAt: s.createdAt,
+      lastSuccessAt: s.lastSuccessAt ?? null,
+      lastFailureAt: s.lastFailureAt ?? null,
+      failureCount: s.failureCount,
+    });
+  }
+  return out;
+}

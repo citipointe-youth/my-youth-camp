@@ -922,6 +922,7 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="admin"></section>
     <section class="screen" id="adminAccounts"></section>
     <section class="screen" id="loginActivity"></section>
+    <section class="screen" id="pushActivity"></section>
     <section class="screen" id="adminAccom"></section>
     <section class="screen" id="adminSettings"></section>
     <section class="screen" id="adminData"></section>
@@ -6780,6 +6781,7 @@ RENDER.admin=function(){
     <div class="tiles">
       ${_adminTile('key','Accounts &amp; churches',"go('adminAccounts')")}
       ${isAdmin?_adminTile('clock','Login activity',"go('loginActivity')"):''}
+      ${isAdmin?_adminTile('bell','Notification delivery',"go('pushActivity')"):''}
       ${_adminTile('phone','Ministry contacts',"go('adminContacts')")}
     </div>
     <div class="h3" style="margin:16px 0 6px">Data</div>
@@ -6957,10 +6959,21 @@ function _loginActivityOrder(users){
     return String(a.churchName||'').localeCompare(String(b.churchName||''))||String(a.username).localeCompare(String(b.username));
   }).map(u=>({u,leader:isL(u),label:(isL(u)?(LBL[u.role]||u.role)+': ':'')+u.username+(u.status==='inactive'?' · inactive':'')}));
 }
+// "All | <missing> (N)" filter shared by Login activity and Notification delivery (owner,
+// 2026-09-22): reveals only the accounts that still need chasing. Module-level state per
+// screen so the choice survives the re-render the toggle triggers. Empty filtered list gets
+// its own message — a blank screen would read as "failed to load".
+let _laOnlyMissing=false,_paOnlyMissing=false;
+function _missingSeg(on,label,n,fn){
+  return `<div class="seg" style="margin:0 0 10px"><button class="${on?'':'on'}" onclick="${fn}(false)">All</button><button class="${on?'on':''}" onclick="${fn}(true)">${esc(label)} (${n})</button></div>`;
+}
+function setLaFilter(v){_laOnlyMissing=!!v;RENDER.loginActivity();}
+function setPaFilter(v){_paOnlyMissing=!!v;RENDER.pushActivity();}
 RENDER.loginActivity=async function(){
   const users=await api('/accounts/users');
+  const never=u=>!(u.loginHistory&&u.loginHistory.length);
   const churchAccts=users.filter(u=>u.role==='church');
-  const churchNotIn=churchAccts.filter(u=>!(u.loginHistory&&u.loginHistory.length));
+  const churchNotIn=churchAccts.filter(never);
   const summary=churchAccts.length
     ?`<p class="sub" style="margin:0 0 12px">${churchNotIn.length} of ${churchAccts.length} church logins haven't logged in yet</p>`
     :'';
@@ -6970,8 +6983,89 @@ RENDER.loginActivity=async function(){
     return `<details class="la-row"><summary class="la-line"><span class="la-name">${esc(label)}</span><span class="la-when">${esc(_relTime(history[0]))}</span></summary>
         <div class="la-hist">${history.map(h=>esc(dtFmt(h))).join('<br>')}</div></details>`;
   };
-  const rows=_loginActivityOrder(users);
-  paint('loginActivity',`${summary}${rows.length?rows.map(row).join(''):emptyState('users','No accounts yet.')}`,'Login activity','Who has logged in, and when');
+  const all=_loginActivityOrder(users);
+  const rows=_laOnlyMissing?all.filter(r=>never(r.u)):all;
+  const seg=_missingSeg(_laOnlyMissing,'Not logged in',all.filter(r=>never(r.u)).length,'setLaFilter');
+  const body=rows.length?rows.map(row).join('')
+    :emptyState('users',_laOnlyMissing?'Every account has logged in.':'No accounts yet.');
+  paint('loginActivity',`${summary}${seg}${body}`,'Login activity','Who has logged in, and when');
+};
+
+/* ===== NOTIFICATION DELIVERY ===== */
+// Owner request 2026-09-22: which accounts' phones are actually getting alerts, and how many
+// phones each. Same order/labels/rows as Login activity (_loginActivityOrder). CURRENT STATE
+// ONLY — see summariseDevices() in push.service.ts for the two limits the note below states:
+// "delivered" = Apple/Google accepted it (no read receipts exist), and a dead phone is pruned
+// rather than shown as failing. Only urgent notices + incident/check-in alerts push at all.
+// _pushReached/_pushLastSuccess/_deviceLabel are pure and extracted BY NAME by
+// scripts/push-activity-harness.js — never rename them.
+const _PUSH_LABELLED_KEY='ycp_push_labelled';
+function _pushReached(devs){return (devs||[]).some(d=>d&&d.lastSuccessAt);}
+function _pushLastSuccess(devs){
+  let best=null;
+  for(const d of devs||[])if(d&&d.lastSuccessAt&&(!best||d.lastSuccessAt>best))best=d.lastSuccessAt;
+  return best;
+}
+// Coarse phone type sent at subscribe time — never the raw UA (a fingerprint). iPadOS sends a
+// desktop-Mac UA, so a touch-capable "Macintosh" is an iPad. Must stay within the server's
+// PUSH_DEVICE_LABELS list or the subscribe is rejected by validation.
+function _deviceLabel(ua,touchPoints){
+  ua=String(ua||'');
+  if(/iPhone|iPod/.test(ua))return 'iPhone';
+  if(/iPad/.test(ua)||(/Macintosh/.test(ua)&&touchPoints>1))return 'iPad';
+  if(/Android/.test(ua))return 'Android';
+  if(/Macintosh|Mac OS X/.test(ua))return 'Mac';
+  if(/Windows/.test(ua))return 'Windows';
+  return 'Other';
+}
+// Back-fill the phone type for a device subscribed before migration 0027. Once per device
+// (flag set on success), silent, and via /push/label rather than /push/subscribe — the latter
+// would move the row onto whichever account is signed in now. Never throws.
+async function _pushLabelSync(){
+  try{
+    if(PREVIEW_MODE||ACCOUNT_PREVIEW)return;
+    if(!('serviceWorker' in navigator)||!('PushManager' in window)||typeof Notification==='undefined')return;
+    if(Notification.permission!=='granted')return;
+    try{if(localStorage.getItem(_PUSH_LABELLED_KEY))return;}catch(_){return;}
+    const reg=await navigator.serviceWorker.getRegistration();
+    const sub=reg&&await reg.pushManager.getSubscription();
+    if(!sub)return;
+    await api('/push/label',{method:'POST',body:{endpoint:sub.endpoint,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints)}});
+    try{localStorage.setItem(_PUSH_LABELLED_KEY,'1');}catch(_){}
+  }catch(_){}
+}
+RENDER.pushActivity=async function(){
+  const [users,dev]=await Promise.all([api('/accounts/users'),api('/push/devices',{noCache:true})]);
+  const by=(dev&&dev.byUser)||{};
+  const devsOf=u=>by[u.id]||[];
+  const churchAccts=users.filter(u=>u.role==='church');
+  const churchNot=churchAccts.filter(u=>!_pushReached(devsOf(u)));
+  const phoneTotal=users.reduce((n,u)=>n+devsOf(u).length,0);
+  const summary=`<p class="sub" style="margin:0 0 4px">${churchAccts.length?`${churchNot.length} of ${churchAccts.length} church logins have no phone receiving alerts yet · `:''}${phoneTotal} phone${phoneTotal===1?'':'s'} registered</p>
+    <p class="note-hint" style="margin:0 0 12px">Only urgent notices, high-priority incidents and check-in warnings are sent to phones. "Delivered" means Apple/Google accepted the alert — phones can't confirm it was seen. Phones that stop working are removed automatically.</p>`;
+  const plural=n=>n+' phone'+(n===1?'':'s');
+  const devLine=d=>{
+    const bits=[esc(d.device||'Unknown device'),'added '+esc(dtFmt(d.addedAt)),
+      d.lastSuccessAt?'last delivered '+esc(_relTime(d.lastSuccessAt)):'not yet delivered'];
+    if(d.failureCount)bits.push(`<b>${d.failureCount} failed in a row</b>`);
+    return bits.join(' · ');
+  };
+  const row=({u,label})=>{
+    const devs=devsOf(u);
+    if(!devs.length)return `<div class="la-row never"><div class="la-line"><span class="la-name">${esc(label)}</span><span class="la-when">No phones</span></div></div>`;
+    const last=_pushLastSuccess(devs);
+    const failing=devs.some(d=>d.failureCount>0);
+    const when=`${plural(devs.length)} · ${last?'delivered '+_relTime(last):'not yet delivered'}${failing?' · ⚠':''}`;
+    return `<details class="la-row"><summary class="la-line"><span class="la-name">${esc(label)}</span><span class="la-when">${esc(when)}</span></summary>
+        <div class="la-hist">${devs.map(devLine).join('<br>')}</div></details>`;
+  };
+  const all=_loginActivityOrder(users);
+  const missing=r=>!_pushReached(devsOf(r.u));
+  const rows=_paOnlyMissing?all.filter(missing):all;
+  const seg=_missingSeg(_paOnlyMissing,'Not receiving',all.filter(missing).length,'setPaFilter');
+  const body=rows.length?rows.map(row).join('')
+    :emptyState('bell',_paOnlyMissing?'Every account has a phone receiving alerts.':'No accounts yet.');
+  paint('pushActivity',`${summary}${seg}${body}`,'Notification delivery','Which accounts’ phones are getting alerts');
 };
 function aRoleChange(){
   const r=document.getElementById('aR').value;
@@ -10184,6 +10278,9 @@ function _pushOn(){
    is respected. Anyone who declines can still turn alerts on from the Notices screen. */
 function _pushAskedKey(){return 'ycp_push_asked';}
 function _offerAlertsAfterLogin(){
+  // Every role, before the church early-return: back-fills the phone type on a subscription
+  // made before migration 0027. Fire-and-forget and fully self-guarded.
+  _pushLabelSync();
   // Church accounts are served by the initials path — see the warning above.
   if(_isChurchAccount())return;
   // Longer than the initials delay: Home is still painting right after sign-in, and a modal
@@ -10251,7 +10348,8 @@ async function _pushFinish(permP){
       });
     }
     const j=sub.toJSON();
-    await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg.keyId}});
+    await api('/push/subscribe',{method:'POST',body:{endpoint:sub.endpoint,keys:{p256dh:j.keys.p256dh,auth:j.keys.auth},keyId:_pushCfg.keyId,device:_deviceLabel(navigator.userAgent,navigator.maxTouchPoints)}});
+    try{localStorage.setItem(_PUSH_LABELLED_KEY,'1');}catch(_){}
     toast('Alerts are on for this device');
   }catch(e){
     _pushFail(e);

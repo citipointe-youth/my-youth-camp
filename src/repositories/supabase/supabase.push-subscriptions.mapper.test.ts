@@ -45,6 +45,16 @@ describe('push_subscriptions mapper encryption', () => {
     expect(back.failureCount).toBe(0);
   });
 
+  it('round-trips device_label (migration 0027), and reads a pre-0027 row as null', () => {
+    const cols = pushSubColumns(sub({ deviceLabel: 'iPhone' }));
+    expect(cols['device_label']).toBe('iPhone');
+    const back = toPushSub({ ...cols, created_at: new Date('2026-09-29T01:00:00.000Z') } as Record<string, unknown>);
+    expect(back.deviceLabel).toBe('iPhone');
+    const { device_label: _d, ...legacy } = cols;
+    const old = toPushSub({ ...legacy, created_at: new Date('2026-09-29T01:00:00.000Z') } as Record<string, unknown>);
+    expect(old.deviceLabel).toBeNull();
+  });
+
   it('rejects ciphertext decrypted under the wrong AAD (bound to column)', () => {
     // Swapping the two ciphertexts must fail to decrypt, proving the AAD is per-column.
     // A value encrypted under p256dh AAD cannot decrypt under auth AAD.
