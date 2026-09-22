@@ -597,6 +597,7 @@ service. **Bugs are almost always in a service.**
 | Search / contact reveal | `src/services/search.service.ts` | search results, reveal audit |
 | Audit / export | `src/services/audit-export.service.ts` | export CSV, lastExportedAt |
 | Registrant export ("Export all"/"Export filtered") | `src/services/export.service.ts` | Elvanto columns + 6 appended override/accommodation/code columns (`EXPORT_EXTRA_HEADERS`, 2026-09-23). Blank "Church Override (individual)" for everyone → `container.ts` stopped passing the allocation-override repo. |
+| Data tab "Unallocated (N)" church filter missing / wrong | SPA `RENDER.data` `chOpts` (2026-09-23) | Only rendered when someone in `_dataCache` has `churchId===UNALLOCATED_ID`, so its absence is expected when nobody is unallocated. The value must match the backend sentinel `__unallocated__`, or both the table filter and Export filtered come back empty. |
 | Supabase repos | `src/repositories/supabase/*` | prod-only data round-trip issues |
 | Types / Zod schemas / errors | `src/core/*` | validation rejects valid input |
 
