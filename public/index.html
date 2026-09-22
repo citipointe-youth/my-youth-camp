@@ -689,6 +689,8 @@ textarea{min-height:84px;resize:vertical;}
 .detail-hd h2{font-size:var(--t-h1);}
 .snap .bignum{font-size:var(--t-xl);font-weight:800;line-height:1;color:var(--navy);}
 .accbadge{font-size:var(--t-2xs);font-weight:800;padding:7px 12px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
+.snaphead .snapx{flex:1;display:flex;justify-content:center;}
+@media(max-width:420px){.snaphead{flex-wrap:wrap;}.snaphead .snapx{order:3;flex-basis:100%;margin-top:4px;}}
 .accbadge.tent{background:#dcfce7;color:#15803d;}.accbadge.classroom{background:var(--chip);color:var(--violet-d);}.accbadge.mixed{background:#fef3c7;color:#92400e;}
 .gbar{display:flex;height:16px;border-radius:999px;overflow:hidden;background:#eef2f8;margin:4px 0 6px;}
 .gbar i{display:block;height:100%;}.gbar .m{background:linear-gradient(90deg,#818cf8,#4f46e5);}.gbar .f{background:linear-gradient(90deg,#f472b6,var(--female));}
@@ -3140,6 +3142,25 @@ function _contactExportRows(regs,withChurch){
   });
   return rows;
 }
+async function exportStudentContacts(){
+  const btn=document.getElementById('contactExportBtn');
+  if(btn)btn.disabled=true;
+  try{
+    const rows=_contactExportRows(scopeRegs(),_isWideRole());
+    if(rows.length<2){toast('Nothing to export yet');return;}
+    await _ensureXlsx();
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'Contacts');
+    const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+    _rlSaveBlob(new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),
+      _exportName('contacts','xlsx'));
+    toast('Contact list downloaded');
+  }catch(e){
+    toast(e.message||'Could not build the contact list');
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
 
 RENDER.people=async function renderPeople(){
   ALLREG=await api(_scoped('/registrants'));
@@ -3172,8 +3193,9 @@ function buildPeopleSnap(regs){
   // no gender scope and its split IS meaningful, and director/admin/zoneLeader keep it too.
   const genderScoped=!!(ACTOR&&(ACTOR.genderScope==='male'||ACTOR.genderScope==='female'));
   return `<div class="card snap">
-    <div class="rowsb"><div><div class="lbl" style="margin:0">Students</div><div class="bignum">${campers.length}</div></div>
-    ${al.primary!=='none'?`<span class="accbadge ${al.primary}">${ACC_LABEL[al.primary]||al.primary}</span>`:''}
+    <div class="rowsb snaphead"><div><div class="lbl" style="margin:0">Students</div><div class="bignum">${campers.length}</div></div>
+    <div class="snapx"><button type="button" class="btn ghost sm" id="contactExportBtn" onclick="exportStudentContacts()">${icSm('download')} Export student contact</button></div>
+    ${al.primary!=='none'?`<span class="accbadge ${al.primary}">${ACC_LABEL[al.primary]||al.primary}</span>`:'<span></span>'}
     </div>
     ${genderScoped?'':`<div class="lbl" style="margin-top:12px">Student split</div>
     <div class="gbar"><i class="m" style="width:${g.male/gtot*100}%"></i><i class="f" style="width:${g.female/gtot*100}%"></i></div>
