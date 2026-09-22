@@ -4,6 +4,25 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Registrant export: six override/accommodation columns appended — 2026-09-23
+
+Owner request. **Backend only** (`export.service.ts` + `container.ts`) — no SPA, schema or
+migration change, so **no `sw.js` bump**. `npm run typecheck` clean, `npx vitest run` **1122 pass
+/ 65 files** (+3). "Export all" and "Export filtered" (`/export/registrants`) now append, AFTER the
+unchanged Elvanto block (`EXPORT_EXTRA_HEADERS`):
+`Church Override (individual)` (the `formChurch` of any `allocation_overrides` row — both
+`override` and `unallocated` kinds — i.e. what the form said) · `Accommodation Override
+(individual)` (`Person.accommodationOverride`) · `Accommodation Override (church)`
+(`Church.accommodationOverride`) · `Registered Accommodation` (`accommodationKindRaw` — ⚠ already
+has the church override baked in at import; the original ticket type is not stored anywhere) ·
+`Accommodation (final)` (effective `accommodationKind`) · `Discount Code (export)`.
+
+- ⚠ **The code column is deliberately NOT named `Discount Code`** — the Form importer reads that
+  header (`import.service.ts` `field(row,'Code','Discount Code',…)`), so re-importing an exported
+  file would write codes back. No extra header may collide with a name the importer reads.
+- `makeExportService` takes the allocation-override repo as an **optional** third arg; both
+  `container.ts` paths pass it. Omit it and column 1 is silently blank.
+
 ## Phones identified by the leader's OWN initials — migration `0028` — 2026-09-23
 
 Owner, on seeing the screen below: *"they shouldn't have a new notification and field to fill out

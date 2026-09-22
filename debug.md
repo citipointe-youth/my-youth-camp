@@ -596,6 +596,7 @@ service. **Bugs are almost always in a service.**
 | Accommodation | `src/services/accommodation.service.ts` + `accommodation-allocation.ts` (pure: groups/validation/tents) | classroom rooms CRUD, allocation map, 75% eligibility, single-gender/capacity validation, lock, church-rooms. **No blocks/reservations** (removed). |
 | Search / contact reveal | `src/services/search.service.ts` | search results, reveal audit |
 | Audit / export | `src/services/audit-export.service.ts` | export CSV, lastExportedAt |
+| Registrant export ("Export all"/"Export filtered") | `src/services/export.service.ts` | Elvanto columns + 6 appended override/accommodation/code columns (`EXPORT_EXTRA_HEADERS`, 2026-09-23). Blank "Church Override (individual)" for everyone → `container.ts` stopped passing the allocation-override repo. |
 | Supabase repos | `src/repositories/supabase/*` | prod-only data round-trip issues |
 | Types / Zod schemas / errors | `src/core/*` | validation rejects valid input |
 

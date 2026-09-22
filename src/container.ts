@@ -234,7 +234,7 @@ export async function buildContainer(): Promise<Container> {
     const schedule = makeScheduleService(scheduleRepo);
     const content = makeContentService(faqs, devotionals);
     const importSvc = makeImportService(people, churches, allocationOverrides);
-    const exportSvc = makeExportService(people, churches);
+    const exportSvc = makeExportService(people, churches, allocationOverrides);
     const allocation = makeAllocationService(people, churches, allocationOverrides);
     const churchImportSvc = makeChurchImportService(users, churches);
     const ticketImportSvc = makeTicketImportService(people, churches);
@@ -387,7 +387,7 @@ export async function buildContainer(): Promise<Container> {
   const schedule = makeScheduleService(scheduleRepo);
   const content = makeContentService(faqs, devotionals);
   const importSvc = makeImportService(people, churches, allocationOverrides);
-  const exportSvc = makeExportService(people, churches);
+  const exportSvc = makeExportService(people, churches, allocationOverrides);
   const allocation = makeAllocationService(people, churches, allocationOverrides);
   const churchImportSvc = makeChurchImportService(users, churches);
   const ticketImportSvc = makeTicketImportService(people, churches);
