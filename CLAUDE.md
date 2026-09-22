@@ -7,7 +7,7 @@
 ## My Youth: "Export student contact" — 2026-09-22
 
 Owner request. A button in the top-middle of the My Youth snapshot card (`buildPeopleSnap`,
-between the Students count and the accommodation badge; wraps to its own centred row ≤420px)
+between the Students count and the accommodation badge; wraps to its own centred row ≤480px)
 downloads `youth-camp-<year>-contacts-<date>.xlsx`, one sheet `Contacts`. **SPA-only** — no
 backend/DTO/schema change; `RegistrantDto` already carried every field and none is masked for
 any role. `sw.js` → **`camp-v118`**.
@@ -15,6 +15,7 @@ any role. `sw.js` → **`camp-v118`**.
 - **Who:** `scopeRegs()` (login scope + director/admin Church dropdown; Gender/Grade/search
   ignored), **cancelled excluded**, **students AND leaders** despite the button label — owner's
   explicit choice, don't "fix" the label or drop leaders.
+- **Pre-camp only in practice:** My Youth (`people` tab) exists only in pre-camp mode — at camp, `navModel` swaps it for Students — and `/registrants` holds people not yet at camp. Don't go looking for the button at camp.
 - **Columns:** `Type, First name, Last name, Grade (blank for leaders), Email, Phone` +
   a leading `Church` column when `_isWideRole()` (director/admin/zoneLeader).
 - **Phone** goes through `fmtPhone` and is written as a TEXT cell so the leading 0 survives.
@@ -22,7 +23,7 @@ any role. `sw.js` → **`camp-v118`**.
   (also round-trips through vendored SheetJS to prove phones stay text). Never rename it without
   updating the harness. Run: `node scripts/contact-export-harness.js`.
 - **Not verified in a browser** (repo convention — no dev server). Owner to eyeball on-device:
-  button centred between the count and the badge (and with no badge); on a phone ≤420px it drops
+  button centred between the count and the badge (and with no badge) — with no badge it centres in the space right of the count, not on the card; on a phone ≤480px it drops
   to its own centred row; tapping it downloads the .xlsx, including from the installed iOS PWA
   (same `_rlSaveBlob` path as the accommodation export).
 
