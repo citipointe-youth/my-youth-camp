@@ -4,6 +4,67 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Accommodation: "Left to per-registration" per ministry — 2026-09-24
+
+Owner problem: a ministry sitting under the 75% classroom-eligibility bar gets **none** of its
+classroom-preference people grouped — the whole ministry folds into Tent City (2026-07-20
+behaviour), even when the office already knows *some* of that ministry's juniors need classroom
+beds (allergies, age, etc.) and the seniors are genuinely fine in a tent. Backend + SPA +
+**migration `0029`** (`churches.accommodation_per_registration boolean not null default false`,
+additive/nullable-safe — **must be applied to prod BEFORE this code deploys**, same standing rule
+as every prior `people`/`churches` column addition — `supabase.churches`'s mapper reads/writes it
+on every church save). `npm run typecheck` clean, `npx vitest run` **1136 pass / 65 files** (was
+1122; **+14**: +6 `accommodation-allocation.test.ts`, +7 `accommodation.characterisation.test.ts`,
+harness-only for the SPA task — no `src/**` change there), `node scripts/accom-export-harness.js`
+**13 scenarios, all checks passed** (was 11; **+2**). `node --check` OK on the SPA body and
+`sw.js`. `sw.js` `camp-v123`→**`camp-v124`**.
+
+> ⚠️ **`0029` must be applied to prod BEFORE this code deploys.** The controller applies it and
+> pushes `master` immediately after this entry — do not treat it as already live; this entry does
+> not itself confirm deployment (that confirmation, if any, is appended separately below/after).
+
+- **The dropdown lives inside "Under 75% — Moved to Tents"** on the Accommodation Allocations
+  screen (`drawAccom`): a per-ministry **Status** `<select>` — *Moved to tents* (default) /
+  *Left to per-registration* — next to each under-75% church row, wired to
+  `setAccomPerReg(churchId, on, sel)` → `PATCH /accommodation/per-registration/:churchId`.
+  Flipping it to **on** makes that church behave as if it cleared 75%: its classroom-preference
+  people form a normal per-gender (and 7-9/10-12-split, where the pool is big enough) classroom
+  group again, while its tent-preference people are unaffected and still count in Tent City.
+  Director + admin only (`assertDirectorOrAdmin`), and blocked while accommodation is locked for
+  non-admins (`assertNotLocked` — admin is never blocked, matching every other write in this
+  service).
+- **One pure rule, `isEligible`/`_accomEligible`, both call sites.** Backend
+  `accommodation-allocation.ts`'s `isEligible(c, opts)` takes an optional
+  `EligibilityOptions{perRegistration: Set<churchId>}` and short-circuits to "eligible" before the
+  75%-ratio check when the church id is in the set; `computeGroups`/`tentDistribution` both thread
+  it through. `accommodation.service.ts`'s `eligibilityOptions()` builds that set once per call
+  from `churchRepo.findAll()`'s `accommodationPerRegistration` flags, and both `listGroups`/
+  `setAllocations` pass it in. SPA mirrors it as **`ACCOM_ELIGIBLE_RATIO`/`_accomEligible(c)`** —
+  the ONLY place `0.75` is a literal; `accomGroups`, `tentDist`, `_accomExportRows` and
+  `drawAccom` all call the helper. **Harness scenario 13 greps all four functions' extracted
+  source for a literal `0.75` and fails if one reappears** — this is what keeps a future edit from
+  quietly reintroducing a second copy of the ratio.
+- **Switch-back cleanup, and why it's needed.** Turning the flag back OFF for a church whose
+  volume still sits under 75% orphans its now-ineligible classroom group's placements —
+  `setAllocations` (`accommodation.service.ts`) does a **whole-map replace** and
+  `validateAllocations` rejects any group key it doesn't recognise, so ONE stale placement blocks
+  saving the room map for the *entire camp*, not just that church. `setPerRegistration` prunes
+  only that church's now-orphaned `classroom_allocations` rows (via a fresh `computeGroups` with
+  post-toggle eligibility options) when switching OFF; a church that clears 75% on its own keeps
+  its placements untouched, and a sibling church's placements are never touched. See the two new
+  debug.md symptom rows below for what this looks like when it isn't caught.
+- **`/accounts` cache invalidation + the removed `.catch(()=>[])`.** `setAccomPerReg` invalidates
+  `/accommodation` and `/accounts` (`_invalidate`'s new branch) — the flag is read off
+  `/accounts/churches`, which the Accommodation screen already fetches and previously swallowed
+  failures on (`.catch(()=>[])`). That swallow is now removed: a failed churches fetch means the
+  screen can't know which ministries are flagged, so it now surfaces the error rather than
+  silently rendering everyone as "Moved to tents".
+- **Rollover carry-over.** `accommodationPerRegistration` rides on the whole-`Church` object
+  through `saveDefaults`/`newYear` exactly like `accommodationOverride` — no separate snapshot
+  code needed, no new field to exclude. It is a per-year operational choice, not something that
+  should silently persist forever without a fresh look, so if the owner wants it reset at rollover
+  that would need a deliberate new exclusion (not built here — not requested).
+
 ## Registrant export: six override/accommodation columns appended — 2026-09-23
 
 Owner request. **Backend only** (`export.service.ts` + `container.ts`) — no SPA, schema or
@@ -6260,7 +6321,7 @@ The SPA was forked from an earlier demo and had drifted onto the demo's **MockAP
 - **Check-in status** = `{session, roster:[{camperId,firstName,lastName,church,zone,gender,grade,medicalFlag,checkedIn,lastEntry}], checkedInCount, totalCount}` — roster now includes gender/grade/medicalFlag directly (no second `/campers` fetch needed).
 - **Attendance** is `POST /attendance/sign-in|sign-out` with a `camperId` body (not `/campers/:id/sign-*`). Notes for a camper = `GET /notes/camper/:id`. Search reveal = `GET /search/contact/:camperId/:role` (role like `male-primary`).
 - **`/home`** DTO differs by mode: pre-camp has `totalCampers/totalLeaders/noBlueCardCount/accommodationSummary[]/perChurchBreakdown[]` (no gender split, no church `code`, no `expected`); the by-ministry M/F table and church code are derived client-side from `/registrants` and `/accounts/churches`.
-- **Accommodation (reworked 2026-06-27 to match the prototype):** classroom **rooms** (`/accommodation/classrooms`, name+capacity) + an **allocation map** (`GET/PATCH /accommodation/allocations` = `{roomId:[{key:"churchId|gender", n}]}`) + eligible-group helper (`/accommodation/groups`) + church-facing `/accommodation/church-rooms/:churchId`. Allocatable **groups** = per church×gender (students **and** leaders pooled together) where **≥75% of that church's campers are classroom-kind**; the SPA **auto-fills** a room to capacity (remainder shown as "unallocated"), rooms are **single-gender** (enforced in the service via `validateAllocations` AND the SPA dropdown), and un-allocate cascades freed people into other rooms. **Tents** are not allocated — `tentDistribution` auto-buckets tent-kind campers into **7-person tents, students and leaders separate** (display only). **(2026-07-20)** also folds in anyone whose `accommodationKind==='classroom'` but whose church is under the 75% threshold (see "Accommodation fold-in fix" below) — nobody is left uncounted just because their church didn't clear the classroom eligibility bar. The old `AccommodationBlock` + per-church `reservations` model is **gone** (DB tables dropped in migration `004`). **(SUPERSEDED 2026-06-29 — see "Improvement Initiative" above):** `CampSettings.tentPrice/classroomPrice` are now **deprecated/unused** — removed from the Settings UI; Budget reads per-registrant `registrationCost`, not settings. The eligible-group logic now also **splits a church×gender pool >50 into `7-9`/`10-12` brackets** (PC-10). Pure logic + types: `src/services/accommodation-allocation.ts`. The church "Your accommodation" home tile is shown **only in real at-camp** (`campMode==='at-camp' && !PREVIEW_MODE`).
+- **Accommodation (reworked 2026-06-27 to match the prototype):** classroom **rooms** (`/accommodation/classrooms`, name+capacity) + an **allocation map** (`GET/PATCH /accommodation/allocations` = `{roomId:[{key:"churchId|gender", n}]}`) + eligible-group helper (`/accommodation/groups`) + church-facing `/accommodation/church-rooms/:churchId`. Allocatable **groups** = per church×gender (students **and** leaders pooled together) where **≥75% of that church's campers are classroom-kind**; the SPA **auto-fills** a room to capacity (remainder shown as "unallocated"), rooms are **single-gender** (enforced in the service via `validateAllocations` AND the SPA dropdown), and un-allocate cascades freed people into other rooms. **Tents** are not allocated — `tentDistribution` auto-buckets tent-kind campers into **7-person tents, students and leaders separate** (display only). **(2026-07-20)** also folds in anyone whose `accommodationKind==='classroom'` but whose church is under the 75% threshold (see "Accommodation fold-in fix" below) — nobody is left uncounted just because their church didn't clear the classroom eligibility bar. The old `AccommodationBlock` + per-church `reservations` model is **gone** (DB tables dropped in migration `004`). **(SUPERSEDED 2026-06-29 — see "Improvement Initiative" above):** `CampSettings.tentPrice/classroomPrice` are now **deprecated/unused** — removed from the Settings UI; Budget reads per-registrant `registrationCost`, not settings. The eligible-group logic now also **splits a church×gender pool >50 into `7-9`/`10-12` brackets** (PC-10). Pure logic + types: `src/services/accommodation-allocation.ts`. The church "Your accommodation" home tile is shown **only in real at-camp** (`campMode==='at-camp' && !PREVIEW_MODE`). A church flagged `accommodationPerRegistration` skips the 75% bar (2026-09-24).
 - **Notes** require a `camperId`; a **testimony** is a note with `category:'testimony'` (so the testimonies screen picks a student). `/notes/recent` has no camper details (joined from `/campers`); `/notes/export` returns a **CSV string** (downloaded directly) with a Category column.
 - **Admin paths**: `/accounts/users`, `/accounts/churches`, `/admin/defaults`, `DELETE /admin/notifications`, `/import/csv` (body `{csvData}`, CSV only), `/devotional/:day` (path param). Passwords are **min 8**. Church create needs `churchName`+`zone`+`account*` fields only. (Password edits use `POST /accounts/users/password` `{userId,password}`.)
 
