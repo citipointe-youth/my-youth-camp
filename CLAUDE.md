@@ -11,11 +11,12 @@ classroom-preference people grouped — the whole ministry folds into Tent City 
 behaviour), even when the office already knows *some* of that ministry's juniors need classroom
 beds (allergies, age, etc.) and the seniors are genuinely fine in a tent. Backend + SPA +
 **migration `0029`** (`churches.accommodation_per_registration boolean not null default false`,
-additive/nullable-safe — **must be applied to prod BEFORE this code deploys**, same standing rule
-as every prior `people`/`churches` column addition — `supabase.churches`'s mapper reads/writes it
-on every church save). `npm run typecheck` clean, `npx vitest run` **1136 pass / 65 files** (was
-1122; **+14**: +6 `accommodation-allocation.test.ts`, +7 `accommodation.characterisation.test.ts`,
-harness-only for the SPA task — no `src/**` change there), `node scripts/accom-export-harness.js`
+additive, not null default false — **must be applied to prod BEFORE this code deploys**, same
+standing rule as every prior `people`/`churches` column addition — `supabase.churches`'s mapper
+reads/writes it on every church save). `npm run typecheck` clean, `npx vitest run` **1136 pass /
+65 files** (was 1122; **+14**: +6 `accommodation-allocation.test.ts`, +8
+`accommodation.characterisation.test.ts`, harness-only for the SPA task — no `src/**` change
+there), `node scripts/accom-export-harness.js`
 **13 scenarios, all checks passed** (was 11; **+2**). `node --check` OK on the SPA body and
 `sw.js`. `sw.js` `camp-v123`→**`camp-v124`**.
 
@@ -24,8 +25,8 @@ harness-only for the SPA task — no `src/**` change there), `node scripts/accom
 > not itself confirm deployment (that confirmation, if any, is appended separately below/after).
 
 - **The dropdown lives inside "Under 75% — Moved to Tents"** on the Accommodation Allocations
-  screen (`drawAccom`): a per-ministry **Status** `<select>` — *Moved to tents* (default) /
-  *Left to per-registration* — next to each under-75% church row, wired to
+  screen (`drawAccom`): a per-ministry **Status** `<select>` — *Counted in Tent City below*
+  (default) / *Left to per-registration* — next to each under-75% church row, wired to
   `setAccomPerReg(churchId, on, sel)` → `PATCH /accommodation/per-registration/:churchId`.
   Flipping it to **on** makes that church behave as if it cleared 75%: its classroom-preference
   people form a normal per-gender (and 7-9/10-12-split, where the pool is big enough) classroom
@@ -58,7 +59,15 @@ harness-only for the SPA task — no `src/**` change there), `node scripts/accom
   `/accounts/churches`, which the Accommodation screen already fetches and previously swallowed
   failures on (`.catch(()=>[])`). That swallow is now removed: a failed churches fetch means the
   screen can't know which ministries are flagged, so it now surfaces the error rather than
-  silently rendering everyone as "Moved to tents".
+  silently rendering everyone as "Counted in Tent City below".
+- **The sentinel "Unallocated" church has no dropdown.** `drawAccom`'s `tentedOut` builder skips
+  the `<select>` for `c.id===UNALLOCATED_ID` — the server excludes that sentinel from
+  `churchRepo.findAll()`, so a PATCH against it could only 404. That row keeps the plain
+  "Counted in Tent City below" status text instead.
+- **The select disables itself while a save is in flight.** `setAccomPerReg` sets `sel.disabled =
+  true` right after the confirm step (before the PATCH) and clears it in a `finally` (guarded
+  `if(sel)`) — harmless even though `drawAccom` re-renders the whole card on success and replaces
+  the node anyway.
 - **Rollover carry-over.** `accommodationPerRegistration` rides on the whole-`Church` object
   through `saveDefaults`/`newYear` exactly like `accommodationOverride` — no separate snapshot
   code needed, no new field to exclude. It is a per-year operational choice, not something that

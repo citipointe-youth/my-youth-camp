@@ -5650,10 +5650,12 @@ async function setAccomPerReg(churchId,on,sel){
     let placed=0;Object.values(window._accomAlloc||{}).forEach(arr=>(arr||[]).forEach(e=>{if(e.key.split('|')[0]===churchId)placed+=e.n;}));
     if(placed>0&&!await confirmSheet({title:'Move them back to Tent City?',body:placed+' from this ministry '+(placed===1?'is':'are')+' placed in classrooms. Switching back removes them from those rooms.',confirmLabel:'Move to tents',danger:true})){if(sel)sel.value='1';return;}
   }
+  if(sel)sel.disabled=true;
   try{await api('/accommodation/per-registration/'+churchId,{method:'PATCH',body:{perRegistration:on}});
     window._accomPerReg=Object.assign({},window._accomPerReg,{[churchId]:on||undefined});
     window._accomAlloc=await api('/accommodation/allocations');drawAccom();toast('Saved');}
-  catch(e){if(sel)sel.value=on?'0':'1';toast(e.message);}}
+  catch(e){if(sel)sel.value=on?'0':'1';toast(e.message);}
+  finally{if(sel)sel.disabled=false;}}
 // Mirrors src/services/accommodation-allocation.ts tentDistribution: a classroom-preference
 // person still lands in a tent if their church never reached the 75% eligibility threshold
 // (no room group exists for them there) — folded in here so nobody is silently uncounted.
@@ -5866,6 +5868,10 @@ function drawAccom(){
   availGroups.forEach(g=>pendingOut.push([g.church,g.label,g.avail,g.avail<g.n?(g.avail+' of '+g.n+' to allocate'):'Awaiting a room']));
   const tentedOut=[];
   Object.values(by).forEach(c=>{if(!_accomUnderBar(c))return;
+    // The sentinel "Unallocated" church (c.id===UNALLOCATED_ID) has no server-side church row —
+    // the server excludes it, so a PATCH here could only 404. No dropdown for it; keep the
+    // plain status text.
+    if(c.id===UNALLOCATED_ID){tentedOut.push([c.name,'Classroom',c.classroom,'Counted in Tent City below']);return;}
     // Stays listed while flagged, so it can be switched back.
     const on=!!(window._accomPerReg||{})[c.id];
     tentedOut.push([c.name,'Classroom',c.classroom,'',
@@ -5906,7 +5912,7 @@ function drawAccom(){
   // Double the gap between the male and female sections (~18px → ~40px).
   // Bug-11: a help icon on the FIRST Tent City heading explains the automatic tent logic to a
   // leader who didn't build the app.
-  const tentHelp=helpTip('Tent-kind registrants — plus anyone from a below-75% ministry who chose classroom — are grouped by church and gender, then split into tents of up to 7, students and leaders separately. Filled automatically.',{left:true});
+  const tentHelp=helpTip('Tent-kind registrants — plus anyone from a below-75% ministry who chose classroom, unless that ministry is marked \'Left to per-registration\' — are grouped by church and gender, then split into tents of up to 7, students and leaders separately. Filled automatically.',{left:true});
   const tentBlocks=[tentTable('m','Male'),tentTable('f','Female')].filter(Boolean);
   if(tentBlocks.length)tentBlocks[0]=tentBlocks[0].replace('</h3>',' '+tentHelp+'</h3>');
   const tentHtml=tentBlocks.map((b,i)=>`<div style="margin-top:${i===0?18:40}px">${b}</div>`).join('');
@@ -5914,8 +5920,8 @@ function drawAccom(){
   // A7/PC-12: room cards reflow as wrapping narrow tiles (matches the accommodation-setup
   // tile pattern), 1→N columns by width, instead of a single fixed column.
   const roomGrid=rooms.length?`<div class="accom-rooms">${roomCards}</div>`:roomCards;
-  box.innerHTML=`<h3 class="sec" style="margin-top:2px">Classrooms ${helpTip('Sleeping rooms you set up, each with a capacity. Single-gender, auto-filled to capacity. A church qualifies only when 75%+ of its students chose classroom.',{left:true})}</h3>${roomGrid}
-    <h3 class="sec">Classrooms (Pending Allocation) ${helpTip('Groups that qualified for a classroom (75%+ of the ministry chose classroom) but haven\'t been placed in a room yet, plus anyone with no accommodation type recorded yet.',{left:true})}</h3>${table}
+  box.innerHTML=`<h3 class="sec" style="margin-top:2px">Classrooms ${helpTip('Sleeping rooms you set up, each with a capacity. Single-gender, auto-filled to capacity. A church qualifies only when 75%+ of its students chose classroom, or when it is marked \'Left to per-registration\'.',{left:true})}</h3>${roomGrid}
+    <h3 class="sec">Classrooms (Pending Allocation) ${helpTip('Groups that qualified for a classroom (75%+ of the ministry chose classroom, or the ministry is marked \'Left to per-registration\') but haven\'t been placed in a room yet, plus anyone with no accommodation type recorded yet.',{left:true})}</h3>${table}
     <h3 class="sec" style="margin-top:20px">Under 75% — Moved to Tents ${helpTip('Fewer than 75% of this ministry chose classroom, so everyone from it is automatically counted in Tent City below instead of waiting on a room. Choose \'Left to per-registration\' for a ministry that deliberately splits (e.g. juniors in classrooms, seniors in tents) — its classroom people then appear above to place in rooms.',{left:true})}</h3>${tentedTable}
     ${tentHtml||'<p class="note-hint" style="margin-top:14px">Tent City auto-distribution appears once registrants have a tent accommodation kind set.</p>'}`;
 }
