@@ -8,8 +8,8 @@
 
 Owner problem: a ministry sitting under the 75% classroom-eligibility bar gets **none** of its
 classroom-preference people grouped — the whole ministry folds into Tent City (2026-07-20
-behaviour), even when the office already knows *some* of that ministry's juniors need classroom
-beds (allergies, age, etc.) and the seniors are genuinely fine in a tent. Backend + SPA +
+behaviour), even when that is deliberate: one ministry sends its **juniors to classrooms and its
+seniors to tents**, which lands it well under 75% by design. Backend + SPA +
 **migration `0029`** (`churches.accommodation_per_registration boolean not null default false`,
 additive, not null default false — **must be applied to prod BEFORE this code deploys**, same
 standing rule as every prior `people`/`churches` column addition — `supabase.churches`'s mapper
@@ -20,9 +20,14 @@ there), `node scripts/accom-export-harness.js`
 **13 scenarios, all checks passed** (was 11; **+2**). `node --check` OK on the SPA body and
 `sw.js`. `sw.js` `camp-v123`→**`camp-v124`**.
 
-> ⚠️ **`0029` must be applied to prod BEFORE this code deploys.** The controller applies it and
-> pushes `master` immediately after this entry — do not treat it as already live; this entry does
-> not itself confirm deployment (that confirmation, if any, is appended separately below/after).
+> **✅ APPLIED AND DEPLOYED (2026-09-24).** `0029` was applied to prod FIRST (MCP recorded
+> `20260924014503`, reconciled to `'0029'` after a collision guard returned 0), then `master`
+> pushed at `8321a63` → `dpl_PABX7XjLkAZm6HD69oyVU5MttZt8` (git source). Verified live: `sw.js`
+> serves `camp-v124`, `/health` 200, `PATCH /accommodation/per-registration/:id` → 401 unauthenticated
+> (route present). Column is `boolean NOT NULL default false`; all 27 churches read `false`.
+> **Also reconciled a stray `0023` history row** that had been left un-reconciled since 2026-09-08
+> (`20260908233749`/`person_invoice_numbers` → `0023`/`0023_person_invoice_numbers`).
+> `schema_migrations` now reads `0001`–`0029` contiguous, 29 rows, 0 timestamped.
 
 - **The dropdown lives inside "Under 75% — Moved to Tents"** on the Accommodation Allocations
   screen (`drawAccom`): a per-ministry **Status** `<select>` — *Counted in Tent City below*
