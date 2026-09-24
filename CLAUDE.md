@@ -6,6 +6,13 @@
 
 ## Accommodation rooms grouped + shaded by building — `camp-v126` — 2026-09-24 (3rd)
 
+> **Follow-up `camp-v127`:** the logic is now shared top-level helpers — `_roomBuilding(name)`,
+> `_roomBuildings(rooms)` → `[{name, rooms, tint}]`, `_roomBuildingHead`, `_ROOM_TINTS`, `_roomNat`
+> (defined just above `_accomRoomUsed`) — and **Admin → Accommodation setup** (`RENDER.adminAccom`)
+> groups/tints its edit tiles the same way (heading shows `N rooms · cap beds`). Infobox + the
+> add-room placeholder now teach the `Building - Room` convention. Renaming via Save re-renders the
+> screen, so the tile jumps to its new building immediately.
+
 Owner request: rooms are named `<Building> - <Room>` (ITC, CHC, Mezz, K Block, SOHO, CP; `Chapel`
 has no prefix). **SPA only** (`drawAccom` in `public/index.html`) — no schema, API or migration.
 The Classrooms section on the allocations screen now shows one heading per building (prefix before

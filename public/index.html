@@ -5650,6 +5650,20 @@ function accomGroups(regs){
    a time into the room with the most free space (ties → the earliest, i.e. first-placed, room).
    No baselines (not frozen) ⇒ a plain clamp. The screen, the export and the requests all read
    THIS, so they cannot disagree with each other. */
+/* Rooms grouped + shaded by BUILDING (2026-09-24, owner request) — shared by the allocations
+   screen (`drawAccom`) and Admin → Accommodation setup. The building is the room name's prefix
+   before " - " ("CHC - E1" → CHC); a name with no " - " is its own group ("Chapel"). Buildings
+   A→Z, rooms in natural order (E2 before E10); tint cycles `_ROOM_TINTS` by alphabetical position.
+   Nothing is stored — renaming a room is what moves it. DISPLAY ONLY: grow/shrink/freeze read the
+   placement map's order, never this list's, so re-ordering cannot change who goes where. */
+const _ROOM_TINTS=[['#2563eb','#eef4ff'],['#16a34a','#edf9f1'],['#d97706','#fff6e6'],['#9333ea','#f6effe'],['#0891b2','#e9f8fb'],['#db2777','#fdeef5'],['#65a30d','#f3f9e8'],['#475569','#f1f4f7']];
+function _roomNat(x,y){return String(x).localeCompare(String(y),undefined,{numeric:true,sensitivity:'base'});}
+function _roomBuilding(name){const n=String(name||'').trim(),i=n.indexOf(' - ');return i>0?n.slice(0,i).trim():n;}
+function _roomBuildings(rooms){const g={};(rooms||[]).forEach(rm=>{const b=_roomBuilding(rm.name);(g[b]=g[b]||[]).push(rm);});
+  return Object.keys(g).sort(_roomNat).map((b,i)=>{const t=_ROOM_TINTS[i%_ROOM_TINTS.length];
+    return{name:b,rooms:g[b].slice().sort((x,y)=>_roomNat(x.name,y.name)),tint:{edge:t[0],bg:t[1]}};});}
+function _roomBuildingHead(name,list,tint,i,used){const cap=list.reduce((s,rm)=>s+(rm.capacity||0),0);
+  return `<h3 class="sec" style="margin:${i?18:4}px 0 8px;display:flex;align-items:center;gap:8px"><span style="width:12px;height:12px;border-radius:3px;background:${tint.edge};flex:none"></span>${esc(name)} <span class="sub" style="font-weight:400">· ${list.length} room${list.length===1?'':'s'} · ${used!=null?used+'/'+cap:cap+' beds'}</span></h3>`;}
 function _accomRoomUsed(map,roomId){return (map[roomId]||[]).reduce((s,e)=>s+(e.n>0?e.n:0),0);}
 function _accomHeld(map,key){const out=[];Object.keys(map).forEach(r=>{const e=(map[r]||[]).find(x=>x.key===key&&x.n>0);if(e)out.push({roomId:r,entry:e});});return out;}
 function _accomShrink(map,key,count,rooms){const cap={};rooms.forEach(r=>cap[r.id]=r.capacity);
@@ -5954,18 +5968,10 @@ function drawAccom(){
     const tone=over>0?'warn':used?'ok':'info';const lbl=used+'/'+rm.capacity+(over>0?' · +'+over+' over':'');
     return `<div class="card" style="${over>0?'border:2px solid var(--danger);background:#fdecec':'border-left:5px solid '+tint.edge+';background:'+tint.bg}"><div class="rowsb"><div style="font-weight:600">${icSm('classroom')} ${esc(rm.name)} <span class="sub">· cap ${rm.capacity}</span></div><span class="pill ${tone}">${lbl}</span></div>${chips}${addSel}</div>`;
   };
-  // Rooms grouped + shaded by building (2026-09-24, owner request): the building is the name's
-  // prefix before " - " ("CHC - E1" → CHC; no prefix → its own group). Buildings A→Z, rooms in
-  // natural order (E2 before E10). DISPLAY ONLY — grow/shrink/freeze read the placement map's
-  // order, never this list's, so re-ordering here cannot change who goes where.
-  const _bld=rm=>{const i=rm.name.indexOf(' - ');return i>0?rm.name.slice(0,i).trim():rm.name.trim();};
-  const _nat=(x,y)=>x.localeCompare(y,undefined,{numeric:true,sensitivity:'base'});
-  const _TINTS=[['#2563eb','#eef4ff'],['#16a34a','#edf9f1'],['#d97706','#fff6e6'],['#9333ea','#f6effe'],['#0891b2','#e9f8fb'],['#db2777','#fdeef5'],['#65a30d','#f3f9e8'],['#475569','#f1f4f7']];
-  const _bGroups={};rooms.forEach(rm=>{(_bGroups[_bld(rm)]=_bGroups[_bld(rm)]||[]).push(rm);});
-  const roomCards=rooms.length?Object.keys(_bGroups).sort(_nat).map((b,i)=>{
-    const t=_TINTS[i%_TINTS.length],tint={edge:t[0],bg:t[1]};const list=_bGroups[b].sort((x,y)=>_nat(x.name,y.name));
-    const used=list.reduce((s,rm)=>s+_accomRoomUsed(alloc,rm.id),0),cap=list.reduce((s,rm)=>s+rm.capacity,0);
-    return `<h3 class="sec" style="margin:${i?18:4}px 0 8px;display:flex;align-items:center;gap:8px"><span style="width:12px;height:12px;border-radius:3px;background:${t[0]};flex:none"></span>${esc(b)} <span class="sub" style="font-weight:400">· ${list.length} room${list.length===1?'':'s'} · ${used}/${cap}</span></h3><div class="accom-rooms">${list.map(rm=>_roomCard(rm,tint)).join('')}</div>`;
+  // Rooms grouped + shaded by building — see `_roomBuildings`. DISPLAY ONLY.
+  const roomCards=rooms.length?_roomBuildings(rooms).map(({name:b,rooms:list,tint},i)=>{
+    const used=list.reduce((s,rm)=>s+_accomRoomUsed(alloc,rm.id),0);
+    return _roomBuildingHead(b,list,tint,i,used)+`<div class="accom-rooms">${list.map(rm=>_roomCard(rm,tint)).join('')}</div>`;
   }).join(''):'<p class="note-hint">No classroom rooms yet — add them in Admin → Accommodation.</p>';
   // Two separate lists (previously one merged table): groups still waiting on a room spot
   // (incl. anyone with no accommodation type recorded yet) vs. ministries under the 75%
@@ -7617,8 +7623,8 @@ async function _rSched(){const el=document.getElementById('stage');const y=el?el
 RENDER.adminAccom=async function(){
   const [rooms,churches]=await Promise.all([api('/accommodation/classrooms'),api('/accounts/churches')]);
   window._adminRooms=rooms||[];
-  const tiles=(rooms||[]).map(rm=>`
-    <div class="tile" style="align-items:stretch;text-align:left;padding:12px;min-height:unset;cursor:default">
+  const tile=(rm,tint)=>`
+    <div class="tile" style="align-items:stretch;text-align:left;padding:12px;min-height:unset;cursor:default;border-left:5px solid ${tint.edge};background:${tint.bg}">
       <div style="display:flex;gap:6px;margin-bottom:8px">
         <input class="fld" id="rn_${rm.id}" value="${esc(rm.name)}" placeholder="Name" style="flex:1;min-width:0">
         <input class="fld" id="rc_${rm.id}" type="number" inputmode="numeric" min="0" value="${rm.capacity}" placeholder="Cap" style="width:60px;flex:none;padding:6px 4px">
@@ -7627,8 +7633,9 @@ RENDER.adminAccom=async function(){
         <button class="btn sm" onclick="saveRoom('${rm.id}')" style="flex:1">Save</button>
         <button class="btn red sm" onclick="delRoom('${rm.id}')" style="flex:none" aria-label="Delete room">${icSm('close')}</button>
       </div>
-    </div>`).join('')||'<p class="note-hint">No classroom rooms yet.</p>';
-  const tileGrid=rooms&&rooms.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:4px">${tiles}</div>`:tiles;
+    </div>`;
+  // Grouped + shaded by building, same as the allocations screen (`_roomBuildings`).
+  const tileGrid=rooms&&rooms.length?_roomBuildings(rooms).map(({name,rooms:list,tint},i)=>_roomBuildingHead(name,list,tint,i)+`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:4px">${list.map(rm=>tile(rm,tint)).join('')}</div>`).join(''):'<p class="note-hint">No classroom rooms yet.</p>';
   /* The "Accommodation overrides" card MOVED to the allocations screen (2026-08-02, owner
      request) — see `_accomOverrideCard`. This screen is for naming rooms; an override is a
      statement about where a church sleeps and belongs beside the map. `churches` is still
@@ -7637,11 +7644,11 @@ RENDER.adminAccom=async function(){
   // Item 23 (2026-07-28): a direct route from setup to the allocations map. Setting up rooms and
   // then placing groups in them is one continuous task, but the two screens had no link.
   paint('adminAccom',`<button class="btn" onclick="go('accom')">${icSm('classroom')} Go to accommodation allocations ${icSm('arrowr')}</button>
-    <div class="infobox">Classrooms have a name &amp; capacity. Tent City is auto-distributed (7 per tent) — no setup needed.</div>
+    <div class="infobox">Classrooms have a name &amp; capacity. Tent City is auto-distributed (7 per tent) — no setup needed. Name rooms <b>Building - Room</b> (e.g. <i>CHC - E1</i>) and they group and colour by building here and on the allocations screen.</div>
     <div class="card"><h3 class="sec" style="margin-top:0">Classrooms</h3>${tileGrid}</div>
     <div class="card"><div class="lbl" style="margin-top:0">Add a room</div>
       <div style="display:flex;gap:6px;align-items:flex-end">
-        <div style="flex:2;min-width:110px"><label style="font-size:.72rem">Name</label><input class="fld" id="nrName" placeholder="e.g. Room 5"></div>
+        <div style="flex:2;min-width:110px"><label style="font-size:.72rem">Name</label><input class="fld" id="nrName" placeholder="e.g. CHC - E4"></div>
         <div style="flex:1;min-width:60px"><label style="font-size:.72rem">Cap</label><input class="fld" id="nrCap" type="number" inputmode="numeric" min="0" value="8"></div>
         <button class="btn sm" onclick="addRoom()" style="flex:none;align-self:flex-end">Add</button>
       </div></div>
