@@ -6,13 +6,14 @@ import {
   InMemoryChurchRepository,
   InMemorySettingsRepository,
   InMemoryPersonRepository,
+  InMemoryClassroomFreezeRepository,
 } from '../repositories/in-memory';
 import type { Classroom } from '../core/entities/accommodation';
 import type { Church } from '../core/entities/church';
 import type { CampSettings } from '../core/entities/settings';
 import type { Actor } from '../core/entities/user';
 import type { Person } from '../core/entities/person';
-import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../core/errors/app-error';
 
 // ---------------------------------------------------------------------------
 // Builders
@@ -104,13 +105,14 @@ async function build(opts: {
   const churchRepo = new InMemoryChurchRepository();
   const settingsRepo = new InMemorySettingsRepository();
   const personRepo = new InMemoryPersonRepository();
-  await Promise.all([classroomRepo.init(), allocationRepo.init(), churchRepo.init(), settingsRepo.init(), personRepo.init()]);
+  const freezeRepo = new InMemoryClassroomFreezeRepository();
+  await Promise.all([classroomRepo.init(), allocationRepo.init(), churchRepo.init(), settingsRepo.init(), personRepo.init(), freezeRepo.init()]);
   for (const r of opts.rooms ?? []) await classroomRepo.save(r);
   for (const c of opts.churches ?? []) await churchRepo.save(c);
   for (const p of opts.registrants ?? []) await personRepo.save(p);
   await settingsRepo.saveSingleton(opts.settings ?? settings({}));
-  const svc = makeAccommodationService(classroomRepo, allocationRepo, churchRepo, settingsRepo, personRepo);
-  return { svc, classroomRepo, allocationRepo, churchRepo, settingsRepo, personRepo };
+  const svc = makeAccommodationService(classroomRepo, allocationRepo, churchRepo, settingsRepo, personRepo, freezeRepo);
+  return { svc, classroomRepo, allocationRepo, churchRepo, settingsRepo, personRepo, freezeRepo };
 }
 
 // Three male + one female classroom-kind youth at Victory (c1) -> 100% eligible.
@@ -386,5 +388,104 @@ describe('per-registration churches (2026-09-24)', () => {
     await expect(svc.setPerRegistration(actor('admin'), 'nope', { perRegistration: true }))
       .rejects.toBeInstanceOf(NotFoundError);
     await expect(svc.setPerRegistration(actor('admin'), 'c9', { perRegistration: 'yes' })).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-heal + soft freeze (2026-09-24)
+// ---------------------------------------------------------------------------
+const males = (n: number, pre: string, over: Partial<Person> = {}) =>
+  Array.from({ length: n }, (_, i) => reg({ id: `${pre}${i}`, churchId: 'c1', gender: 'male', grade: 8, ...over }));
+
+describe('auto-heal through the service', () => {
+  it('a pool that re-split since placement no longer blocks saves; the save reports and persists the heal', async () => {
+    const { svc, personRepo, allocationRepo } = await build({
+      churches: [church({ id: 'c1' })], registrants: males(40, 'a'),
+      rooms: [room({ id: 'A', name: 'Room A', capacity: 45 }), room({ id: 'B', name: 'Room B', capacity: 30 })],
+    });
+    await svc.setAllocations(actor('director'), { allocations: { A: [{ key: 'c1|male', n: 40 }] } });
+    for (const p of males(20, 'b', { grade: 11 })) await personRepo.save(p);   // 60 → splits
+
+    const st = await svc.getState(actor('director'));
+    expect(st.stored).toEqual({});
+    expect(st.healed).toEqual([expect.objectContaining({ roomName: 'Room A', n: 40, reason: 'group re-split', groupLabel: 'Victory — Guys' })]);
+    expect(await allocationRepo.findAll()).toHaveLength(1);        // a read never writes
+
+    // The SPA resends the stale entry alongside a new placement — it saves, and the orphan is gone.
+    const saved = await svc.saveAllocations(actor('director'), {
+      allocations: { A: [{ key: 'c1|male', n: 40 }], B: [{ key: 'c1|male|10-12', n: 20 }] },
+    });
+    expect(saved.stored).toEqual({ B: [{ key: 'c1|male|10-12', n: 20 }] });
+    expect(saved.healed.map((h) => h.reason)).toEqual(['group re-split']);
+    expect((await svc.getState(actor('director'))).healed).toEqual([]);
+  });
+
+  it('rule errors reach the director as a 400 with the reason, not a generic 500', async () => {
+    const { svc } = await build({ churches: [church({ id: 'c1' })], registrants: victoryClassroomRegs, rooms: [room({ id: 'rm1', capacity: 2 })] });
+    await expect(svc.saveAllocations(actor('director'), { allocations: { rm1: [{ key: 'c1|male', n: 3 }] } }))
+      .rejects.toBeInstanceOf(BadRequestError);
+  });
+});
+
+describe('soft freeze through the service', () => {
+  async function frozenCamp() {
+    const b = await build({
+      churches: [church({ id: 'c1' })], registrants: males(25, 'a'),
+      rooms: [room({ id: 'A', name: 'Room A', capacity: 25 })],
+    });
+    await b.svc.setAllocations(actor('director'), { allocations: { A: [{ key: 'c1|male', n: 25 }] } });
+    const st = await b.svc.setSoftFreeze(actor('director'), { frozen: true });
+    expect(st.freeze?.baselines).toEqual({ 'c1|male': 25 });
+    return b;
+  }
+
+  it('late registrations are absorbed (29/25) — on the state, the church view and the stored map is untouched', async () => {
+    const { svc, personRepo, allocationRepo } = await frozenCamp();
+    for (const p of males(4, 'late')) await personRepo.save(p);
+    const st = await svc.getState(actor('director'));
+    expect(st.stored).toEqual({ A: [{ key: 'c1|male', n: 25 }] });
+    expect(st.effective).toEqual({ A: [{ key: 'c1|male', n: 29 }] });
+    expect((await svc.getChurchRooms(actor('church', { churchId: 'c1', zone: 'Yellow' }), 'c1')).rooms)
+      .toEqual([{ name: 'Room A', gender: 'male', n: 29 }]);
+    expect((await allocationRepo.findAll())[0]!.n).toBe(25);
+  });
+
+  it('a 51st registrant while frozen does not re-split', async () => {
+    const { svc, personRepo } = await frozenCamp();
+    for (const p of males(26, 'late', { grade: 11 })) await personRepo.save(p);
+    expect((await svc.listGroups(actor('director'))).map((g) => g.key)).toEqual(['c1|male']);
+  });
+
+  it('eligibility cannot change while frozen', async () => {
+    const { svc } = await frozenCamp();
+    await expect(svc.setPerRegistration(actor('admin'), 'c1', { perRegistration: true })).rejects.toBeInstanceOf(BadRequestError);
+  });
+
+  it('unfreeze writes the effective counts back, keeps the overflow, and later saves still work', async () => {
+    const { svc, personRepo, freezeRepo, classroomRepo } = await frozenCamp();
+    for (const p of males(4, 'late')) await personRepo.save(p);
+    const st = await svc.setSoftFreeze(actor('director'), { frozen: false });
+    expect(st.freeze).toBeNull();
+    expect(st.stored).toEqual({ A: [{ key: 'c1|male', n: 29 }] });
+    expect(await freezeRepo.findAll()).toEqual([]);
+    const now = new Date().toISOString();
+    await classroomRepo.save({ id: 'B', name: 'Room B', capacity: 10, createdAt: now, updatedAt: now });
+    await expect(svc.saveAllocations(actor('director'), { allocations: { A: [{ key: 'c1|male', n: 29 }] } })).resolves.toBeTruthy();
+    await expect(svc.saveAllocations(actor('director'), { allocations: { A: [{ key: 'c1|male', n: 29 }], B: [] } })).resolves.toBeTruthy();
+  });
+
+  it('remove + re-add while frozen resets that group\'s baseline', async () => {
+    const { svc, personRepo } = await frozenCamp();
+    for (const p of males(4, 'late')) await personRepo.save(p);
+    await svc.saveAllocations(actor('director'), { allocations: {} });
+    const st = await svc.saveAllocations(actor('director'), { allocations: { A: [{ key: 'c1|male', n: 25 }] } });
+    expect(st.freeze?.baselines['c1|male']).toBe(29);
+    expect(st.effective).toEqual({ A: [{ key: 'c1|male', n: 25 }] });
+  });
+
+  it('director is refused under the hard lock; church logins are refused', async () => {
+    const { svc } = await build({ settings: settings({ accommodationLocked: true }) });
+    await expect(svc.setSoftFreeze(actor('director'), { frozen: true })).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(svc.setSoftFreeze(actor('church', { churchId: 'c1' }), { frozen: true })).rejects.toBeInstanceOf(ForbiddenError);
   });
 });

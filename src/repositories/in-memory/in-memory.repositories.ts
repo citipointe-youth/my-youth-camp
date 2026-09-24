@@ -7,7 +7,7 @@ import type { Church } from '../../core/entities/church';
 import type { Person } from '../../core/entities/person';
 import { isCamper } from '../../core/entities/person';
 import type { AllocationOverride } from '../../core/entities/allocation-override';
-import type { Classroom, RoomAllocation } from '../../core/entities/accommodation';
+import type { Classroom, RoomAllocation, ClassroomFreeze } from '../../core/entities/accommodation';
 import type { Zone } from '../../core/entities/zone';
 import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
@@ -28,6 +28,7 @@ import type {
   IPersonRepository,
   IClassroomRepository,
   IAllocationRepository,
+  IClassroomFreezeRepository,
   IZoneRepository,
   IGroupRepository,
   INoteRepository,
@@ -208,6 +209,15 @@ export class InMemoryAllocationRepository
     return Array.from(this.store.values())
       .filter((a) => a.roomId === roomId)
       .map((a) => this.clone(a));
+  }
+}
+
+export class InMemoryClassroomFreezeRepository
+  extends InMemoryBaseRepository<ClassroomFreeze>
+  implements IClassroomFreezeRepository
+{
+  constructor(persistence?: IPersistenceAdapter<ClassroomFreeze>) {
+    super(persistence);
   }
 }
 

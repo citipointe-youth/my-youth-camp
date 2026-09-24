@@ -45,7 +45,18 @@ export function makeAccommodationController(services: AccommodationControllerSer
 
     async setAllocations(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
-      return services.accommodation.setAllocations(req.ctx.actor, req.body);
+      // Returns the full state (incl. which stale placements the save cleared), not just the map.
+      return services.accommodation.saveAllocations(req.ctx.actor, req.body);
+    },
+
+    async state(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.accommodation.getState(req.ctx.actor);
+    },
+
+    async setSoftFreeze(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      return services.accommodation.setSoftFreeze(req.ctx.actor, req.body);
     },
 
     async setPerRegistration(req: HttpRequest) {

@@ -3,7 +3,7 @@ import type { User } from '../../core/entities/user';
 import type { Church } from '../../core/entities/church';
 import type { Person } from '../../core/entities/person';
 import type { AllocationOverride } from '../../core/entities/allocation-override';
-import type { Classroom, RoomAllocation } from '../../core/entities/accommodation';
+import type { Classroom, RoomAllocation, ClassroomFreeze } from '../../core/entities/accommodation';
 import type { Zone } from '../../core/entities/zone';
 import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
@@ -53,6 +53,9 @@ export interface IClassroomRepository extends IRepository<Classroom> {}
 export interface IAllocationRepository extends IRepository<RoomAllocation> {
   findByRoom(roomId: string): Promise<RoomAllocation[]>;
 }
+
+/** Soft-freeze snapshot — a singleton row (`CLASSROOM_FREEZE_ID`); absent = not frozen. */
+export interface IClassroomFreezeRepository extends IRepository<ClassroomFreeze> {}
 
 export interface IZoneRepository extends IRepository<Zone> {
   findByName(name: string): Promise<Zone | null>;

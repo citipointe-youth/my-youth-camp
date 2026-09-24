@@ -22,3 +22,7 @@ export type SetAllocationsInput = z.infer<typeof SetAllocationsSchema>;
 // PATCH /accommodation/per-registration/:churchId — "Left to per-registration" toggle (2026-09-24).
 export const SetPerRegistrationSchema = z.object({ perRegistration: z.boolean() });
 export type SetPerRegistrationInput = z.infer<typeof SetPerRegistrationSchema>;
+
+// POST /accommodation/soft-freeze — classroom soft freeze toggle (2026-09-24).
+export const SetSoftFreezeSchema = z.object({ frozen: z.boolean() });
+export type SetSoftFreezeInput = z.infer<typeof SetSoftFreezeSchema>;

@@ -48,8 +48,16 @@ const PARTS = [
   "const _ACCOM_YEARS=",
   'function _spreadLeaders(total,n)',
   'function _accomYearGroups(c,gender,g,bracket,leaders,extraYouth,lbl)',
-  'function _accomGenderGroups(c,gender,g)',
+  'function _accomNaturalShape(g)',
+  'function _accomGenderGroups(c,gender,g,shape)',
   'function accomGroups(regs)',
+  'function _accomRoomUsed(map,roomId)',
+  'function _accomHeld(map,key)',
+  'function _accomShrink(map,key,count,rooms)',
+  'function _accomGrow(map,key,count,rooms)',
+  'function _accomEffective(stored,groups,rooms,baselines)',
+  'function _accomEff()',
+  'function _accomReqBase(key,eff,groups)',
   'function tentDist(regs)',
   'function _accomExportRows()',
 ];
@@ -110,7 +118,7 @@ run('1. Small eligible church, one room, fully placed',
   (d) => {
     check('cohort row', d.cohortRows[1],
       ['Victory', 'Guys', 'Guys', 18, 2, 20, 20, 0, 'Room A', 30]);
-    check('room row', d.roomRows[1], ['Room A', 30, 20, 10, 'Guys', 'Victory — Guys (20)']);
+    check('room row', d.roomRows[1], ['Room A', 30, 20, 10, 'Guys', 'Victory — Guys (20)', 0]);
     check('no tent rows beyond TOTAL', d.tentRows.length, 2);
   });
 
@@ -272,6 +280,113 @@ ctx.window._accomPerReg = {};
 console.log('\n13. The 75% ratio lives only in ACCOM_ELIGIBLE_RATIO');
 ['function accomGroups(regs)', 'function tentDist(regs)', 'function _accomExportRows()', 'function drawAccom()']
   .forEach((n) => checkTrue(n + ' has no literal 0.75', !extract(n).includes('0.75')));
+
+
+// ── 14–20. Soft freeze + effective placements (2026-09-24). These drive the REAL mirrored
+//    functions (_accomEligible / accomGroups with frozen shapes, _accomEffective) and the export.
+function freezeNow(regs) {
+  // Build the freeze snapshot exactly as the server would: eligibility + natural shape per pool,
+  // baselines = live group sizes. Uses the SPA's own grouping (unfrozen) to do it.
+  ctx.window._accomFreeze = null;
+  const by = ctx.accomChurches(regs), eligible = [], shapes = {};
+  Object.values(by).forEach((c) => {
+    if (!ctx._accomEligible(c)) return;
+    eligible.push(c.id);
+    if (c.male.cls) shapes[c.id + '|male'] = ctx._accomNaturalShape(c.male);
+    if (c.female.cls) shapes[c.id + '|female'] = ctx._accomNaturalShape(c.female);
+  });
+  const baselines = Object.fromEntries(ctx.accomGroups(regs).map((g) => [g.key, g.n]));
+  return { frozenAt: '2026-09-25T00:00:00.000Z', eligibleChurchIds: eligible, shapes, baselines };
+}
+function runFrozen(label, freeze, regs, rooms, alloc, fn) {
+  ctx.window._accomFreeze = freeze;
+  run(label, regs, rooms, alloc, fn);
+  ctx.window._accomFreeze = null;
+}
+const pick = (d, k) => (d.sumRows.find((r) => r[0] === k) || [])[1];
+
+{
+  const at = many(25, {});
+  const fz = freezeNow(at);
+  runFrozen('14. Freeze, then +4 registrants into a single-room group → 29/25, loud in the export',
+    fz, [...at, ...many(4, {})], [{ id: 'r1', name: 'Room A', capacity: 25 }], { r1: [{ key: 'c1|male', n: 25 }] },
+    (d) => {
+      check('room row shows 29 allocated, -4 remaining, 4 over', [d.roomRows[1][2], d.roomRows[1][3], d.roomRows[1][6]], [29, -4, 4]);
+      check('summary rooms over capacity', pick(d, 'Rooms over capacity'), 1);
+      check('summary total over capacity', pick(d, 'Total over capacity'), 4);
+      check('summary late registrations absorbed', pick(d, 'Late registrations absorbed'), 4);
+      checkTrue('summary names the freeze', /^On since/.test(pick(d, 'Soft freeze')));
+      check('cohort placed = 29, nothing unplaced', [d.cohortRows[1][6], d.cohortRows[1][7]], [29, 0]);
+    });
+}
+{
+  const at = many(30, {});
+  const fz = freezeNow(at);
+  ctx.window._accomFreeze = fz; ctx.window._accomRegs = [...at, ...many(6, {})]; ctx.window._accomRooms = [{ id: 'A', name: 'A', capacity: 20 }, { id: 'B', name: 'B', capacity: 20 }];
+  ctx.window._accomAlloc = { A: [{ key: 'c1|male', n: 18 }], B: [{ key: 'c1|male', n: 12 }] };
+  console.log('\n15. A group split across rooms grows into the room with the most free space');
+  const e = ctx._accomEff();
+  check('A 18, B 18', [e.A[0].n, e.B[0].n], [18, 18]);
+  ctx.window._accomRegs = [...many(40, {}), ...many(3, {})];
+  ctx.window._accomFreeze = freezeNow(many(40, {}));
+  ctx.window._accomAlloc = { B: [{ key: 'c1|male', n: 20 }], A: [{ key: 'c1|male', n: 20 }] };
+  console.log('\n16. All rooms full: least-overfull takes the next; ties → first-placed room (B)');
+  const e2 = ctx._accomEff();
+  check('B 22, A 21', [e2.B[0].n, e2.A[0].n], [22, 21]);
+  ctx.window._accomRegs = many(27, {});
+  ctx.window._accomFreeze = freezeNow(many(30, {}));
+  ctx.window._accomRooms = [{ id: 'A', name: 'A', capacity: 10 }, { id: 'B', name: 'B', capacity: 30 }];
+  ctx.window._accomAlloc = { A: [{ key: 'c1|male', n: 12 }], B: [{ key: 'c1|male', n: 18 }] };
+  console.log('\n17. Cancellation while frozen: over-capacity room first, then the smallest placement');
+  const e3 = ctx._accomEff();
+  check('A 9, B 18', [e3.A[0].n, e3.B[0].n], [9, 18]);
+  ctx.window._accomFreeze = null;
+}
+{
+  const at = many(50, {});
+  const fz = freezeNow(at);
+  ctx.window._accomFreeze = fz;
+  console.log('\n18. A 51st registrant while frozen does NOT re-split');
+  check('still one group', ctx.accomGroups([...at, person({})]).map((g) => g.key), ['c1|male']);
+  ctx.window._accomFreeze = null;
+  checkTrue('(the live rule would have split it)', ctx.accomGroups([...at, person({})])[0].key !== 'c1|male');
+}
+{
+  const at = [...many(2, { churchId: 'n', churchName: 'New' }), ...many(6, { churchId: 'n', churchName: 'New', accommodationKind: 'tent' })];
+  const fz = freezeNow(at);
+  runFrozen('19. A ministry that becomes eligible while frozen stays as at freeze time (tents)',
+    fz, [...many(20, { churchId: 'n', churchName: 'New' }), ...many(6, { churchId: 'n', churchName: 'New', accommodationKind: 'tent' })], [], {},
+    (d) => {
+      check('no classroom cohort', d.cohortRows.length, 1);
+      check('all 26 counted in tents', d.tentRows[1][2], 26);
+    });
+}
+{
+  // 20. After unfreeze the over-capacity room stays over, not frozen → effective = stored (clamp only)
+  runFrozen('20. Not frozen: effective is a plain clamp, and an over-capacity stored room is reported',
+    null, many(29, {}), [{ id: 'r1', name: 'Room A', capacity: 25 }], { r1: [{ key: 'c1|male', n: 29 }] },
+    (d) => {
+      check('over capacity 4', d.roomRows[1][6], 4);
+      check('no late registrations when not frozen', pick(d, 'Late registrations absorbed'), 0);
+      check('soft freeze off', pick(d, 'Soft freeze'), 'Off');
+    });
+}
+
+{
+  // 21. The request a change sends: the touched group's EFFECTIVE placements, everyone else as
+  //     stored, and never an entry for a group that no longer exists.
+  const at = [...many(25, {}), ...many(5, { churchId: 'c2', churchName: 'Grace' })];
+  ctx.window._accomFreeze = freezeNow(at);
+  ctx.window._accomRegs = [...at, ...many(4, {}), ...many(2, { churchId: 'c2', churchName: 'Grace' })];
+  ctx.window._accomRooms = [{ id: 'A', name: 'A', capacity: 25 }, { id: 'B', name: 'B', capacity: 25 }];
+  ctx.window._accomAlloc = { A: [{ key: 'c1|male', n: 25 }, { key: 'GONE|male', n: 3 }], B: [{ key: 'c2|male', n: 5 }] };
+  console.log('\n21. addAlloc/removeAlloc request base');
+  const groups = ctx.accomGroups(ctx.window._accomRegs);
+  const base = ctx._accomReqBase('c1|male', ctx._accomEff(), groups);
+  check('touched group sent as effective (29), other group as stored (5), stale entry dropped',
+    base, { A: [{ key: 'c1|male', n: 29 }], B: [{ key: 'c2|male', n: 5 }] });
+  ctx.window._accomFreeze = null;
+}
 
 console.log('\n' + (failures ? failures + ' CHECK(S) FAILED' : 'All checks passed.'));
 process.exit(failures ? 1 : 0);
