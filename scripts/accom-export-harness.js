@@ -42,6 +42,9 @@ const PARTS = [
   'const ACCOM_SPLIT_THRESHOLD=50;',
   'function _bracketOfGrade(g)',
   'function accomChurches(regs)',
+  'const ACCOM_ELIGIBLE_RATIO=0.75;',
+  'function _accomEligible(c)',
+  'function _accomUnderBar(c)',
   "const _ACCOM_YEARS=",
   'function _spreadLeaders(total,n)',
   'function _accomYearGroups(c,gender,g,bracket,leaders,extraYouth,lbl)',
@@ -246,6 +249,29 @@ checkTrue('the /registrants fetch inside RENDER.accom includes includeCancelled=
   /_scoped\(['"]\/registrants\?includeCancelled=1['"]\)/.test(renderAccomSrc),
   'RENDER.accom must fetch /registrants?includeCancelled=1 (mirroring RENDER.budget and ' +
   '_loadAllocation) or window._accomRegs never contains cancelled people in production');
+
+// ── 12. "Left to per-registration" (2026-09-24): a flagged under-75% ministry keeps its
+//        classroom people in classroom cohorts and ONLY its tent people in tents ───────────
+ctx.window._accomPerReg = { c1: true };
+run('12. Per-registration ministry under 75% — juniors to classrooms, seniors to tents',
+  [...many(4, { accommodationKind: 'classroom', grade: 8 }),
+   ...many(16, { accommodationKind: 'tent', grade: 11 })],
+  [], {},
+  (d) => {
+    check('one classroom cohort of the 4 juniors', d.cohortRows.length, 2);
+    check('cohort size', d.cohortRows[1][5], 4);
+    check('only the 16 tent-kind in tents', d.tentRows[1][2], 16);
+    check('not listed as moved to tents',
+      d.sumRows.find((r) => r[0] === 'Ministries under the 75% classroom threshold')[1], 0);
+    check('listed as per-registration',
+      d.sumRows.find((r) => r[0] === 'Ministries left to per-registration')[1], 1);
+  });
+ctx.window._accomPerReg = {};
+
+// ── 13. No hardcoded 0.75 left in the SPA's accommodation code ─────────────────────────
+console.log('\n13. The 75% ratio lives only in ACCOM_ELIGIBLE_RATIO');
+['function accomGroups(regs)', 'function tentDist(regs)', 'function _accomExportRows()', 'function drawAccom()']
+  .forEach((n) => checkTrue(n + ' has no literal 0.75', !extract(n).includes('0.75')));
 
 console.log('\n' + (failures ? failures + ' CHECK(S) FAILED' : 'All checks passed.'));
 process.exit(failures ? 1 : 0);
