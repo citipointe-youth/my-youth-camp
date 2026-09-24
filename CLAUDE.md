@@ -22,6 +22,16 @@ checks, disabling growth fails 9). `node --check` OK on the SPA body (range **10
 `sw.js`. `sw.js` `camp-v124`→**`camp-v125`**. Plan:
 `docs/superpowers/plans/2026-09-24-classroom-soft-freeze.md`.
 
+> **✅ `0030` APPLIED TO PROD, CODE PUSHED — LIVE CHECK STILL OUTSTANDING (2026-09-24).** `0030` was
+> applied FIRST (MCP recorded `20260924032553`; collision guard returned 0; reconciled to `'0030'`).
+> Verified after: `schema_migrations` = 30 rows, `0001`–`0030` contiguous, 0 timestamped;
+> `classroom_freeze` exists (4 NOT NULL cols, RLS on, 0 rows); `classroom_allocations.seq` is
+> `integer` nullable; prod had 0 placement rows at apply time. `master` then pushed at `92be504`.
+> ⚠ **The deploy was NOT verified live**: this session's egress proxy returned 403 for
+> `my-youth-camp.vercel.app`, and the Vercel connector had no access to the `citipointe-youth`
+> scope. Before relying on it, confirm `curl -s https://my-youth-camp.vercel.app/sw.js | head -1` →
+> `camp-v125`, `/health` → 200, and `POST /accommodation/soft-freeze` → 401 unauthenticated.
+
 ### Part 1 — auto-heal (always on). All pure logic in `accommodation-allocation.ts`, tested.
 - **`healAllocations(stored, {rooms, groups, eligibleChurches, clamp})`** drops entries for unknown
   rooms/keys, reporting each as `{roomId, roomName, key, n, reason}` with reason `group re-split` /
