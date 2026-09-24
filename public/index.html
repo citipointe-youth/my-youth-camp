@@ -5941,7 +5941,7 @@ function drawAccom(){
   const allocByKey={};Object.values(alloc).forEach(arr=>(arr||[]).forEach(e=>{allocByKey[e.key]=(allocByKey[e.key]||0)+e.n;}));
   groups.forEach(g=>g.avail=g.n-(allocByKey[g.key]||0));
   const availGroups=groups.filter(g=>g.avail>0);
-  const roomCards=rooms.length?rooms.map(rm=>{
+  const _roomCard=(rm,tint)=>{
     const entries=(alloc[rm.id]||[]).filter(e=>gByKey[e.key]);
     const used=entries.reduce((s,e)=>s+e.n,0);const rem=rm.capacity-used;
     const roomGender=entries.length?gByKey[entries[0].key].gender:null;
@@ -5952,7 +5952,20 @@ function drawAccom(){
     // unfreeze keeps that overflow): red card, `29/25` and "+4 over".
     const over=used-rm.capacity;
     const tone=over>0?'warn':used?'ok':'info';const lbl=used+'/'+rm.capacity+(over>0?' · +'+over+' over':'');
-    return `<div class="card"${over>0?' style="border:2px solid var(--danger);background:#fdecec"':''}><div class="rowsb"><div style="font-weight:600">${icSm('classroom')} ${esc(rm.name)} <span class="sub">· cap ${rm.capacity}</span></div><span class="pill ${tone}">${lbl}</span></div>${chips}${addSel}</div>`;
+    return `<div class="card" style="${over>0?'border:2px solid var(--danger);background:#fdecec':'border-left:5px solid '+tint.edge+';background:'+tint.bg}"><div class="rowsb"><div style="font-weight:600">${icSm('classroom')} ${esc(rm.name)} <span class="sub">· cap ${rm.capacity}</span></div><span class="pill ${tone}">${lbl}</span></div>${chips}${addSel}</div>`;
+  };
+  // Rooms grouped + shaded by building (2026-09-24, owner request): the building is the name's
+  // prefix before " - " ("CHC - E1" → CHC; no prefix → its own group). Buildings A→Z, rooms in
+  // natural order (E2 before E10). DISPLAY ONLY — grow/shrink/freeze read the placement map's
+  // order, never this list's, so re-ordering here cannot change who goes where.
+  const _bld=rm=>{const i=rm.name.indexOf(' - ');return i>0?rm.name.slice(0,i).trim():rm.name.trim();};
+  const _nat=(x,y)=>x.localeCompare(y,undefined,{numeric:true,sensitivity:'base'});
+  const _TINTS=[['#2563eb','#eef4ff'],['#16a34a','#edf9f1'],['#d97706','#fff6e6'],['#9333ea','#f6effe'],['#0891b2','#e9f8fb'],['#db2777','#fdeef5'],['#65a30d','#f3f9e8'],['#475569','#f1f4f7']];
+  const _bGroups={};rooms.forEach(rm=>{(_bGroups[_bld(rm)]=_bGroups[_bld(rm)]||[]).push(rm);});
+  const roomCards=rooms.length?Object.keys(_bGroups).sort(_nat).map((b,i)=>{
+    const t=_TINTS[i%_TINTS.length],tint={edge:t[0],bg:t[1]};const list=_bGroups[b].sort((x,y)=>_nat(x.name,y.name));
+    const used=list.reduce((s,rm)=>s+_accomRoomUsed(alloc,rm.id),0),cap=list.reduce((s,rm)=>s+rm.capacity,0);
+    return `<h3 class="sec" style="margin:${i?18:4}px 0 8px;display:flex;align-items:center;gap:8px"><span style="width:12px;height:12px;border-radius:3px;background:${t[0]};flex:none"></span>${esc(b)} <span class="sub" style="font-weight:400">· ${list.length} room${list.length===1?'':'s'} · ${used}/${cap}</span></h3><div class="accom-rooms">${list.map(rm=>_roomCard(rm,tint)).join('')}</div>`;
   }).join(''):'<p class="note-hint">No classroom rooms yet — add them in Admin → Accommodation.</p>';
   // Two separate lists (previously one merged table): groups still waiting on a room spot
   // (incl. anyone with no accommodation type recorded yet) vs. ministries under the 75%
@@ -6020,7 +6033,7 @@ function drawAccom(){
   const box=document.getElementById('accomBody');if(!box)return;
   // A7/PC-12: room cards reflow as wrapping narrow tiles (matches the accommodation-setup
   // tile pattern), 1→N columns by width, instead of a single fixed column.
-  const roomGrid=rooms.length?`<div class="accom-rooms">${roomCards}</div>`:roomCards;
+  const roomGrid=roomCards;
   // Soft-freeze card + the stale-placement notice (2026-09-24). Absorbed = effective above stored.
   let absorbed=0;Object.keys(alloc).forEach(r=>(alloc[r]||[]).forEach(e=>{const d=e.n-storedN(r,e.key);if(d>0)absorbed+=d;}));
   const overRooms=rooms.filter(rm=>_accomRoomUsed(alloc,rm.id)>rm.capacity).length;

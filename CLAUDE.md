@@ -4,6 +4,20 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Accommodation rooms grouped + shaded by building — `camp-v126` — 2026-09-24 (3rd)
+
+Owner request: rooms are named `<Building> - <Room>` (ITC, CHC, Mezz, K Block, SOHO, CP; `Chapel`
+has no prefix). **SPA only** (`drawAccom` in `public/index.html`) — no schema, API or migration.
+The Classrooms section on the allocations screen now shows one heading per building (prefix before
+" - "; no prefix → its own group), buildings **A→Z**, rooms **natural order** (E2 before E10), each
+building a tinted card background + coloured left edge (`_TINTS`, 8 colours cycled by alphabetical
+position — adding a building can shift later buildings' colours), heading shows `N rooms · used/cap`.
+Over-capacity red still overrides the tint. To recategorise a room, rename it in Admin →
+Accommodation. **Display only**: `_accomGrow`/`_accomShrink` iterate the placement map, not the room
+list, so ordering cannot change allocations. The API/export still sort rooms by plain `name`.
+Harness 21 scenarios pass, vitest 1169 pass, SPA body `node --check` OK. `sw.js` → `camp-v126`.
+Not verified on a device.
+
 ## Accommodation: stale-placement auto-heal + classroom "soft freeze" — migration `0030` — 2026-09-24 (2nd)
 
 Owner problem: placements are stored as COUNTS per group key (`churchId|gender[|bracket]`), and
