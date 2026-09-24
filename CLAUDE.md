@@ -12,6 +12,11 @@
 > groups/tints its edit tiles the same way (heading shows `N rooms · cap beds`). Infobox + the
 > add-room placeholder now teach the `Building - Room` convention. Renaming via Save re-renders the
 > screen, so the tile jumps to its new building immediately.
+>
+> **Follow-up `camp-v128`:** grouping now **ignores capitals and extra spaces** and splits on the
+> first `-` whether or not it has spaces (`chc-E2`, `CHC  -  A1` → CHC); the heading shows the
+> most-used spelling in the group. ⚠ So any hyphen now splits — a name like `Year-12 Room` would
+> group as "Year". Setup tiles widened 20% (`minmax(180px)`→`216px`) so `Mezz - CK5` isn't cut off.
 
 Owner request: rooms are named `<Building> - <Room>` (ITC, CHC, Mezz, K Block, SOHO, CP; `Chapel`
 has no prefix). **SPA only** (`drawAccom` in `public/index.html`) — no schema, API or migration.

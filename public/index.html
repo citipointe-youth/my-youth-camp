@@ -5652,16 +5652,20 @@ function accomGroups(regs){
    THIS, so they cannot disagree with each other. */
 /* Rooms grouped + shaded by BUILDING (2026-09-24, owner request) — shared by the allocations
    screen (`drawAccom`) and Admin → Accommodation setup. The building is the room name's prefix
-   before " - " ("CHC - E1" → CHC); a name with no " - " is its own group ("Chapel"). Buildings
+   before the first "-" ("CHC - E1" → CHC); a name with no "-" is its own group ("Chapel"). Buildings
    A→Z, rooms in natural order (E2 before E10); tint cycles `_ROOM_TINTS` by alphabetical position.
    Nothing is stored — renaming a room is what moves it. DISPLAY ONLY: grow/shrink/freeze read the
    placement map's order, never this list's, so re-ordering cannot change who goes where. */
 const _ROOM_TINTS=[['#2563eb','#eef4ff'],['#16a34a','#edf9f1'],['#d97706','#fff6e6'],['#9333ea','#f6effe'],['#0891b2','#e9f8fb'],['#db2777','#fdeef5'],['#65a30d','#f3f9e8'],['#475569','#f1f4f7']];
 function _roomNat(x,y){return String(x).localeCompare(String(y),undefined,{numeric:true,sensitivity:'base'});}
-function _roomBuilding(name){const n=String(name||'').trim(),i=n.indexOf(' - ');return i>0?n.slice(0,i).trim():n;}
-function _roomBuildings(rooms){const g={};(rooms||[]).forEach(rm=>{const b=_roomBuilding(rm.name);(g[b]=g[b]||[]).push(rm);});
-  return Object.keys(g).sort(_roomNat).map((b,i)=>{const t=_ROOM_TINTS[i%_ROOM_TINTS.length];
-    return{name:b,rooms:g[b].slice().sort((x,y)=>_roomNat(x.name,y.name)),tint:{edge:t[0],bg:t[1]}};});}
+// Building = text before the first "-", spaces around it optional ("CHC-E1" = "CHC - E1"). Grouping
+// ignores capitals and extra spaces ("chc  - E1" joins CHC); the heading shows the spelling most
+// rooms in the group use (tie → A→Z first).
+function _roomBuilding(name){const n=String(name||'').trim().replace(/\s+/g,' '),i=n.indexOf('-');return i>0?n.slice(0,i).trim():n;}
+function _roomBuildings(rooms){const g={};(rooms||[]).forEach(rm=>{const b=_roomBuilding(rm.name),k=b.toLowerCase();(g[k]=g[k]||{spell:{},rooms:[]}).rooms.push(rm);g[k].spell[b]=(g[k].spell[b]||0)+1;});
+  const label=k=>Object.keys(g[k].spell).sort((x,y)=>g[k].spell[y]-g[k].spell[x]||_roomNat(x,y))[0];
+  return Object.keys(g).sort(_roomNat).map((k,i)=>{const t=_ROOM_TINTS[i%_ROOM_TINTS.length];
+    return{name:label(k),rooms:g[k].rooms.slice().sort((x,y)=>_roomNat(x.name,y.name)),tint:{edge:t[0],bg:t[1]}};});}
 function _roomBuildingHead(name,list,tint,i,used){const cap=list.reduce((s,rm)=>s+(rm.capacity||0),0);
   return `<h3 class="sec" style="margin:${i?18:4}px 0 8px;display:flex;align-items:center;gap:8px"><span style="width:12px;height:12px;border-radius:3px;background:${tint.edge};flex:none"></span>${esc(name)} <span class="sub" style="font-weight:400">· ${list.length} room${list.length===1?'':'s'} · ${used!=null?used+'/'+cap:cap+' beds'}</span></h3>`;}
 function _accomRoomUsed(map,roomId){return (map[roomId]||[]).reduce((s,e)=>s+(e.n>0?e.n:0),0);}
@@ -7635,7 +7639,7 @@ RENDER.adminAccom=async function(){
       </div>
     </div>`;
   // Grouped + shaded by building, same as the allocations screen (`_roomBuildings`).
-  const tileGrid=rooms&&rooms.length?_roomBuildings(rooms).map(({name,rooms:list,tint},i)=>_roomBuildingHead(name,list,tint,i)+`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:4px">${list.map(rm=>tile(rm,tint)).join('')}</div>`).join(''):'<p class="note-hint">No classroom rooms yet.</p>';
+  const tileGrid=rooms&&rooms.length?_roomBuildings(rooms).map(({name,rooms:list,tint},i)=>_roomBuildingHead(name,list,tint,i)+`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:10px;margin-top:4px">${list.map(rm=>tile(rm,tint)).join('')}</div>`).join(''):'<p class="note-hint">No classroom rooms yet.</p>';
   /* The "Accommodation overrides" card MOVED to the allocations screen (2026-08-02, owner
      request) — see `_accomOverrideCard`. This screen is for naming rooms; an override is a
      statement about where a church sleeps and belongs beside the map. `churches` is still
