@@ -56,6 +56,11 @@ export type AllocationMap = Record<string, AllocEntry[]>;
 export const ELIGIBLE_RATIO = 0.75;
 export const TENT_SIZE = 7;
 
+// Churches whose accommodation is "left to per-registration" (owner, 2026-09-24): they skip the
+// 75% bar, so each person sleeps where they registered — classroom-kind people get classroom
+// groups, tent-kind people stay in tents. Omit it and the rule is exactly the 75% bar.
+export interface EligibilityOptions { perRegistration?: ReadonlySet<string> }
+
 // Per church×gender classroom tally, broken down by grade bracket + leader count, so a
 // pool over SPLIT_THRESHOLD can be split into 7-9 / 10-12 sub-pools (PC-10).
 interface GenderTally {
@@ -76,7 +81,10 @@ function newGender(): GenderTally { return { cls: 0, youth79: 0, youth1012: 0, y
 // A church qualifies for classroom groups only once 75%+ of its (non-cancelled) people are
 // classroom-kind. Below that, its classroom-kind people have no room to be placed in — see
 // `tentDistribution`, which folds them into the tent counts instead of leaving them uncounted.
-function isEligible(c: Pick<ChurchTally, 'total' | 'classroom'>): boolean {
+// A church flagged "left to per-registration" (`opts.perRegistration`) skips the bar entirely —
+// each person sleeps where they registered, classroom or tent, regardless of the church's ratio.
+function isEligible(c: Pick<ChurchTally, 'id' | 'total' | 'classroom'>, opts?: EligibilityOptions): boolean {
+  if (opts?.perRegistration?.has(c.id)) return true;
   return c.total > 0 && c.classroom / c.total >= ELIGIBLE_RATIO;
 }
 
@@ -169,10 +177,10 @@ function groupsForGender(
   return out;
 }
 
-export function computeGroups(occupants: readonly AllocationOccupant[]): AllocationGroup[] {
+export function computeGroups(occupants: readonly AllocationOccupant[], opts?: EligibilityOptions): AllocationGroup[] {
   const groups: AllocationGroup[] = [];
   for (const c of tallyChurches(occupants).values()) {
-    if (!isEligible(c)) continue;
+    if (!isEligible(c, opts)) continue;
     groups.push(...groupsForGender(c, 'male', c.male));
     groups.push(...groupsForGender(c, 'female', c.female));
   }
@@ -223,16 +231,20 @@ export interface TentChurch {
   f: { stu: number; ld: number };
 }
 
-export function tentDistribution(occupants: readonly AllocationOccupant[]): TentChurch[] {
+export function tentDistribution(occupants: readonly AllocationOccupant[], opts?: EligibilityOptions): TentChurch[] {
   // A person whose personal preference is 'classroom' still ends up in a tent if their
   // church never reached the 75% eligibility threshold (no room group exists for them) —
-  // fold those in here so they're always counted somewhere, never silently dropped.
+  // fold those in here so they're always counted somewhere, never silently dropped. A
+  // per-registration church is always "eligible" (see isEligible), so this fold-in never
+  // applies to it; a flagged church with zero classroom people simply emits no groups
+  // (groupsForGender returns [] when g.cls===0) and its tent people are unaffected, since
+  // only classroom-kind people are ever folded in here.
   const churchTallies = tallyChurches(occupants);
   const by = new Map<string, TentChurch>();
   for (const o of occupants) {
     if (o.lifecycle === 'cancelled') continue;
     const tally = churchTallies.get(o.churchId);
-    const churchEligible = tally != null && isEligible(tally);
+    const churchEligible = tally != null && isEligible(tally, opts);
     const isTentBound = o.accommodationKind === 'tent'
       || (o.accommodationKind === 'classroom' && !churchEligible);
     if (!isTentBound) continue;

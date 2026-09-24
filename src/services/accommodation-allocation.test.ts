@@ -307,3 +307,52 @@ describe('computeGroups — per-year-level split (bug 5)', () => {
     expect(total).toBe(people.length);
   });
 });
+
+describe('per-registration churches (bypass the 75% bar)', () => {
+  // c9: 2 classroom juniors (1 male, 1 female) + 3 male tent seniors = 40% classroom.
+  const split = [
+    occ({ churchId: 'c9', churchName: 'Hope', gender: 'male', grade: 8 }),
+    occ({ churchId: 'c9', churchName: 'Hope', gender: 'female', grade: 8 }),
+    occ({ churchId: 'c9', churchName: 'Hope', gender: 'male', grade: 11, accommodationKind: 'tent' }),
+    occ({ churchId: 'c9', churchName: 'Hope', gender: 'male', grade: 11, accommodationKind: 'tent' }),
+    occ({ churchId: 'c9', churchName: 'Hope', gender: 'male', grade: 11, accommodationKind: 'tent' }),
+  ];
+  const flagged = { perRegistration: new Set(['c9']) };
+
+  it('without the flag, an under-75% church still gets no classroom groups', () => {
+    expect(computeGroups(split)).toEqual([]);
+  });
+
+  it('with the flag, its classroom-kind people form normal per-gender groups', () => {
+    const groups = computeGroups(split, flagged);
+    expect(groups.map((g) => g.key).sort()).toEqual(['c9|female', 'c9|male']);
+    expect(groups.find((g) => g.key === 'c9|male')!.n).toBe(1);
+  });
+
+  it('with the flag, only tent-kind people are counted in tents', () => {
+    const t = tentDistribution(split, flagged)[0]!;
+    expect(t.m).toEqual({ stu: 3, ld: 0 });
+    expect(t.f).toEqual({ stu: 0, ld: 0 });
+  });
+
+  it('without the flag, classroom-kind people still fold into tents (unchanged)', () => {
+    const t = tentDistribution(split)[0]!;
+    expect(t.m).toEqual({ stu: 4, ld: 0 });
+    expect(t.f).toEqual({ stu: 1, ld: 0 });
+  });
+
+  it('flagging one church does not lift another under-75% church', () => {
+    const other = [
+      occ({ churchId: 'c8', accommodationKind: 'classroom' }),
+      occ({ churchId: 'c8', accommodationKind: 'tent' }),
+      occ({ churchId: 'c8', accommodationKind: 'tent' }),
+    ];
+    const keys = computeGroups([...split, ...other], flagged).map((g) => g.key);
+    expect(keys.some((k) => k.startsWith('c8|'))).toBe(false);
+  });
+
+  it('a flagged church with no classroom-kind people emits no groups', () => {
+    const allTent = [occ({ churchId: 'c7', accommodationKind: 'tent' })];
+    expect(computeGroups(allTent, { perRegistration: new Set(['c7']) })).toEqual([]);
+  });
+});
