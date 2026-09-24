@@ -18,6 +18,13 @@ export interface Church {
    * (churches that deliberately split ticket types leave this unset).
    */
   accommodationOverride?: AccommodationKind | null;
+  /**
+   * "Left to per-registration" (2026-09-24): when true this church skips the 75% classroom
+   * eligibility bar in accommodation allocation — classroom-kind people get classroom groups,
+   * tent-kind people stay in tents. Unlike `accommodationOverride` it changes no one's
+   * accommodationKind; it only changes whether the church's classroom people are placeable.
+   */
+  accommodationPerRegistration?: boolean;
   contacts: {
     male: { primary: ChurchContact; backup: ChurchContact };
     female: { primary: ChurchContact; backup: ChurchContact };
