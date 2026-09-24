@@ -5521,8 +5521,10 @@ RENDER.accom=async function(){
   // The churches fetch is unswallowed (no .catch(()=>[])) — this screen is director/admin only and
   // both can list churches. A swallowed failure here would silently show a flagged ministry as
   // tents while the server treats it as placeable (the 2026-08-01 `.catch(()=>[])` lesson).
-  const [regs,rooms,alloc,churches]=await Promise.all([api(_scoped('/registrants?includeCancelled=1')),api('/accommodation/classrooms'),api('/accommodation/allocations'),api('/accounts/churches')]);
-  window._accomRegs=regs||[];window._accomRooms=rooms||[];window._accomAlloc=alloc||{};
+  // `/accommodation/state` (2026-09-24) = the healed stored map + soft-freeze snapshot + which stale
+  // placements were cleared. Stale entries are never on the client, so a request can't resend them.
+  const [regs,rooms,st,churches]=await Promise.all([api(_scoped('/registrants?includeCancelled=1')),api('/accommodation/classrooms'),api('/accommodation/state'),api('/accounts/churches')]);
+  window._accomRegs=regs||[];window._accomRooms=rooms||[];_accomApplyState(st);
   window._accomPerReg=Object.fromEntries((churches||[]).filter(c=>c.accommodationPerRegistration).map(c=>[c.id,true]));
   /* The overrides card sits OUTSIDE `#accomBody` on purpose — `drawAccom()` rewrites that div on
      every allocation change, and rebuilding the card there would slam the <details> shut (and drop
@@ -5579,7 +5581,11 @@ function accomChurches(regs){
 // (window._accomPerReg, from churches.accommodationPerRegistration) skips the bar: its
 // classroom-kind people get classroom groups, its tent-kind people stay in tents.
 const ACCOM_ELIGIBLE_RATIO=0.75;
-function _accomEligible(c){if(!c)return false;if((window._accomPerReg||{})[c.id])return true;
+function _accomEligible(c){if(!c)return false;
+  // Soft freeze (2026-09-24): eligibility is whatever it was when the freeze was pressed — no
+  // ministry gains or loses classrooms while frozen (mirrors isEligible's `opts.frozen`).
+  const fz=window._accomFreeze;if(fz)return (fz.eligibleChurchIds||[]).indexOf(c.id)>=0;
+  if((window._accomPerReg||{})[c.id])return true;
   return c.total>0&&c.classroom/c.total>=ACCOM_ELIGIBLE_RATIO;}
 // Under the bar on the numbers alone, flag or not — the rows of "Under 75% — Moved to Tents".
 function _accomUnderBar(c){return c.total>0&&c.classroom>0&&c.classroom/c.total<ACCOM_ELIGIBLE_RATIO;}
@@ -5603,46 +5609,117 @@ function _accomYearGroups(c,gender,g,bracket,leaders,extraYouth,lbl){
    would be a fourth copy of this arithmetic — the drift trap this file has been bitten by
    repeatedly. The split is computed HERE, once, at the same moment `n` is, so the two cannot
    disagree. Nothing on screen reads them yet; they are additive and `n` is unchanged. */
-function _accomGenderGroups(c,gender,g){
+// Today's split rule as data (mirrors naturalShape in accommodation-allocation.ts). While the
+// soft freeze is on, the shape recorded at freeze time is used instead, so nothing re-splits or
+// un-splits at 50.
+function _accomNaturalShape(g){
+  if(g.cls<=ACCOM_SPLIT_THRESHOLD)return {split:false};
+  const ld79=Math.ceil(g.ld/2),n79=g.y79+g.yOther+ld79,n1012=g.y1012+(g.ld-ld79);
+  return {split:true,years79:n79>ACCOM_SPLIT_THRESHOLD,years1012:n1012>ACCOM_SPLIT_THRESHOLD};
+}
+function _accomGenderGroups(c,gender,g,shape){
   if(g.cls===0)return [];
   const lbl=gender==='male'?'Guys':'Girls';
-  if(g.cls<=ACCOM_SPLIT_THRESHOLD)return [{key:c.id+'|'+gender,church:c.name,gender,label:lbl,n:g.cls,stu:g.cls-g.ld,ld:g.ld}];
+  const sh=shape||_accomNaturalShape(g);
+  if(!sh.split)return [{key:c.id+'|'+gender,church:c.name,gender,label:lbl,n:g.cls,stu:g.cls-g.ld,ld:g.ld}];
   const ld79=Math.ceil(g.ld/2),ld1012=g.ld-ld79;
   const stu79=g.y79+g.yOther,stu1012=g.y1012;
   const n79=stu79+ld79,n1012=stu1012+ld1012;const out=[];
   if(n79>0){
-    if(n79>ACCOM_SPLIT_THRESHOLD)out.push(..._accomYearGroups(c,gender,g,'7-9',ld79,g.yOther,lbl));
+    if(sh.years79)out.push(..._accomYearGroups(c,gender,g,'7-9',ld79,g.yOther,lbl));
     else out.push({key:c.id+'|'+gender+'|7-9',church:c.name,gender,label:lbl+' Yr 7–9',n:n79,stu:stu79,ld:ld79,bracket:'7-9'});
   }
   if(n1012>0){
-    if(n1012>ACCOM_SPLIT_THRESHOLD)out.push(..._accomYearGroups(c,gender,g,'10-12',ld1012,0,lbl));
+    if(sh.years1012)out.push(..._accomYearGroups(c,gender,g,'10-12',ld1012,0,lbl));
     else out.push({key:c.id+'|'+gender+'|10-12',church:c.name,gender,label:lbl+' Yr 10–12',n:n1012,stu:stu1012,ld:ld1012,bracket:'10-12'});
   }
   return out;
 }
 function accomGroups(regs){
-  const by=accomChurches(regs),groups=[];
+  const by=accomChurches(regs),groups=[],fz=window._accomFreeze;
+  const shapeOf=(id,gender)=>fz?((fz.shapes||{})[id+'|'+gender]||{split:false}):null;
   Object.values(by).forEach(c=>{const elig=_accomEligible(c);if(elig){
-    groups.push(..._accomGenderGroups(c,'male',c.male));
-    groups.push(..._accomGenderGroups(c,'female',c.female));}});
+    groups.push(..._accomGenderGroups(c,'male',c.male,shapeOf(c.id,'male')));
+    groups.push(..._accomGenderGroups(c,'female',c.female,shapeOf(c.id,'female')));}});
   return groups;
 }
-async function addAlloc(roomId,key){if(!key)return;const rooms=window._accomRooms||[],a=JSON.parse(JSON.stringify(window._accomAlloc||{}));
+/* ===== Effective placements (soft freeze, 2026-09-24) — mirrors effectiveAllocations /
+   growGroup / shrinkGroup in src/services/accommodation-allocation.ts (the tested source of
+   truth). Per group with a placement: target = min(n, placed + max(0, n − baseline)). Shrinks
+   first (most over-capacity room, then smallest placement; ties → later room), then grows one at
+   a time into the room with the most free space (ties → the earliest, i.e. first-placed, room).
+   No baselines (not frozen) ⇒ a plain clamp. The screen, the export and the requests all read
+   THIS, so they cannot disagree with each other. */
+function _accomRoomUsed(map,roomId){return (map[roomId]||[]).reduce((s,e)=>s+(e.n>0?e.n:0),0);}
+function _accomHeld(map,key){const out=[];Object.keys(map).forEach(r=>{const e=(map[r]||[]).find(x=>x.key===key&&x.n>0);if(e)out.push({roomId:r,entry:e});});return out;}
+function _accomShrink(map,key,count,rooms){const cap={};rooms.forEach(r=>cap[r.id]=r.capacity);
+  for(let i=0;i<count;i++){const held=_accomHeld(map,key);if(!held.length)break;let pick=held[0],best=-Infinity;
+    held.forEach(h=>{const over=_accomRoomUsed(map,h.roomId)-(cap[h.roomId]!=null?cap[h.roomId]:Infinity);if(over>0&&over>=best){best=over;pick=h;}});
+    if(best<=0){let sm=Infinity;held.forEach(h=>{if(h.entry.n<=sm){sm=h.entry.n;pick=h;}});}
+    pick.entry.n--;}}
+function _accomGrow(map,key,count,rooms){const cap={};rooms.forEach(r=>cap[r.id]=r.capacity);
+  for(let i=0;i<count;i++){const held=_accomHeld(map,key);if(!held.length)return;let pick=held[0],best=-Infinity;
+    held.forEach(h=>{const free=(cap[h.roomId]||0)-_accomRoomUsed(map,h.roomId);if(free>best){best=free;pick=h;}});
+    pick.entry.n++;}}
+function _accomEffective(stored,groups,rooms,baselines){
+  const map={};Object.keys(stored||{}).forEach(r=>{map[r]=(stored[r]||[]).map(e=>({key:e.key,n:e.n}));});
+  const placedOf=k=>Object.values(map).reduce((s,arr)=>s+arr.filter(e=>e.key===k&&e.n>0).reduce((a,e)=>a+e.n,0),0);
+  const plan=groups.map(g=>{const placed=placedOf(g.key);const base=baselines&&baselines[g.key]!=null?baselines[g.key]:g.n;
+    return {key:g.key,placed,target:placed===0?0:Math.min(g.n,placed+Math.max(0,g.n-base))};});
+  plan.forEach(p=>{if(p.target<p.placed)_accomShrink(map,p.key,p.placed-p.target,rooms);});
+  plan.forEach(p=>{if(p.target>p.placed)_accomGrow(map,p.key,p.target-p.placed,rooms);});
+  Object.keys(map).forEach(r=>{map[r]=map[r].filter(e=>e.n>0);if(!map[r].length)delete map[r];});
+  return map;
+}
+// The effective map for what is on screen right now.
+function _accomEff(){const fz=window._accomFreeze;
+  return _accomEffective(window._accomAlloc||{},accomGroups(window._accomRegs||[]),window._accomRooms||[],fz?fz.baselines:null);}
+function _accomApplyState(st){st=st||{};window._accomAlloc=st.stored||{};window._accomFreeze=st.freeze||null;window._accomHealed=st.healed||[];}
+// The request base for changing `key`: the stored map (already healed server-side, and filtered to
+// live groups here as a backstop), with that ONE group's placements replaced by its EFFECTIVE ones
+// — so a group absorbed to 29/25 while frozen is edited from what people actually got. Every other
+// group goes back exactly as stored; the server treats those as untouched.
+function _accomReqBase(key,eff,groups){const live={};groups.forEach(g=>live[g.key]=1);
+  const a={};Object.keys(window._accomAlloc||{}).forEach(r=>{a[r]=(window._accomAlloc[r]||[]).filter(e=>live[e.key]&&e.n>0).map(e=>({key:e.key,n:e.n}));});
+  Object.keys(a).forEach(r=>{const e=a[r].find(x=>x.key===key);if(!e)return;const f=(eff[r]||[]).find(x=>x.key===key);
+    if(f)e.n=f.n;else a[r]=a[r].filter(x=>x.key!==key);});
+  return a;}
+async function _accomSave(a){const st=await api('/accommodation/allocations',{method:'PATCH',body:{allocations:a}});_accomApplyState(st);drawAccom();}
+async function addAlloc(roomId,key){if(!key)return;const rooms=window._accomRooms||[];
   const groups=accomGroups(window._accomRegs||[]),g=groups.find(x=>x.key===key);if(!g)return;
-  let allocated=0;Object.values(a).forEach(arr=>(arr||[]).forEach(e=>{if(e.key===key)allocated+=e.n;}));
+  const eff=_accomEff(),a=_accomReqBase(key,eff,groups);
+  let allocated=0;Object.values(eff).forEach(arr=>(arr||[]).forEach(e=>{if(e.key===key)allocated+=e.n;}));
   const availN=g.n-allocated;if(availN<=0){toast('All of that group is already allocated');return;}
-  const room=rooms.find(r=>r.id===roomId);if(!room)return;const entries=a[roomId]||[];const used=entries.reduce((s,e)=>s+e.n,0);const rem=room.capacity-used;
+  const room=rooms.find(r=>r.id===roomId);if(!room)return;const rem=room.capacity-_accomRoomUsed(eff,roomId);
   if(rem<=0){toast('Room is full');return;}
-  const rg=entries.length?(groups.find(x=>x.key===entries[0].key)||{}).gender:null;
+  const effEntries=eff[roomId]||[];const rg=effEntries.length?(groups.find(x=>x.key===effEntries[0].key)||{}).gender:null;
   if(rg&&rg!==g.gender){toast('That room is '+(rg==='male'?'Guys':'Girls')+' only');return;}
   const place=Math.min(availN,rem);
   a[roomId]=a[roomId]||[];const ex=a[roomId].find(e=>e.key===key);if(ex)ex.n+=place;else a[roomId].push({key,n:place});
-  try{await api('/accommodation/allocations',{method:'PATCH',body:{allocations:a}});window._accomAlloc=await api('/accommodation/allocations');drawAccom();if(place<availN)toast(place+' placed · '+(availN-place)+' still to allocate elsewhere');}catch(e){toast(e.message);}}
-async function removeAlloc(roomId,key){const rooms=window._accomRooms||[];const a=JSON.parse(JSON.stringify(window._accomAlloc||{}));
+  try{await _accomSave(a);if(place<availN)toast(place+' placed · '+(availN-place)+' still to allocate elsewhere');}catch(e){toast(e.message);}}
+async function removeAlloc(roomId,key){const rooms=window._accomRooms||[];const groups=accomGroups(window._accomRegs||[]);
+  const eff=_accomEff(),a=_accomReqBase(key,eff,groups);
   const entry=(a[roomId]||[]).find(e=>e.key===key);if(!entry)return;
   let freed=entry.n;a[roomId]=(a[roomId]||[]).filter(e=>e.key!==key);
-  for(const rm of rooms){if(rm.id===roomId)continue;const arr=a[rm.id];if(!arr)continue;const ex=arr.find(e=>e.key===key);if(!ex)continue;const used=arr.reduce((s,e)=>s+e.n,0);const rem=rm.capacity-used;if(rem>0&&freed>0){const add=Math.min(rem,freed);ex.n+=add;freed-=add;}}
-  try{await api('/accommodation/allocations',{method:'PATCH',body:{allocations:a}});window._accomAlloc=await api('/accommodation/allocations');drawAccom();}catch(e){toast(e.message);}}
+  // Cascade the freed people into the group's other rooms that still have EFFECTIVE space.
+  for(const rm of rooms){if(rm.id===roomId)continue;const arr=a[rm.id];if(!arr)continue;const ex=arr.find(e=>e.key===key);if(!ex)continue;const rem=rm.capacity-_accomRoomUsed(eff,rm.id);if(rem>0&&freed>0){const add=Math.min(rem,freed);ex.n+=add;freed-=add;}}
+  try{await _accomSave(a);}catch(e){toast(e.message);}}
+// Soft freeze (2026-09-24): director + admin, ~3 days before camp. While on, group shapes and
+// classroom eligibility stay as they were when pressed, and late registrations join their group's
+// rooms even past capacity. Unfreezing writes those absorbed counts back as the stored ones.
+async function toggleSoftFreeze(on){
+  const body=on
+    ?'Group sizes and which ministries get classrooms stay as they are now. Anyone who registers late joins their group\'s room — even if that puts the room over capacity — and it will show in red. Turn this on about 3 days before camp.'
+    :'The late registrations absorbed into rooms become normal placements. Rooms keep any overflow. Groups will re-split at 50 and ministries can gain or lose classrooms again.';
+  if(!await confirmSheet({title:on?'Soft-freeze classrooms?':'Turn off the soft freeze?',body,confirmLabel:on?'Soft-freeze':'Unfreeze'}))return;
+  try{const st=await api('/accommodation/soft-freeze',{method:'POST',body:{frozen:on}});_accomApplyState(st);drawAccom();toast(on?'Classrooms soft-frozen':'Soft freeze turned off');}
+  catch(e){toast(e.message);}}
+function _accomHealSig(list){return (list||[]).map(h=>h.roomId+'/'+h.key+'/'+h.n+'/'+h.reason).sort().join(';');}
+function _accomHealDismiss(){const sig=_accomHealSig(window._accomHealed);window._accomHealDismissed=sig;
+  try{localStorage.setItem('ycp_accom_heal_dismissed',sig);}catch(e){}drawAccom();}
+function _accomHealDismissed(){if(window._accomHealDismissed!=null)return window._accomHealDismissed;
+  try{return localStorage.getItem('ycp_accom_heal_dismissed')||'';}catch(e){return '';}}
+const _ACCOM_HEAL_WHY={'group re-split':'that group was re-grouped by year level (it crossed 50 people)','group shrank':'that group is now smaller than the number placed','ministry no longer eligible':'that ministry no longer qualifies for classrooms','room removed':'that room was removed'};
 // "Left to per-registration" toggle (2026-09-24). Switching BACK drops this ministry's classroom
 // placements server-side (their groups stop existing), so confirm first when any are placed.
 async function setAccomPerReg(churchId,on,sel){
@@ -5653,7 +5730,7 @@ async function setAccomPerReg(churchId,on,sel){
   if(sel)sel.disabled=true;
   try{await api('/accommodation/per-registration/'+churchId,{method:'PATCH',body:{perRegistration:on}});
     window._accomPerReg=Object.assign({},window._accomPerReg,{[churchId]:on||undefined});
-    window._accomAlloc=await api('/accommodation/allocations');drawAccom();toast('Saved');}
+    _accomApplyState(await api('/accommodation/state'));drawAccom();toast('Saved');}
   catch(e){if(sel)sel.value=on?'0':'1';toast(e.message);}
   finally{if(sel)sel.disabled=false;}}
 // Mirrors src/services/accommodation-allocation.ts tentDistribution: a classroom-preference
@@ -5685,7 +5762,10 @@ function tentDist(regs){const by={},churches=accomChurches(regs);
    through `XLSX.write` → `XLSX.read` with cells intact. No new dependency, no server work.
    xlsx rather than CSV because the owner asked for four sheets, and CSV cannot carry them. */
 function _accomExportRows(){
-  const regs=window._accomRegs||[],rooms=window._accomRooms||[],alloc=window._accomAlloc||{};
+  // EFFECTIVE placements (soft-freeze absorption included) — what people actually get, and what
+  // the screen shows. `stored` is only used to count the late registrations absorbed.
+  const regs=window._accomRegs||[],rooms=window._accomRooms||[],stored=window._accomAlloc||{},alloc=_accomEff();
+  const fz=window._accomFreeze;
   const groups=accomGroups(regs);
   const gByKey=Object.fromEntries(groups.map(g=>[g.key,g]));
   const by=accomChurches(regs);
@@ -5718,13 +5798,15 @@ function _accomExportRows(){
   });
 
   /* ── Sheet 3: one row per classroom ── */
-  const roomRows=[['Classroom','Capacity','Allocated','Remaining','Gender','Cohorts allocated']];
+  const roomRows=[['Classroom','Capacity','Allocated','Remaining','Gender','Cohorts allocated','Over capacity']];
+  let overRooms=0,overTotal=0;
   rooms.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(rm=>{
     const entries=(alloc[rm.id]||[]).filter(e=>gByKey[e.key]);
     const used=entries.reduce((s,e)=>s+e.n,0);
     const rg=entries.length?gByKey[entries[0].key].gender:null;
+    const over=Math.max(0,used-rm.capacity);if(over){overRooms++;overTotal+=over;}
     roomRows.push([rm.name,rm.capacity,used,rm.capacity-used,rg?gLabel(rg):'—',
-      entries.map(e=>{const g=gByKey[e.key];return g.church+' — '+g.label+' ('+e.n+')';}).join('; ')||'Unallocated']);
+      entries.map(e=>{const g=gByKey[e.key];return g.church+' — '+g.label+' ('+e.n+')';}).join('; ')||'Unallocated',over]);
   });
 
   /* ── Sheet 4: tents ── */
@@ -5745,6 +5827,9 @@ function _accomExportRows(){
   /* ── Sheet 1: summary ── */
   const totalCap=rooms.reduce((s,r)=>s+r.capacity,0);
   const totalPlaced=Object.values(alloc).reduce((s,arr)=>s+(arr||[]).filter(e=>gByKey[e.key]).reduce((a,e)=>a+e.n,0),0);
+  // Spare capacity is summed per room, so an over-full room can't hide another room's empty beds.
+  const spare=rooms.reduce((s,rm)=>s+Math.max(0,rm.capacity-(alloc[rm.id]||[]).filter(e=>gByKey[e.key]).reduce((a,e)=>a+e.n,0)),0);
+  let absorbed=0;Object.keys(alloc).forEach(r=>(alloc[r]||[]).forEach(e=>{const st=((stored[r]||[]).find(x=>x.key===e.key)||{n:0}).n;if(e.n>st)absorbed+=e.n-st;}));
   const clsTotal=groups.reduce((s,g)=>s+g.n,0);
   const clsStu=groups.reduce((s,g)=>s+g.stu,0);
   const clsLd=groups.reduce((s,g)=>s+g.ld,0);
@@ -5775,8 +5860,12 @@ function _accomExportRows(){
     ['Classrooms set up',rooms.length],
     ['Total capacity',totalCap],
     ['Placed in a classroom',totalPlaced],
-    ['Spare capacity',totalCap-totalPlaced],
+    ['Spare capacity',spare],
     ['Still to place',clsTotal-totalPlaced],
+    ['Rooms over capacity',overRooms],
+    ['Total over capacity',overTotal],
+    ['Soft freeze',fz?'On since '+new Date(fz.frozenAt).toLocaleString():'Off'],
+    ['Late registrations absorbed',absorbed],
     ['',''],
     ['TENTS',''],
     ['Student tents',tSt],
@@ -5843,9 +5932,12 @@ async function exportAccommodation(){
 }
 
 function drawAccom(){
-  const regs=window._accomRegs||[],rooms=window._accomRooms||[],alloc=window._accomAlloc||{};
+  // Everything below reads the EFFECTIVE map (stored placements + soft-freeze absorption).
+  const regs=window._accomRegs||[],rooms=window._accomRooms||[],stored=window._accomAlloc||{},alloc=_accomEff();
   const groups=accomGroups(regs);
   const gByKey=Object.fromEntries(groups.map(g=>[g.key,g]));
+  const fz=window._accomFreeze;
+  const storedN=(r,k)=>((stored[r]||[]).find(e=>e.key===k)||{n:0}).n;
   const allocByKey={};Object.values(alloc).forEach(arr=>(arr||[]).forEach(e=>{allocByKey[e.key]=(allocByKey[e.key]||0)+e.n;}));
   groups.forEach(g=>g.avail=g.n-(allocByKey[g.key]||0));
   const availGroups=groups.filter(g=>g.avail>0);
@@ -5854,10 +5946,13 @@ function drawAccom(){
     const used=entries.reduce((s,e)=>s+e.n,0);const rem=rm.capacity-used;
     const roomGender=entries.length?gByKey[entries[0].key].gender:null;
     const addable=roomGender?availGroups.filter(g=>g.gender===roomGender):availGroups;
-    const chips=entries.map(e=>{const g=gByKey[e.key];return `<div class="rowsb" style="align-items:center;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-top:6px"><span style="font-size:var(--t-micro);line-height:1.3">${esc(g.church)} — ${g.label} (${e.n})</span><button class="btn ghost sm" onclick="removeAlloc('${rm.id}','${e.key}')">Remove</button></div>`;}).join('');
+    const chips=entries.map(e=>{const g=gByKey[e.key];const late=e.n-storedN(rm.id,e.key);return `<div class="rowsb" style="align-items:center;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-top:6px"><span style="font-size:var(--t-micro);line-height:1.3">${esc(g.church)} — ${g.label} (${e.n}${late>0?` · <b>+${late} late</b>`:''})</span><button class="btn ghost sm" onclick="removeAlloc('${rm.id}','${e.key}')">Remove</button></div>`;}).join('');
     const addSel=(rem>0&&addable.length)?`<select onchange="addAlloc('${rm.id}',this.value);this.value=''" style="width:100%;margin-top:8px"><option value="">+ Add ministry…</option>${addable.map(g=>`<option value="${g.key}">${esc(g.church)} — ${g.label} (${g.avail} left)</option>`).join('')}</select>`:(rem<=0?`<div class="sub" style="margin-top:8px">Room full.</div>`:`<div class="sub" style="margin-top:8px">${roomGender?'No more '+(roomGender==='male'?'Guys':'Girls')+' groups to add.':'All eligible groups are allocated.'}</div>`);
-    const tone=used?'ok':'info';const lbl=used+'/'+rm.capacity;
-    return `<div class="card"><div class="rowsb"><div style="font-weight:600">${icSm('classroom')} ${esc(rm.name)} <span class="sub">· cap ${rm.capacity}</span></div><span class="pill ${tone}">${lbl}</span></div>${chips}${addSel}</div>`;
+    // Over capacity must be LOUD (soft freeze absorbs late registrations past capacity, and an
+    // unfreeze keeps that overflow): red card, `29/25` and "+4 over".
+    const over=used-rm.capacity;
+    const tone=over>0?'warn':used?'ok':'info';const lbl=used+'/'+rm.capacity+(over>0?' · +'+over+' over':'');
+    return `<div class="card"${over>0?' style="border:2px solid var(--danger);background:#fdecec"':''}><div class="rowsb"><div style="font-weight:600">${icSm('classroom')} ${esc(rm.name)} <span class="sub">· cap ${rm.capacity}</span></div><span class="pill ${tone}">${lbl}</span></div>${chips}${addSel}</div>`;
   }).join(''):'<p class="note-hint">No classroom rooms yet — add them in Admin → Accommodation.</p>';
   // Two separate lists (previously one merged table): groups still waiting on a room spot
   // (incl. anyone with no accommodation type recorded yet) vs. ministries under the 75%
@@ -5867,7 +5962,13 @@ function drawAccom(){
   Object.values(by).forEach(c=>{if(c.none>0)pendingOut.push([c.name,'No preference',c.none,'Accommodation type not recorded']);});
   availGroups.forEach(g=>pendingOut.push([g.church,g.label,g.avail,g.avail<g.n?(g.avail+' of '+g.n+' to allocate'):'Awaiting a room']));
   const tentedOut=[];
-  Object.values(by).forEach(c=>{if(!_accomUnderBar(c))return;
+  Object.values(by).forEach(c=>{
+    // While frozen, eligibility is fixed: list every ministry with classroom people that did NOT
+    // qualify at freeze time, plus under-bar ministries kept in classrooms by the freeze — and no
+    // dropdown (the server refuses eligibility changes until the freeze is off).
+    if(fz){if(!c.classroom)return;const el=_accomEligible(c);if(el&&!_accomUnderBar(c))return;
+      tentedOut.push([c.name,'Classroom',c.classroom,el?'Soft freeze — kept in classrooms':'Soft freeze — counted in Tent City below']);return;}
+    if(!_accomUnderBar(c))return;
     // The sentinel "Unallocated" church (c.id===UNALLOCATED_ID) has no server-side church row —
     // the server excludes it, so a PATCH here could only 404. No dropdown for it; keep the
     // plain status text.
@@ -5920,7 +6021,18 @@ function drawAccom(){
   // A7/PC-12: room cards reflow as wrapping narrow tiles (matches the accommodation-setup
   // tile pattern), 1→N columns by width, instead of a single fixed column.
   const roomGrid=rooms.length?`<div class="accom-rooms">${roomCards}</div>`:roomCards;
-  box.innerHTML=`<h3 class="sec" style="margin-top:2px">Classrooms ${helpTip('Sleeping rooms you set up, each with a capacity. Single-gender, auto-filled to capacity. A church qualifies only when 75%+ of its students chose classroom, or when it is marked \'Left to per-registration\'.',{left:true})}</h3>${roomGrid}
+  // Soft-freeze card + the stale-placement notice (2026-09-24). Absorbed = effective above stored.
+  let absorbed=0;Object.keys(alloc).forEach(r=>(alloc[r]||[]).forEach(e=>{const d=e.n-storedN(r,e.key);if(d>0)absorbed+=d;}));
+  const overRooms=rooms.filter(rm=>_accomRoomUsed(alloc,rm.id)>rm.capacity).length;
+  const since=fz?(()=>{try{return new Date(fz.frozenAt).toLocaleString('en-AU',{timeZone:'Australia/Brisbane',weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});}catch(e){return fz.frozenAt;}})():'';
+  const freezeHtml=fz
+    ?`<div class="card" style="border-left:4px solid var(--danger)"><div class="rowsb" style="align-items:center;gap:10px"><div style="min-width:0"><b>Soft freeze on since ${esc(since)}</b> — ${absorbed} late registration${absorbed===1?'':'s'} absorbed, ${overRooms} room${overRooms===1?'':'s'} over capacity</div><button class="btn ghost sm" style="flex:0 0 auto;width:auto" onclick="toggleSoftFreeze(false)">Unfreeze</button></div></div>`
+    :`<div class="card"><div class="rowsb" style="align-items:center;gap:10px"><div style="min-width:0"><b>Soft-freeze classrooms</b> ${helpTip('For the last few days before camp: groups stop re-splitting at 50, no ministry gains or loses classrooms, and late registrations join their group\'s room even over capacity (shown in red).',{left:true})}</div><button class="btn ghost sm" style="flex:0 0 auto;width:auto" onclick="toggleSoftFreeze(true)">Soft-freeze</button></div></div>`;
+  const heals=window._accomHealed||[];
+  const healHtml=heals.length&&_accomHealSig(heals)!==_accomHealDismissed()
+    ?`<div class="warnbox" style="margin-top:12px"><div class="rowsb" style="align-items:flex-start;gap:10px"><b>Some placements were cleared — re-place them</b><button class="btn ghost sm" style="flex:0 0 auto;width:auto" onclick="_accomHealDismiss()">Dismiss</button></div>${heals.map(h=>`<div style="margin-top:6px;font-size:var(--t-sm)">${esc(h.roomName)}: ${h.n} placement${h.n===1?'':'s'} for ${esc(h.groupLabel||h.key)} ${h.n===1?'was':'were'} cleared because ${esc(_ACCOM_HEAL_WHY[h.reason]||h.reason)}.</div>`).join('')}</div>`
+    :'';
+  box.innerHTML=`${freezeHtml}${healHtml}<h3 class="sec" style="margin-top:14px">Classrooms ${helpTip('Sleeping rooms you set up, each with a capacity. Single-gender, auto-filled to capacity. A church qualifies only when 75%+ of its students chose classroom, or when it is marked \'Left to per-registration\'.',{left:true})}</h3>${roomGrid}
     <h3 class="sec">Classrooms (Pending Allocation) ${helpTip('Groups that qualified for a classroom (75%+ of the ministry chose classroom, or the ministry is marked \'Left to per-registration\') but haven\'t been placed in a room yet, plus anyone with no accommodation type recorded yet.',{left:true})}</h3>${table}
     <h3 class="sec" style="margin-top:20px">Under 75% — Moved to Tents ${helpTip('Fewer than 75% of this ministry chose classroom, so everyone from it is automatically counted in Tent City below instead of waiting on a room. Choose \'Left to per-registration\' for a ministry that deliberately splits (e.g. juniors in classrooms, seniors in tents) — its classroom people then appear above to place in rooms.',{left:true})}</h3>${tentedTable}
     ${tentHtml||'<p class="note-hint" style="margin-top:14px">Tent City auto-distribution appears once registrants have a tent accommodation kind set.</p>'}`;

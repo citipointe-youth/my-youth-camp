@@ -113,6 +113,8 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'GET', path: '/accommodation/groups', auth: true, handler: (r) => accommodation.groups(r) },
     { method: 'GET', path: '/accommodation/allocations', auth: true, handler: (r) => accommodation.allocations(r) },
     { method: 'PATCH', path: '/accommodation/allocations', auth: true, handler: (r) => accommodation.setAllocations(r) },
+    { method: 'GET', path: '/accommodation/state', auth: true, handler: (r) => accommodation.state(r) },
+    { method: 'POST', path: '/accommodation/soft-freeze', auth: true, handler: (r) => accommodation.setSoftFreeze(r) },
     { method: 'PATCH', path: '/accommodation/per-registration/:churchId', auth: true, handler: (r) => accommodation.setPerRegistration(r) },
     { method: 'GET', path: '/accommodation/church-rooms/:churchId', auth: true, handler: (r) => accommodation.churchRooms(r) },
 

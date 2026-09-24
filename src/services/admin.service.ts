@@ -4,6 +4,7 @@ import type {
   IPersonRepository,
   IClassroomRepository,
   IAllocationRepository,
+  IClassroomFreezeRepository,
   IFaqRepository,
   IScheduleRepository,
   INotificationRepository,
@@ -89,6 +90,10 @@ export function makeAdminService(
   // 2026-07-31: the reveal audit is a log of THIS year's people, so it is purged by all three
   // destructive paths (reset, resetLogs, newYear) — same standing rule as the two above.
   revealAuditRepo: IRevealAuditRepository,
+  // 2026-09-24: the classroom soft-freeze snapshot describes THIS year's people and placements —
+  // cleared by reset and newYear alongside the allocations it refers to. Optional so older test
+  // wiring builds unchanged.
+  classroomFreezeRepo?: IClassroomFreezeRepository,
 ): AdminService {
   const settingsService = makeSettingsService(settingsRepo);
 
@@ -128,6 +133,7 @@ export function makeAdminService(
         churchRepo.deleteAll(),
         classroomRepo.deleteAll(),
         allocationRepo.deleteAll(),
+        classroomFreezeRepo?.deleteAll() ?? Promise.resolve(0),
         faqRepo.deleteAll(),
         scheduleRepo.deleteAll(),
         notifRepo.deleteAll(),
@@ -263,6 +269,7 @@ export function makeAdminService(
         noteRepo.deleteAll(),
         notifRepo.deleteAll(),
         allocationRepo.deleteAll(),
+        classroomFreezeRepo?.deleteAll() ?? Promise.resolve(0),
         overrideRepo.deleteAll(),
         // Last year's leaders must not carry alerts into a new camp with a partly different
         // team. `reset()` already did this (bug 16); newYear did not, and was relying by

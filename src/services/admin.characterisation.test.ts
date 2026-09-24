@@ -6,6 +6,7 @@ import {
   InMemoryPersonRepository,
   InMemoryClassroomRepository,
   InMemoryAllocationRepository,
+  InMemoryClassroomFreezeRepository,
   InMemoryFaqRepository,
   InMemoryScheduleRepository,
   InMemoryNotificationRepository,
@@ -194,6 +195,7 @@ interface Repos {
   incidentRepo: InMemoryIncidentRepository;
   pushSubRepo: InMemoryPushSubscriptionRepository;
   revealAuditRepo: InMemoryRevealAuditRepository;
+  freezeRepo: InMemoryClassroomFreezeRepository;
 }
 
 async function makeRepos(): Promise<Repos> {
@@ -214,6 +216,7 @@ async function makeRepos(): Promise<Repos> {
     incidentRepo: new InMemoryIncidentRepository(),
     pushSubRepo: new InMemoryPushSubscriptionRepository(),
     revealAuditRepo: new InMemoryRevealAuditRepository(),
+    freezeRepo: new InMemoryClassroomFreezeRepository(),
   };
   await Promise.all([
     repos.userRepo.init(),
@@ -254,6 +257,7 @@ function build(r: Repos) {
     r.incidentRepo,
     r.pushSubRepo,
     r.revealAuditRepo,
+    r.freezeRepo,
   );
 }
 
@@ -316,6 +320,13 @@ describe('AdminService.reset', () => {
     expect(await repos.notifRepo.findAll()).toEqual([]);
     expect(await repos.noteRepo.findAll()).toEqual([]);
     expect(await repos.devotionalRepo.findAll()).toEqual([]);
+  });
+
+  it('clears the classroom soft freeze on reset (it describes this year\'s placements)', async () => {
+    await repos.freezeRepo.save({ id: 'freeze', frozenAt: 't', frozenBy: 'x', eligibleChurchIds: [], shapes: {}, baselines: {} });
+    const svc = build(repos);
+    await svc.reset(actor('admin'));
+    expect(await repos.freezeRepo.findAll()).toEqual([]);
   });
 
   it('purges allocation overrides on reset', async () => {

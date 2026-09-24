@@ -9,6 +9,7 @@ import {
   InMemoryPersonRepository,
   InMemoryClassroomRepository,
   InMemoryAllocationRepository,
+  InMemoryClassroomFreezeRepository,
   InMemoryZoneRepository,
   InMemoryGroupRepository,
   InMemoryNoteRepository,
@@ -30,6 +31,7 @@ import {
   SupabasePersonRepository,
   SupabaseClassroomRepository,
   SupabaseAllocationRepository,
+  SupabaseClassroomFreezeRepository,
   SupabaseZoneRepository,
   SupabaseGroupRepository,
   SupabaseNoteRepository,
@@ -51,6 +53,7 @@ import type {
   IPersonRepository,
   IClassroomRepository,
   IAllocationRepository,
+  IClassroomFreezeRepository,
   IZoneRepository,
   IGroupRepository,
   INoteRepository,
@@ -68,7 +71,7 @@ import type { User } from './core/entities/user';
 import type { Church } from './core/entities/church';
 import type { Person } from './core/entities/person';
 import type { AllocationOverride } from './core/entities/allocation-override';
-import type { Classroom, RoomAllocation } from './core/entities/accommodation';
+import type { Classroom, RoomAllocation, ClassroomFreeze } from './core/entities/accommodation';
 import type { Zone } from './core/entities/zone';
 import type { Group } from './core/entities/group';
 import type { StudentNote } from './core/entities/note';
@@ -115,6 +118,7 @@ export interface Repositories {
   people: IPersonRepository;
   classrooms: IClassroomRepository;
   allocations: IAllocationRepository;
+  classroomFreeze: IClassroomFreezeRepository;
   zones: IZoneRepository;
   groups: IGroupRepository;
   notes: INoteRepository;
@@ -183,6 +187,7 @@ export async function buildContainer(): Promise<Container> {
     const people: IPersonRepository = new SupabasePersonRepository(sql);
     const classrooms: IClassroomRepository = new SupabaseClassroomRepository(sql);
     const allocations: IAllocationRepository = new SupabaseAllocationRepository(sql);
+    const classroomFreeze: IClassroomFreezeRepository = new SupabaseClassroomFreezeRepository(sql);
     const zones: IZoneRepository = new SupabaseZoneRepository(sql);
     const groups: IGroupRepository = new SupabaseGroupRepository(sql);
     const notes: INoteRepository = new SupabaseNoteRepository(sql);
@@ -197,13 +202,13 @@ export async function buildContainer(): Promise<Container> {
     const pushSubscriptions: IPushSubscriptionRepository = new SupabasePushSubscriptionRepository(sql);
 
     const repos: Repositories = {
-      users, churches, allocationOverrides, people, classrooms, allocations,
+      users, churches, allocationOverrides, people, classrooms, allocations, classroomFreeze,
       zones, groups, notes, notifications, incidents, revealAudit, schedule: scheduleRepo,
       devotionals, faqs, settings: settingsRepo, snapshots, pushSubscriptions,
     };
 
     await Promise.all([
-      users.init(), churches.init(), allocationOverrides.init(), people.init(), classrooms.init(), allocations.init(),
+      users.init(), churches.init(), allocationOverrides.init(), people.init(), classrooms.init(), allocations.init(), classroomFreeze.init(),
       zones.init(), groups.init(), notes.init(), notifications.init(), incidents.init(), revealAudit.init(),
       scheduleRepo.init(), devotionals.init(), faqs.init(), settingsRepo.init(), snapshots.init(),
       pushSubscriptions.init(),
@@ -214,7 +219,7 @@ export async function buildContainer(): Promise<Container> {
   // content across to the new dates (see remapDays in settings.service.ts).
   const settings = makeSettingsService(settingsRepo, { devotionals, schedule: scheduleRepo });
     const personSvc = makePersonService(people);
-    const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
+    const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people, classroomFreeze);
     const checkIn = makeCheckInService(people, settingsRepo);
     // ⚠ `push` is constructed BEFORE notification/incident (moved 2026-08-03). Both of those
     // now take it so an urgent notice / high-severity incident alert is pushed the moment it
@@ -246,7 +251,7 @@ export async function buildContainer(): Promise<Container> {
     const admin = makeAdminService(
       users, churches, people, classrooms, allocations, faqs, scheduleRepo,
       notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
-      incidents, pushSubscriptions, revealAudit,
+      incidents, pushSubscriptions, revealAudit, classroomFreeze,
     );
   const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
 
@@ -282,6 +287,9 @@ export async function buildContainer(): Promise<Container> {
   );
   const allocations: IAllocationRepository = new InMemoryAllocationRepository(
     useJson ? makeJsonPersistence<RoomAllocation>('allocations.json') : undefined,
+  );
+  const classroomFreeze: IClassroomFreezeRepository = new InMemoryClassroomFreezeRepository(
+    useJson ? makeJsonPersistence<ClassroomFreeze>('classroom-freeze.json') : undefined,
   );
   const zones: IZoneRepository = new InMemoryZoneRepository(
     useJson ? makeJsonPersistence<Zone>('zones.json') : undefined,
@@ -327,6 +335,7 @@ export async function buildContainer(): Promise<Container> {
     people,
     classrooms,
     allocations,
+    classroomFreeze,
     zones,
     groups,
     notes,
@@ -349,6 +358,7 @@ export async function buildContainer(): Promise<Container> {
     people.init(),
     classrooms.init(),
     allocations.init(),
+    classroomFreeze.init(),
     zones.init(),
     groups.init(),
     notes.init(),
@@ -369,7 +379,7 @@ export async function buildContainer(): Promise<Container> {
   // content across to the new dates (see remapDays in settings.service.ts).
   const settings = makeSettingsService(settingsRepo, { devotionals, schedule: scheduleRepo });
   const personSvc = makePersonService(people);
-  const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people);
+  const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people, classroomFreeze);
   const checkIn = makeCheckInService(people, settingsRepo);
   // ⚠ See the note in the other composition block above — `push` is built first so an urgent
   // notice / high-severity incident alert can be pushed at creation time, not on the tick.
@@ -417,6 +427,7 @@ export async function buildContainer(): Promise<Container> {
     incidents,
     pushSubscriptions,
     revealAudit,
+    classroomFreeze,
   );
   const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
 

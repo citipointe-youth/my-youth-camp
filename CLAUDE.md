@@ -4,6 +4,111 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Accommodation: stale-placement auto-heal + classroom "soft freeze" — migration `0030` — 2026-09-24 (2nd)
+
+Owner problem: placements are stored as COUNTS per group key (`churchId|gender[|bracket]`), and
+`setAllocations` replaced the whole map and threw on ANY stale entry — so a pool crossing 50
+(re-split), shrinking back (un-split), cancellations, or a ministry dropping under 75% made EVERY
+later save fail for the whole camp (generic 500; `Unknown group` / `Allocated more than available`
+only in the runtime log), while `drawAccom` silently hid the orphans. Plus a new owner feature: a
+"soft freeze" for the last ~3 days before camp. Backend + SPA + **migration `0030`** (new
+`classroom_freeze` table + `classroom_allocations.seq int`, additive — **must be applied to prod
+BEFORE this code deploys**: `supabase.allocation` writes `seq` on every placement save and orders
+by it). `npm run typecheck` clean, `npx vitest run` **1169 pass / 67 files** (was 1136/65; **+33,
++2 files**: `accommodation-heal-freeze.test.ts` 22, `supabase.classroom-freeze.mapper.test.ts` 2,
++8 characterisation, +1 admin), `node scripts/accom-export-harness.js` **21 scenarios, all checks
+passed** (was 13; proven to catch regressions — removing the frozen-eligibility line fails 3
+checks, disabling growth fails 9). `node --check` OK on the SPA body (range **1004–10708**) and
+`sw.js`. `sw.js` `camp-v124`→**`camp-v125`**. Plan:
+`docs/superpowers/plans/2026-09-24-classroom-soft-freeze.md`.
+
+### Part 1 — auto-heal (always on). All pure logic in `accommodation-allocation.ts`, tested.
+- **`healAllocations(stored, {rooms, groups, eligibleChurches, clamp})`** drops entries for unknown
+  rooms/keys, reporting each as `{roomId, roomName, key, n, reason}` with reason `group re-split` /
+  `group shrank` / `ministry no longer eligible` / `room removed`; with `clamp`, trims any group
+  placed beyond its live size (**most over-capacity room first, then its smallest placement; ties →
+  the later room**, so the first-placed room keeps people longest). Never throws.
+- **`applyAllocationRequest`** replaces `validateAllocations` on the save path (the old function is
+  still exported/tested but no longer called by the service). ⚠ The core idea: a group is
+  **TOUCHED** only when its per-room placements in the request differ from BOTH the raw stored map
+  AND the healed one. **Untouched groups keep their healed stored placements whatever the request
+  carries** — so neither stored staleness nor a screen loaded before a re-split/cancellation can
+  fail a save. Touched groups are strict: key must exist (message tells the user to refresh), total
+  ≤ live n. Every room single-gender; a room may not END the save with effective occupancy >
+  capacity AND > what it was before the save — **an already-over room may stay or shrink, never
+  grow** (this is what makes unfreeze's overflow survivable).
+- Rule errors now reach the director as a **400 with the reason** (`AllocationRequestError` →
+  `BadRequestError`), not the generic 500.
+- **Reads never write.** `GET /accommodation/state` reports the heal; the next save (any add/remove)
+  persists it and returns that save's heal list. The SPA shows a dismissible warnbox ("Room A: 20
+  placements for Victory — Guys were cleared because that group was re-grouped by year level …"),
+  dismissal remembered per device by content signature (`ycp_accom_heal_dismissed`).
+
+### Part 2 — soft freeze (owner decisions, binding)
+- **`classroom_freeze`** singleton (`id='freeze'`; row absent = not frozen), `snapshot jsonb =
+  {eligibleChurchIds, shapes, baselines}`, written with `sql.json()` and mapped defensively
+  (`toClassroomFreeze` throws on a double-encoded string, the 2026-08-04 lesson). Its own table,
+  NOT a settings column: `GET /settings` is unauthenticated and settings rows are rewritten whole.
+- **`POST /accommodation/soft-freeze {frozen}`** — director + admin, blocked by the hard lock for
+  directors (`assertNotLocked`), same as placements. The hard lock itself is untouched.
+- **Frozen = `EligibilityOptions.frozen`**: eligibility is the frozen set (75% and per-registration
+  both ignored), and each church×gender pool uses its recorded `PoolShape {split, years79,
+  years1012}` — `naturalShape()` is today's split rule factored out of `groupsForGender`. No re-split
+  or un-split at 50; a pool with no recorded shape (no classroom people at freeze) is one group.
+  A new registrant joins their frozen bracket/year group with the usual leader spread.
+- **`effectiveAllocations(stored, {rooms, groups, baselines})`** — computed at READ time, no
+  background writes: per group with a placement, `target = min(n, placed + max(0, n − baseline))`.
+  Shrinks first (same order as the clamp), then growth one at a time into the group's room with the
+  **most free space (capacity − used, may be negative); tie → earliest room in stored order**
+  ("first-placed"). `seq` exists so that order is deterministic on Supabase (pre-0030 rows sort last
+  until the next save). Not frozen ⇒ plain clamp.
+- **Baselines = group sizes when frozen; any save that TOUCHES a group resets that group's baseline**
+  to its current n (covers remove → re-add: re-add places `min(unplaced, effective room space)`,
+  remainder stays "to allocate", only later registrations are absorbed).
+- **Unfreeze writes the effective map back as stored** and deletes the snapshot. Rooms keep their
+  overflow; normal rules resume — ⚠ so a pool that grew past 50 while frozen **re-splits the moment
+  you unfreeze** and its placements are healed away (reported). That is the owner's "normal rules
+  resume", stated here so nobody reads it as a bug.
+- **`setPerRegistration` is refused while frozen** (interpretation: eligibility must not change
+  while frozen). The SPA replaces the dropdown with status text ("Soft freeze — kept in classrooms"
+  / "…counted in Tent City below").
+- `getChurchRooms` (church home at camp) and the export show **EFFECTIVE** counts. `getChurchRooms`
+  needs the whole people table (rooms are shared across churches), so it is cached 30s per warm
+  instance (`effectiveCache`), cleared by every write in the service — an import is NOT a write
+  here, so up to 30s stale after one.
+- Admin `reset` and `newYear` clear the freeze (optional 17th arg to `makeAdminService`, both
+  container paths pass it).
+
+### SPA
+- `RENDER.accom` loads **`/accommodation/state`** (`_accomApplyState`); `window._accomAlloc` is the
+  healed stored map, `window._accomFreeze` the snapshot. `_accomEligible`/`accomGroups` honour the
+  freeze; `_accomEffective`/`_accomGrow`/`_accomShrink`/`_accomEff` mirror the backend. **Screen,
+  export and requests all read `_accomEff()`** so they cannot disagree.
+- `addAlloc`/`removeAlloc` build requests via **`_accomReqBase(key, eff, groups)`**: stored map
+  filtered to live keys, with ONLY the changed group's placements replaced by its effective ones.
+  Space/availability use effective counts. `PATCH /accommodation/allocations` now returns the state
+  object (used directly, no re-GET). `setAccomPerReg` re-reads `/accommodation/state`.
+- Freeze card at the top of the screen ("Soft freeze on since … — N late registrations absorbed, M
+  rooms over capacity" + Unfreeze, or the Soft-freeze button + tooltip). Over-capacity room card is
+  red with `29/25 · +4 over`; chips show `(29 · +4 late)`.
+- Export: "Classrooms by room" gains **Over capacity**; Summary gains Rooms over capacity, Total over
+  capacity, Soft freeze, Late registrations absorbed. "Spare capacity" is now summed per room
+  (Σ max(0, cap − used)) so an over-full room can't hide empty beds elsewhere.
+- Harness names extracted BY NAME — add parameters freely, never rename: `_accomNaturalShape`,
+  `_accomGenderGroups(c,gender,g,shape)`, `_accomRoomUsed`, `_accomHeld`, `_accomShrink`,
+  `_accomGrow`, `_accomEffective`, `_accomEff`, `_accomReqBase`.
+
+### Interpretations made (owner may want to confirm)
+1. Per-registration toggle blocked while frozen (not "applies on unfreeze").
+2. Cancellations reduce placements only once placements exceed the live group — unplaced people
+   absorb shrinkage first (counts are anonymous). Effective depends only on the live count, so a
+   cancellation followed by a late registration re-absorbs the seat.
+3. "Baseline reset on manual action" = any save that changes that group's placements.
+4. A GET reports stale placements without clearing them; the next save persists the clean-up.
+
+**Not verified on a device** (repo convention). Owner to eyeball: freeze card + confirm sheet, a
+red over-capacity room card at phone width, the heal warnbox and its Dismiss.
+
 ## Accommodation: "Left to per-registration" per ministry — 2026-09-24
 
 Owner problem: a ministry sitting under the 75% classroom-eligibility bar gets **none** of its

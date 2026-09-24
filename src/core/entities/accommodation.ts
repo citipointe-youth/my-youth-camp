@@ -33,4 +33,24 @@ export interface RoomAllocation {
   gender: AllocationGender;
   n: number;
   bracket?: AllocationBracket | null;
+  /** Insertion order within the stored map (migration 0030). "First-placed room" — the
+   *  soft-freeze tie-break — is the earliest row; null on rows written before 0030. */
+  seq?: number | null;
 }
+
+/**
+ * Classroom soft freeze (2026-09-24, migration 0030). A singleton (`id: 'freeze'`); no row = not
+ * frozen. While it exists, eligibility and pool shape come from this snapshot, and each group's
+ * growth past its baseline is absorbed into the rooms it already occupies.
+ */
+export interface ClassroomFreeze {
+  id: ID;
+  frozenAt: ISODateString;
+  frozenBy: string;
+  eligibleChurchIds: string[];
+  /** keyed `${churchId}|${gender}` */
+  shapes: Record<string, { split: boolean; years79?: boolean; years1012?: boolean }>;
+  /** group key → group size when frozen (or when a save last changed that group) */
+  baselines: Record<string, number>;
+}
+export const CLASSROOM_FREEZE_ID = 'freeze';
