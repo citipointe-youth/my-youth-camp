@@ -48,6 +48,13 @@ export function makeAccommodationController(services: AccommodationControllerSer
       return services.accommodation.setAllocations(req.ctx.actor, req.body);
     },
 
+    async setPerRegistration(req: HttpRequest) {
+      if (!req.ctx) throw new UnauthorizedError();
+      const churchId = req.params['churchId'];
+      if (!churchId) throw new BadRequestError('Missing churchId');
+      return services.accommodation.setPerRegistration(req.ctx.actor, churchId, req.body);
+    },
+
     async churchRooms(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       const churchId = req.params['churchId'] ?? req.ctx.actor.churchId;

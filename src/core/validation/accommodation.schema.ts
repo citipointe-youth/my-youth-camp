@@ -18,3 +18,7 @@ export const SetAllocationsSchema = z.object({
   allocations: z.record(z.string(), z.array(AllocEntrySchema)),
 });
 export type SetAllocationsInput = z.infer<typeof SetAllocationsSchema>;
+
+// PATCH /accommodation/per-registration/:churchId — "Left to per-registration" toggle (2026-09-24).
+export const SetPerRegistrationSchema = z.object({ perRegistration: z.boolean() });
+export type SetPerRegistrationInput = z.infer<typeof SetPerRegistrationSchema>;

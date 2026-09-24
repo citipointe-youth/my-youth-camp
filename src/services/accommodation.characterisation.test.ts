@@ -316,3 +316,75 @@ describe('AccommodationService.getChurchRooms', () => {
     await expect(svc.getChurchRooms(actor('admin'), 'nope')).rejects.toBeInstanceOf(NotFoundError);
   });
 });
+
+describe('per-registration churches (2026-09-24)', () => {
+  // Hope (c9): 1 classroom junior + 3 tent seniors, all male = 25% classroom.
+  const hopeRegs = [
+    reg({ id: 'h1', churchId: 'c9', churchName: 'Hope', grade: 8 }),
+    reg({ id: 'h2', churchId: 'c9', churchName: 'Hope', grade: 11, accommodationKind: 'tent' }),
+    reg({ id: 'h3', churchId: 'c9', churchName: 'Hope', grade: 11, accommodationKind: 'tent' }),
+    reg({ id: 'h4', churchId: 'c9', churchName: 'Hope', grade: 11, accommodationKind: 'tent' }),
+  ];
+  const hope = (flag: boolean) => church({ id: 'c9', name: 'Hope', accommodationPerRegistration: flag });
+
+  it('listGroups omits an unflagged under-75% church', async () => {
+    const { svc } = await build({ churches: [hope(false)], registrants: hopeRegs });
+    expect(await svc.listGroups(actor('director'))).toEqual([]);
+  });
+
+  it('listGroups includes a flagged church, and setAllocations accepts its group', async () => {
+    const { svc } = await build({ churches: [hope(true)], registrants: hopeRegs, rooms: [room({ id: 'rm' })] });
+    expect((await svc.listGroups(actor('director'))).map((g) => g.key)).toEqual(['c9|male']);
+    const map = await svc.setAllocations(actor('director'), { allocations: { rm: [{ key: 'c9|male', n: 1 }] } });
+    expect(map).toEqual({ rm: [{ key: 'c9|male', n: 1 }] });
+  });
+
+  it('setPerRegistration persists the flag', async () => {
+    const { svc, churchRepo } = await build({ churches: [hope(false)], registrants: hopeRegs });
+    await svc.setPerRegistration(actor('director'), 'c9', { perRegistration: true });
+    expect((await churchRepo.findById('c9'))!.accommodationPerRegistration).toBe(true);
+  });
+
+  it('turning it off removes that church\'s now-orphaned placements, and only those', async () => {
+    const { svc, allocationRepo } = await build({
+      churches: [hope(true), church({ id: 'c1' })],
+      registrants: [...hopeRegs, ...victoryClassroomRegs],
+      rooms: [room({ id: 'rm', capacity: 10 })],
+    });
+    await svc.setAllocations(actor('admin'), { allocations: { rm: [{ key: 'c9|male', n: 1 }, { key: 'c1|male', n: 3 }] } });
+    await svc.setPerRegistration(actor('admin'), 'c9', { perRegistration: false });
+    const left = (await allocationRepo.findAll()).map((r) => `${r.churchId}|${r.gender}`);
+    expect(left).toEqual(['c1|male']);
+  });
+
+  it('turning it off keeps placements for a church that clears 75% on its own', async () => {
+    const { svc, allocationRepo } = await build({
+      churches: [church({ id: 'c1', accommodationPerRegistration: true })],
+      registrants: victoryClassroomRegs,
+      rooms: [room({ id: 'rm', capacity: 10 })],
+    });
+    await svc.setAllocations(actor('admin'), { allocations: { rm: [{ key: 'c1|male', n: 3 }] } });
+    await svc.setPerRegistration(actor('admin'), 'c1', { perRegistration: false });
+    expect((await allocationRepo.findAll()).length).toBe(1);
+  });
+
+  it('church logins are refused', async () => {
+    const { svc } = await build({ churches: [hope(false)] });
+    await expect(svc.setPerRegistration(actor('church', { churchId: 'c9' }), 'c9', { perRegistration: true }))
+      .rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it('a director is refused while accommodation is locked; admin is not', async () => {
+    const { svc } = await build({ churches: [hope(false)], settings: settings({ accommodationLocked: true }) });
+    await expect(svc.setPerRegistration(actor('director'), 'c9', { perRegistration: true }))
+      .rejects.toBeInstanceOf(ForbiddenError);
+    await expect(svc.setPerRegistration(actor('admin'), 'c9', { perRegistration: true })).resolves.toBeTruthy();
+  });
+
+  it('unknown church is NotFound; a non-boolean body is rejected', async () => {
+    const { svc } = await build({ churches: [hope(false)] });
+    await expect(svc.setPerRegistration(actor('admin'), 'nope', { perRegistration: true }))
+      .rejects.toBeInstanceOf(NotFoundError);
+    await expect(svc.setPerRegistration(actor('admin'), 'c9', { perRegistration: 'yes' })).rejects.toThrow();
+  });
+});

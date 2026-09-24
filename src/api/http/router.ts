@@ -113,6 +113,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'GET', path: '/accommodation/groups', auth: true, handler: (r) => accommodation.groups(r) },
     { method: 'GET', path: '/accommodation/allocations', auth: true, handler: (r) => accommodation.allocations(r) },
     { method: 'PATCH', path: '/accommodation/allocations', auth: true, handler: (r) => accommodation.setAllocations(r) },
+    { method: 'PATCH', path: '/accommodation/per-registration/:churchId', auth: true, handler: (r) => accommodation.setPerRegistration(r) },
     { method: 'GET', path: '/accommodation/church-rooms/:churchId', auth: true, handler: (r) => accommodation.churchRooms(r) },
 
     // ----- Campers (at-camp / Portal) -----

@@ -4,15 +4,16 @@ import type {
 } from '../repositories/interfaces/entity-repositories';
 import type { Classroom, RoomAllocation, AllocationGender, AllocationBracket } from '../core/entities/accommodation';
 import type { Actor } from '../core/entities/user';
+import type { Church } from '../core/entities/church';
 import { assertCan, assertCanAccessChurch } from './access-control';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
-import { CreateClassroomSchema, UpdateClassroomSchema, SetAllocationsSchema } from '../core/validation/accommodation.schema';
+import { CreateClassroomSchema, UpdateClassroomSchema, SetAllocationsSchema, SetPerRegistrationSchema } from '../core/validation/accommodation.schema';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { UNALLOCATED_CHURCH_ID } from './church-allocation';
 import {
   computeGroups, validateAllocations,
-  type AllocationOccupant, type AllocationGroup, type AllocationMap,
+  type AllocationOccupant, type AllocationGroup, type AllocationMap, type EligibilityOptions,
 } from './accommodation-allocation';
 
 export interface ChurchRooms {
@@ -28,6 +29,7 @@ export interface AccommodationService {
   getAllocations(actor: Actor): Promise<AllocationMap>;
   setAllocations(actor: Actor, input: unknown): Promise<AllocationMap>;
   getChurchRooms(actor: Actor, churchId: string): Promise<ChurchRooms>;
+  setPerRegistration(actor: Actor, churchId: string, input: unknown): Promise<Church>;
 }
 
 export function makeAccommodationService(
@@ -63,12 +65,20 @@ export function makeAccommodationService(
     }));
   }
 
+  async function eligibilityOptions(): Promise<EligibilityOptions> {
+    const churches = await churchRepo.findAll();
+    return { perRegistration: new Set(churches.filter((c) => c.accommodationPerRegistration).map((c) => c.id)) };
+  }
+
+  // The group key a stored row belongs to (C-1: split sub-pools carry a bracket → 3-part key).
+  function keyOf(r: RoomAllocation): string {
+    return r.bracket ? `${r.churchId}|${r.gender}|${r.bracket}` : `${r.churchId}|${r.gender}`;
+  }
+
   function rowsToMap(rows: readonly RoomAllocation[]): AllocationMap {
     const map: AllocationMap = {};
     for (const r of rows) {
-      // C-1: reconstruct the original group key. PC-10 split sub-pools carry a bracket
-      // and use the 3-part key (`churchId|gender|bracket`); non-split pools the 2-part key.
-      const key = r.bracket ? `${r.churchId}|${r.gender}|${r.bracket}` : `${r.churchId}|${r.gender}`;
+      const key = keyOf(r);
       (map[r.roomId] ??= []).push({ key, n: r.n });
     }
     return map;
@@ -109,7 +119,7 @@ export function makeAccommodationService(
 
     async listGroups(actor) {
       assertDirectorOrAdmin(actor);
-      return computeGroups(await occupants());
+      return computeGroups(await occupants(), await eligibilityOptions());
     },
 
     async getAllocations(actor) {
@@ -122,7 +132,7 @@ export function makeAccommodationService(
       await assertNotLocked(actor);
       const { allocations } = SetAllocationsSchema.parse(input);
       const rooms = await classroomRepo.findAll();
-      const groups = computeGroups(await occupants());
+      const groups = computeGroups(await occupants(), await eligibilityOptions());
       validateAllocations(allocations, { rooms, groups });
       // Replace-all: clear then insert non-zero rows.
       await allocationRepo.deleteAll();
@@ -137,6 +147,26 @@ export function makeAccommodationService(
         }
       }
       return rowsToMap(await allocationRepo.findAll());
+    },
+
+    async setPerRegistration(actor, churchId, input) {
+      assertDirectorOrAdmin(actor);
+      await assertNotLocked(actor);
+      const { perRegistration } = SetPerRegistrationSchema.parse(input);
+      const church = await churchRepo.findById(churchId);
+      if (!church) throw new NotFoundError('Church not found');
+      const saved = await churchRepo.save({ ...church, accommodationPerRegistration: perRegistration, updatedAt: nowISO() });
+      if (!perRegistration) {
+        // Switching back can make this church's classroom groups disappear. setAllocations
+        // replaces the WHOLE map and rejects any unknown group key, so an orphaned row left
+        // here would make every later save on the screen fail. Drop only rows whose group no
+        // longer exists — a church that clears 75% on its own keeps its placements.
+        const live = new Set(computeGroups(await occupants(), await eligibilityOptions()).map((g) => g.key));
+        for (const r of await allocationRepo.findAll()) {
+          if (r.churchId === churchId && !live.has(keyOf(r))) await allocationRepo.delete(r.id);
+        }
+      }
+      return saved;
     },
 
     async getChurchRooms(actor, churchId) {
