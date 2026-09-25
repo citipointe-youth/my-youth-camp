@@ -4,6 +4,18 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Data table scrolls in its own box; individual overrides list is data-driven — `camp-v129` — 2026-09-25
+
+SPA only. **Data screen**: the table wrapper is now `overflow:auto;max-height:calc(100vh - 220px)`
+with a sticky header row, so the horizontal scrollbar sits at the bottom of the visible box instead
+of the bottom of a 600-row page. **Data Import → Individual accommodation override**: the card
+listed only `_indivIds` (people searched in during THIS page session), so any reload/re-upload
+emptied it although the overrides were still saved (and protected from import deletes). It now
+lists every active registrant with `accommodationOverride` or `amountPaidOverride` set, plus unsaved
+session additions; saved rows show "Saved override" instead of "Remove from list" (there is still no
+UI to CLEAR a saved override — the PATCH accepts `null`, the dropdown just doesn't offer it). No
+import/API change, so the Elvanto console (Project 11.1) is unaffected.
+
 ## Accommodation rooms grouped + shaded by building — `camp-v126` — 2026-09-24 (3rd)
 
 > **Follow-up `camp-v127`:** the logic is now shared top-level helpers — `_roomBuilding(name)`,

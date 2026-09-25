@@ -9227,7 +9227,14 @@ function _renderAllocCards(){
 
   const accLabel=k=>k==='tent'?'Tent':k==='classroom'?'Classroom':'—';
   const money=v=>v==null?'—':'$'+Number(v).toFixed(2);
-  const indivRows=_indivIds.map(id=>{
+  /* The list = everyone with a SAVED override (read from the registrant rows, so it survives a
+     reload / re-upload) + anyone searched in this session and not yet saved. Before 2026-09-25 it
+     was the session list alone, so every upload (and every reload) appeared to wipe the overrides
+     even though the data still carried them. */
+  const _hasIndivOv=p=>p.accommodationOverride!=null||p.amountPaidOverride!=null;
+  const indivList=_allocState.regs.filter(_hasIndivOv).map(r=>r.id)
+    .concat(_indivIds.filter(id=>!_allocState.regs.some(r=>r.id===id&&_hasIndivOv(r))));
+  const indivRows=indivList.map(id=>{
     const p=_allocState.regs.find(r=>r.id===id); if(!p)return '';
     const ch=_allocState.churches.find(c=>c.id===p.churchId);
     const ov=p.accommodationOverride||'';
@@ -9245,14 +9252,14 @@ function _renderAllocCards(){
       <label class="sub" style="display:block;margin-top:4px">New amount paid</label>
       <input class="fld" id="indivAmt_${esc(p.id)}" type="number" step="0.01" inputmode="decimal" placeholder="Leave blank to keep existing">
       <div class="rowsb" style="gap:6px;margin-top:8px">
-        <button class="btn ghost" onclick="indivRemove('${esc(p.id)}')">Remove from list</button>
+        ${_hasIndivOv(p)?'<span class="sub" style="flex:1">Saved override</span>':`<button class="btn ghost" onclick="indivRemove('${esc(p.id)}')">Remove from list</button>`}
         <button class="btn" style="width:auto;flex:0 0 auto;margin-top:0" onclick="indivSave('${esc(p.id)}')">Save override</button>
       </div>
     </details></div>`;
   }).join('');
   /* Collapsed by default like every other card on this screen (:8244). */
   const cardD=`<div class="card"><details data-ac="indivcard">
-    <summary style="cursor:pointer;font-weight:700">Individual accommodation override (${_indivIds.length})</summary>
+    <summary style="cursor:pointer;font-weight:700">Individual accommodation override (${indivList.length})</summary>
     <p class="note-hint" style="text-align:left">Set where one student sleeps, and/or what they paid, regardless of the ticket list, the invoice or their church's accommodation. Survives re-imports.</p>
     <input class="fld" id="indivSearch" oninput="_renderIndivSearch()" placeholder="Search a student to add…">
     <div id="indivSearchResults"></div>
@@ -9347,6 +9354,7 @@ function _renderIndivSearch(){
   if(q.length<2){box.innerHTML='';return;}
   // Active registrants only — you do not set sleeping arrangements for a cancelled student.
   const hits=_allocState.regs.filter(r=>_indivIds.indexOf(r.id)<0
+    && r.accommodationOverride==null && r.amountPaidOverride==null
     && `${r.firstName} ${r.lastName}`.toLowerCase().includes(q)).slice(0,8);
   box.innerHTML=hits.length?hits.map(p=>`<div class="rowsb" style="gap:6px;padding:4px 0">
     <div style="flex:1;min-width:0"><div style="font-weight:600">${esc(p.firstName)} ${esc(p.lastName)}</div><div class="sub">${esc(p.churchName)}</div></div>
@@ -9480,7 +9488,7 @@ RENDER.data=async function(){
       <button class="btn ghost" onclick="dataExport(false)">Export all</button>
     </div>
     <div id="dataCount" class="note-hint" style="margin-top:6px"></div>
-    <div style="overflow-x:auto;margin-top:8px"><table id="dataTbl" style="min-width:1020px;border-collapse:collapse;font-size:.8rem"></table></div>
+    <div style="overflow:auto;max-height:calc(100vh - 220px);min-height:240px;margin-top:8px"><table id="dataTbl" style="min-width:1020px;border-collapse:collapse;font-size:.8rem"></table></div>
   </div>`,'Data','Registrations');
   dataApply();
 };
@@ -9580,7 +9588,7 @@ function dataApply(){
   const t=document.getElementById('dataTbl');
   const thead=DATA_COLS.map(([label,key])=>{
     const arrow=_dataSortKey===key?(_dataSortDir===1?' ▲':' ▼'):'';
-    return `<th style="text-align:left;border-bottom:2px solid var(--line);padding:6px 8px;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap" onclick="dataSort('${key}')">${label}${arrow}</th>`;
+    return `<th style="position:sticky;top:0;z-index:1;background:var(--card);text-align:left;border-bottom:2px solid var(--line);padding:6px 8px;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap" onclick="dataSort('${key}')">${label}${arrow}</th>`;
   }).join('');
   if(t)t.innerHTML=`<thead><tr>${thead}</tr></thead><tbody>${body||'<tr><td colspan="15" style="padding:10px;color:var(--muted)">No matching registrants</td></tr>'}</tbody>`;
   const c=document.getElementById('dataCount');if(c)c.textContent=`${rows.length} of ${(_dataCache||[]).length} registrants`;
