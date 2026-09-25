@@ -540,8 +540,14 @@ export function makeImportService(
       // `person.service.ts`'s `update()` keeps those two fields in lockstep with `refundAmount`/
       // `lifecycle` in both directions (the cancel/refund patch). If that invariant is ever
       // relaxed, re-check this guard before assuming it still covers what it claims to.
+      /* 2026-09-25: anyone who has CHECKED IN is protected too. Uploads keep running during camp
+         (11.1's daily 09:00 camp job, plus manual runs for late registrations), and an Elvanto form
+         edited or deleted mid-camp must not hard-delete a camper and their check-in history.
+         `lifecycle !== 'registered'` covers cancelled + every at-camp state; the history test
+         catches a camper since reset back to registered. */
       const isProtected = (p: Person) =>
-        p.lifecycle === 'cancelled' ||
+        p.lifecycle !== 'registered' ||
+        (p.checkInHistory?.length ?? 0) > 0 ||
         p.accommodationOverride != null ||
         p.amountPaidOverride != null ||
         p.refundAmount != null;
@@ -558,7 +564,7 @@ export function makeImportService(
           row: 0,
           message:
             `${p.firstName} ${p.lastName} (${p.churchName || 'no church'}) is no longer in this file but ` +
-            'was KEPT — they have a cancellation, refund or individual override recorded',
+            'was KEPT — they have a cancellation, refund, individual override or check-in recorded',
         });
       }
 

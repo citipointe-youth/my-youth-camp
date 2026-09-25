@@ -602,6 +602,24 @@ describe('ImportService.importCsv — protects overridden/cancelled people from 
     expect(res.retained).toBe(2);
   });
 
+  it('never deletes an absent person who has checked in at camp (2026-09-25)', async () => {
+    const h = await build();
+    const arrived = await seedPerson(h, { firstName: 'At', lastName: 'Camp', lifecycle: 'arrived', atCamp: true });
+    const reset = await seedPerson(h, {
+      firstName: 'Was', lastName: 'Here', lifecycle: 'registered',
+      checkInHistory: [{ id: 'ci1', sessionId: 's1', sessionLabel: 'Mon AM', type: 'in', leaderId: 'u1', timestamp: '2026-10-05T09:30:00Z' }],
+    });
+    const ordinary = await seedPerson(h, { firstName: 'Plain', lastName: 'Person' });
+
+    const res = await h.svc.importCsv(actor('admin'), { csvData: csvWithNobody(), dryRun: false });
+
+    expect(await h.personRepo.findById(arrived.id)).not.toBeNull();
+    expect(await h.personRepo.findById(reset.id)).not.toBeNull();
+    expect(await h.personRepo.findById(ordinary.id)).toBeNull();
+    expect(res.retained).toBe(2);
+    expect(res.warnings.filter((w) => w.code === 'absent-but-retained')).toHaveLength(2);
+  });
+
   it('does not warn that a protected person will be deleted in a dry run', async () => {
     const h = await build();
     await seedPerson(h, { firstName: 'Cancelled', lastName: 'Camper', lifecycle: 'cancelled' });

@@ -16,6 +16,12 @@ session additions; saved rows show "Saved override" instead of "Remove from list
 UI to CLEAR a saved override — the PATCH accepts `null`, the dropdown just doesn't offer it). No
 import/API change, so the Elvanto console (Project 11.1) is unaffected.
 
+**Same day, backend:** `importCsv`'s delete sweep now also protects anyone who has checked in
+(`lifecycle !== 'registered'` or a non-empty `checkInHistory`), so a mid-camp upload (11.1's daily
+camp job or a manual late-registration run) can't hard-delete a camper whose Elvanto form was edited
+or removed. Reported with the existing `absent-but-retained` code (11.1 maps it by code; only the
+message text gained "or check-in"). vitest 1170 pass.
+
 ## Accommodation rooms grouped + shaded by building — `camp-v126` — 2026-09-24 (3rd)
 
 > **Follow-up `camp-v127`:** the logic is now shared top-level helpers — `_roomBuilding(name)`,
