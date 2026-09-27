@@ -1189,7 +1189,7 @@ let SESSIONS=[],SEL_SESSION=null,FILTER={gender:'all',grade:'all',church:'all',z
 /* My-students filter (2026-08-03). It used to live ONLY in the DOM — `filterMyYouth` read
    `sel('myZoneF')` directly — so it did not survive a navigation, let alone a login. Hoisted to
    a real object so it can be persisted and restored like the check-in one. */
-let MY_FILTER={zone:'all',gender:'all',grade:'all'};
+let MY_FILTER={church:'all',gender:'all',grade:'all'};
 
 /* ── SAVED ROSTER VIEW (2026-08-03, owner request; premise corrected 2026-08-04) ──────────
    Both roster filters are remembered on the device and restored at next sign-in.
@@ -1233,7 +1233,7 @@ function _restoreFilters(){
   // Defaults first, so a corrupt or partial blob can never leave a filter undefined (which
   // would compare false against everything and silently empty the roster).
   FILTER={gender:'all',grade:'all',church:'all',zone:'all'};
-  MY_FILTER={zone:'all',gender:'all',grade:'all'};
+  MY_FILTER={church:'all',gender:'all',grade:'all'};
   try{
     const raw=localStorage.getItem(_filtKey());if(!raw)return;
     const v=JSON.parse(raw)||{};
@@ -1243,13 +1243,13 @@ function _restoreFilters(){
 }
 function _clearFilters(which){
   if(which!=='my')FILTER={gender:'all',grade:'all',church:'all',zone:'all'};
-  if(which!=='checkin')MY_FILTER={zone:'all',gender:'all',grade:'all'};
+  if(which!=='checkin')MY_FILTER={church:'all',gender:'all',grade:'all'};
   _saveFilters();
   if(which==='my'){
     /* Reset the three <select>s in place and re-run the list, rather than re-entering the
        screen. A full re-render would refetch and bounce the scroll to the top, and the selects
        are the only DOM that reflects this state. */
-    [['myZoneF','all'],['myGenderF','all'],['myGradeF','all']].forEach(([id,v])=>{
+    [['myChurchF','all'],['myGenderF','all'],['myGradeF','all']].forEach(([id,v])=>{
       const el=document.getElementById(id);if(el)el.value=v;
     });
     filterMyYouth();
@@ -4112,7 +4112,7 @@ RENDER.students=async function(){
   const seg=`<div class="seg" id="studentsSeg" style="margin-bottom:10px">
       <button class="${STUDENTS_SUB==='mygroup'?'on':''}" onclick="switchStudentsTab('mygroup')">My group</button>
       <button class="${STUDENTS_SUB==='others'?'on':''}" onclick="switchStudentsTab('others')">All churches</button>
-    </div><div id="studentsBody"></div>`;
+    </div>${['admin','director'].includes(ACTOR.role)?`<div style="text-align:right;margin:-4px 0 8px"><button class="btn ghost sm" onclick="go('data')">${icSm('note')} Data table</button></div>`:''}<div id="studentsBody"></div>`;
   // Paint the shell first so the seg is stable, then fill the body for the active sub-tab.
   paint('students',seg,'Student Search',STUDENTS_SUB==='mygroup'?'Your group':'Find any student');
   await _renderStudentsBody();
@@ -4133,10 +4133,9 @@ async function _renderStudentsBody(){
   window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
   window._myLeaders=await _loadMyLeaders(items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
-  const zones=[...new Set(items.map(c=>c.zone))].sort();
-  const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="setMyFilter()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}" ${MY_FILTER.zone===z?'selected':''}>${z} Zone</option>`).join('')}</select>`:'';
+  const churchFilterHtml=isWide?_myChurchFilterHtml(items):'';
   window._myYouthAll=items;
-  host.innerHTML=`<div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div><div id="myYouthList"></div>`;
+  host.innerHTML=`<div class="filters">${churchFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div><div id="myYouthList"></div>`;
   filterMyYouth();
 }
 function switchStudentsTab(sub){
@@ -6266,10 +6265,9 @@ async function _renderMyGroup(screenId){
   window._myNotSignedIn=await _loadMyNotSignedIn(previewSim,items);
   window._myLeaders=await _loadMyLeaders(items);
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
-  const zones=[...new Set(items.map(c=>c.zone))].sort();
-  const zoneFilterHtml=isWide?`<select id="myZoneF" onchange="setMyFilter()"><option value="all">All zones</option>${zones.map(z=>`<option value="${z}" ${MY_FILTER.zone===z?'selected':''}>${z} Zone</option>`).join('')}</select>`:'';
+  const churchFilterHtml=isWide?_myChurchFilterHtml(items):'';
   window._myYouthAll=items;
-  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not signed in. Tap a name to see their details and contacts.')}</div><div class="filters">${zoneFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div><div id="myYouthList"></div>`;
+  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not signed in. Tap a name to see their details and contacts.')}</div><div class="filters">${churchFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div><div id="myYouthList"></div>`;
   document.getElementById(screenId).innerHTML=base;
   filterMyYouth();
 }
@@ -6313,27 +6311,38 @@ function _sortLeaders(rows){
     || String(a.firstName||'').localeCompare(String(b.firstName||''))
     || String(a.lastName||'').localeCompare(String(b.lastName||'')));
 }
+/* Church filter on My group (2026-09-28, replaced the zone filter — owner: at camp admins and
+   directors look for a church, not a zone). Options come from every list the screen shows
+   (campers + not-signed-in + leaders) so a church whose youth haven't arrived is still pickable.
+   Filters by churchName (same as the check-in FILTER.church, so _filterBanner can print it as-is);
+   a saved pre-2026-09-28 `zone` value is simply dropped by _restoreFilters. */
+function _myChurchFilterHtml(items){
+  const names=[...new Set([...items,...(window._myNotSignedIn||[]),...(window._myLeaders||[])]
+    .map(c=>c.churchName).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const opts=names.map(nm=>`<option value="${esc(nm)}" ${MY_FILTER.church===nm?'selected':''}>${esc(nm)}</option>`).join('');
+  return `<select id="myChurchF" onchange="setMyFilter()"><option value="all">All churches</option>${opts}</select>`;
+}
 /* Called by the three <select>s. Reads the DOM ONCE, into `MY_FILTER`, then persists — the
    selects are the input, `MY_FILTER` is the state. Before 2026-08-03 the DOM WAS the state,
    which is why this filter did not survive so much as a tab change. */
 function setMyFilter(){
-  MY_FILTER={zone:sel('myZoneF')||'all',gender:sel('myGenderF')||'all',grade:sel('myGradeF')||'all'};
+  MY_FILTER={church:sel('myChurchF')||'all',gender:sel('myGenderF')||'all',grade:sel('myGradeF')||'all'};
   _saveFilters();
   filterMyYouth();
 }
 function filterMyYouth(){
-  const zone=MY_FILTER.zone,gen=MY_FILTER.gender,gr=MY_FILTER.grade;
-  const matchF=c=>(zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)&&(gr==='all'||(gr==='leaders'?c.kind==='leader':String(c.grade)===gr));
+  const ch=MY_FILTER.church,gen=MY_FILTER.gender,gr=MY_FILTER.grade;
+  const matchF=c=>(ch==='all'||c.churchName===ch)&&(gen==='all'||c.gender===gen)&&(gr==='all'||(gr==='leaders'?c.kind==='leader':String(c.grade)===gr));
   const all=(window._myYouthAll||[]).filter(matchF);
   const signedOut=all.filter(c=>!c.atCamp&&c.signOutHistory&&c.signOutHistory.length>0);
   const atCamp=all.filter(c=>c.atCamp);
   // "Not signed in" moved here from the daily check-in screen (with the same one-tap sign-in button).
   const notSignedIn=(window._myNotSignedIn||[]).filter(matchF);
-  /* Item 14: leaders are filtered by zone/gender but NOT by the grade filter — a leader has no
+  /* Item 14: leaders are filtered by church/gender but NOT by the grade filter — a leader has no
      grade, so any specific year level would empty the list, and the "Leaders" option already
      shows them in the main sections above. */
   const leaders=_sortLeaders((window._myLeaders||[]).filter(c=>
-    (zone==='all'||c.zone===zone)&&(gen==='all'||c.gender===gen)));
+    (ch==='all'||c.churchName===ch)&&(gen==='all'||c.gender===gen)));
   const el=document.getElementById('myYouthList');if(!el)return;
   // Item 9/11: align My-group rows with the daily check-in rows — a grade/gender badge (or LDR) to
   // the LEFT of the name instead of an initials bubble. Church logins don't repeat their own church

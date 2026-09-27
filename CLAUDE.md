@@ -4,6 +4,19 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Student Search: Data table button + church filter replaces zone — `camp-v130` — 2026-09-28
+
+SPA only, camp is LIVE (at-camp mode). **Student Search → My group** (`RENDER.students`, and the
+legacy `_renderMyGroup`/`myyouth` that shares it): admin + director get a small right-aligned
+**"Data table"** button under the My group / All churches seg → `go('data')` (the full
+medical/dietary/etc. `RENDER.data` table; back returns to Student Search). The **zone** dropdown
+(`myZoneF`) is replaced by a **church** dropdown (`myChurchF`, built by `_myChurchFilterHtml` from
+campers + not-signed-in + leaders). `MY_FILTER.zone` → `MY_FILTER.church`, matched on
+**`churchName`** (not id) so `_filterBanner` prints it as-is, same as the check-in `FILTER.church`.
+A phone's saved `zone` value is silently dropped by `_restoreFilters` (it only copies known keys).
+Still shown to zoneLeader/director/admin (`isWide`), as the zone filter was. Tiles still show
+"X Zone · Church" — only the filter changed.
+
 ## Data table scrolls in its own box; individual overrides list is data-driven — `camp-v129` — 2026-09-25
 
 SPA only. **Data screen**: the table wrapper is now `overflow:auto;max-height:calc(100vh - 220px)`
