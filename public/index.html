@@ -2993,7 +2993,7 @@ async function renderHomeAtCamp(){
     // once the switchover passes. Sits between the hero card and the tile grid.
     if(!isDay1)return '';
     const disabled=phase!=='signin';
-    const blockedMsg=PREVIEW_MODE?'Tap the “Through camp” badge up top to switch to the sign-in view':'First-day sign-in has closed for today';
+    const blockedMsg=PREVIEW_MODE?'Tap the “Through camp” badge up top to switch to the sign-in view':'Sign-in closed. Sign late arrivals in on the Students screen';
     return `<button class="btn wide-signin${disabled?' bdis':''}" onclick="${disabled?`toast('${blockedMsg}')`:"openCheckinFace('signin')"}">${icSm('check')} First Day Sign In</button>`;
   })()}
   <div class="tiles">${tiles.join('')}</div>
