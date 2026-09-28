@@ -1209,8 +1209,15 @@ function _applyNameFilter(scr,q){
     const el=document.getElementById(scr);if(!el)return;
     const k=_nmKey(_ciQ);let shown=0;
     el.querySelectorAll('[data-nm]').forEach(r=>{const m=!k||(r.getAttribute('data-nm')||'').indexOf(k)>=0;r.style.display=m?'':'none';if(m)shown++;});
-    // Open a collapsed section only when it actually holds a match.
-    if(k)el.querySelectorAll('details[data-nmopen]').forEach(d=>{if([...d.querySelectorAll('[data-nm]')].some(r=>r.style.display!=='none'))d.open=true;});
+    // Collapsed sections follow the search: a section with no match is hidden (it used to stay
+    // as "Not signed in · 323" and open onto an empty list — reported 2026-09-28), its count
+    // shows matches only, and it opens when it holds one. Clearing the search restores all three.
+    el.querySelectorAll('details[data-nmopen]').forEach(d=>{
+      const n=[...d.querySelectorAll('[data-nm]')].filter(r=>r.style.display!=='none').length;
+      const c=d.querySelector('.nm-cnt');if(c)c.textContent=k?n:c.getAttribute('data-total');
+      d.style.display=(k&&!n)?'none':'';
+      if(k&&n)d.open=true;
+    });
     const none=el.querySelector('.nm-none');if(none)none.style.display=(k&&!shown)?'block':'none';
   }catch(_){} // never let a search glitch break the check-in screen
 }
@@ -3680,7 +3687,7 @@ async function _renderDailyCheckin(){
     (_checkinFailed>0
       ?`<div class="ci-sync ci-sync-fail" onclick="_retryFailedCheckins()">${icSm('alert')} ${_checkinFailed} check-in${_checkinFailed===1?'':'s'} didn’t save — ${_checkinFailReason?esc(_checkinFailReason):'tap to retry'}</div>`
       :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${syncingN} syncing…</div>`):'';
-  const doneSection=doneList.length>0?`<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · ${doneList.length}</summary>
+  const doneSection=doneList.length>0?`<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · <span class="nm-cnt" data-total="${doneList.length}">${doneList.length}</span></summary>
     ${doneList.map(c=>rowHtml(c)).join('')}</details>`:'';
   // ("Not signed in" moved to the bottom of the My-students screen — see filterMyYouth.)
   const html=`<div class="seg" id="dayseg">${dayBtns}</div>
@@ -6436,7 +6443,7 @@ function filterMyYouth(){
   // Signed-out and Not-signed-in collapse into dropdowns (like the old check-in "Not Signed In").
   function dropdown(title,rows,rowFn){
     if(!rows.length)return '';
-    return `<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${title} · ${rows.length}</summary>${grouped(rows,rowFn)}</details>`;
+    return `<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${title} · <span class="nm-cnt" data-total="${rows.length}">${rows.length}</span></summary>${grouped(rows,rowFn)}</details>`;
   }
   let html='';
   html+=section('At camp',atCamp);
@@ -6447,7 +6454,7 @@ function filterMyYouth(){
   // so leaders get their own un-grouped block with the signed-in-first ordering intact.
   if(leaders.length){
     const label=ACTOR.role==='church'?'Leaders in your group':'Leaders you can see';
-    html+=`<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${label} · ${leaders.length}</summary>${leaders.map(leaderRow).join('')}</details>`;
+    html+=`<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${label} · <span class="nm-cnt" data-total="${leaders.length}">${leaders.length}</span></summary>${leaders.map(leaderRow).join('')}</details>`;
   }
   if(!html)html='<p class="note-hint" style="margin-top:24px;text-align:center">No one matches these filters.</p>';
   /* The saved-view strip goes ABOVE the list. `_myYouthAll` is the unfiltered population; the
