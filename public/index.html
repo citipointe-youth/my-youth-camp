@@ -6768,6 +6768,7 @@ async function submitTestimony(){const camperId=sel('tmCamper'),body=val('tmBody
 const NOTE_CAT_OPTIONS=[
   {v:'testimony',label:'Testimony'},
   {v:'note',label:'Student note'},
+  {v:'sensitive',label:'Sensitive note'},
   {v:'firstaid',label:'First-aid'},
   {v:'signedout',label:'Signed out'},
   {v:'incident',label:'Incidents'},
@@ -6804,6 +6805,10 @@ function _mselToggle(e,id){
 // rendered inside a screen that gets rebuilt on every draw — a per-instance listener would
 // leak one handler per render.
 document.addEventListener('click',()=>{document.querySelectorAll('.msel.open').forEach(x=>x.classList.remove('open'));});
+// camp-v139: a sensitive STUDENT note is its own record type so it can be filtered apart from
+// ordinary student notes. A sensitive TESTIMONY keeps cat 'testimony' but ALSO matches the
+// "Sensitive note" filter (owner request) — see the NOTE_CATS filter in drawNotes.
+function _noteCat(n){const c=n.category||'note';return c==='note'&&n.sensitive?'sensitive':c;}
 RENDER.notes=async function(presetFilter){
   // /notes/recent returns bare notes (no camper details) — join /campers for name/church/zone/gender/grade.
   const [notes,page,incidents,churchRows]=await Promise.all([api('/notes/recent'),api(_scoped('/campers?pageSize=300')).catch(()=>[]),api('/incidents').catch(()=>[]),api('/accounts/churches').catch(()=>[])]);
@@ -6811,7 +6816,7 @@ RENDER.notes=async function(presetFilter){
   // Left-edge zone accent (2026-07-18): a general note/testimony (no camperId) has no student
   // to take a zone from, so fall back to the zone of the church that logged it (authorChurchId).
   const churchZoneById={};(churchRows||[]).forEach(c=>{churchZoneById[c.id]=c.zone;});
-  const noteRecs=(notes||[]).map(n=>{const c=cmap[n.camperId]||{};const zone=c.zone||churchZoneById[n.authorChurchId]||null;return Object.assign({},n,{camperName:c.firstName?(c.firstName+' '+c.lastName):(n.camperId||'No specific student'),church:c.churchName,zone,gender:c.gender,grade:c.grade,cat:n.category||'note'});});
+  const noteRecs=(notes||[]).map(n=>{const c=cmap[n.camperId]||{};const zone=c.zone||churchZoneById[n.authorChurchId]||null;return Object.assign({},n,{camperName:c.firstName?(c.firstName+' '+c.lastName):(n.camperId||'No specific student'),church:c.churchName,zone,gender:c.gender,grade:c.grade,cat:_noteCat(n)});});
   // AC-8: synthesise "Signed out" records from the attendance data — students no longer at camp
   // (atCamp:false / lifecycle checked_out|departed) with a sign-out event. Each surfaces as a
   // record alongside testimonies/notes, sourced from signOutHistory.
@@ -6875,7 +6880,7 @@ function drawNotes(){
   let list=window._notesAll||[];
   const ch=sel('ntChurch')||'all',z=sel('ntZone')||'all',day=sel('ntDay')||'all';
   // Empty set = no filter (see the note on _toggleNoteCat) — NOT "show nothing".
-  if(NOTE_CATS.size)list=list.filter(n=>NOTE_CATS.has(n.cat||'note'));
+  if(NOTE_CATS.size)list=list.filter(n=>NOTE_CATS.has(n.cat||'note')||(n.sensitive&&NOTE_CATS.has('sensitive')));
   if(ch!=='all')list=list.filter(n=>n.church===ch);
   if(z!=='all')list=list.filter(n=>n.zone===z);
   if(day!=='all'){
@@ -6889,10 +6894,11 @@ function drawNotes(){
   // Incidents carry their own low/high severity — surface it in the badge instead of a flat
   // "Incident" label (high stays the alarming red pill; low reads as a calmer amber).
   const badge=n=>{const c=n.cat||'note';
-    if(c==='testimony')return '<span class="pill info">Testimony</span>';
+    if(c==='testimony')return '<span class="pill info">Testimony</span>'+(n.sensitive?` <span class="pill warn">${icSm('alert')} Sensitive</span>`:'');
     if(c==='signedout')return '<span class="pill warn">Signed out</span>';
     if(c==='firstaid')return '<span class="pill amb">First-aid</span>';
     if(c==='incident')return n.severity==='high'?'<span class="pill warn">Incident · High</span>':'<span class="pill amb">Incident · Low</span>';
+    if(c==='sensitive')return `<span class="pill warn">${icSm('alert')} Sensitive note</span>`;
     return '<span class="pill ok">Student note</span>';
   };
   box.innerHTML=list.length?list.map(n=>{const c=n.cat||'note';

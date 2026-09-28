@@ -4,6 +4,15 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Testimonies & Notes: "Sensitive note" record type — `camp-v139` — 2026-09-28
+
+SPA only, camp LIVE. Owner request: the **Records** filter on Testimonies & Notes (zoneLeader /
+director / admin) separates **Student note** from **Sensitive note**. `_noteCat(n)` maps a
+`category:'note'` record with `sensitive:true` to cat `'sensitive'` (red `pill warn` badge). A
+sensitive **testimony** keeps cat `'testimony'` but ALSO matches the Sensitive note filter (owner
+asked for it in both); its tile shows Testimony + a red "Sensitive" pill. No server change
+(`/notes/recent` already returns `sensitive`); the server-side CSV export is unchanged.
+
 ## Name search now drives the collapsed sections' counts — `camp-v136` — 2026-09-28
 
 SPA only, camp LIVE. Owner bug: Student Search → My group, name search typed, **"Not signed in ·
