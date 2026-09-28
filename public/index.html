@@ -3635,11 +3635,14 @@ async function _renderDailyCheckin(){
   _lastRoster=roster;
   const DUE=roster.filter(c=>!c.present).length;
   const tb=document.getElementById('tabDue');if(tb){if(DUE>0){tb.style.display='grid';tb.textContent=DUE;}else tb.style.display='none';}
-  const showZone=['director','admin'].includes(ACTOR.role);
+  // 2026-09-28 (owner): no zone filter here any more — admin/director pick a CHURCH from the whole
+  // camp. A zone saved on a phone before this would otherwise narrow the roster invisibly (no
+  // dropdown left to clear it), so it's dropped.
+  const showZone=false;
+  if(FILTER.zone!=='all'){FILTER.zone='all';_saveFilters();}
   const showChurch=['zoneLeader','director','admin'].includes(ACTOR.role);
-  const zonesOpt=['all',...new Set(roster.map(c=>c.zone))].filter((v,i,a)=>a.indexOf(v)===i);
-  let churchPool=FILTER.zone!=='all'?roster.filter(c=>c.zone===FILTER.zone):roster;
-  const churchesOpt=['all',...new Set(churchPool.map(c=>c.church))].filter((v,i,a)=>a.indexOf(v)===i);
+  const zonesOpt=['all'];
+  const churchesOpt=['all',...[...new Set(roster.map(c=>c.church))].sort((a,b)=>String(a).localeCompare(String(b)))];
   let list=roster.filter(c=>(FILTER.gender==='all'||c.gender===FILTER.gender)&&
     (FILTER.grade==='all'||String(c.grade)===FILTER.grade)&&
     (FILTER.zone==='all'||c.zone===FILTER.zone)&&
