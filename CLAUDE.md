@@ -4,6 +4,16 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Name search now drives the collapsed sections' counts — `camp-v136` — 2026-09-28
+
+SPA only, camp LIVE. Owner bug: Student Search → My group, name search typed, **"Not signed in ·
+323" opened onto an empty list** — the searched person wasn't in that section (arrived, signed
+out, or a leader) but the header kept its full count. `_applyNameFilter` now, while a search is
+active, sets each `details[data-nmopen]`'s `.nm-cnt` span to the match count and **hides a
+section with no matches**; clearing restores `data-total`. Supersedes camp-v133's "counts ignore
+the search" for these dropdowns (the `At camp (N)` heading and `_filterBanner` still ignore it).
+Any new `details[data-nmopen]` should wrap its count in `<span class="nm-cnt" data-total="N">`.
+
 ## First-aid Student Info shows full logs; All Students grade buttons → name search — `camp-v135` — 2026-09-28
 
 SPA only, camp LIVE. **First-aid Student Info** (`_loadStudentRecent`): was the 4 newest logs,
