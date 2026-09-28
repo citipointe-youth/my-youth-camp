@@ -6410,9 +6410,11 @@ function filterMyYouth(){
   }
   function nsRow(c){
     const nm=(c.firstName+' '+c.lastName).trim();
-    return `<div class="row" data-nm="${esc(_nmKey(nm))}">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
+    // 2026-09-28: tapping the row opens the profile (phone numbers) — /campers/:id is scope-checked
+    // only, not lifecycle, so it works for registered-not-arrived people (as leaderRow already does).
+    return `<div class="row" role="button" tabindex="0" style="cursor:pointer" data-nm="${esc(_nmKey(nm))}" onclick="openCamper('${c.id}')">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
       <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div>${showChurchOnTile?`<div class="sub">${esc(c.churchName||'')}</div>`:''}</div>
-      <button class="btn ghost sm" style="flex:none;padding:8px 12px" onclick="signInConfirmList('${c.id}','${esc(jsq(nm))}',${c.kind==='leader'})">Sign in to camp</button>
+      <button class="btn ghost sm" style="flex:none;padding:8px 12px" onclick="event.stopPropagation();signInConfirmList('${c.id}','${esc(jsq(nm))}',${c.kind==='leader'})">Sign in to camp</button>
     </div>`;
   }
   const groupByChurch=ACTOR.role==='zoneLeader';

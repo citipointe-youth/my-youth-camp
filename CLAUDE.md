@@ -4,6 +4,15 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## "Not signed in" rows open the profile — `camp-v134` — 2026-09-28
+
+SPA only, camp LIVE. Student Search → My group → **Not signed in** (`nsRow` in `filterMyYouth`):
+the row now `openCamper(id)` so church logins can reach phone numbers for someone who hasn't
+arrived without signing them in; the "Sign in to camp" button `stopPropagation`s. `/campers/:id`
+is scope-checked only (no lifecycle gate), same path `leaderRow` already used; church still gets
+the masked, audited parent-phone reveal. Profile status reads "Signed out" for a never-arrived
+person (pre-existing wording).
+
 ## Dietary icon on First Day Sign In + name search on Student Search — `camp-v133` — 2026-09-28
 
 SPA only, camp LIVE. **First Day Sign In** (`fdDraw`/`fdRow`): a small pink fork & knife
