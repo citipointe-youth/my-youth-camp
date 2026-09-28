@@ -29,7 +29,7 @@ import type { Actor } from '../core/entities/user';
 import type { Person } from '../core/entities/person';
 import { assertCan } from './access-control';
 import { ForbiddenError, NotFoundError, BadRequestError, WipeGuardError } from '../core/errors/app-error';
-import { nowISO } from '../utils/date';
+import { nowISO, zonedNow } from '../utils/date';
 import { newId } from '../utils/id';
 import { makeSettingsService } from './settings.service';
 import { generateTempPassword } from '../utils/temp-password';
@@ -66,6 +66,16 @@ export interface AdminService {
   newYear(actor: Actor, year: number, opts?: WipeOpts): Promise<NewYearResult>;
   clearNotifications(actor: Actor): Promise<{ deleted: number }>;
   setMode(actor: Actor, mode: CampMode): Promise<CampSettings>;
+}
+
+/** True when the camp-zone date falls within the camp (startDate..endDate, widened by checkInDays). */
+export function isCampDay(s: CampSettings, at: Date = new Date()): boolean {
+  const days = [s.startDate, s.endDate, ...(s.checkInDays ?? [])].filter(Boolean).sort();
+  const first = days[0];
+  const last = days[days.length - 1];
+  if (!first || !last) return false;
+  const today = zonedNow(s.timezone || 'Australia/Brisbane', at).date;
+  return today >= first && today <= last;
 }
 
 export function makeAdminService(
@@ -336,6 +346,16 @@ export function makeAdminService(
     // from the twice-daily roster regardless of this.
     async setMode(actor, mode) {
       const before = await settingsService.get();
+      // 2026-09-28: an accidental "Switch to Pre-Camp" on camp day 1 signed out everyone who had
+      // arrived (the revert sweep below). While camp is running the switch back is refused
+      // outright; it opens again the day after the last camp day. Checked BEFORE the settings
+      // write so a refused request changes nothing.
+      if (before.campMode === 'at-camp' && mode === 'pre-camp' && isCampDay(before)) {
+        assertCan(actor, 'admin:manage');
+        throw new BadRequestError(
+          'Camp is running — switching back to pre-camp is locked until after the last camp day.',
+        );
+      }
       const saved = await settingsService.setMode(actor, mode);
       if (before.campMode !== 'at-camp' && mode === 'at-camp') {
         // First-aid records logged during pre-camp are necessarily test/practice ones —

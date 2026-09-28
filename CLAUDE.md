@@ -4,6 +4,33 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Pre-camp switch LOCKED on camp days — `camp-v131` — 2026-09-28 (incident)
+
+**Incident (camp day 1):** at 09:20:47 Brisbane (`23:20:47Z` 09-27) the "Youth Admin" login confirmed
+**Switch to Pre-Camp** (owner believes accidentally). `admin.service.setMode`'s at-camp→pre-camp sweep
+signed out all **18** people signed in 08:31–08:32 (`sign_out_history.reason = 'Camp mode reverted
+to pre-camp'`). Church logins then correctly showed pre-camp; admin tabs kept showing At Camp only
+until their next home-nav re-sync. Not a race/import: the SPA's settings PATCH never sends
+`campMode`, and imports stamped at 08:01.
+
+**Recovery (direct SQL, one transaction):** `camp_mode='at-camp'` set **by SQL, NOT via the button**
+(the pre→at transition deletes every `firstaid` note — would wipe real ones logged mid-camp; 0
+existed at the time). The 18 reverted people → `lifecycle='arrived', at_camp=true` + one `'in'`
+event each, reason `Restored after accidental revert to pre-camp`.
+
+**Locks (two layers):**
+- **DB trigger `settings_lock_at_camp`** (`lock_camp_mode_at_camp()`, BEFORE UPDATE on `settings`)
+  raises if `camp_mode` leaves `'at-camp'`. Covers every whole-row writer (import stamp, audit
+  export, newYear). The service writes settings BEFORE the sweep, so a blocked switch signs nobody
+  out. ⚠ **Not a migration file — drop it after camp:** `drop trigger settings_lock_at_camp on
+  public.settings; drop function public.lock_camp_mode_at_camp();` (or the end-of-camp switch and
+  New Year both fail).
+- **Code:** `isCampDay(settings)` (exported from `admin.service.ts`; Brisbane date within
+  startDate..endDate widened by checkInDays) → `setMode` throws `BadRequestError` for at→pre on a
+  camp day, before any write. SPA `_modeSwitchLocked()` mirrors it: the Admin console tile becomes a
+  lock tile "Pre-Camp switch locked (camp running)" and `switchMode()` refuses. Unlocks
+  automatically the day after the last camp day. +4 tests (`camp-day lock`), vitest 1174 pass.
+
 ## Student Search: Data table button + church filter replaces zone — `camp-v130` — 2026-09-28
 
 SPA only, camp is LIVE (at-camp mode). **Student Search → My group** (`RENDER.students`, and the

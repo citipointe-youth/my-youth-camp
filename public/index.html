@@ -6942,7 +6942,10 @@ RENDER.admin=function(){
   // Item 11 (2026-07-28): every console tile now carries an icon, matching the two that already
   // had one. `_adminTile` is the single tile builder so a new entry can't miss its glyph.
   const _adminTile=(icon,label,action)=>`<div class="tile" onclick="${action}"><div class="ic">${ic(icon)}</div><div class="l">${label}</div></div>`;
-  const modeTile=isAdmin?_adminTile('swap',`Switch to ${CAMP_MODE==='pre-camp'?'At-Camp':'Pre-Camp'}`,'switchMode()'):'';
+  // At camp on a camp day the switch back is LOCKED (server refuses it too) — see _modeSwitchLocked.
+  const modeTile=!isAdmin?'':_modeSwitchLocked()
+    ?_adminTile('lock','Pre-Camp switch locked (camp running)',"toast('Locked while camp is running — opens again after the last camp day')")
+    :_adminTile('swap',`Switch to ${CAMP_MODE==='pre-camp'?'At-Camp':'Pre-Camp'}`,'switchMode()');
   const dataTile=isAdminOrDirector?_adminTile('download',isAdmin?'Data Export/Reset':'Records &amp; Export',"go('adminData')"):'';
   const importTile=isAdmin?_adminTile('upload','Data Import',"go('import')"):'';
   // At camp, the setup wizard gives way to per-student data edits (no more CSV uploads mid-camp).
@@ -6995,7 +6998,17 @@ RENDER.admin=function(){
     </div>`,'Admin console','Back office');
 };
 
+// 2026-09-28: an accidental "Switch to Pre-Camp" on camp day 1 signed out everyone who had arrived.
+// Mirrors admin.service isCampDay: at-camp + Brisbane today within startDate..endDate/checkInDays.
+function _modeSwitchLocked(){
+  if(PREVIEW_MODE||!SETTINGS||SETTINGS.campMode!=='at-camp')return false;
+  const days=[SETTINGS.startDate,SETTINGS.endDate,...(SETTINGS.checkInDays||[])].filter(Boolean).sort();
+  if(!days.length)return false;
+  const today=localDateISO();
+  return today>=days[0]&&today<=days[days.length-1];
+}
 function switchMode(){
+  if(_modeSwitchLocked()){toast('Locked while camp is running — opens again after the last camp day');return;}
   const newMode=CAMP_MODE==='pre-camp'?'at-camp':'pre-camp';
   const label=newMode==='at-camp'?'AT CAMP (live operations)':'PRE-CAMP (registration prep)';
   const changes=newMode==='at-camp'

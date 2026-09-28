@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeAdminService } from './admin.service';
 import {
   InMemoryUserRepository,
@@ -767,6 +767,46 @@ describe('AdminService.setMode', () => {
     await svc.setMode(actor('admin'), 'pre-camp'); // already pre-camp — no-op
     const lead1 = await fresh.personRepo.findById('lead1');
     expect(lead1!.atCamp).toBe(true); // untouched — before.campMode was never 'at-camp'
+  });
+
+  // 2026-09-28: an accidental "Switch to Pre-Camp" tap on camp day 1 signed out everyone who
+  // had arrived. The at-camp -> pre-camp switch is now refused on any camp day (Brisbane date
+  // within startDate..endDate / checkInDays); seeded camp is 2026-07-01..2026-07-05.
+  describe('camp-day lock', () => {
+    afterEach(() => vi.useRealTimers());
+    const at = (iso: string) => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(iso)); };
+
+    it('refuses at-camp -> pre-camp on a camp day and signs nobody out', async () => {
+      await repos.personRepo.save(person({ id: 'stu1', kind: 'youth', lifecycle: 'arrived', atCamp: true, signOutHistory: [] }));
+      const svc = build(repos);
+      at('2026-07-02T01:00:00Z'); // 11am Brisbane, camp day 2
+      await svc.setMode(actor('admin'), 'at-camp');
+      await expect(svc.setMode(actor('admin'), 'pre-camp')).rejects.toBeInstanceOf(BadRequestError);
+      expect((await repos.settingsRepo.getSingleton())!.campMode).toBe('at-camp');
+      const stu1 = await repos.personRepo.findById('stu1');
+      expect(stu1!.atCamp).toBe(true);
+      expect(stu1!.signOutHistory).toHaveLength(0);
+    });
+
+    it('uses the Brisbane date, not UTC (first camp morning is still the prior UTC day)', async () => {
+      const svc = build(repos);
+      at('2026-06-30T22:00:00Z'); // 8am Brisbane on 2026-07-01
+      await svc.setMode(actor('admin'), 'at-camp');
+      await expect(svc.setMode(actor('admin'), 'pre-camp')).rejects.toBeInstanceOf(BadRequestError);
+    });
+
+    it('allows at-camp -> pre-camp after the last camp day', async () => {
+      const svc = build(repos);
+      at('2026-07-06T01:00:00Z');
+      await svc.setMode(actor('admin'), 'at-camp');
+      expect((await svc.setMode(actor('admin'), 'pre-camp')).campMode).toBe('pre-camp');
+    });
+
+    it('still allows switching INTO at-camp on a camp day', async () => {
+      const svc = build(repos);
+      at('2026-07-01T01:00:00Z');
+      expect((await svc.setMode(actor('admin'), 'at-camp')).campMode).toBe('at-camp');
+    });
   });
 });
 
