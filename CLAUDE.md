@@ -4,6 +4,16 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Dietary icon on First Day Sign In + name search on Student Search — `camp-v133` — 2026-09-28
+
+SPA only, camp LIVE. **First Day Sign In** (`fdDraw`/`fdRow`): a small pink fork & knife
+(`ICONS.diet`, `.dietic` #db2777) after the Yr/Leader badge for anyone (students AND leaders) with a
+non-empty `dietaryRequirements`; `title` lists them. Both feeds (/campers, /registrants) already
+carried the field; Nil/None answers are stripped at import by `cleanCareText`. **Student Search →
+My group** gains the display-only name search (`_nameSearchHtml('students',true)`, thinner box);
+`filterMyYouth` rows get `data-nm` and re-apply `_ciQ` after each render; `details[data-nmopen]`
+now auto-open only when they contain a match. Counts/church headers ignore the search by design.
+
 ## Pre-camp switch LOCKED on camp days — `camp-v131` — 2026-09-28 (incident)
 
 **Incident (camp day 1):** at 09:20:47 Brisbane (`23:20:47Z` 09-27) the "Youth Admin" login confirmed

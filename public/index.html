@@ -757,6 +757,7 @@ textarea{min-height:84px;resize:vertical;}
 .selrow{display:flex;gap:8px;margin-bottom:12px;}.selrow>div{flex:1;}.selrow label{margin-top:0;}
 .lead-tag{font-size:var(--t-micro);font-weight:800;background:var(--chip);color:#6d28d9;border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
 .gradepill{font-size:var(--t-micro);font-weight:800;background:#eef2f8;color:#475569;border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
+.dietic{color:#db2777;margin-left:4px;vertical-align:middle;}
 .err{background:#fde2e1;color:#7f1d1d;border-radius:10px;padding:9px 12px;font-size:var(--t-sm);margin-top:8px;display:none;}
 /* Login is white-background / purple-text to match the in-app theme (was dark gradient). */
 /* position:FIXED so these full-screen gates cover the viewport regardless of body scroll
@@ -1198,8 +1199,9 @@ let MY_FILTER={church:'all',gender:'all',grade:'all'};
    silently hides people. Counts/"All checked in" deliberately ignore it. Not persisted. */
 let _ciQ='';
 function _nmKey(s){return String(s||'').toLowerCase().replace(/\s+/g,' ').trim();}
-function _nameSearchHtml(scr){
-  return `<div class="search" style="margin-bottom:10px"><span>${ic('search')}</span><input id="nmQ_${scr}" type="text" enterkeyhint="search" placeholder="Search by name…" aria-label="Search by name" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" value="${esc(_ciQ)}" oninput="_applyNameFilter('${scr}',this.value)"></div>`;
+function _nameSearchHtml(scr,thin){
+  // `thin` (My group): slimmer box. Font stays --t-lg (16px+) so iOS doesn't zoom on focus.
+  return `<div class="search" style="margin-bottom:${thin?'8px;padding:5px 11px;border-width:1.5px':'10px'}"><span>${ic('search')}</span><input id="nmQ_${scr}" type="text" enterkeyhint="search" placeholder="Search by name…" aria-label="Search by name" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" value="${esc(_ciQ)}" oninput="_applyNameFilter('${scr}',this.value)"></div>`;
 }
 function _applyNameFilter(scr,q){
   try{
@@ -1207,7 +1209,8 @@ function _applyNameFilter(scr,q){
     const el=document.getElementById(scr);if(!el)return;
     const k=_nmKey(_ciQ);let shown=0;
     el.querySelectorAll('[data-nm]').forEach(r=>{const m=!k||(r.getAttribute('data-nm')||'').indexOf(k)>=0;r.style.display=m?'':'none';if(m)shown++;});
-    if(k)el.querySelectorAll('details[data-nmopen]').forEach(d=>{d.open=true;});
+    // Open a collapsed section only when it actually holds a match.
+    if(k)el.querySelectorAll('details[data-nmopen]').forEach(d=>{if([...d.querySelectorAll('[data-nm]')].some(r=>r.style.display!=='none'))d.open=true;});
     const none=el.querySelector('.nm-none');if(none)none.style.display=(k&&!shown)?'block':'none';
   }catch(_){} // never let a search glitch break the check-in screen
 }
@@ -1454,7 +1457,9 @@ plus:'<path d="M12 5v14M5 12h14"/>',
 // and the site-map feature (item 8).
 swap:'<path d="M4 8h13l-3-3M20 16H7l3 3"/>',
 dollar:'<path d="M12 3v18"/><path d="M16.5 7.5A3.5 3.5 0 0 0 13 5h-2a3 3 0 0 0 0 6h2a3 3 0 0 1 0 6h-2a3.5 3.5 0 0 1-3.5-2.5"/>',
-map:'<path d="M9 4 3 6.5v13L9 17l6 2.5 6-2.5v-13L15 6.5Z"/><path d="M9 4v13M15 6.5v13"/>'
+map:'<path d="M9 4 3 6.5v13L9 17l6 2.5 6-2.5v-13L15 6.5Z"/><path d="M9 4v13M15 6.5v13"/>',
+// 2026-09-28 — fork & knife: dietary-requirement marker on First Day Sign In.
+diet:'<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>'
 };
 // ACC_LABEL must come AFTER ICONS (icSm references ICONS; hoisting doesn't help const TDZ).
 const ACC_LABEL={tent:icSm('tent')+' All tents',classroom:icSm('classroom')+' All classrooms',mixed:icSm('tent')+icSm('classroom')+' Mixed'};
@@ -4161,7 +4166,7 @@ async function _renderStudentsBody(){
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const churchFilterHtml=isWide?_myChurchFilterHtml(items):'';
   window._myYouthAll=items;
-  host.innerHTML=`<div class="filters">${churchFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div><div id="myYouthList"></div>`;
+  host.innerHTML=`<div class="filters">${churchFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div>${_nameSearchHtml('students',true)}${_NM_NONE}<div id="myYouthList"></div>`;
   filterMyYouth();
 }
 function switchStudentsTab(sub){
@@ -6212,8 +6217,12 @@ function fdDraw(){
     const av=`<div class="av ${esc(c.gender)}">${initials(c.firstName+' '+c.lastName)}</div>`;
     // Leaders have no grade — badge them "Leader" rather than showing "Yr —".
     const gradeLabel=c.kind==='leader'?'Leader':'Yr '+(c.grade||'—');
+    // 2026-09-28: small pink fork & knife beside the badge when the person (student or leader) has
+    // any dietary requirement; tooltip lists them. Nil/None answers are already stripped on import.
+    const diet=(c.dietaryRequirements||[]).filter(Boolean);
+    const dietIc=diet.length?`<span class="dietic" title="Dietary: ${esc(diet.join(', '))}" aria-label="Dietary requirement">${icSm('diet')}</span>`:'';
     const nmAttr=`data-nm="${esc(_nmKey(c.firstName+' '+c.lastName))}"`;
-    const info=`<div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}<span class="gradepill">${gradeLabel}</span></div><div class="sub">${esc(c.churchName)}</div></div>`;
+    const info=`<div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}<span class="gradepill">${gradeLabel}</span>${dietIc}</div><div class="sub">${esc(c.churchName)}</div></div>`;
     if(done){
       // AC-2: an already-signed-in student can be signed OUT here to correct a mistake.
       const nm=(c.firstName+' '+c.lastName).replace(/'/g,"\\'");
@@ -6381,7 +6390,7 @@ function filterMyYouth(){
     const subParts=[];
     if(showChurchOnTile){subParts.push(esc(c.zone)+' Zone');subParts.push(esc(c.churchName));}
     const sub=subParts.join(' · ');
-    return `<div class="row" role="button" tabindex="0" onclick="openCamper('${c.id}')">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
+    return `<div class="row" role="button" tabindex="0" data-nm="${esc(_nmKey(c.firstName+' '+c.lastName))}" onclick="openCamper('${c.id}')">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
       <div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}</div>
       ${sub?`<div class="sub">${sub}</div>`:''}</div><span class="chev">›</span></div>`;
   }
@@ -6394,14 +6403,14 @@ function filterMyYouth(){
     const pill=c.atCamp
       ?'<span class="pill ok" style="flex:none">At camp</span>'
       :'<span class="pill warn" style="flex:none">Not on site</span>';
-    return `<div class="row" role="button" tabindex="0" onclick="openCamper('${c.id}')">${gbadge({kind:'leader',gender:c.gender})}
+    return `<div class="row" role="button" tabindex="0" data-nm="${esc(_nmKey(nm))}" onclick="openCamper('${c.id}')">${gbadge({kind:'leader',gender:c.gender})}
       <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div>
       ${showChurchOnTile&&c.churchName?`<div class="sub">${esc(c.churchName)}</div>`:''}</div>
       ${pill}<span class="chev">›</span></div>`;
   }
   function nsRow(c){
     const nm=(c.firstName+' '+c.lastName).trim();
-    return `<div class="row">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
+    return `<div class="row" data-nm="${esc(_nmKey(nm))}">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
       <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div>${showChurchOnTile?`<div class="sub">${esc(c.churchName||'')}</div>`:''}</div>
       <button class="btn ghost sm" style="flex:none;padding:8px 12px" onclick="signInConfirmList('${c.id}','${esc(jsq(nm))}',${c.kind==='leader'})">Sign in to camp</button>
     </div>`;
@@ -6419,7 +6428,7 @@ function filterMyYouth(){
   // Signed-out and Not-signed-in collapse into dropdowns (like the old check-in "Not Signed In").
   function dropdown(title,rows,rowFn){
     if(!rows.length)return '';
-    return `<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${title} · ${rows.length}</summary>${grouped(rows,rowFn)}</details>`;
+    return `<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${title} · ${rows.length}</summary>${grouped(rows,rowFn)}</details>`;
   }
   let html='';
   html+=section('At camp',atCamp);
@@ -6430,7 +6439,7 @@ function filterMyYouth(){
   // so leaders get their own un-grouped block with the signed-in-first ordering intact.
   if(leaders.length){
     const label=ACTOR.role==='church'?'Leaders in your group':'Leaders you can see';
-    html+=`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${label} · ${leaders.length}</summary>${leaders.map(leaderRow).join('')}</details>`;
+    html+=`<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">${label} · ${leaders.length}</summary>${leaders.map(leaderRow).join('')}</details>`;
   }
   if(!html)html='<p class="note-hint" style="margin-top:24px;text-align:center">No one matches these filters.</p>';
   /* The saved-view strip goes ABOVE the list. `_myYouthAll` is the unfiltered population; the
@@ -6438,6 +6447,7 @@ function filterMyYouth(){
      rules (zone/gender but never grade — a leader has no year level). */
   const totalAll=(window._myYouthAll||[]).length;
   el.innerHTML=_filterBanner('my',all.length,totalAll)+html;
+  const scr=el.closest('.screen');if(scr&&scr.id)_applyNameFilter(scr.id,_ciQ); // name search (display-only)
 }
 async function openCamper(id,push=true){
   const p=await api('/campers/'+id);let notesHtml='';const lead=p.kind==='leader';
