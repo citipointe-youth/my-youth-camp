@@ -3869,41 +3869,40 @@ function faResultRow(c){
    role-scoped). No pagination/virtualization: a flat map/join of a few hundred simple rows is
    fine on a modern phone; this app has no lazy-render pattern anywhere else. */
 let _asGender='all';
-let _asGrade='all';
+let _asQ='';
 RENDER.allstudents=async function(){
   let all;try{all=await api('/campers?scope=all');}catch(e){paint('allstudents','<p class="err" style="display:block">'+esc(e.message)+'</p>','All Students','First Aid');return;}
   all=(all||[]).filter(c=>c.lifecycle!=='cancelled');
   window._allStu=all;
   const cmap={};all.forEach(c=>{if(c.churchId)cmap[c.churchId]=c.churchName;});
   const churches=Object.entries(cmap).map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name));
-  const grades=[...new Set(all.map(c=>c.grade).filter(g=>g!=null))].sort((a,b)=>a-b);
   _asGender='all';
-  _asGrade='all';
+  _asQ='';
   const churchSel=`<div><label>Church ${helpTip('Narrow to one church, or leave as "All churches" to see everyone camp-wide. People not on site show in red.')}</label><select id="asChurch" onchange="drawAllStudents()"><option value="">All churches</option>${churches.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>`;
   const zoneSelEl=`<div><label>Zone</label><select id="asZone" onchange="drawAllStudents()"><option value="all">All zones</option>${ZONE_OPTS.map(z=>`<option value="${z}">${z}</option>`).join('')}</select></div>`;
   const genderBtns=`<div class="fa-seg" id="asGender">
     <button class="on" data-g="all" onclick="_asSetGender('all')">All</button>
     <button data-g="male" onclick="_asSetGender('male')">Guys</button>
     <button data-g="female" onclick="_asSetGender('female')">Girls</button></div>`;
-  const gradeBtns=`<div class="fa-seg wrap" id="asGradeBtns">
-    <button class="on" data-g="all" onclick="_asSetGrade('all')">All grades</button>
-    ${grades.map(g=>`<button data-g="${g}" onclick="_asSetGrade('${g}')">Yr ${g}</button>`).join('')}</div>`;
-  paint('allstudents',`<div class="selrow">${churchSel}${zoneSelEl}</div>${genderBtns}${gradeBtns}
+  /* Name search replaced the Yr grade buttons (2026-09-28, owner request) — same slim box as
+     Student Search → My group. Matches first/last name via _nmKey, like _applyNameFilter. */
+  const nameQ=`<div class="search" style="margin-bottom:8px;padding:5px 11px;border-width:1.5px"><span>${ic('search')}</span><input id="asQ" type="text" enterkeyhint="search" placeholder="Search by name…" aria-label="Search by name" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" oninput="_asQ=this.value;drawAllStudents()"></div>`;
+  paint('allstudents',`<div class="selrow">${churchSel}${zoneSelEl}</div>${genderBtns}${nameQ}
     ${_faSignedInToggleHtml('_faSetSignedIn(this,drawAllStudents)')}
     <div id="asList"></div>`,'All Students','First Aid');
   drawAllStudents();
 };
 function _asSetGender(g){_asGender=g;document.querySelectorAll('#asGender button').forEach(b=>b.classList.toggle('on',b.dataset.g===g));drawAllStudents();}
-function _asSetGrade(g){_asGrade=g;document.querySelectorAll('#asGradeBtns button').forEach(b=>b.classList.toggle('on',b.dataset.g===g));drawAllStudents();}
 function drawAllStudents(){
   const box=document.getElementById('asList');if(!box)return;
   const cid=sel('asChurch')||'';
   const zn=sel('asZone')||'all';
-  const filtersApplied=!!cid||_asGender!=='all'||_asGrade!=='all'||zn!=='all'||(_faPresenceMatters()&&_faSignedInOnly);
+  const k=_nmKey(_asQ);
+  const filtersApplied=!!cid||_asGender!=='all'||!!k||zn!=='all'||(_faPresenceMatters()&&_faSignedInOnly);
   let list=_faSignedInFilter(window._allStu||[]);
   if(cid)list=list.filter(c=>c.churchId===cid);
   if(_asGender!=='all')list=list.filter(c=>c.gender===_asGender);
-  if(_asGrade!=='all')list=list.filter(c=>String(c.grade)===_asGrade);
+  if(k)list=list.filter(c=>_nmKey((c.firstName||'')+' '+(c.lastName||'')).indexOf(k)>=0);
   if(zn!=='all')list=list.filter(c=>c.zone===zn);
   list.sort((a,b)=>(a.lastName||'').localeCompare(b.lastName||'')||(a.firstName||'').localeCompare(b.firstName||''));
   box.innerHTML=list.length?list.map(faResultRow).join(''):(filtersApplied?'<p class="note-hint">No one matches these filters.</p>':'<p class="note-hint">No students or leaders found.</p>');
@@ -4024,11 +4023,18 @@ async function faRevealLeader(id,role,btn){
 }
 async function _loadStudentRecent(id){
   const box=document.getElementById('faRecent');if(!box)return;
-  let recs=[];try{recs=await api('/notes/firstaid?limit=50');}catch(e){return;}
-  const mine=(recs||[]).filter(n=>n.camperId===id).slice(0,4);
+  /* Every first-aid log for this student, in full: time, what happened, treatment, who
+     (2026-09-28). Was the 4 newest, problem only, from a 50-record camp-wide window — an
+     older log for this student silently dropped off once the camp passed 50 logs. */
+  let recs=[];try{recs=await api('/notes/firstaid?limit=250');}catch(e){return;}
+  const mine=(recs||[]).filter(n=>n.camperId===id);
   if(!mine.length){box.innerHTML='';return;}
-  box.innerHTML=`<div class="lbl" style="margin-top:18px">Recent logs · this student</div>
-    <div class="fa-recent">${mine.map(n=>{const p=_faParse(n.body);return `<div class="r"><span class="tm">${dtFmt(n.createdAt)}</span><span>${esc(p.problem||n.body)}</span></div>`;}).join('')}</div>`;
+  box.innerHTML=`<div class="lbl" style="margin-top:18px">First-aid logs · this student (${mine.length})</div>
+    <div class="card">${mine.map(n=>{const p=_faParse(n.body);const legacy=!p.problem&&!p.treatment;return `<div class="fa-rec">
+    <div class="top"><span class="tm" style="margin-left:0">${dtFmt(n.createdAt)}</span></div>
+    ${p.problem||legacy?`<div class="ln"><b>What happened:</b> ${esc(p.problem||n.body)}</div>`:''}
+    ${p.treatment?`<div class="ln"><b>Treatment:</b> ${esc(p.treatment)}</div>`:''}
+    <div class="ln"><b>By:</b> ${esc(p.firstAider||n.authorName||'')}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div></div>`;}).join('')}</div>`;
 }
 async function revealMedicare(id){
   const el=document.getElementById('mcn');

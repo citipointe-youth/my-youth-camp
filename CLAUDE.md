@@ -4,6 +4,20 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## First-aid Student Info shows full logs; All Students grade buttons → name search — `camp-v135` — 2026-09-28
+
+SPA only, camp LIVE. **First-aid Student Info** (`_loadStudentRecent`): was the 4 newest logs,
+time + problem only, taken from a 50-record camp-wide `/notes/firstaid` window (so a student's older
+log silently vanished once the camp passed 50 first-aid logs). Now lists **every** log for the
+student as `.fa-rec` rows — time, **What happened**, **Treatment**, **By** (first-aider, else the
+login's authorName, + "brought by"); a body that doesn't parse shows raw under "What happened".
+Window is `limit=250` (server scans 1000 notes — every body decrypted, so don't raise it casually;
+a per-camper firstaid endpoint is the real fix if a camp ever exceeds 250 logs).
+**First-aid All Students**: the Yr grade buttons (`_asGrade`, `_asSetGrade`, `#asGradeBtns`) are
+gone, replaced by a slim name search (`#asQ`, `_asQ`, same style as `_nameSearchHtml(…,true)`),
+matched with `_nmKey` on "first last" inside `drawAllStudents` and counted as a filter for the
+empty-state text. `sw.js` → `camp-v135`. Not verified on a device.
+
 ## "Not signed in" rows open the profile — `camp-v134` — 2026-09-28
 
 SPA only, camp LIVE. Student Search → My group → **Not signed in** (`nsRow` in `filterMyYouth`):
