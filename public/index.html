@@ -1190,6 +1190,28 @@ let SESSIONS=[],SEL_SESSION=null,FILTER={gender:'all',grade:'all',church:'all',z
    `sel('myZoneF')` directly — so it did not survive a navigation, let alone a login. Hoisted to
    a real object so it can be persisted and restored like the check-in one. */
 let MY_FILTER={church:'all',gender:'all',grade:'all'};
+/* Name search on First-day sign-in + Daily check-in (2026-09-28, camp-v132). DISPLAY-ONLY: it
+   hides non-matching rows (`[data-nm]`) in place and never re-renders — both screens rebuild
+   their whole innerHTML on every tap, so re-rendering per keystroke would drop focus and close
+   the phone keyboard. `_ciQ` survives those in-place re-renders (each renderer re-applies it)
+   and is cleared by `_navTo` on a real navigation, so a leader never returns to a roster that
+   silently hides people. Counts/"All checked in" deliberately ignore it. Not persisted. */
+let _ciQ='';
+function _nmKey(s){return String(s||'').toLowerCase().replace(/\s+/g,' ').trim();}
+function _nameSearchHtml(scr){
+  return `<div class="search" style="margin-bottom:10px"><span>${ic('search')}</span><input id="nmQ_${scr}" type="text" enterkeyhint="search" placeholder="Search by name…" aria-label="Search by name" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" value="${esc(_ciQ)}" oninput="_applyNameFilter('${scr}',this.value)"></div>`;
+}
+function _applyNameFilter(scr,q){
+  try{
+    _ciQ=q||'';
+    const el=document.getElementById(scr);if(!el)return;
+    const k=_nmKey(_ciQ);let shown=0;
+    el.querySelectorAll('[data-nm]').forEach(r=>{const m=!k||(r.getAttribute('data-nm')||'').indexOf(k)>=0;r.style.display=m?'':'none';if(m)shown++;});
+    if(k)el.querySelectorAll('details[data-nmopen]').forEach(d=>{d.open=true;});
+    const none=el.querySelector('.nm-none');if(none)none.style.display=(k&&!shown)?'block':'none';
+  }catch(_){} // never let a search glitch break the check-in screen
+}
+const _NM_NONE='<p class="note-hint nm-none" style="display:none">No names match your search.</p>';
 
 /* ── SAVED ROSTER VIEW (2026-08-03, owner request; premise corrected 2026-08-04) ──────────
    Both roster filters are remembered on the device and restored at next sign-in.
@@ -2516,6 +2538,7 @@ function _spinner(id,label){
   _showScreen(id);
 }
 async function _navTo(id,arg){
+  if(id!==_navId)_ciQ=''; // name search resets on a real navigation (see _applyNameFilter)
   const tok=++_navToken; _navId=id;
   // PHONE body-scroll: all screens share the one document scroll, so a genuine navigation must
   // reset it to the top (each screen no longer keeps its own scrollTop). In-place refreshes don't
@@ -3632,7 +3655,7 @@ async function _renderDailyCheckin(){
     const actionBtn=sessionLocked
       ?`<span class="pill ${c.present?'ok':'warn'}" style="flex:none">${c.present?'In':'Out'}</span>`
       :`<button class="btn ${c.present?'ghost ':''}sm" style="z-index:1;flex:none;padding:8px 14px;font-size:var(--t-sm)" aria-label="${c.present?'Check out':'Check in'}" onclick="event.stopPropagation();_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')">${c.present?'Check out':'Check in'}</button>`;
-    return `<div class="row${c.present?' checked':''}" role="button" tabindex="0"${rowClick}>
+    return `<div class="row${c.present?' checked':''}" role="button" tabindex="0" data-nm="${esc(_nmKey(c.name))}"${rowClick}>
       ${gbadge(c)}
       <div style="flex:1;min-width:0">
         <div class="nm">${esc(c.name)}</div>
@@ -3652,7 +3675,7 @@ async function _renderDailyCheckin(){
     (_checkinFailed>0
       ?`<div class="ci-sync ci-sync-fail" onclick="_retryFailedCheckins()">${icSm('alert')} ${_checkinFailed} check-in${_checkinFailed===1?'':'s'} didn’t save — ${_checkinFailReason?esc(_checkinFailReason):'tap to retry'}</div>`
       :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${syncingN} syncing…</div>`):'';
-  const doneSection=doneList.length>0?`<details style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · ${doneList.length}</summary>
+  const doneSection=doneList.length>0?`<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · ${doneList.length}</summary>
     ${doneList.map(c=>rowHtml(c)).join('')}</details>`:'';
   // ("Not signed in" moved to the bottom of the My-students screen — see filterMyYouth.)
   const html=`<div class="seg" id="dayseg">${dayBtns}</div>
@@ -3671,10 +3694,13 @@ async function _renderDailyCheckin(){
       ${dueShown>0?`<div style="text-align:right"><div style="font-weight:800;font-size:var(--t-h1);line-height:1;color:var(--warn)">${dueShown}</div><div class="sub" style="font-size:var(--t-2xs)">not yet in</div></div>`:''}
     </div>
     ${completionBanner}
+    ${_nameSearchHtml('checkin')}
+    ${_NM_NONE}
     ${dueList.map(c=>rowHtml(c)).join('')}
     ${doneSection}
     <p class="note-hint">Tap a row to check in/out. Notes show on the student's profile to your church too, unless marked sensitive.</p>`;
   paint('checkin',html,'Daily Check-in',label);
+  _applyNameFilter('checkin',_ciQ); // re-apply the name search after the in-place re-render
   // Show undo toast if pending
   if(_undoCamperId)_showUndoToast(_undoType);
 };
@@ -6186,14 +6212,15 @@ function fdDraw(){
     const av=`<div class="av ${esc(c.gender)}">${initials(c.firstName+' '+c.lastName)}</div>`;
     // Leaders have no grade — badge them "Leader" rather than showing "Yr —".
     const gradeLabel=c.kind==='leader'?'Leader':'Yr '+(c.grade||'—');
+    const nmAttr=`data-nm="${esc(_nmKey(c.firstName+' '+c.lastName))}"`;
     const info=`<div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}<span class="gradepill">${gradeLabel}</span></div><div class="sub">${esc(c.churchName)}</div></div>`;
     if(done){
       // AC-2: an already-signed-in student can be signed OUT here to correct a mistake.
       const nm=(c.firstName+' '+c.lastName).replace(/'/g,"\\'");
-      return `<div class="row" role="button" tabindex="0" style="cursor:pointer" onclick="signOutPrompt('${c.id}','${esc(jsq(nm))}')">${av}${info}<span class="pill ok">${icSm('check')} In</span><button class="btn ghost sm" style="flex:none" onclick="event.stopPropagation();signOutPrompt('${c.id}','${esc(jsq(nm))}')">Sign out</button></div>`;
+      return `<div class="row" role="button" tabindex="0" ${nmAttr} style="cursor:pointer" onclick="signOutPrompt('${c.id}','${esc(jsq(nm))}')">${av}${info}<span class="pill ok">${icSm('check')} In</span><button class="btn ghost sm" style="flex:none" onclick="event.stopPropagation();signOutPrompt('${c.id}','${esc(jsq(nm))}')">Sign out</button></div>`;
     }
     const sel=pending.has(c.id);
-    return `<div class="row ${sel?'checked':''}" role="button" tabindex="0" style="cursor:pointer" onclick="fdToggle('${c.id}',this)" data-id="${c.id}">
+    return `<div class="row ${sel?'checked':''}" role="button" tabindex="0" ${nmAttr} style="cursor:pointer" onclick="fdToggle('${c.id}',this)" data-id="${c.id}">
       ${av}${info}
       <div style="width:26px;height:26px;border-radius:50%;border:2px solid ${sel?'#16a34a':'#c2cdda'};background:${sel?'#16a34a':'transparent'};display:grid;place-items:center;flex:none;transition:.15s">
         ${sel?icSm('check','cwhite'):''}
@@ -6210,6 +6237,8 @@ function fdDraw(){
       </select>
       <select onchange="window._fdGrade=this.value;fdDraw()">${gradeOpts}</select>
     </div>
+    ${_nameSearchHtml(_fdScreen)}
+    ${_NM_NONE}
     ${visible.length?visible.map(c=>fdRow(c,false)).join(''):'<p class="note-hint">No students match these filters.</p>'}
     ${notIn.length===0?`<div class="callbox">${icSm('check')} All students in your group are signed in</div>`:''}
     ${visibleIn.length?`<h3 class="sec" style="margin-top:16px">Already signed in (${visibleIn.length})</h3>`+visibleIn.map(c=>fdRow(c,true)).join(''):''}
@@ -6220,7 +6249,7 @@ function fdDraw(){
   // Preserve scroll: ticking a student / confirming must not jump back to the top of a long list.
   const el=document.getElementById(_fdScreen);
   const sc=_scroller(el);const y=sc?sc.scrollTop:0;
-  if(el){el.innerHTML=html;if(sc)sc.scrollTop=y;}
+  if(el){el.innerHTML=html;_applyNameFilter(_fdScreen,_ciQ);if(sc)sc.scrollTop=y;}
   document.getElementById('barT').textContent='First Day Sign In';
   document.getElementById('barS').textContent=(notIn.length-pendingCount)+' remaining';
 }
