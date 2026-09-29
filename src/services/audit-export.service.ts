@@ -31,13 +31,16 @@ function revealLabel(kind: string, contactRole: string | null): string {
   return `Leader phone${which}`;
 }
 
-/** Parse a first-aid note's 4-line body into columns (mirrors the SPA's _faParse). */
+/** Parse a first-aid note's 4-line body into columns (mirrors the SPA's _faParse). An
+ *  AMENDMENT (2026-09-29) is its own first-aid note whose body is `Amends: <original note id>`
+ *  / `Amendment: <text>` / `First-aider: <name>` — the original record is never modified. */
 function parseFirstAidBody(body: string): {
   problem: string; treatment: string; firstAider: string; broughtBy: string;
+  amends: string; amendment: string;
 } {
-  const out = { problem: '', treatment: '', firstAider: '', broughtBy: '' };
+  const out = { problem: '', treatment: '', firstAider: '', broughtBy: '', amends: '', amendment: '' };
   for (const line of (body || '').split('\n')) {
-    const m = /^(Problem|Treatment|First-aider|Brought by):\s*(.*)$/i.exec(line);
+    const m = /^(Problem|Treatment|First-aider|Brought by|Amends|Amendment):\s*(.*)$/i.exec(line);
     if (!m) continue;
     const k = m[1]!.toLowerCase();
     const v = m[2] ?? '';
@@ -45,6 +48,8 @@ function parseFirstAidBody(body: string): {
     else if (k === 'treatment') out.treatment = v;
     else if (k === 'first-aider') out.firstAider = v;
     else if (k === 'brought by') out.broughtBy = v;
+    else if (k === 'amends') out.amends = v.trim();
+    else if (k === 'amendment') out.amendment = v;
   }
   return out;
 }
@@ -261,18 +266,20 @@ export function makeAuditExportService(
 
       // ----- First-Aid Records (parsed 4-line body: Problem / Treatment / First-aider / Brought by) -----
       const faSheet = wb.addWorksheet('First-Aid Records');
-      faSheet.addRow(['Student', 'Church', 'Zone', 'Grade', 'Gender', 'Problem', 'Treatment', 'First-aider', 'Brought by', 'Logged At']);
+      faSheet.addRow(['Student', 'Church', 'Zone', 'Grade', 'Gender', 'Problem', 'Treatment', 'First-aider', 'Brought by', 'Amendment', 'Amends record logged at', 'Logged At']);
       faSheet.getRow(1).font = { bold: true };
       faSheet.columns = [
         { width: 22 }, { width: 20 }, { width: 10 }, { width: 8 }, { width: 10 }, { width: 30 },
-        { width: 30 }, { width: 18 }, { width: 18 }, { width: 20 },
+        { width: 30 }, { width: 18 }, { width: 18 }, { width: 30 }, { width: 20 }, { width: 20 },
       ];
       const firstAidNotes = notes
         .filter((note) => note.category === 'firstaid')
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // item 24: newest first
+      const faById = new Map(firstAidNotes.map((n) => [n.id, n]));
       for (const note of firstAidNotes) {
         const p = note.camperId ? personMap.get(note.camperId) : undefined;
         const fa = parseFirstAidBody(note.body);
+        const orig = fa.amends ? faById.get(fa.amends) : undefined;
         faSheet.addRow([
           p ? `${p.firstName} ${p.lastName}` : 'No specific student',
           p?.churchName || '',
@@ -280,6 +287,8 @@ export function makeAuditExportService(
           p?.grade ?? '',
           p?.gender || '',
           fa.problem, fa.treatment, fa.firstAider, fa.broughtBy,
+          fa.amendment,
+          fa.amends ? (orig ? toLocalTs(orig.createdAt, tz) : 'Record not found') : '',
           toLocalTs(note.createdAt, tz),
         ]);
       }

@@ -4,6 +4,26 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## First-aid record AMENDMENTS — `camp-v140` — 2026-09-29
+
+Camp LIVE. Owner chose **amend, not edit** (a medical record about a minor must keep its original).
+An amendment is its **own `category:'firstaid'` note** via the existing `POST /notes` (same
+`note:write:firstaid`, same scoping — **no route, permission or migration change**). Body:
+`Amends: <original note id>` / `Amendment: <one line>` / `First-aider: <name>`; the original is never
+touched. **No cap** — owner asked for "at least 5"; any number nest (oldest first, "Amendment N").
+- SPA: `_faParse` reads `Amends`/`Amendment`; `_faIsAmend`, `_faGroup` (nests under the original;
+  an amendment whose original is outside the loaded `/notes/firstaid` window renders alone as an
+  "orphan"), `_faAmendsHtml`, `_faAmendBtn`, `openFaAmend`/`saveFaAmend`. "Add amendment" on every
+  record in **Student Info** and the **Records** tab — **firstAid login only** (`_faAmendBtn`/`openFaAmend` check `ACTOR.role`; owner requirement). Records "Today" keeps a record if it OR any
+  amendment is today. Director digest "first-aid today" excludes amendments. Leaders' Notes feed
+  shows them as "First-aid · Amendment". Records CSV + audit workbook `First-Aid Records` sheet gain
+  **Amendment** and **Amends record logged at** columns (`parseFirstAidBody`, test covers 5).
+- **Other logins: read-only effects only, owner-approved 2026-09-29** — digest count, Notes-feed
+  tile, workbook columns (above). Without them an amendment would inflate the count / show a blank
+  tile / blank workbook row. Leaders' `openCamper` Notes list is untouched (shows the raw body, as
+  it already does for every first-aid note).
+- ⚠ Amendments use up the `limit=100/250` windows like any record. Not verified on a device.
+
 ## Testimonies & Notes: "Sensitive note" record type — `camp-v139` — 2026-09-28
 
 SPA only, camp LIVE. Owner request: the **Records** filter on Testimonies & Notes (zoneLeader /

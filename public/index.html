@@ -451,6 +451,8 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .fa-recent .r .tm{color:var(--ink-2);flex:none;min-width:62px;}
 .fa-rec{padding:12px 4px;border-bottom:1px solid var(--line);}
 .fa-rec:last-child{border-bottom:none;}
+.fa-amend{margin:8px 0 0 10px;padding:6px 0 2px 10px;border-left:3px solid var(--line);font-size:var(--t-xs);}
+.fa-amend .tm{color:var(--ink-2);}
 .fa-rec .top{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
 .fa-rec .top .nm{font-weight:800;font-size:var(--t-sm);}
 .fa-rec .top .tm{margin-left:auto;font-size:var(--t-xs);color:var(--ink-2);}
@@ -2907,7 +2909,7 @@ async function _renderDirectorDigest(){
   try{
     const recs=await api('/notes/firstaid?limit=100').catch(()=>[]);
     const today=localDateISO();
-    const count=(recs||[]).filter(n=>n.createdAt&&localDateISO(n.createdAt)===today).length;
+    const count=(recs||[]).filter(n=>!_faIsAmend(n)&&n.createdAt&&localDateISO(n.createdAt)===today).length;
     const el=document.getElementById('digestFirstAid');
     if(el)el.textContent=`${count} first-aid record${count===1?'':'s'} today`;
   }catch(e){}
@@ -4037,14 +4039,16 @@ async function _loadStudentRecent(id){
      (2026-09-28). Was the 4 newest, problem only, from a 50-record camp-wide window — an
      older log for this student silently dropped off once the camp passed 50 logs. */
   let recs=[];try{recs=await api('/notes/firstaid?limit=250');}catch(e){return;}
-  const mine=(recs||[]).filter(n=>n.camperId===id);
+  const mine=_faGroup((recs||[]).filter(n=>n.camperId===id));
   if(!mine.length){box.innerHTML='';return;}
-  box.innerHTML=`<div class="lbl" style="margin-top:18px">First-aid logs · this student (${mine.length})</div>
-    <div class="card">${mine.map(n=>{const p=_faParse(n.body);const legacy=!p.problem&&!p.treatment;return `<div class="fa-rec">
+  box.innerHTML=`<div class="lbl" style="margin-top:18px">First-aid logs · this student (${mine.filter(g=>!g.orphan).length})</div>
+    <div class="card">${mine.map(g=>{const n=g.n;if(g.orphan)return _faOrphanHtml(n,'');
+    const p=_faParse(n.body);const legacy=!p.problem&&!p.treatment;return `<div class="fa-rec">
     <div class="top"><span class="tm" style="margin-left:0">${dtFmt(n.createdAt)}</span></div>
     ${p.problem||legacy?`<div class="ln"><b>What happened:</b> ${esc(p.problem||n.body)}</div>`:''}
     ${p.treatment?`<div class="ln"><b>Treatment:</b> ${esc(p.treatment)}</div>`:''}
-    <div class="ln"><b>By:</b> ${esc(p.firstAider||n.authorName||'')}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div></div>`;}).join('')}</div>`;
+    <div class="ln"><b>By:</b> ${esc(p.firstAider||n.authorName||'')}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div>
+    ${_faAmendsHtml(g)}${_faAmendBtn(n,'info')}</div>`;}).join('')}</div>`;
 }
 async function revealMedicare(id){
   const el=document.getElementById('mcn');
@@ -4054,11 +4058,71 @@ async function revealMedicare(id){
   }catch(e){toast(e.message);}
 }
 /* Parse a first-aid record body (4 labelled lines) back into its parts for display. */
-function _faParse(body){const o={problem:'',treatment:'',firstAider:'',broughtBy:''};(body||'').split('\n').forEach(line=>{
-  const m=line.match(/^(Problem|Treatment|First-aider|Brought by):\s*(.*)$/i);if(!m)return;
+function _faParse(body){const o={problem:'',treatment:'',firstAider:'',broughtBy:'',amends:'',amendment:''};(body||'').split('\n').forEach(line=>{
+  const m=line.match(/^(Problem|Treatment|First-aider|Brought by|Amends|Amendment):\s*(.*)$/i);if(!m)return;
   const k=m[1].toLowerCase();const v=m[2];
-  if(k==='problem')o.problem=v;else if(k==='treatment')o.treatment=v;else if(k==='first-aider')o.firstAider=v;else if(k==='brought by')o.broughtBy=v;});
+  if(k==='problem')o.problem=v;else if(k==='treatment')o.treatment=v;else if(k==='first-aider')o.firstAider=v;else if(k==='brought by')o.broughtBy=v;
+  else if(k==='amends')o.amends=v.trim();else if(k==='amendment')o.amendment=v;});
   return o;}
+/* ── First-aid AMENDMENTS (2026-09-29) ──────────────────────────────────────────
+   A record is never edited. An amendment is its OWN category 'firstaid' note (same camperId,
+   same POST /notes, same note:write:firstaid) whose body is `Amends: <original note id>` /
+   `Amendment: <text>` / `First-aider: <name>`. No limit on how many a record can carry.
+   _faGroup nests each amendment under its original (oldest first); an amendment whose original
+   is outside the loaded window (/notes/firstaid limit) shows on its own as an "orphan". */
+function _faIsAmend(n){return /^Amends:\s*\S/m.test((n&&n.body)||'');}
+function _faGroup(recs){
+  const byId={},out=[];
+  recs.forEach(n=>{if(_faIsAmend(n))return;const g={n,amends:[]};byId[n.id]=g;out.push(g);});
+  recs.forEach(n=>{if(!_faIsAmend(n))return;const g=byId[_faParse(n.body).amends];
+    if(g)g.amends.push(n);else out.push({n,amends:[],orphan:true});});
+  out.forEach(g=>g.amends.sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||'')));
+  out.sort((a,b)=>(b.n.createdAt||'').localeCompare(a.n.createdAt||''));
+  window._faNoteById=window._faNoteById||{};recs.forEach(n=>{window._faNoteById[n.id]=n;});
+  return out;}
+function _faAmendsHtml(g){return g.amends.map((a,i)=>{const p=_faParse(a.body);
+  return `<div class="fa-amend"><div><span class="pill amb">Amendment ${i+1}</span> <span class="tm">${dtFmt(a.createdAt)}</span></div>
+    <div class="ln">${esc(p.amendment)}</div><div class="tm">By ${esc(p.firstAider||a.authorName||'')}</div></div>`;}).join('');}
+function _faOrphanHtml(n,nameHtml){const p=_faParse(n.body);return `<div class="fa-rec">
+    <div class="top">${nameHtml}<span class="pill amb">Amendment</span><span class="tm">${dtFmt(n.createdAt)}</span></div>
+    <div class="ln">${esc(p.amendment)}</div>
+    <div class="sub" style="color:var(--ink-2);margin-top:3px">By ${esc(p.firstAider||n.authorName||'')} · amends an earlier record not shown here</div></div>`;}
+// First-aid login ONLY (owner, 2026-09-29) — even though Records/Student Info are firstAid-only screens.
+function _faAmendBtn(n,from){if(!ACTOR||ACTOR.role!=='firstAid')return '';return `<div style="margin-top:8px"><button class="btn ghost sm" onclick="openFaAmend('${n.id}','${from}')">${icSm('plus')} Add amendment</button></div>`;}
+function openFaAmend(origId,from){
+  if(!ACTOR||ACTOR.role!=='firstAid')return;
+  const n=(window._faNoteById||{})[origId];if(!n){toast('Record not found — reload and try again');return;}
+  const p=_faParse(n.body);
+  const back=from==='records'?`RENDER.records()`:`openStudentInfo('${n.camperId}')`;
+  const scr=from==='records'?'records':_faScreen();
+  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${back}">${icSm('arrowl')} Back</button></div>
+    <div class="card">
+      <div class="lbl" style="margin-top:0">Original record · ${dtFmt(n.createdAt)}</div>
+      ${p.problem?`<div class="ln"><b>What happened:</b> ${esc(p.problem)}</div>`:''}
+      ${p.treatment?`<div class="ln"><b>Treatment:</b> ${esc(p.treatment)}</div>`:''}
+      ${!p.problem&&!p.treatment?`<div class="ln">${esc(n.body)}</div>`:''}
+      <label class="lbl" style="margin-top:12px">Amendment</label>
+      <textarea id="faAmendTx" class="fld" style="min-height:84px" maxlength="1500" placeholder="What needs correcting or adding? e.g. Ice pack was 20 min, not 15. Parent called at 3:10pm."></textarea>
+      <label class="lbl" style="margin-top:12px">First-aider <span style="color:var(--danger)">*</span></label>
+      <input id="faAmendWho" class="fld" value="${esc(LAST_LEADER||'')}" placeholder="Who is adding this amendment">
+      <p class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:6px">The original record is kept unchanged. Time and login account are recorded automatically.</p>
+    </div>
+    <button class="btn" id="faAmendSave" onclick="saveFaAmend('${origId}','${from}')">${icSm('check')} Save amendment</button>`,'Add amendment','');
+}
+async function saveFaAmend(origId,from){
+  const n=(window._faNoteById||{})[origId];if(!n)return;
+  // One line each: the body is line-labelled, so a newline in the text would break _faParse.
+  const tx=val('faAmendTx').replace(/\s*\n\s*/g,' ').trim(),who=val('faAmendWho').replace(/\s*\n\s*/g,' ').trim();
+  if(!tx){toast('Describe the amendment');return;}
+  if(!who){toast('Enter the first-aider name');return;}
+  LAST_LEADER=who;
+  const btn=document.getElementById('faAmendSave');if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  try{
+    await api('/notes',{method:'POST',body:{camperId:n.camperId,category:'firstaid',body:`Amends: ${origId}\nAmendment: ${tx}\nFirst-aider: ${who}`}});
+    toast('Amendment saved');
+    if(from==='records')await RENDER.records();else await openStudentInfo(n.camperId);
+  }catch(e){toast(e.message);if(btn){btn.disabled=false;btn.innerHTML=`${icSm('check')} Save amendment`;}}
+}
 /* ── Log a first-aid action ─────────────────────────────────────────────────── */
 function openFirstAidLog(id){
   const c=_currentStudent&&_currentStudent.id===id?_currentStudent:null;
@@ -4117,9 +4181,11 @@ function exportFaRecords(){
   if(!recs.length){toast('No first-aid records to export yet');return;}
   const cmap=window._faCamperMap||{};
   const q=v=>{v=String(v==null?'':v);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
-  const header=['Student','Problem','Treatment','First-aider','Brought by','Logged by','Logged at'];
+  const byId={};recs.forEach(n=>{byId[n.id]=n;});
+  const header=['Student','Problem','Treatment','First-aider','Brought by','Amendment','Amends record logged at','Logged by','Logged at'];
   const rows=recs.map(n=>{const p=_faParse(n.body);const name=(cmap[n.camperId]||'').split(' · ')[0]||'Student';
-    return [name,p.problem,p.treatment,p.firstAider||n.authorName||'',p.broughtBy,n.authorName||'',n.createdAt||''];});
+    const orig=p.amends?(byId[p.amends]?byId[p.amends].createdAt:'Record not in export'):'';
+    return [name,p.problem,p.treatment,p.firstAider||n.authorName||'',p.broughtBy,p.amendment,orig,n.authorName||'',n.createdAt||''];});
   const csv='﻿'+[header,...rows].map(r=>r.map(q).join(',')).join('\r\n');
   _saveTextFile(csv,_exportName('first-aid-records','csv'));
   toast('First-aid records exported');
@@ -4127,20 +4193,24 @@ function exportFaRecords(){
 function faRecSeg(f){_faRecFilter=f;const a=document.getElementById('faSegToday'),b=document.getElementById('faSegAll');if(a)a.classList.toggle('on',f==='today');if(b)b.classList.toggle('on',f==='all');drawFaRecords();}
 function drawFaRecords(){
   const box=document.getElementById('faRecList');if(!box)return;
-  let list=window._faRecsAll||[];
-  const today=localDateISO();
-  if(_faRecFilter==='today')list=list.filter(n=>n.createdAt&&localDateISO(n.createdAt)===today);
+  // Grouped: each record carries its amendments. "Today" keeps a record if it OR any of its
+  // amendments was logged today, so an amendment to yesterday's record still surfaces.
+  let list=_faGroup(window._faRecsAll||[]);
+  const today=localDateISO();const isToday=n=>n.createdAt&&localDateISO(n.createdAt)===today;
+  if(_faRecFilter==='today')list=list.filter(g=>isToday(g.n)||g.amends.some(isToday));
   const q=(val('faRecQ')||'').trim().toLowerCase();
   // join camper name from the cached people list if present; fall back to id
   const cmap=window._faCamperMap||{};
-  const named=list.map(n=>({n,name:(cmap[n.camperId]?cmap[n.camperId]:'')}));
+  const named=list.map(g=>({g,n:g.n,name:(cmap[g.n.camperId]?cmap[g.n.camperId]:'')}));
   let filtered=named;
   if(q)filtered=named.filter(x=>x.name.toLowerCase().includes(q));
-  box.innerHTML=filtered.length?`<div class="card">${filtered.map(x=>{const p=_faParse(x.n.body);return `<div class="fa-rec">
+  box.innerHTML=filtered.length?`<div class="card">${filtered.map(x=>{if(x.g.orphan)return _faOrphanHtml(x.n,`<span class="nm">${esc(x.name||'Student')}</span>`);
+    const p=_faParse(x.n.body);return `<div class="fa-rec">
     <div class="top"><span class="nm">${esc(x.name||'Student')}</span><span class="pill info">First-aid</span><span class="tm">${dtFmt(x.n.createdAt)}</span></div>
     ${p.problem?`<div class="ln"><b>Problem:</b> ${esc(p.problem)}</div>`:''}
     ${p.treatment?`<div class="ln tx"><b>Treatment:</b> ${esc(p.treatment)}</div>`:''}
-    <div class="sub" style="color:var(--ink-2);margin-top:3px">${esc(p.firstAider||x.n.authorName||'')}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div></div>`;}).join('')}</div>`
+    <div class="sub" style="color:var(--ink-2);margin-top:3px">${esc(p.firstAider||x.n.authorName||'')}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div>
+    ${_faAmendsHtml(x.g)}${_faAmendBtn(x.n,'records')}</div>`;}).join('')}</div>`
     :emptyState('note',_faRecFilter==='today'?'No actions logged today.':'No actions logged yet.');
 }
 
@@ -6896,7 +6966,7 @@ function drawNotes(){
   const badge=n=>{const c=n.cat||'note';
     if(c==='testimony')return '<span class="pill info">Testimony</span>'+(n.sensitive?` <span class="pill warn">${icSm('alert')} Sensitive</span>`:'');
     if(c==='signedout')return '<span class="pill warn">Signed out</span>';
-    if(c==='firstaid')return '<span class="pill amb">First-aid</span>';
+    if(c==='firstaid')return _faIsAmend(n)?'<span class="pill amb">First-aid · Amendment</span>':'<span class="pill amb">First-aid</span>';
     if(c==='incident')return n.severity==='high'?'<span class="pill warn">Incident · High</span>':'<span class="pill amb">Incident · Low</span>';
     if(c==='sensitive')return `<span class="pill warn">${icSm('alert')} Sensitive note</span>`;
     return '<span class="pill ok">Student note</span>';
@@ -6910,6 +6980,7 @@ function drawNotes(){
       bodyHtml=`<div style="font-size:.86rem;margin:4px 0">
         ${p.problem?`<div><b style="color:var(--alert-ink)">Problem:</b> ${esc(p.problem)}</div>`:''}
         ${p.treatment?`<div><b style="color:var(--consent-ok-ink)">Treatment:</b> ${esc(p.treatment)}</div>`:''}
+        ${p.amendment?`<div><b>Amendment:</b> ${esc(p.amendment)}</div>`:''}
         ${p.firstAider?`<div class="sub" style="color:var(--ink-2)">First-aider: ${esc(p.firstAider)}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div>`:''}</div>`;
     }else{bodyHtml=`<div style="font-size:.86rem;color:#475569;margin:4px 0">${esc(n.body)}</div>`;}
     /* 2026-08-03 (owner request): the record TYPE badge moved from the end of the footer line

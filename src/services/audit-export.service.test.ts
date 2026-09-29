@@ -92,6 +92,32 @@ describe('audit-export: master workbook', () => {
     expect(cells).toContain('Sam');
   });
 
+  it('first-aid amendments get their own row with the amendment text and the original record time', async () => {
+    const orig = (await notes.findAll()).find((n) => n.category === 'firstaid')!;
+    const noteSvc = makeNoteService(notes, people);
+    for (let i = 1; i <= 5; i++) {
+      await noteSvc.add(actor, {
+        camperId: 'cam1', category: 'firstaid',
+        body: `Amends: ${orig.id}\nAmendment: Correction ${i}\nFirst-aider: Jo`,
+      });
+    }
+    const wb = await load();
+    const fa = wb.getWorksheet('First-Aid Records')!;
+    const header = (fa.getRow(1).values as unknown[]).map((v) => String(v ?? ''));
+    const aCol = header.indexOf('Amendment');
+    const oCol = header.indexOf('Amends record logged at');
+    expect(aCol).toBeGreaterThan(0);
+    expect(oCol).toBeGreaterThan(0);
+    const rows: unknown[][] = [];
+    for (let r = 2; r <= fa.rowCount; r++) rows.push(fa.getRow(r).values as unknown[]);
+    expect(rows).toHaveLength(6); // original + 5 amendments, original untouched
+    const amendments = rows.filter((r) => String(r[aCol] ?? '').startsWith('Correction'));
+    expect(amendments).toHaveLength(5);
+    for (const r of amendments) expect(String(r[oCol] ?? '')).not.toMatch(/^$|not found/);
+    const original = rows.find((r) => String(r[aCol] ?? '') === '')!;
+    expect(original.map((v) => String(v ?? ''))).toContain('Sprained ankle');
+  });
+
   it('does NOT duplicate first-aid records into Notes & Testimonies (bug 9)', async () => {
     const wb = await load();
     const ns = wb.getWorksheet('Notes & Testimonies')!;
