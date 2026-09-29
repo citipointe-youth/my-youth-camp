@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import ExcelJS from 'exceljs';
-import { makeAuditExportService } from './audit-export.service';
+import { makeAuditExportService, parseFirstAidBody } from './audit-export.service';
 import { makeNoteService } from './note.service';
 import {
   InMemoryNoteRepository,
@@ -414,5 +414,28 @@ describe('audit-export: Incidents sheet carries Occurred at (2026-07-30)', () =>
     expect(withTime[col]).toBeTruthy();
     expect(withTime[col]).not.toBe(withTime[header.indexOf('Logged at')]); // a distinct time
     expect(withoutTime[col] ?? '').toBe(''); // optional — blank, never a placeholder
+  });
+});
+
+// 2026-09-29: a first-aider pressing Return inside "What happened?"/"Treatment" stored a
+// multi-line field; the parser dropped every unlabelled line, so the record looked truncated.
+describe('parseFirstAidBody — multi-line fields', () => {
+  it('keeps lines typed after a Return as part of the field above', () => {
+    const body = 'Problem: Fell on the court.\nGraze to left knee.\n\nTreatment: Cleaned wound.\nIce pack 15 min.\nFirst-aider: SD\nBrought by: Jo';
+    expect(parseFirstAidBody(body)).toEqual({
+      problem: 'Fell on the court.\nGraze to left knee.',
+      treatment: 'Cleaned wound.\nIce pack 15 min.',
+      firstAider: 'SD', broughtBy: 'Jo', amends: '', amendment: '',
+    });
+  });
+
+  it('still parses a single-line record unchanged', () => {
+    expect(parseFirstAidBody('Problem: Headache\nTreatment: Water\nFirst-aider: SD')).toEqual({
+      problem: 'Headache', treatment: 'Water', firstAider: 'SD', broughtBy: '', amends: '', amendment: '',
+    });
+  });
+
+  it('ignores leading unlabelled text rather than inventing a field', () => {
+    expect(parseFirstAidBody('free text\nProblem: X').problem).toBe('X');
   });
 });

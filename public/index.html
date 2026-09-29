@@ -457,6 +457,9 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .fa-rec .top .nm{font-weight:800;font-size:var(--t-sm);}
 .fa-rec .top .tm{margin-left:auto;font-size:var(--t-xs);color:var(--ink-2);}
 .fa-rec .ln{font-size:var(--t-sm);margin-top:2px;}
+/* A first-aider's Return is kept in the record — show it as a line break. Only on .ln, whose
+   template is a single line; pre-line on a wrapper would render the template's own newlines. */
+.fa-rec .ln,.fa-amend .ln{white-space:pre-line;}
 .fa-rec .ln b{color:var(--alert-ink);font-weight:800;}
 .fa-rec .ln.tx b{color:var(--consent-ok-ink);}
 .fa-form2{display:flex;flex-direction:column;gap:0;}
@@ -4057,12 +4060,17 @@ async function revealMedicare(id){
     if(el)el.textContent=(res&&res.medicareNumber)||'—';
   }catch(e){toast(e.message);}
 }
-/* Parse a first-aid record body (4 labelled lines) back into its parts for display. */
-function _faParse(body){const o={problem:'',treatment:'',firstAider:'',broughtBy:'',amends:'',amendment:''};(body||'').split('\n').forEach(line=>{
-  const m=line.match(/^(Problem|Treatment|First-aider|Brought by|Amends|Amendment):\s*(.*)$/i);if(!m)return;
-  const k=m[1].toLowerCase();const v=m[2];
-  if(k==='problem')o.problem=v;else if(k==='treatment')o.treatment=v;else if(k==='first-aider')o.firstAider=v;else if(k==='brought by')o.broughtBy=v;
-  else if(k==='amends')o.amends=v.trim();else if(k==='amendment')o.amendment=v;});
+/* Parse a first-aid record body (4 labelled lines) back into its parts for display.
+   A Return typed inside "What happened?"/"Treatment" is stored as-is, so an UNLABELLED line is a
+   continuation of the field above it — never drop it (2026-09-29: records looked truncated after
+   a Return). Mirrored by audit-export.service.ts parseFirstAidBody; keep the two in step. */
+const _FA_KEYS={'problem':'problem','treatment':'treatment','first-aider':'firstAider','brought by':'broughtBy','amends':'amends','amendment':'amendment'};
+function _faParse(body){const o={problem:'',treatment:'',firstAider:'',broughtBy:'',amends:'',amendment:''};let last=null;
+  (body||'').split('\n').forEach(line=>{
+  const m=line.match(/^(Problem|Treatment|First-aider|Brought by|Amends|Amendment):\s*(.*)$/i);
+  if(!m){if(last&&last!=='amends')o[last]+='\n'+line;return;}
+  last=_FA_KEYS[m[1].toLowerCase()];o[last]=m[2];});
+  Object.keys(o).forEach(k=>{o[k]=o[k].replace(/\s+$/,'');});o.amends=o.amends.trim();
   return o;}
 /* ── First-aid AMENDMENTS (2026-09-29) ──────────────────────────────────────────
    A record is never edited. An amendment is its OWN category 'firstaid' note (same camperId,
@@ -6978,9 +6986,9 @@ function drawNotes(){
     let bodyHtml;
     if(c==='firstaid'){const p=_faParse(n.body);
       bodyHtml=`<div style="font-size:.86rem;margin:4px 0">
-        ${p.problem?`<div><b style="color:var(--alert-ink)">Problem:</b> ${esc(p.problem)}</div>`:''}
-        ${p.treatment?`<div><b style="color:var(--consent-ok-ink)">Treatment:</b> ${esc(p.treatment)}</div>`:''}
-        ${p.amendment?`<div><b>Amendment:</b> ${esc(p.amendment)}</div>`:''}
+        ${p.problem?`<div style="white-space:pre-line"><b style="color:var(--alert-ink)">Problem:</b> ${esc(p.problem)}</div>`:''}
+        ${p.treatment?`<div style="white-space:pre-line"><b style="color:var(--consent-ok-ink)">Treatment:</b> ${esc(p.treatment)}</div>`:''}
+        ${p.amendment?`<div style="white-space:pre-line"><b>Amendment:</b> ${esc(p.amendment)}</div>`:''}
         ${p.firstAider?`<div class="sub" style="color:var(--ink-2)">First-aider: ${esc(p.firstAider)}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div>`:''}</div>`;
     }else{bodyHtml=`<div style="font-size:.86rem;color:#475569;margin:4px 0">${esc(n.body)}</div>`;}
     /* 2026-08-03 (owner request): the record TYPE badge moved from the end of the footer line

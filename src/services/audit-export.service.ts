@@ -33,24 +33,31 @@ function revealLabel(kind: string, contactRole: string | null): string {
 
 /** Parse a first-aid note's 4-line body into columns (mirrors the SPA's _faParse). An
  *  AMENDMENT (2026-09-29) is its own first-aid note whose body is `Amends: <original note id>`
- *  / `Amendment: <text>` / `First-aider: <name>` — the original record is never modified. */
-function parseFirstAidBody(body: string): {
+ *  / `Amendment: <text>` / `First-aider: <name>` — the original record is never modified.
+ *  A Return typed inside a textarea is stored verbatim, so an UNLABELLED line continues the
+ *  field above it (2026-09-29: those lines were dropped and records looked truncated). */
+type FirstAidParts = {
   problem: string; treatment: string; firstAider: string; broughtBy: string;
   amends: string; amendment: string;
-} {
-  const out = { problem: '', treatment: '', firstAider: '', broughtBy: '', amends: '', amendment: '' };
+};
+const FA_KEYS: Record<string, keyof FirstAidParts> = {
+  'problem': 'problem', 'treatment': 'treatment', 'first-aider': 'firstAider',
+  'brought by': 'broughtBy', 'amends': 'amends', 'amendment': 'amendment',
+};
+export function parseFirstAidBody(body: string): FirstAidParts {
+  const out: FirstAidParts = { problem: '', treatment: '', firstAider: '', broughtBy: '', amends: '', amendment: '' };
+  let last: keyof FirstAidParts | null = null;
   for (const line of (body || '').split('\n')) {
     const m = /^(Problem|Treatment|First-aider|Brought by|Amends|Amendment):\s*(.*)$/i.exec(line);
-    if (!m) continue;
-    const k = m[1]!.toLowerCase();
-    const v = m[2] ?? '';
-    if (k === 'problem') out.problem = v;
-    else if (k === 'treatment') out.treatment = v;
-    else if (k === 'first-aider') out.firstAider = v;
-    else if (k === 'brought by') out.broughtBy = v;
-    else if (k === 'amends') out.amends = v.trim();
-    else if (k === 'amendment') out.amendment = v;
+    if (!m) {
+      if (last && last !== 'amends') out[last] += '\n' + line;
+      continue;
+    }
+    last = FA_KEYS[m[1]!.toLowerCase()]!;
+    out[last] = m[2] ?? '';
   }
+  for (const k of Object.keys(out) as (keyof FirstAidParts)[]) out[k] = out[k].replace(/\s+$/, '');
+  out.amends = out.amends.trim();
   return out;
 }
 

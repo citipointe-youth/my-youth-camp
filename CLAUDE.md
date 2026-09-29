@@ -4,6 +4,20 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## First-aid records no longer cut off after a Return — `camp-v141` — 2026-09-29
+
+Camp LIVE, owner bug: *"when a first aider adds a record it sometimes truncates after a return."*
+**Display-only bug, no data lost.** "Log action" (`saveFirstAidLog`) stores the textareas verbatim
+inside the labelled body, so a Return put an UNLABELLED line in it — and both parsers (SPA
+`_faParse`, server `audit-export.service.parseFirstAidBody`) dropped every line without a label.
+Both now append an unlabelled line to the field above (a leading one is still ignored); trailing
+whitespace trimmed. Retroactive: every stored record re-displays in full. `.fa-rec .ln` /
+`.fa-amend .ln` + the Notes-view first-aid lines are `white-space:pre-line` so the break shows
+(⚠ never on a wrapper — the template's own newlines would render). CSV/workbook get the full
+multi-line text. `parseFirstAidBody` is now exported; +3 tests (1178 pass). Edge case accepted: a
+typed line beginning `Treatment:` inside "What happened?" is still read as a label. The amendment
+form still flattens Returns on save (unchanged). Not verified on a device.
+
 ## First-aid record AMENDMENTS — `camp-v140` — 2026-09-29
 
 Camp LIVE. Owner chose **amend, not edit** (a medical record about a minor must keep its original).
