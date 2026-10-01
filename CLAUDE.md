@@ -4,6 +4,36 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Pulse Unallocated bar + session stepping, first-aid day filter, Student Edit overrides — `camp-v142` — 2026-10-01
+
+SPA only (`public/index.html`), no route/permission/DTO/migration change, **no data change**. Owner
+batch on the last camp day. Spec `docs/superpowers/specs/2026-10-01-pulse-firstaid-studentedit-design.md`,
+plan `docs/superpowers/plans/2026-10-01-pulse-firstaid-studentedit.md`. New
+`scripts/pulse-fa-harness.js` (22 checks) extracts **`_pulseGroups`, `_faKeep`, `_stuSavePlan` BY
+NAME — never rename them.** vitest 1178 pass (unchanged — browser-only).
+- **Pulse "5th zone 0/1"** = an at-camp student with no church (form church "OTHER", never
+  allocated → `zone=''`). `_pulseGroups` now labels zone-less rows **"Unallocated"**, sorted last;
+  director/admin tap → `_pulseGoUnalloc` → Data Import with the Unallocated card opened (one-shot
+  `_openAllocCard`, consumed in `_renderAllocCards`). It flags a real gap: **no church login can
+  check such a student in.**
+- **Pulse ‹ › stepping** through `/checkin/sessions` (`_pulseSess`, `_pulseStep`); re-renders only
+  `#homePulse` (the card itself now carries that id). Home resets to the current session on every
+  render. A zoneLeader church-bar tap opens Check-in on the session being viewed.
+- **First-aid Records**: Today/All seg → `<select id="faRecDay">` (Today · `Day N · Mon 28 Sep` per
+  `checkInDays` · All, `_faDayOpts`/`faRecDay`). ⚠ **`limit=100` → `limit=1000`**: prod held 195
+  first-aid records, so All + the CSV export had been silently missing the oldest ~95 (all of day 1).
+  The director digest's own `limit=100` (today-only count) was left alone on purpose.
+- **Individual Student Data Edit** now writes the SAME records as the Data Import cards: a church
+  change → `POST /import/allocate` (an `allocation_overrides` row the Form import re-applies — the
+  old raw PATCH was reverted by the next import), accommodation → `accommodationOverride` (the old
+  `accommodationKind` PATCH hit the RAW column, so it was overwritten on import and **did nothing
+  at all when an override already existed**). Order: plain PATCH → allocate → override, so the
+  church accommodation rule can't clobber the chosen override. An Unallocated student's church
+  select starts blank instead of silently defaulting to the first church. **Add student unchanged.**
+- Known, not fixed: a hand-added, never-signed-in student is unprotected from the Form-import delete
+  sweep; overrides key on name+mobile, so renaming here breaks re-matching on the next import.
+  Not verified on a device.
+
 ## First-aid records no longer cut off after a Return — `camp-v141` — 2026-09-29
 
 Camp LIVE, owner bug: *"when a first aider adds a record it sometimes truncates after a return."*

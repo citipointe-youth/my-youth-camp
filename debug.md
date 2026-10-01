@@ -620,6 +620,16 @@ tolerate absence via `?? false`.
 
 ## Symptom router (fastest path)
 
+### 2026-10-01 — `camp-v142` pulse / first-aid filter / Student Edit overrides
+
+| Symptom | Go to |
+|---|---|
+| **Pulse shows an "Unallocated" bar (was a blank-named 5th "zone")** | Real data, not a bug: an at-camp student with no church (`zone=''`). `_pulseGroups`. Fix the DATA — allocate them on Data Import (tap the bar). |
+| **Pulse ‹ › arrows missing / stuck** | `renderOversightPulse(sessId)` + `_pulseStep`; arrows only render when `SESSIONS.length>1`. The card must keep `id="homePulse"` or stepping has nothing to replace. |
+| **First-aid Records day shows nothing / older records missing** | `_faKeep` (Brisbane date via `localDateISO`, record OR amendment) and the `limit=1000` fetch in `RENDER.records`. Harness: `node scripts/pulse-fa-harness.js`. |
+| **Student Data Edit church change reverted after an import** | `stuSave` must call `POST /import/allocate` via `_stuSavePlan(...).allocateTo`; a raw `churchId` PATCH has no `allocation_overrides` row. |
+| **Student Data Edit accommodation change "doesn't stick"** | It edits `accommodationOverride` (`seAccOv`), written LAST in `stuSave`. If it appears unchanged, check the PATCH order — `allocate` re-derives the raw kind from the church rule. |
+
 ### 2026-09-09 (2nd) — AU phone normalisation
 
 | Symptom | Go to |
