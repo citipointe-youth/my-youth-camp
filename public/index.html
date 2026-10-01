@@ -3014,6 +3014,8 @@ async function renderHomeAtCamp(){
   // `_alertBannerHtml(feed)` already injected above the "Notices" heading in `html` above.)
   if(['director','admin'].includes(ACTOR.role))_renderDirectorDigest();
   // Load the oversight pulse in the background and inject it when ready.
+  // Home always opens the pulse on the CURRENT session; ‹ › stepping only lasts while on Home.
+  _pulseSess=null;
   renderOversightPulse().then(pulseHtml=>{
     const el=document.getElementById('homePulse');
     if(el&&pulseHtml)el.outerHTML=pulseHtml;
@@ -3153,38 +3155,62 @@ function _pulseGroups(roster,byChurch){
   const out=Object.values(groups);
   return out.filter(g=>!g.unalloc).concat(out.filter(g=>g.unalloc));
 }
-async function renderOversightPulse(){
+/* camp-v142: the pulse can be stepped ‹ › through every check-in session (owner request — after
+   camp, or mid-day, the CURRENT session is not always the one you want to look at). `_pulseSess`
+   is the session on screen; stepping re-renders ONLY this card (#homePulse), not Home. */
+let _pulseSess=null;
+async function renderOversightPulse(sessId){
   if(!['director','admin','zoneLeader'].includes(ACTOR.role))return '';
   try{
-    const session=await api('/checkin/sessions/current').catch(()=>null);
-    if(!session)return '';
-    const st=await api('/checkin/sessions/'+encodeURIComponent(session.id)+'/status').catch(()=>null);
+    if(SESSIONS.length===0)SESSIONS=(await api('/checkin/sessions').catch(()=>[]))||[];
+    const cur=await api('/checkin/sessions/current').catch(()=>null);
+    const curId=cur&&cur.id;
+    _pulseSess=sessId||_pulseSess||curId||(SESSIONS[0]&&SESSIONS[0].id)||null;
+    if(!_pulseSess)return '';
+    const st=await api('/checkin/sessions/'+encodeURIComponent(_pulseSess)+'/status').catch(()=>null);
     if(!st)return '';
     const byChurch=ACTOR.role==='zoneLeader';
-    const groups={};
-    (st.roster||[]).forEach(r=>{
-      const key=byChurch?r.church:r.zone;
-      if(!groups[key])groups[key]={label:key,total:0,done:0};
-      groups[key].total++;
-      if(r.checkedIn)groups[key].done++;
-    });
-    const bars=Object.values(groups).map(g=>{
+    const canAlloc=['director','admin'].includes(ACTOR.role);
+    const bars=_pulseGroups(st.roster,byChurch).map(g=>{
       const pct=g.total?Math.round(g.done/g.total*100):0;
       const amber=pct<PULSE_AMBER_PCT;
-      const label=byChurch?esc(g.label):esc(g.label)+' Zone';
-      const tap=byChurch?` onclick="_pulseGoToChurch('${esc(jsq(g.label))}')" style="cursor:pointer"`:'';
+      // Unallocated: nobody's church login can check these students in — tap goes to the
+      // Data Import "Unallocated" card (director/admin only; zoneLeader never has them in scope).
+      const tap=g.unalloc
+        ?(canAlloc?` onclick="_pulseGoUnalloc()" style="cursor:pointer"`:'')
+        :(byChurch?` onclick="_pulseGoToChurch('${esc(jsq(g.raw))}')" style="cursor:pointer"`:'');
       return `<div style="margin-bottom:8px"${tap}>
-        <div style="display:flex;justify-content:space-between;font-size:.8rem"><span>${label}</span><span>${g.done}/${g.total}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:.8rem"><span>${esc(g.label)}</span><span>${g.done}/${g.total}</span></div>
         <div class="bar7${amber?' amber':''}"><i style="width:${pct}%"></i></div></div>`;
     }).join('');
-    return bars?`<div class="card"><div class="lbl" style="margin-top:0">Check-in pulse · ${esc(st.session?.label||'')}</div>${bars}</div>`:'';
+    const idx=SESSIONS.findIndex(s=>s.id===_pulseSess);
+    const sess=st.session||SESSIONS[idx]||{};
+    // camp-v107 rule: buttons in a .rowsb are `.btn … sm` + flex:0 0 auto.
+    const arrow=(dir,ch,off)=>`<button class="btn ghost sm" style="flex:0 0 auto;padding:4px 10px${off?';opacity:.35':''}"${off?' disabled':''} onclick="_pulseStep(${dir})" aria-label="${dir<0?'Previous':'Next'} session">${ch}</button>`;
+    const nav=SESSIONS.length>1
+      ?`<div style="display:flex;align-items:center;gap:6px;flex:0 0 auto">${arrow(-1,'‹',idx<=0)}<span style="font-size:.8rem;font-weight:700;min-width:62px;text-align:center">${esc(_ciLabel(sess))}${_pulseSess===curId?' •':''}</span>${arrow(1,'›',idx<0||idx>=SESSIONS.length-1)}</div>`
+      :`<span style="font-size:.8rem;font-weight:700">${esc(_ciLabel(sess))}</span>`;
+    return `<div class="card" id="homePulse"><div class="rowsb" style="align-items:center;margin-bottom:8px"><div class="lbl" style="margin:0">Check-in pulse</div>${nav}</div>${bars||'<p class="note-hint" style="margin:0">No students on this roster.</p>'}</div>`;
   }catch(e){return '';}
 }
-// Tapping a church bar (zoneLeader pulse) jumps to Check-in pre-filtered to that church.
+async function _pulseStep(dir){
+  const i=SESSIONS.findIndex(s=>s.id===_pulseSess),next=SESSIONS[i+dir];
+  if(i<0||!next)return;
+  const html=await renderOversightPulse(next.id);
+  const el=document.getElementById('homePulse');
+  if(el&&html)el.outerHTML=html;
+}
+// Tapping a church bar (zoneLeader pulse) jumps to Check-in pre-filtered to that church, on the
+// session the pulse was showing.
 function _pulseGoToChurch(church){
   FILTER.church=church;
+  if(_pulseSess)SEL_SESSION=_pulseSess;
   gotoTab('checkin');
 }
+// Tapping the Unallocated bar opens Data Import with its "Unallocated" card expanded (one-shot,
+// consumed in _renderAllocCards).
+let _openAllocCard=null;
+function _pulseGoUnalloc(){_openAllocCard='unallocated';go('import');}
 // Displays AU mobile numbers consistently (e.g. CSV imports that dropped the leading 0
 // via spreadsheet numeric coercion show "411928301" — this reformats to "0411 928 301").
 // Anything that isn't a recognisable 9/10-digit AU mobile (incl. masked contact numbers
@@ -9490,6 +9516,8 @@ function _renderAllocCards(){
   wrap.innerHTML=errCard+cardA+cardB+cardC+cardD+cardE;
   openKeys.forEach(k=>{const d=wrap.querySelector(`details[data-ac="${k}"]`);if(d)d.open=true;});
   if(sc)sc.scrollTop=y;
+  // One-shot from the pulse's Unallocated bar (_pulseGoUnalloc): open that card and bring it into view.
+  if(_openAllocCard){const d=wrap.querySelector(`details[data-ac="${_openAllocCard}"]`);_openAllocCard=null;if(d){d.open=true;d.scrollIntoView({block:'start'});}}
 }
 
 function _renderOvSearch(){
