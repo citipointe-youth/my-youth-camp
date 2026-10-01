@@ -4210,13 +4210,13 @@ async function saveFirstAidLog(id){
 let _faRecFilter='today';
 RENDER.records=async function(){
   let recs=[],page=[];
-  try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=100'),api(_scoped('/campers?pageSize=300')).catch(()=>[])]);}
+  try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=1000'),api(_scoped('/campers?pageSize=300')).catch(()=>[])]);}
   catch(e){paint('records','<p class="err" style="display:block">'+esc(e.message)+'</p>','First-aid records','');return;}
   window._faRecsAll=recs||[];
   const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c.firstName+' '+c.lastName+(c.grade?' · Gr '+c.grade:'');});window._faCamperMap=cmap;
   paint('records',`<div class="search" style="padding:9px 14px"><span>${ic('search')}</span><input id="faRecQ" placeholder="Filter by student…" oninput="drawFaRecords()" aria-label="Filter records"></div>
     <div class="rowsb" style="margin-bottom:12px;align-items:center">
-      <div class="seg" style="margin:0"><button id="faSegToday" class="${_faRecFilter==='today'?'on':''}" onclick="faRecSeg('today')">Today</button><button id="faSegAll" class="${_faRecFilter==='all'?'on':''}" onclick="faRecSeg('all')">All</button></div>
+      <select class="fld" id="faRecDay" style="flex:1;min-width:0;margin:0 8px 0 0" onchange="faRecDay(this.value)" aria-label="Show records from">${_faDayOpts().map(o=>`<option value="${o.v}"${o.v===_faRecFilter?' selected':''}>${esc(o.l)}</option>`).join('')}</select>
       <button class="btn alt sm" style="flex:none" onclick="exportFaRecords()">${icSm('download')} Export</button></div>
     <div id="faRecList"></div>`,'First-aid records','Logged actions');
   drawFaRecords();
@@ -4237,7 +4237,13 @@ function exportFaRecords(){
   _saveTextFile(csv,_exportName('first-aid-records','csv'));
   toast('First-aid records exported');
 }
-function faRecSeg(f){_faRecFilter=f;const a=document.getElementById('faSegToday'),b=document.getElementById('faSegAll');if(a)a.classList.toggle('on',f==='today');if(b)b.classList.toggle('on',f==='all');drawFaRecords();}
+/* camp-v142: Today / each camp day / All (was a Today|All seg). Day labels match the Notes screen's
+   Day select. A filter value left over from a previous camp's dates falls back to Today. */
+function _faDayOpts(){
+  const days=(SETTINGS&&SETTINGS.checkInDays)||[];
+  return [{v:'today',l:'Today'}].concat(days.map((d,i)=>({v:d,l:'Day '+(i+1)+' · '+new Date(d+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'})})),[{v:'all',l:'All'}]);
+}
+function faRecDay(v){_faRecFilter=v;drawFaRecords();}
 // Pure (harness: scripts/pulse-fa-harness.js). filter: 'all' | 'today' | 'YYYY-MM-DD'. A record is
 // kept for a day if it OR any of its amendments was logged that day (Brisbane date via dayOf).
 function _faKeep(g,filter,today,dayOf){
@@ -4248,11 +4254,11 @@ function _faKeep(g,filter,today,dayOf){
 }
 function drawFaRecords(){
   const box=document.getElementById('faRecList');if(!box)return;
-  // Grouped: each record carries its amendments. "Today" keeps a record if it OR any of its
-  // amendments was logged today, so an amendment to yesterday's record still surfaces.
+  // Grouped: each record carries its amendments. A day filter (incl. "Today") keeps a record if it
+  // OR any of its amendments was logged that day (_faKeep), so a later amendment still surfaces.
   let list=_faGroup(window._faRecsAll||[]);
-  const today=localDateISO();const isToday=n=>n.createdAt&&localDateISO(n.createdAt)===today;
-  if(_faRecFilter==='today')list=list.filter(g=>isToday(g.n)||g.amends.some(isToday));
+  if(!_faDayOpts().some(o=>o.v===_faRecFilter))_faRecFilter='today';
+  list=list.filter(g=>_faKeep(g,_faRecFilter,localDateISO(),localDateISO));
   const q=(val('faRecQ')||'').trim().toLowerCase();
   // join camper name from the cached people list if present; fall back to id
   const cmap=window._faCamperMap||{};
@@ -4266,7 +4272,7 @@ function drawFaRecords(){
     ${p.treatment?`<div class="ln tx"><b>Treatment:</b> ${esc(p.treatment)}</div>`:''}
     <div class="sub" style="color:var(--ink-2);margin-top:3px">${esc(p.firstAider||x.n.authorName||'')}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div>
     ${_faAmendsHtml(x.g)}${_faAmendBtn(x.n,'records')}</div>`;}).join('')}</div>`
-    :emptyState('note',_faRecFilter==='today'?'No actions logged today.':'No actions logged yet.');
+    :emptyState('note',_faRecFilter==='today'?'No actions logged today.':_faRecFilter==='all'?'No actions logged yet.':'No actions logged on '+((_faDayOpts().find(o=>o.v===_faRecFilter)||{}).l||_faRecFilter)+'.');
 }
 
 /* ===== SEARCH ===== */
