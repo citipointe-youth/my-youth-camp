@@ -4,6 +4,21 @@
 > **2026-08-01**. Dates in this file are hand-written and have drifted; trust `git log` over a
 > heading.
 
+## Past check-in sessions keep signed-out students + end-of-camp sign-outs restored — 2026-10-01
+
+Server only (`checkin.service.getSessionStatus`), no SPA/migration change. Owner: after camp ended
+(12pm day 4) leaders signed out 74 people by hand, and every past session (check-in screen + pulse
+‹ › stepping) lost them, because the roster was `atCamp===true` only. Roster is now **`atCamp` OR
+has a `checkInHistory` entry for that session** (leaders still excluded), so a later sign-out never
+rewrites a past session. +1 test (1179 pass). `checkin-warnings.ts` (who is missing NOW) unchanged.
+- **Data (prod SQL, owner-approved):** the 74 (55 youth, 19 leaders) whose LAST event was an `out`
+  at/after 02:00Z 10-01 → `lifecycle='arrived', at_camp=true` + one `'in'` event each (reason
+  `Restored after end-of-camp sign-out (kept as present at camp close)`, Youth Admin). Their real
+  pickup sign-outs were **kept**. Owner intent: the end-of-camp state shows who was there at close.
+- **`settings_lock_at_camp` trigger + `lock_camp_mode_at_camp()` DROPPED** 2026-10-01.
+  ⚠ `isCampDay` unlocks the Pre-Camp switch from 10-02 — and at→pre **signs out everyone at camp**
+  (incl. the 74). Don't switch modes until the owner decides how the end-of-camp state is archived.
+
 ## Pulse Unallocated bar + session stepping, first-aid day filter, Student Edit overrides — `camp-v142` — 2026-10-01
 
 SPA only (`public/index.html`), no route/permission/DTO/migration change, **no data change**. Owner

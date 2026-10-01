@@ -94,6 +94,16 @@ describe('getSessionStatus — roster filter', () => {
     expect(result.roster).toHaveLength(0);
   });
 
+  it('keeps a signed-out person on a session they were checked in for (past sessions stay intact)', async () => {
+    const entry = { id: 'e1', sessionId: SESSION_ID, sessionLabel: 'AM', type: 'in' as const, leaderId: 'u', timestamp: '2026-07-01T08:00:00.000Z' };
+    await personRepo.save(person({ id: 'gone', atCamp: false, lifecycle: 'checked_out', checkInHistory: [entry] }));
+    await personRepo.save(person({ id: 'other', atCamp: false, lifecycle: 'checked_out', checkInHistory: [{ ...entry, sessionId: '2026-07-01~pm' }] }));
+    const svc = makeCheckInService(personRepo, settingsRepo);
+    const result = await svc.getSessionStatus(actor(), SESSION_ID);
+    expect(result.roster.map((r) => r.camperId)).toEqual(['gone']);
+    expect(result.checkedInCount).toBe(1);
+  });
+
   it('totalCount reflects only atCamp persons', async () => {
     await personRepo.save(person({ id: 'p1', atCamp: true }));
     await personRepo.save(person({ id: 'p5', atCamp: false, lifecycle: 'checked_out' }));
