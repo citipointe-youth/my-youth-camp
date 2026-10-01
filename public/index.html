@@ -9875,6 +9875,7 @@ async function dataExport(filtered){
 let _stuCache=[],_stuChurches=[];
 function _stuNorm(r,atCamp){return {id:r.id,firstName:r.firstName,lastName:r.lastName,gender:r.gender,grade:r.grade??null,
   churchId:r.churchId,churchName:r.churchName,zone:r.zone,accommodationKind:r.accommodationKind??null,
+  accommodationOverride:r.accommodationOverride??null,
   medical:(r.medicalConditions||[]).join(', '),dietary:(r.dietaryRequirements||[]).join(', '),atCamp};}
 RENDER.adminStudents=async function(){
   const [regs,campers,churches]=await Promise.all([
@@ -9928,7 +9929,11 @@ function stuApply(){
   const c=document.getElementById('stuCount');if(c)c.textContent=`${rows.length} of ${_stuCache.length} students`;
 }
 function _stuFormFields(s){
-  const chSel=`<select id="seCh">${_stuChurches.map(c=>`<option value="${esc(c.id)}"${s&&c.id===s.churchId?' selected':''}>${esc(c.name)}</option>`).join('')}</select>`;
+  /* camp-v142: an Unallocated student's churchId is not in the list, so the select used to fall back
+     to the FIRST church — and saving any unrelated field allocated them there. Blank placeholder
+     instead; stuSave refuses until a real church is picked. */
+  const _chKnown=s&&_stuChurches.some(c=>c.id===s.churchId);
+  const chSel=`<select id="seCh">${s&&!_chKnown?'<option value="" selected>— Select church —</option>':''}${_stuChurches.map(c=>`<option value="${esc(c.id)}"${s&&c.id===s.churchId?' selected':''}>${esc(c.name)}</option>`).join('')}</select>`;
   /* 2026-07-31 (owner request): "Other" is no longer a CHOOSABLE gender.
      ⚠ It is NOT simply deleted, because 'other' records genuinely exist: `import.service`
      defaults a brand-new person to `gender:'other'` when the Form CSV's Gender cell is blank or
@@ -9946,13 +9951,21 @@ function _stuFormFields(s){
     +`<option value="male"${s&&s.gender==='male'?' selected':''}>Male</option>`
     +`<option value="female"${s&&s.gender==='female'?' selected':''}>Female</option></select>`;
   const grSel=`<select id="seGr"><option value="">—</option>${GRADES.map(g=>`<option value="${g}"${s&&s.grade===g?' selected':''}>Grade ${g}</option>`).join('')}</select>`;
-  const accSel=`<select id="seAcc"><option value=""${s&&!s.accommodationKind?' selected':''}>—</option><option value="tent"${s&&s.accommodationKind==='tent'?' selected':''}>Tent</option><option value="classroom"${s&&s.accommodationKind==='classroom'?' selected':''}>Classroom</option></select>`;
+  /* camp-v142: on EDIT this is the individual accommodation override (same record as Data Import's
+     "Individual accommodation override" card, survives re-imports). It used to PATCH
+     accommodationKind, which writes the importers' RAW column — the next import overwrote it, and
+     when an override already existed the edit saved but changed nothing (effective = override ?? raw).
+     ADD keeps the plain kind: a new student has no imported value to override. */
+  const ov=s?s.accommodationOverride:null;
+  const accSel=s
+    ?`<select id="seAccOv"><option value=""${!ov?' selected':''}>— (use imported)</option><option value="tent"${ov==='tent'?' selected':''}>Tent</option><option value="classroom"${ov==='classroom'?' selected':''}>Classroom</option></select>${ov?'<div class="note-hint" style="text-align:left;margin-top:2px">Individual override — survives re-imports</div>':''}`
+    :`<select id="seAcc"><option value="" selected>—</option><option value="tent">Tent</option><option value="classroom">Classroom</option></select>`;
   return `<label>First name</label><input class="fld" id="seFirst" value="${esc(s?s.firstName:'')}">
     <label>Last name</label><input class="fld" id="seLast" value="${esc(s?s.lastName:'')}">
     <label>Church</label>${chSel}
     <label>Gender</label>${genSel}
     <label>Grade</label>${grSel}
-    <label>Accommodation</label>${accSel}
+    <label>Accommodation${s?' override':''}</label>${accSel}
     <label>Medical conditions</label><input class="fld" id="seMed" value="${esc(s?s.medical:'')}" placeholder="e.g. Asthma">
     <label>Dietary requirements</label><input class="fld" id="seDiet" value="${esc(s?s.dietary:'')}" placeholder="e.g. Gluten free">`;
 }
@@ -9973,6 +9986,7 @@ function _stuFormBody(){
     gender:sel('seGen'),grade:sel('seGr')?Number(sel('seGr')):null,
     churchId:ch?ch.id:'',churchName:ch?ch.name:'',zone:ch?ch.zone:'',
     accommodationKind:sel('seAcc')||null,
+    accOv:sel('seAccOv'),
     medical:val('seMed').trim(),dietary:val('seDiet').trim(),
   };
 }
@@ -9987,7 +10001,20 @@ async function stuSave(id){
   if(!b.churchId){toast('Pick a church');return;}
   // See _stuFormFields: refuse rather than let a legacy 'other' record be saved as male by default.
   if(b.gender!=='male'&&b.gender!=='female'){toast('Choose Male or Female');return;}
-  try{await api('/registrants/'+id,{method:'PATCH',body:b});closeModal();toast('Student updated');await _rStu();}catch(e){toast(e.message);}}
+  const s=_stuCache.find(x=>x.id===id);if(!s){toast('Student not found');return;}
+  const plan=_stuSavePlan(s,b);
+  /* Church goes through POST /import/allocate (an allocation_overrides row the Form import re-applies)
+     and accommodation through the individual override — the same two records the Data Import cards
+     write. Order matters: allocate re-derives accommodation from the church rule, so the individual
+     override is written LAST and can't be clobbered by it. */
+  try{
+    await api('/registrants/'+id,{method:'PATCH',body:plan.patch});
+    if(plan.allocateTo)await api('/import/allocate',{method:'POST',body:{personId:id,churchId:plan.allocateTo}});
+    if(plan.accOv!==undefined)await api('/registrants/'+id,{method:'PATCH',body:{accommodationOverride:plan.accOv}});
+    closeModal();toast('Student updated');
+  }catch(e){toast(e.message);}
+  // Re-render either way, so a half-applied save shows what actually landed.
+  await _rStu();}
 function stuAdd(){
   modal(`<h3>Add student</h3>
     <p class="sub" style="margin:2px 0 6px">Created as <b>registered</b> — sign them in on the First-day arrivals screen when they arrive on site.</p>
