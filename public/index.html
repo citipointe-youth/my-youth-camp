@@ -3140,6 +3140,19 @@ function renderMyDay(d){
 // wanted broken out. Group by church instead for zoneLeader; director/admin keep the camp-wide
 // per-zone view (per-church would be 10+ bars on their home screen).
 const PULSE_AMBER_PCT=70;
+// Pure (harness: scripts/pulse-fa-harness.js). A roster row with no zone (byChurch: no church) is
+// a student nobody has allocated — grouped as "Unallocated" and sorted last, not a blank " Zone" bar.
+function _pulseGroups(roster,byChurch){
+  const groups={};
+  (roster||[]).forEach(r=>{
+    const raw=(byChurch?r.church:r.zone)||'';
+    const un=!raw,key=un?'__unallocated__':raw;
+    if(!groups[key])groups[key]={key,label:un?'Unallocated':(byChurch?raw:raw+' Zone'),raw,unalloc:un,total:0,done:0};
+    groups[key].total++;if(r.checkedIn)groups[key].done++;
+  });
+  const out=Object.values(groups);
+  return out.filter(g=>!g.unalloc).concat(out.filter(g=>g.unalloc));
+}
 async function renderOversightPulse(){
   if(!['director','admin','zoneLeader'].includes(ACTOR.role))return '';
   try{
@@ -4199,6 +4212,14 @@ function exportFaRecords(){
   toast('First-aid records exported');
 }
 function faRecSeg(f){_faRecFilter=f;const a=document.getElementById('faSegToday'),b=document.getElementById('faSegAll');if(a)a.classList.toggle('on',f==='today');if(b)b.classList.toggle('on',f==='all');drawFaRecords();}
+// Pure (harness: scripts/pulse-fa-harness.js). filter: 'all' | 'today' | 'YYYY-MM-DD'. A record is
+// kept for a day if it OR any of its amendments was logged that day (Brisbane date via dayOf).
+function _faKeep(g,filter,today,dayOf){
+  if(filter==='all')return true;
+  const day=filter==='today'?today:filter;
+  const on=n=>!!(n&&n.createdAt)&&dayOf(n.createdAt)===day;
+  return on(g.n)||(g.amends||[]).some(on);
+}
 function drawFaRecords(){
   const box=document.getElementById('faRecList');if(!box)return;
   // Grouped: each record carries its amendments. "Today" keeps a record if it OR any of its
@@ -9900,6 +9921,16 @@ function _stuFormFields(s){
     <label>Accommodation</label>${accSel}
     <label>Medical conditions</label><input class="fld" id="seMed" value="${esc(s?s.medical:'')}" placeholder="e.g. Asthma">
     <label>Dietary requirements</label><input class="fld" id="seDiet" value="${esc(s?s.dietary:'')}" placeholder="e.g. Gluten free">`;
+}
+// Pure (harness: scripts/pulse-fa-harness.js). Splits a Student Data Edit save into: the plain PATCH
+// (never church/zone/accommodation), the church re-allocation (POST /import/allocate → an
+// allocation_overrides row, so the Form import re-applies it instead of reverting it), and the
+// individual accommodation override (undefined = unchanged, null = clear → falls back to imported).
+function _stuSavePlan(s,b){
+  const patch={firstName:b.firstName,lastName:b.lastName,gender:b.gender,grade:b.grade,medical:b.medical,dietary:b.dietary};
+  const allocateTo=b.churchId&&b.churchId!==s.churchId?b.churchId:null;
+  const was=s.accommodationOverride||null,now=b.accOv||null;
+  return {patch,allocateTo,accOv:now===was?undefined:now};
 }
 function _stuFormBody(){
   const ch=_stuChurches.find(c=>c.id===sel('seCh'));
