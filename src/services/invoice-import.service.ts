@@ -568,7 +568,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
                 .map((p, i) => `${p.firstName} ${p.lastName} ${formatMoney(parts[i] ?? null)}`)
                 .join(', ');
             // The three split outcomes get DISTINCT codes on purpose: only 'split-equally'
-            // sets needsReview, and CLAUDE.md's 2026-08-07 entry turns on being able to tell
+            // sets needsReview, and the 2026-08-07 (2nd) entry in docs/reference/imports.md turns on being able to tell
             // "the split is too sensitive" apart from "why is this flagged".
             const splitCode: ImportWarningCode =
               split.method === 'ticket-price'

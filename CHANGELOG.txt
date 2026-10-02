@@ -1,6 +1,15 @@
 YOUTH CAMP PLATFORM — CHANGELOG
 ================================
 
+>> This file is not maintained after 2026-07-31. For later history use `git log`.
+
+2026-10-02 - Camp 2026 ran 28 Sep - 1 Oct on the live app; post-camp tidy-up
+-----------------------------------------------------------------------------------
+Removed 8 unused routes and dead code (sw.js camp-v143), fixed the budget-xlsx and
+filter-persist harnesses, added `npm run harness` and Supabase mapper tests, seed.ts
+check-in values aligned with live (16:00 / 05:00 / 23:30), CLAUDE.md split into
+docs/reference + docs/archive. Plan: docs/superpowers/plans/2026-10-02-post-camp-tidy-up.md.
+
 2026-07-31 - Alerts offer extended to every role (post-login) + prod notices cleared
 -----------------------------------------------------------------------------------
 SPA only. sw.js camp-v67 -> camp-v68. Verified: npm run typecheck clean, npx vitest
