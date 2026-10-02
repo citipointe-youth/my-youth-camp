@@ -708,6 +708,18 @@ describe('AdminService.setMode', () => {
     expect(remaining.map((n) => n.id).sort()).toEqual(['note1', 'nt1', 'testimony1']);
   });
 
+  it('wipes prayer records on the pre-camp -> at-camp transition, leaving other notes alone', async () => {
+    await repos.noteRepo.save(note({ id: 'pr1', category: 'prayer', camperId: 'p1' }));
+    await repos.noteRepo.save(note({ id: 'note1', category: 'note', camperId: 'p1' }));
+    const svc = build(repos);
+
+    await svc.setMode(actor('admin'), 'at-camp');
+
+    const remaining = await repos.noteRepo.findAll();
+    // 'nt1' is seedEverything's own default (category-less, i.e. 'note') note.
+    expect(remaining.map((n) => n.id).sort()).toEqual(['note1', 'nt1']);
+  });
+
   it('reverts everyone still atCamp on the at-camp -> pre-camp transition', async () => {
     // A bulk-signed-in leader (mirrors the pre-camp -> at-camp transition above).
     await repos.personRepo.save(

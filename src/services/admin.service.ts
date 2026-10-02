@@ -358,14 +358,19 @@ export function makeAdminService(
       }
       const saved = await settingsService.setMode(actor, mode);
       if (before.campMode !== 'at-camp' && mode === 'at-camp') {
-        // First-aid records logged during pre-camp are necessarily test/practice ones —
-        // nobody is physically at camp yet for a real first-aid incident to happen (see
-        // note.service.ts's preCampEligible, which lets a first-aider log/read a record
-        // against a not-yet-arrived registrant specifically so this can be tested before
-        // going live). Wipe them all now that the real camp is starting.
+        // First-aid AND prayer records logged during pre-camp are necessarily test/practice
+        // ones — nobody is physically at camp yet for a real first-aid incident or prayer
+        // conversation to happen (see note.service.ts's preCampEligible, which lets a
+        // first-aider/prayer-team member log/read a record against a not-yet-arrived
+        // registrant specifically so this can be tested before going live). Wipe them all
+        // now that the real camp is starting, so test entries against real minors never
+        // surface at camp as real disclosures.
         const allNotes = await noteRepo.findAll();
-        const testFirstAidNotes = allNotes.filter((n) => (n.category ?? 'note') === 'firstaid');
-        for (const n of testFirstAidNotes) await noteRepo.delete(n.id);
+        const testRecordNotes = allNotes.filter((n) => {
+          const category = n.category ?? 'note';
+          return category === 'firstaid' || category === 'prayer';
+        });
+        for (const n of testRecordNotes) await noteRepo.delete(n.id);
       } else if (before.campMode === 'at-camp' && mode === 'pre-camp') {
         // Reverting from at-camp back to pre-camp (e.g. an admin toggling modes during
         // setup/testing rather than a real end-of-camp rollover) must undo the presence
