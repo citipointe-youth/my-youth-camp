@@ -1919,7 +1919,7 @@ function updateModeUI(){
   if(PREVIEW_MODE){b.textContent='Preview';b.style.background='#92400e';b.style.color='var(--card)';}
   else if(CAMP_MODE==='at-camp'){b.textContent='At Camp';b.style.background='#16a34a';b.style.color='var(--card)';}
   else{b.textContent='Pre-Camp';b.style.background='var(--purple)';b.style.color='var(--card)';}
-  if(r&&ACTOR)r.textContent=ACTOR.role==='admin'?'Admin':ACTOR.role==='director'?'Director':ACTOR.role==='firstAid'?'First aid':ACTOR.role==='zoneLeader'?'Zone·'+ACTOR.zone:'Church';
+  if(r&&ACTOR)r.textContent=ACTOR.role==='admin'?'Admin':ACTOR.role==='director'?'Director':ACTOR.role==='prayer'?'Prayer team':ACTOR.role==='firstAid'?'First aid':ACTOR.role==='zoneLeader'?'Zone·'+ACTOR.zone:'Church';
   const db=document.getElementById('dayBadge');
   if(db){
     if(CAMP_MODE==='at-camp'){
@@ -1959,7 +1959,7 @@ function exitPreview(){
   updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
 }
 /* ===== ACCOUNT PREVIEW (previewing a different login, read-only) ===== */
-const _previewRoleLabel=r=>r==='zoneLeader'?'Zone leader':r==='director'?'Director':r==='firstAid'?'First aid':r==='church'?'Church':r;
+const _previewRoleLabel=r=>r==='zoneLeader'?'Zone leader':r==='director'?'Director':r==='firstAid'?'First aid':r==='prayer'?'Prayer team':r==='church'?'Church':r;
 function confirmEnterAccountPreview(id){
   const u=_findUser(id);
   const who=esc(((u.firstName||'')+' '+(u.lastName||'')).trim()||u.username||'this account');
@@ -2574,7 +2574,7 @@ async function go(id,arg){STACK.push(id);await _navTo(id,arg);}
 async function gotoTab(id){
   // Phase 4: firstAid has no 'home' tab — its landing is Search. Redirect any home navigation
   // (incl. the post-login gotoTab('home')) so the role lands on its real first screen.
-  if(id==='home'&&ACTOR&&ACTOR.role==='firstAid')id='search';
+  if(id==='home'&&ACTOR&&(ACTOR.role==='firstAid'||ACTOR.role==='prayer'))id='search';
   const keepHome=['checkin','search','notifs'];
   STACK=keepHome.includes(id)?['home',id]:[id];
   await _navTo(id);
@@ -2632,6 +2632,10 @@ function navModel(role,mode){
   if(role==='firstAid'){
     // Phase 4: Search is the home (finding a student is the whole job); Records = the first-aider's
     // logged actions; Schedule kept (owner). Medical Watch removed.
+    return {tabs:[T('search','search','Search'),T('allstudents','users','All Students'),T('records','note','Records'),T('schedule','clock','Schedule')],extras:[]};
+  }
+  if(role==='prayer'){
+    // Prayer team (2026-10): same shape as first aid — find a student, see their notes, record a prayer.
     return {tabs:[T('search','search','Search'),T('allstudents','users','All Students'),T('records','note','Records'),T('schedule','clock','Schedule')],extras:[]};
   }
   if(mode==='pre-camp'){
@@ -2721,7 +2725,7 @@ const RENDER={};
 RENDER.home=async function renderHome(skipModeSync){
   // Phase 4: firstAid has no Home — its landing is Search. (gotoTab already redirects home→search;
   // this guards any direct RENDER.home() call.)
-  if(ACTOR&&ACTOR.role==='firstAid'){await gotoTab('search');return;}
+  if(ACTOR&&(ACTOR.role==='firstAid'||ACTOR.role==='prayer')){await gotoTab('search');return;}
   // Re-check mode on every home visit so mode switches by admin propagate to
   // already-logged-in sessions without requiring a logout/login cycle.
   // NEVER while previewing: preview locally forces CAMP_MODE='at-camp' even though
@@ -6900,6 +6904,7 @@ const NOTE_CAT_OPTIONS=[
   {v:'note',label:'Student note'},
   {v:'sensitive',label:'Sensitive note'},
   {v:'firstaid',label:'First-aid'},
+  {v:'prayer',label:'Prayer'},
   {v:'signedout',label:'Signed out'},
   {v:'incident',label:'Incidents'},
 ];
@@ -7028,6 +7033,7 @@ function drawNotes(){
     if(c==='signedout')return '<span class="pill warn">Signed out</span>';
     if(c==='firstaid')return _faIsAmend(n)?'<span class="pill amb">First-aid · Amendment</span>':'<span class="pill amb">First-aid</span>';
     if(c==='incident')return n.severity==='high'?'<span class="pill warn">Incident · High</span>':'<span class="pill amb">Incident · Low</span>';
+    if(c==='prayer')return `<span class="pill warn">${icSm('alert')} Prayer</span>`;
     if(c==='sensitive')return `<span class="pill warn">${icSm('alert')} Sensitive note</span>`;
     return '<span class="pill ok">Student note</span>';
   };
@@ -7234,12 +7240,12 @@ RENDER.adminAccounts=async function(){
      The ORIGINAL admin is the earliest-created one (the same rule the backend enforces in
      `findOriginalAdmin`); it renders without delete/preview actions because the server refuses
      both, and offering a button that can only 403 is worse than not offering it. */
-  const leaderRoles=['zoneLeader','director','firstAid','admin'];
+  const leaderRoles=['zoneLeader','director','firstAid','prayer','admin'];
   const leaders=users.filter(u=>leaderRoles.includes(u.role));
   const _admins=users.filter(u=>u.role==='admin')
     .sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||String(a.id).localeCompare(String(b.id)));
   const originalAdminId=_admins.length?_admins[0].id:null;
-  const roleLabel=r=>r==='zoneLeader'?'Zone leader':r==='firstAid'?'First aid':r==='director'?'Director':r==='admin'?'Admin':r;
+  const roleLabel=r=>r==='zoneLeader'?'Zone leader':r==='firstAid'?'First aid':r==='prayer'?'Prayer team':r==='director'?'Director':r==='admin'?'Admin':r;
   const acctTile=o=>`<div class="tile" style="align-items:stretch;text-align:left;padding:12px;min-height:unset;cursor:default;gap:0">
       <div style="font-weight:700;font-size:var(--t-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px">${o.title}</div>
       <div style="font-size:var(--t-micro);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px">${o.sub}</div>
@@ -7316,7 +7322,7 @@ RENDER.adminAccounts=async function(){
   // Item 2: Admin is selectable. A secondary admin is a full peer of the original — it can do
   // everything including creating further admins; the only thing it can never do is remove,
   // deactivate or demote the original.
-  const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option><option value="admin">Admin</option>`;
+  const roleOpts=`<option value="director">Director</option><option value="zoneLeader">Zone leader</option><option value="firstAid">First aid</option><option value="prayer">Prayer team</option><option value="admin">Admin</option>`;
   /* 2026-08-03: "Randomise & export passwords" moved to its OWN card at the top of the
      screen (owner request). It used to sit in the Churches card header, below the leadership
      list — which was the right place when it only touched church logins. It now rotates every
@@ -7362,8 +7368,8 @@ RENDER.adminAccounts=async function(){
 // are the bare username (the church is already in it). Pure, and extracted BY NAME by
 // scripts/login-activity-harness.js — never rename it.
 function _loginActivityOrder(users){
-  const RANK={admin:0,director:1,zoneLeader:2,firstAid:3};
-  const LBL={admin:'Admin',director:'Director',zoneLeader:'Zone leader',firstAid:'First aid'};
+  const RANK={admin:0,director:1,zoneLeader:2,firstAid:3,prayer:4};
+  const LBL={admin:'Admin',director:'Director',zoneLeader:'Zone leader',firstAid:'First aid',prayer:'Prayer team'};
   const isL=u=>u.role!=='church';
   return [...(users||[])].sort((a,b)=>{
     if(isL(a)!==isL(b))return isL(a)?-1:1;
@@ -7653,7 +7659,7 @@ async function _pwRandomiseExport(endpoint,filenamePrefix,noneMsg,toastVerb){
      username alone no longer says what an account is. The server sends the role label in
      `church` for a leadership row, which is why that column reads "Director" not a church. */
   const header=['Username','Church / Role','Gender','Role','Password'];
-  const roleLabel={admin:'Admin',director:'Director',zoneLeader:'Zone leader',firstAid:'First aid',church:'Church'};
+  const roleLabel={admin:'Admin',director:'Director',zoneLeader:'Zone leader',firstAid:'First aid',prayer:'Prayer team',church:'Church'};
   const body=rows.map(r=>[r.username,r.church,r.gender==='male'?'Boys':r.gender==='female'?'Girls':'',roleLabel[r.role]||(r.gender?'Church':''),r.password]);
   const csv='﻿'+[header,...body].map(r=>r.map(q).join(',')).join('\r\n');
   _saveTextFile(csv,_exportName(filenamePrefix,'csv'));
