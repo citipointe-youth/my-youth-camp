@@ -4,6 +4,7 @@ import { InMemoryPersonRepository, InMemoryChurchRepository } from '../repositor
 import type { Person } from '../core/entities/person';
 import type { Church } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
+import { ForbiddenError } from '../core/errors/app-error';
 
 // ---------------------------------------------------------------------------
 // search.service — Bug 1 (2026-07-17): the Student Info masked-contact reveal was swapped.
@@ -258,5 +259,19 @@ describe('search.service: revealContact for a not-yet-arrived registrant (bug 21
     await expect(
       svc.revealContact(actor('church', { churchId: 'c1', churchName: 'Victory' }), 'other', 'parent'),
     ).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('search.service: prayer role', () => {
+  it('prayer finds a registered (not-yet-arrived) person, like first aid (pre-camp testing)', async () => {
+    await people.save(person({ id: 'reg1', firstName: 'Ada', lifecycle: 'registered', atCamp: false }));
+    const results = await svc.search(actor('prayer'), 'Ada');
+    expect(results.map((r) => r.camper.id)).toContain('reg1');
+  });
+
+  it('prayer gets the leader contacts but cannot reveal the parent number', async () => {
+    const contacts = await svc.resolveContacts(actor('prayer'), 'p1');
+    expect(contacts.some((c) => c.role !== 'parent')).toBe(true);
+    await expect(svc.revealContact(actor('prayer'), 'p1', 'parent')).rejects.toThrow(ForbiddenError);
   });
 });

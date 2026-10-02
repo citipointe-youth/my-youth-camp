@@ -150,3 +150,48 @@ describe('access-control: canSendNotification()', () => {
     expect(canSendNotification(actor('church', { churchId: 'c1' }), 'church')).toBe(false);
   });
 });
+
+describe('access-control: prayer role', () => {
+  const p = actor('prayer');
+
+  it('can read campers, write/read prayer records, and read notes on one student', () => {
+    expect(can(p, 'camper:read')).toBe(true);
+    expect(can(p, 'note:write:prayer')).toBe(true);
+    expect(can(p, 'note:read:prayer')).toBe(true);
+    expect(can(p, 'note:read:student')).toBe(true);
+  });
+
+  it('cannot reveal sensitive data, sign in/check in, read camp-wide notes, or manage anything', () => {
+    for (const a of [
+      'camper:read:sensitive', 'attendance:write', 'checkin:write', 'note:write', 'note:read',
+      'note:write:firstaid', 'note:read:firstaid', 'registrant:read', 'registrant:write',
+      'incident:manage', 'export:compliance', 'admin:manage', 'camper:write',
+      'notification:send:zone', 'notification:send:camp',
+    ] as const) {
+      expect(can(p, a)).toBe(false);
+    }
+  });
+
+  it('director and admin can write/read prayer records; zoneLeader, church and firstAid cannot write them', () => {
+    expect(can(actor('director'), 'note:write:prayer')).toBe(true);
+    expect(can(actor('admin'), 'note:write:prayer')).toBe(true);
+    expect(can(actor('director'), 'note:read:prayer')).toBe(true);
+    expect(can(actor('zoneLeader'), 'note:write:prayer')).toBe(false);
+    expect(can(actor('church'), 'note:write:prayer')).toBe(false);
+    expect(can(actor('firstAid'), 'note:write:prayer')).toBe(false);
+    expect(can(actor('firstAid'), 'note:read:student')).toBe(false);
+  });
+
+  it('canAccessPerson / canAccessChurch: prayer sees every church and zone', () => {
+    expect(canAccessPerson(p, { churchId: 'any', zone: 'Red' })).toBe(true);
+    expect(canAccessPerson(p, { churchId: 'other', zone: 'Blue', gender: 'female' })).toBe(true);
+    expect(canAccessChurch(p, 'any-church')).toBe(true);
+    expect(canAccessChurch(p, 'other-church', 'Red')).toBe(true);
+  });
+
+  it('cannot send notifications at any scope', () => {
+    expect(canSendNotification(p, 'camp')).toBe(false);
+    expect(canSendNotification(p, 'zone', 'Red')).toBe(false);
+    expect(canSendNotification(p, 'church')).toBe(false);
+  });
+});

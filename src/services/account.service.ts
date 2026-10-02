@@ -45,6 +45,7 @@ const ROLE_LABELS: Partial<Record<UserRole, string>> = {
   director: 'Director',
   zoneLeader: 'Zone leader',
   firstAid: 'First aid',
+  prayer: 'Prayer team',
 };
 
 /** A church login credential row for the Feature 6 password export. */

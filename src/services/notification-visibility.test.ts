@@ -132,6 +132,14 @@ describe('canSeeNotification', () => {
   });
 });
 
+describe('canSeeNotification: prayer role', () => {
+  it('prayer never sees a leadersOnly (incident) notice, but does see an ordinary camp notice', () => {
+    const prayer = actor({ role: 'prayer', churchId: null, zone: null });
+    expect(canSeeNotification(prayer, notif({ leadersOnly: true }), NOW)).toBe(false);
+    expect(canSeeNotification(prayer, notif(), NOW)).toBe(true);
+  });
+});
+
 describe('publishedAt / byPublishedDesc', () => {
   it('uses scheduledFor as the publish time when present', () => {
     expect(publishedAt(notif({ createdAt: 'A', scheduledFor: 'B' }))).toBe('B');

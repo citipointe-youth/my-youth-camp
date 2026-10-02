@@ -18,6 +18,14 @@ export type Action =
   // general note read/write. note.service asserts note:write:firstaid only when category==='firstaid'.
   | 'note:write:firstaid'
   | 'note:read:firstaid'
+  // Prayer team (2026-10). A prayer record is a StudentNote with category 'prayer' and is ALWAYS
+  // sensitive (forced in note.service). Own capabilities, like first aid, so the prayer team gets
+  // prayer access without general note read/write.
+  | 'note:write:prayer'
+  | 'note:read:prayer'
+  // Read every note on ONE student the actor opens (GET /notes/camper/:id) — no camp-wide feed or
+  // export. Held by the prayer team only; church/zoneLeader/director/admin reach that endpoint via note:write.
+  | 'note:read:student'
   | 'notification:send:zone'
   | 'notification:send:camp'
   | 'import:run'
@@ -79,6 +87,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'note:write:firstaid',
     'note:read',
     'note:read:firstaid',
+    'note:write:prayer',
+    'note:read:prayer',
     'notification:send:zone',
     'notification:send:camp',
     'import:run',
@@ -101,6 +111,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'note:write:firstaid',
     'note:read',
     'note:read:firstaid',
+    'note:write:prayer',
+    'note:read:prayer',
     'notification:send:zone',
     'notification:send:camp',
     'import:run',
@@ -125,6 +137,15 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'note:write:firstaid',
     'note:read:firstaid',
   ]),
+  // prayer: find a student, see the leader to contact and every note on that student, and record a
+  // prayer/disclosure (category 'prayer', forced sensitive). No camper:read:sensitive (no Medicare/
+  // parent reveal), no attendance/check-in, no camp-wide notes feed, no notifications.
+  prayer: new Set<Action>([
+    'camper:read',
+    'note:write:prayer',
+    'note:read:prayer',
+    'note:read:student',
+  ]),
 };
 
 export function can(actor: Actor, action: Action): boolean {
@@ -141,13 +162,14 @@ export function assertCan(actor: Actor, action: Action): void {
  * Returns true if the actor can access data for the given church.
  * - church: own church only
  * - zoneLeader: own zone's churches (caller must check zone)
- * - director/admin/firstAid: all
+ * - director/admin/firstAid/prayer: all
  */
 export function canAccessChurch(actor: Actor, churchId: string, churchZone?: string): boolean {
   switch (actor.role) {
     case 'admin':
     case 'director':
     case 'firstAid':
+    case 'prayer':
       return true;
     case 'zoneLeader':
       if (!actor.zone || !churchZone) return false;

@@ -117,6 +117,12 @@ export async function seedAll(container: Container): Promise<void> {
       username: 'firstaid',
       role: 'firstAid',
     }),
+    makeUser({
+      firstName: 'Prayer',
+      lastName: 'Team',
+      username: 'prayer',
+      role: 'prayer',
+    }),
   ];
 
   for (const u of users) {

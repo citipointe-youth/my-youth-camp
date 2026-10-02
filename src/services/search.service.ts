@@ -194,7 +194,7 @@ export function makeSearchService(
         const owned = canAccessPerson(actor, person);
         let visible: boolean;
         if (owned) {
-          visible = isCamper(person) || (actor.role === 'firstAid' && isRegistrant(person));
+          visible = isCamper(person) || ((actor.role === 'firstAid' || actor.role === 'prayer') && isRegistrant(person));
         } else if (actor.role === 'church' || actor.role === 'zoneLeader') {
           visible = isCamper(person);
         } else {

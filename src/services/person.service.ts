@@ -81,6 +81,7 @@ function canAccessByChurchZone(actor: Actor, person: Pick<Person, 'churchId' | '
     case 'admin':
     case 'director':
     case 'firstAid':
+    case 'prayer':
       return true;
     case 'zoneLeader':
       return actor.zone != null && person.zone === actor.zone;
