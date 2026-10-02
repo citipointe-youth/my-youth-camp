@@ -38,7 +38,7 @@
 
 ```
 Read CLAUDE.md and debug.md. Don't read other files yet.
-Account: <username> (role: church | zoneLeader | director | admin | firstAid)
+Account: <username> (role: church | zoneLeader | director | admin | firstAid | prayer)
 Mode: <pre-camp | at-camp>
 Bug(s):
 1. <symptom — what you saw vs expected>
@@ -553,7 +553,8 @@ switchover, else "Check-in"; shown as "Check-in"/"Sign-in" below for brevity):
 | `zoneLeader` | Home · My Youth · Help · Notices | Home · Check-in/Sign-in · **Students** · Notices |
 | `director` | Home · My Youth · **Data** · Help · Notices | Home · Check-in/Sign-in · **Students** · Notices |
 | `admin` | Home · My Youth · **Data** · Notices · **Admin** | Home · Check-in/Sign-in · **Students** · **Admin** |
-| `firstAid` | Search · Records · Schedule (**same in both modes**; Search is the landing — Phase 4) | Search · Records · Schedule |
+| `firstAid` | Search · All Students · Records · Schedule (**same in both modes**; Search is the landing — Phase 4) | Search · All Students · Records · Schedule |
+| `prayer` | Search · All Students · Records · Schedule (**same in both modes**; Search is the landing) | Search · All Students · Records · Schedule |
 
 **Desktop wide sidebar** (`_renderWideNav`) — all roles get the sidebar at ≥980px; items from `navSidebar(role,mode)` = `navModel` tabs + extras (admin at-camp uses a dedicated order). Items are **mode-conditional**:
 - **admin at-camp:** Home, Check In/Sign-in, **Students**, Notices, Accommodation Allocations, Admin Settings
@@ -562,7 +563,8 @@ switchover, else "Check-in"; shown as "Check-in"/"Sign-in" below for brevity):
 - **director pre-camp:** Home, My Youth, Data, Help, Notices, Budget & Costings, Accommodation Allocations
 - **church / zoneLeader at-camp:** Home, Check-in/Sign-in, **Students**, Notices
 - **church / zoneLeader pre-camp:** Home, My Youth, Help, Notices
-- **firstAid (all modes):** Search, Records, Schedule
+- **firstAid (all modes):** Search, All Students, Records, Schedule
+- **prayer (all modes):** Search, All Students, Records, Schedule
 - Bottom tabs hidden (`#tabs{display:none}`) at ≥980px; sidebar is the sole nav.
 
 (Full capability/scope matrix is in CLAUDE.md → "Roles". firstAid = read-only, attendance-only,
@@ -1038,6 +1040,10 @@ FIXED".
 | First-aid records (log an action / Records tab / Notes "First-aid" filter) | SPA `openFirstAidLog`/`saveFirstAidLog`, `RENDER.records`/`drawFaRecords`, `drawNotes` firstaid branch. Backend `note.service.add` (category-scoped: `note:write:firstaid`) + `recentFirstAid` (`note:read:firstaid`, `canAccessPerson`-scoped) → `GET /notes/firstaid`. Body = 4 lines Problem/Treatment/First-aider/Brought by (`_faParse`). No migration. |
 | **First-aid amendment missing / shows as its own record / counted as a new log** | SPA `_faGroup` nests a note whose body has `Amends: <id>` under that id. Shown alone ("amends an earlier record not shown here") = the original is outside the `/notes/firstaid?limit=` window — not a bug. Counted in "first-aid today" = someone dropped `_faIsAmend` from the digest filter. Workbook: `audit-export.service.parseFirstAidBody`. Originals are never edited (owner decision 2026-09-29). |
 | **First-aid Records "Export" button (CSV) missing/wrong** | SPA `exportFaRecords()` (on the `RENDER.records` page) — builds the CSV client-side from `window._faRecsAll` (loaded from `/notes/firstaid?limit=100`) via `_faParse`; filename via `_exportName`. No backend/permission change (firstAid = `note:read:firstaid` only). Exports the loaded records, not the on-screen Today/All filter. |
+| **Prayer team: tapping a student shows the FIRST-AID card (consents/Medicare)** | `openStudentInfo`'s first line must dispatch `prayer` → `openPrayerInfo`. Card = `openPrayerInfo` / `_loadPrayerNotes`; form = `openPrayerLog` / `savePrayerLog`. |
+| **Prayer record visible to a church login** | Server forces `sensitive:true` for `category:'prayer'` in `note.service.add`; `forCamper` hides sensitive notes from `church`. Check the row's `notes.sensitive`. |
+| **Prayer team can't see a student's notes / "cannot read student notes"** | `note.service.forCamper` gate = `note:write` OR `note:read:student`; pre-camp registrants allowed via `preCampEligible` (firstAid + prayer only). |
+| **Prayer Records tab empty / shows first-aid logs** | `RENDER.records` dispatches `prayer` → `renderPrayerRecords` (`GET /notes/prayer`, `recentPrayer` → `recentInCategory`). Day filter reuses `_faDayOpts`/`_faKeep`. |
 | Notices not showing / urgent popup | SPA `RENDER.notifs` (1218); `renderHomeAtCamp` (713) |
 | Accommodation allocation (rooms/auto-fill/unallocated/single-gender) | SPA `RENDER.accom`/`addAlloc`/`removeAlloc`/`drawAccom` (~1278); backend `accommodation.service` + `accommodation-allocation.ts` (75% eligibility, `validateAllocations`). Classroom pools include **both students and leaders** (tent pools keep students/leaders separate). |
 | Budget numbers wrong | ⚠ **SUPERSEDED 2026-07-29** — see "2026-07-29 — seven-item owner batch" at the end of this file. Categories are TICKET CLASSIFICATIONS now, not cost bands, and the total reads as money received (`personValue` prefers `amountPaid`). Everything after this sentence describes the pre-2026-07-29 model: Pure `src/services/budget.ts` (`computeBudget`, tested) → SPA `computeBudgetClient`/`drawBudget`. Costs = per-registrant `registrationCost` (NOT settings prices, which are deprecated). Grand total must == Σ all line totals. Null cost = "Cost not recorded" ($0, flagged). |

@@ -4,6 +4,32 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Prayer team role (2026-10-02)
+
+New `prayer` ("Prayer team") account type — camp-wide, same shape as `firstAid`: `camper:read` +
+**`note:write:prayer`**/**`note:read:prayer`** (category `'prayer'` notes, server-forced
+`sensitive:true` regardless of what the client sends) + **`note:read:student`** (every note on
+ONE opened student via `GET /notes/camper/:id` — first-aid logs, other leaders' notes, sensitive
+notes, prayer records — but no `/notes/recent` feed and no `/notes/export`). It does **not** get
+`camper:read:sensitive`, so the Medicare and parent-number reveal endpoints refuse it; hiding
+those fields (plus consents) on the student card is UI-only, by owner decision. No
+attendance/check-in, no notifications. Pre-camp registrants are reachable too
+(`preCampEligible` = firstAid + prayer).
+
+SPA reuses the first-aid screens (Search · All Students · Records · Schedule, Search is the
+landing) via role dispatch: `openStudentInfo`→`openPrayerInfo`/`_loadPrayerNotes`,
+`openPrayerLog`/`savePrayerLog` (record = a required "Who's filling this out?" name plus one
+free-form box, stored `Recorded by: <name>\n<text>`), `RENDER.records`→`renderPrayerRecords`/
+`drawPrayerRecords` (`GET /notes/prayer`). Director/admin hold both prayer-note permissions;
+zone leaders read prayer records through their existing zone-scoped `note:read`; church logins
+never see them (sensitive notes are filtered from `church` in `note.service.forCamper`).
+
+**No migration** — `users.role` is plain text and `notes.category`/`notes.sensitive` already
+exist. Inert until an admin creates a Prayer team login. This year's `PRAYER: ` director notes
+(free-text, pre-dating this role) are untouched. Verification: `npm run typecheck` clean, `npm
+run test` **1241 pass**, `npm run harness` all green, SPA `node --check` OK, `sw.js` →
+**`camp-v144`**.
+
 ## Login activity: leadership first, one-line rows — 2026-09-22 (2nd)
 
 Owner request against the 2026-09-20 screen below. **SPA-only** (`public/index.html`) — no

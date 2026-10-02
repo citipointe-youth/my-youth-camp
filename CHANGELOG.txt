@@ -3,6 +3,20 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-10-02 - Prayer team role (camp-v144)
+-----------------------------------------------------------------------------------
+New `prayer` account type: camper:read + note:write:prayer/note:read:prayer (prayer
+notes server-forced sensitive:true) + note:read:student (every note on one opened
+student, no /notes/recent, no export). No camper:read:sensitive, no attendance/
+check-in, no notifications. SPA reuses the first-aid screens (Search, All Students,
+Records, Schedule) via role dispatch; Medicare/consents/parent contact hidden in the
+UI only (owner decision). Director/admin also hold the prayer-note permissions; zone
+leaders see prayer records via their existing note:read; church logins never see
+them. No migration - inert until an admin creates a Prayer team login. This year's
+`PRAYER: ` director notes are untouched. sw.js camp-v143 -> camp-v144. Verified: npm
+run typecheck clean, npm run test 1241 pass, npm run harness all green, SPA + sw.js
+node --check OK.
+
 2026-10-02 - Camp 2026 ran 28 Sep - 1 Oct on the live app; post-camp tidy-up
 -----------------------------------------------------------------------------------
 Removed 8 unused routes and dead code (sw.js camp-v143), fixed the budget-xlsx and
