@@ -3,7 +3,7 @@ import type { ISettingsRepository } from '../interfaces/entity-repositories';
 import type { CampSettings } from '../../core/entities/settings';
 import { SETTINGS_ID } from '../../core/entities/settings';
 
-function toSettings(r: Record<string, unknown>): CampSettings {
+export function toSettings(r: Record<string, unknown>): CampSettings {
   return {
     id: SETTINGS_ID,
     campName: r['camp_name'] as string,
@@ -50,7 +50,7 @@ function toSettings(r: Record<string, unknown>): CampSettings {
   };
 }
 
-function settingsCols(s: CampSettings): Record<string, unknown> {
+export function settingsCols(s: CampSettings): Record<string, unknown> {
   return {
     id: SETTINGS_ID,
     camp_name: s.campName,

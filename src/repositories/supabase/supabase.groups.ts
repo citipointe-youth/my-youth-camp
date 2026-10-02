@@ -2,7 +2,7 @@ import type { SqlClient } from './client';
 import type { IGroupRepository } from '../interfaces/entity-repositories';
 import type { Group } from '../../core/entities/group';
 
-function toGroup(r: Record<string, unknown>): Group {
+export function toGroup(r: Record<string, unknown>): Group {
   return {
     id: r['id'] as string,
     name: r['name'] as string,
@@ -15,7 +15,7 @@ function toGroup(r: Record<string, unknown>): Group {
   };
 }
 
-function groupCols(g: Group): Record<string, unknown> {
+export function groupCols(g: Group): Record<string, unknown> {
   return {
     id: g.id,
     name: g.name,

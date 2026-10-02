@@ -2,7 +2,7 @@ import type { SqlClient } from './client';
 import type { IDevotionalRepository } from '../interfaces/entity-repositories';
 import type { Devotional } from '../../core/entities/devotional';
 
-function toDev(r: Record<string, unknown>): Devotional {
+export function toDev(r: Record<string, unknown>): Devotional {
   return {
     id: r['id'] as string,
     day: r['day'] as string,
@@ -15,7 +15,7 @@ function toDev(r: Record<string, unknown>): Devotional {
   };
 }
 
-function devCols(d: Devotional): Record<string, unknown> {
+export function devCols(d: Devotional): Record<string, unknown> {
   return {
     id: d.id,
     day: d.day,

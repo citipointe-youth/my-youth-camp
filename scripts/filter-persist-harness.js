@@ -92,7 +92,7 @@ check('girls login still has its own filter', ctx.FILTER.grade, '11');
 // ── 3. A corrupt or partial blob can never leave a filter undefined ────────────────────────
 console.log('\n3. Corrupt / partial stored values fall back to defaults');
 const DEFAULT_CHECKIN = { gender: 'all', grade: 'all', church: 'all', zone: 'all' };
-const DEFAULT_MY = { zone: 'all', gender: 'all', grade: 'all' };
+const DEFAULT_MY = { church: 'all', gender: 'all', grade: 'all' };
 for (const [label, raw] of [
   ['not JSON', '{{{'],
   ['null', 'null'],

@@ -2,7 +2,7 @@ import type { SqlClient } from './client';
 import type { IClassroomRepository } from '../interfaces/entity-repositories';
 import type { Classroom } from '../../core/entities/accommodation';
 
-function toRoom(r: Record<string, unknown>): Classroom {
+export function toRoom(r: Record<string, unknown>): Classroom {
   return {
     id: r['id'] as string,
     name: r['name'] as string,
@@ -12,7 +12,7 @@ function toRoom(r: Record<string, unknown>): Classroom {
   };
 }
 
-function cols(c: Classroom): Record<string, unknown> {
+export function roomCols(c: Classroom): Record<string, unknown> {
   return { id: c.id, name: c.name, capacity: c.capacity, created_at: c.createdAt, updated_at: c.updatedAt };
 }
 
@@ -33,7 +33,7 @@ export class SupabaseClassroomRepository implements IClassroomRepository {
   }
 
   async save(room: Classroom): Promise<Classroom> {
-    const c = cols(room);
+    const c = roomCols(room);
     await this.sql`
       insert into classrooms ${this.sql(c)}
       on conflict (id) do update set ${this.sql(c, ...UPDATE_COLS)}

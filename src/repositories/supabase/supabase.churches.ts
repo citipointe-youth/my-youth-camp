@@ -2,7 +2,7 @@ import type { SqlClient } from './client';
 import type { IChurchRepository } from '../interfaces/entity-repositories';
 import type { Church } from '../../core/entities/church';
 
-function toChurch(row: Record<string, unknown>): Church {
+export function toChurch(row: Record<string, unknown>): Church {
   return {
     id: row['id'] as string,
     name: row['name'] as string,
@@ -19,7 +19,7 @@ function toChurch(row: Record<string, unknown>): Church {
   };
 }
 
-function churchColumns(c: Church): Record<string, unknown> {
+export function churchColumns(c: Church): Record<string, unknown> {
   return {
     id: c.id,
     name: c.name,

@@ -2,7 +2,7 @@ import type { SqlClient } from './client';
 import type { IAllocationRepository } from '../interfaces/entity-repositories';
 import type { RoomAllocation } from '../../core/entities/accommodation';
 
-function toAlloc(r: Record<string, unknown>): RoomAllocation {
+export function toAlloc(r: Record<string, unknown>): RoomAllocation {
   return {
     id: r['id'] as string,
     roomId: r['room_id'] as string,
@@ -15,7 +15,7 @@ function toAlloc(r: Record<string, unknown>): RoomAllocation {
   };
 }
 
-function cols(a: RoomAllocation): Record<string, unknown> {
+export function allocCols(a: RoomAllocation): Record<string, unknown> {
   return { id: a.id, room_id: a.roomId, church_id: a.churchId, gender: a.gender, n: a.n, bracket: a.bracket ?? null, seq: a.seq ?? null };
 }
 
@@ -42,7 +42,7 @@ export class SupabaseAllocationRepository implements IAllocationRepository {
   }
 
   async save(a: RoomAllocation): Promise<RoomAllocation> {
-    const c = cols(a);
+    const c = allocCols(a);
     await this.sql`
       insert into classroom_allocations ${this.sql(c)}
       on conflict (id) do update set ${this.sql(c, ...UPDATE_COLS)}

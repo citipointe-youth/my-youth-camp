@@ -2,7 +2,7 @@ import type { SqlClient } from './client';
 import type { IZoneRepository } from '../interfaces/entity-repositories';
 import type { Zone } from '../../core/entities/zone';
 
-function toZone(r: Record<string, unknown>): Zone {
+export function toZone(r: Record<string, unknown>): Zone {
   return {
     id: r['id'] as string,
     name: r['name'] as string,
@@ -14,7 +14,7 @@ function toZone(r: Record<string, unknown>): Zone {
   };
 }
 
-function zoneCols(z: Zone): Record<string, unknown> {
+export function zoneCols(z: Zone): Record<string, unknown> {
   return {
     id: z.id,
     name: z.name,

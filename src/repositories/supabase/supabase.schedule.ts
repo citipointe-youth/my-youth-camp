@@ -2,7 +2,7 @@ import type { SqlClient, TxClient } from './client';
 import type { IScheduleRepository } from '../interfaces/entity-repositories';
 import type { ScheduleItem } from '../../core/entities/schedule';
 
-function toItem(r: Record<string, unknown>): ScheduleItem {
+export function toItem(r: Record<string, unknown>): ScheduleItem {
   return {
     id: r['id'] as string,
     day: r['day'] as string,
@@ -16,7 +16,7 @@ function toItem(r: Record<string, unknown>): ScheduleItem {
   };
 }
 
-function itemCols(s: ScheduleItem): Record<string, unknown> {
+export function itemCols(s: ScheduleItem): Record<string, unknown> {
   return {
     id: s.id,
     day: s.day,

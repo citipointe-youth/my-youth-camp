@@ -528,7 +528,7 @@ console.log('\n0. _budExportRows — grouping and totality');
     checkTrue(cls + ' maps to a known accommodation',
       a === 'Tent' || a === 'Classroom' || a === 'Not recorded', a);
     checkTrue(cls + ' maps to a known payment type',
-      ['Full price', 'Paid in person', 'Full sponsor', 'Discounted', ''].indexOf(p) >= 0, p);
+      ['Full price', 'Paid in person', 'Full sponsor', 'Discounted', 'Upgrade', ''].indexOf(p) >= 0, p);
   });
   console.log('       ' + seen.join('\n       '));
 

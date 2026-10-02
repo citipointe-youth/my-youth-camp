@@ -2,7 +2,7 @@ import type { SqlClient } from './client';
 import type { IUserRepository } from '../interfaces/entity-repositories';
 import type { User } from '../../core/entities/user';
 
-function toUser(row: Record<string, unknown>): User {
+export function toUser(row: Record<string, unknown>): User {
   return {
     id: row['id'] as string,
     firstName: row['first_name'] as string,
@@ -24,7 +24,7 @@ function toUser(row: Record<string, unknown>): User {
   };
 }
 
-function userColumns(u: User): Record<string, unknown> {
+export function userColumns(u: User): Record<string, unknown> {
   return {
     id: u.id,
     first_name: u.firstName,

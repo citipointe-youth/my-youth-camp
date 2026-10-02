@@ -10,7 +10,8 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "harness": "node scripts/accom-export-harness.js && node scripts/contact-export-harness.js && node scripts/data-search-harness.js && node scripts/devotional-preview-harness.js && node scripts/login-activity-harness.js && node scripts/pulse-fa-harness.js && node scripts/push-activity-harness.js && node scripts/budget-xlsx-harness.js && node scripts/filter-persist-harness.js"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

@@ -2,7 +2,7 @@ import type { SqlClient } from './client';
 import type { IFaqRepository } from '../interfaces/entity-repositories';
 import type { FaqItem } from '../../core/entities/content';
 
-function toFaq(r: Record<string, unknown>): FaqItem {
+export function toFaq(r: Record<string, unknown>): FaqItem {
   return {
     id: r['id'] as string,
     question: r['question'] as string,
@@ -13,7 +13,7 @@ function toFaq(r: Record<string, unknown>): FaqItem {
   };
 }
 
-function faqCols(f: FaqItem): Record<string, unknown> {
+export function faqCols(f: FaqItem): Record<string, unknown> {
   return {
     id: f.id,
     question: f.question,
