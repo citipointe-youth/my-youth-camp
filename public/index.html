@@ -3879,6 +3879,8 @@ function _faSignedInToggleHtml(onchange){
     <span>Signed in only</span>${helpTip('On by default — shows only people currently signed in to camp. Turn it off to include anyone signed out or not yet arrived (they show with a red "Not on site" flag).')}</label>`;
 }
 function _faSetSignedIn(el,redraw){_faSignedInOnly=!!el.checked;redraw();}
+// Screen subtitle for the logins that share the first-aid screens (first aid + prayer team).
+const _teamLabel=()=>ACTOR&&ACTOR.role==='prayer'?'Prayer Team':'First Aid';
 function renderSearchFirstAid(){
   paint('search',`<div class="search"><span>${ic('search')}</span><input id="q" placeholder="Search any student by name…" oninput="runFaSearch(this.value)" aria-label="Search students"></div>
     ${_faSignedInToggleHtml("_faSetSignedIn(this,()=>runFaSearch((document.getElementById('q')||{}).value||''))")}
@@ -3888,7 +3890,7 @@ function renderSearchFirstAid(){
          this was the role's only map entry point and removing it removes the map for first aid
          entirely -- which is what the owner asked for. Every other role keeps the Map button on
          its Home hero, and RENDER.sitemap itself is untouched. -->
-    <div id="results"><p class="note-hint">Type a name to find any student across the camp.</p></div>`,'Find a student','First Aid');
+    <div id="results"><p class="note-hint">Type a name to find any student across the camp.</p></div>`,'Find a student',_teamLabel());
   const q=document.getElementById('q');if(q)q.focus();
 }
 let faT;function runFaSearch(v){clearTimeout(faT);faT=setTimeout(async()=>{
@@ -3928,7 +3930,7 @@ function faResultRow(c){
 let _asGender='all';
 let _asQ='';
 RENDER.allstudents=async function(){
-  let all;try{all=await api('/campers?scope=all');}catch(e){paint('allstudents','<p class="err" style="display:block">'+esc(e.message)+'</p>','All Students','First Aid');return;}
+  let all;try{all=await api('/campers?scope=all');}catch(e){paint('allstudents','<p class="err" style="display:block">'+esc(e.message)+'</p>','All Students',_teamLabel());return;}
   all=(all||[]).filter(c=>c.lifecycle!=='cancelled');
   window._allStu=all;
   const cmap={};all.forEach(c=>{if(c.churchId)cmap[c.churchId]=c.churchName;});
@@ -3946,7 +3948,7 @@ RENDER.allstudents=async function(){
   const nameQ=`<div class="search" style="margin-bottom:8px;padding:5px 11px;border-width:1.5px"><span>${ic('search')}</span><input id="asQ" type="text" enterkeyhint="search" placeholder="Search by name…" aria-label="Search by name" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" oninput="_asQ=this.value;drawAllStudents()"></div>`;
   paint('allstudents',`<div class="selrow">${churchSel}${zoneSelEl}</div>${genderBtns}${nameQ}
     ${_faSignedInToggleHtml('_faSetSignedIn(this,drawAllStudents)')}
-    <div id="asList"></div>`,'All Students','First Aid');
+    <div id="asList"></div>`,'All Students',_teamLabel());
   drawAllStudents();
 };
 function _asSetGender(g){_asGender=g;document.querySelectorAll('#asGender button').forEach(b=>b.classList.toggle('on',b.dataset.g===g));drawAllStudents();}
@@ -3972,6 +3974,7 @@ let _currentStudent=null;
 function _faScreen(){return _navId==='allstudents'?'allstudents':'search';}
 function _faBackExpr(scr){return scr==='allstudents'?'RENDER.allstudents()':'renderSearchFirstAid()';}
 async function openStudentInfo(id){
+  if(ACTOR&&ACTOR.role==='prayer')return openPrayerInfo(id);
   const scr=_faScreen();
   let c;try{c=await api('/campers/'+id);}catch(e){toast(e.message);return;}
   _currentStudent=c;
@@ -4212,6 +4215,7 @@ async function saveFirstAidLog(id){
 /* ── First-aid Records tab (the first-aider's logged actions) ─────────────────── */
 let _faRecFilter='today';
 RENDER.records=async function(){
+  if(ACTOR&&ACTOR.role==='prayer'){await renderPrayerRecords();return;}
   let recs=[],page=[];
   try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=1000'),api(_scoped('/campers?pageSize=300')).catch(()=>[])]);}
   catch(e){paint('records','<p class="err" style="display:block">'+esc(e.message)+'</p>','First-aid records','');return;}
@@ -4278,9 +4282,109 @@ function drawFaRecords(){
     :emptyState('note',_faRecFilter==='today'?'No actions logged today.':_faRecFilter==='all'?'No actions logged yet.':'No actions logged on '+((_faDayOpts().find(o=>o.v===_faRecFilter)||{}).l||_faRecFilter)+'.');
 }
 
+/* ── Prayer team (2026-10) ──────────────────────────────────────────────────────
+   Shares the first-aid screens (search / allstudents / records). Student card = leader to contact
+   first, then EVERY note on the student (first-aid logs, leaders' notes, sensitive notes, prayer
+   records), then a muted medical/dietary card. Deliberately NO consents, Medicare or parent/guardian
+   contact (owner decision: UI-only hiding). A prayer record is POST /notes category 'prayer'; the
+   server forces it sensitive. Body = "Recorded by: <name>\n<text>". */
+async function openPrayerInfo(id){
+  const scr=_faScreen();
+  let c;try{c=await api('/campers/'+id);}catch(e){toast(e.message);return;}
+  _currentStudent=c;
+  let contacts=[];try{contacts=await api('/search/contacts/'+id);}catch(e){contacts=[];}
+  const leaders=contacts.filter(x=>x.role!=='parent');
+  const prim=leaders.find(x=>x.type==='primary'),back=leaders.find(x=>x.type==='backup');
+  const leadBtn=(ct,sec)=>ct?`<div class="who"><span class="nm">${esc(ct.name)}</span><span class="ptag${sec?' sec':''}">${sec?'Secondary':'Primary'}</span></div>
+      <div class="sub">${esc(c.churchName)} · ${ct.gender==='female'?'Female':'Male'} ${ct.type==='backup'?'backup':'leader'}</div>
+      <a class="btn fa-call" href="tel:${esc(ct.phone)}">${icSm('phone')} ${esc(fmtPhone(ct.phone))}</a>`:'';
+  const leadCard=(prim||back)
+    ? `<div class="fa-lead"><div class="lh">${icSm('phone')} Leader to contact</div>${leadBtn(prim,false)}${back?`<div style="margin-top:14px">${leadBtn(back,true)}</div>`:''}</div>`
+    : `<div class="fa-alert"><div class="ah">${icSm('phone')} No leader contact on file</div><div class="fa-calm" style="color:var(--alert-ink)">Ask a director or admin who to contact.</div></div>`;
+  const med=[...(c.medicalConditions||[]),...(c.otherMedications?[c.otherMedications]:[])];
+  const diet=c.dietaryRequirements||[];
+  const medCard=(med.length||diet.length)?`<div class="card"><div class="lbl" style="margin-top:0">Medical &amp; dietary</div>
+    ${med.map(m=>`<div class="sub" style="color:var(--ink-2)">${esc(m)}</div>`).join('')}
+    ${diet.map(d=>`<span class="fa-diet">${esc(d)}</span>`).join('')}</div>`:'';
+  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${_faBackExpr(scr)}">${icSm('arrowl')} Back</button></div>
+    <div class="fa-id">${_faBubble(c)}<div><h2>${esc(c.firstName+' '+c.lastName)}</h2>
+      <div class="meta">${c.kind==='leader'?'Leader':'Student'+(c.grade?' · Grade '+c.grade:'')} · ${esc(c.churchName)} · ${esc(c.zone)} Zone</div>
+      ${CAMP_MODE==='at-camp'?`<span class="fa-status ${c.atCamp?'on':'off'}">${c.atCamp?'On site':'Not on site'}</span>`:''}</div></div>
+    ${leadCard}
+    <button class="btn" onclick="openPrayerLog('${c.id}')">${icSm('plus')} Record prayer / disclosure</button>
+    <div id="prNotes"></div>
+    ${medCard}`,'Student Info','');
+  _loadPrayerNotes(id);
+}
+async function _loadPrayerNotes(id){
+  const box=document.getElementById('prNotes');if(!box)return;
+  let notes=[];try{notes=await api('/notes/camper/'+id);}catch(e){box.innerHTML='<p class="note-hint">Could not load notes.</p>';return;}
+  notes=(notes||[]).slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  const tag=n=>{const c=n.category||'note';
+    if(c==='prayer')return `<span class="pill warn">${icSm('alert')} Prayer</span>`;
+    if(c==='firstaid')return '<span class="pill amb">First-aid</span>';
+    if(c==='testimony')return '<span class="pill info">Testimony</span>';
+    return n.sensitive?`<span class="pill warn">${icSm('alert')} Sensitive note</span>`:'<span class="pill ok">Leader note</span>';};
+  box.innerHTML=`<div class="lbl" style="margin-top:18px">Notes on this student (${notes.length})</div>`+
+    (notes.length?`<div class="card">${notes.map(n=>`<div class="noteitem">${tag(n)}<div style="white-space:pre-wrap;margin-top:4px">${esc(n.body)}</div><div class="meta">${esc(n.authorName||'')} · ${dtFmt(n.createdAt)}</div></div>`).join('')}</div>`
+      :'<p class="note-hint">No notes recorded for this student yet.</p>');
+}
+function openPrayerLog(id){
+  const c=_currentStudent&&_currentStudent.id===id?_currentStudent:null;
+  paint(_faScreen(),`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="openStudentInfo('${id}')">${icSm('arrowl')} Back</button></div>
+    <div class="card">
+      ${c?`<div class="fa-id" style="margin-bottom:8px">${_faBubble(c)}<div><h2 style="font-size:var(--t-h3)">${esc(c.firstName+' '+c.lastName)}</h2><div class="meta">${esc(c.churchName)}</div></div></div>`:''}
+      <label class="lbl" style="margin-top:4px">Who's filling this out? <span style="color:var(--danger)">*</span></label>
+      <input id="prWho" class="fld" maxlength="80" value="${esc(LAST_LEADER||'')}" placeholder="Your name">
+      <label class="lbl" style="margin-top:12px">What was shared / prayed for <span style="color:var(--danger)">*</span></label>
+      <textarea id="prBody" class="fld" style="min-height:140px" maxlength="1900" placeholder="What was disclosed or prayed for, and anything that may need a child-safety follow-up…"></textarea>
+      <p class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:6px">Saved as a sensitive record — hidden from church logins; zone leaders, directors and admins can see it. Time and login account are recorded automatically.</p>
+    </div>
+    <button class="btn" id="prSave" onclick="savePrayerLog('${id}')">${icSm('check')} Save record</button>`,'Record prayer','');
+}
+async function savePrayerLog(id){
+  const who=val('prWho'),text=val('prBody');
+  if(!who){toast("Enter who's filling this out");return;}
+  if(!text){toast('Write what was shared or prayed for');return;}
+  LAST_LEADER=who;
+  const body='Recorded by: '+who+'\n'+text;
+  const btn=document.getElementById('prSave');if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  try{
+    await api('/notes',{method:'POST',body:{camperId:id,category:'prayer',body}});
+    toast('Record saved');
+    await openStudentInfo(id);
+  }catch(e){toast(e.message);if(btn){btn.disabled=false;btn.innerHTML=`${icSm('check')} Save record`;}}
+}
+let _prRecFilter='today';
+async function renderPrayerRecords(){
+  let recs=[],page=[];
+  try{[recs,page]=await Promise.all([api('/notes/prayer?limit=1000'),api('/campers?scope=all').catch(()=>[])]);}
+  catch(e){paint('records','<p class="err" style="display:block">'+esc(e.message)+'</p>','Prayer records','');return;}
+  window._prRecsAll=recs||[];
+  const cmap={};(Array.isArray(page)?page:page.items||[]).forEach(c=>{cmap[c.id]=c.firstName+' '+c.lastName;});window._prCamperMap=cmap;
+  paint('records',`<div class="search" style="padding:9px 14px"><span>${ic('search')}</span><input id="prRecQ" placeholder="Filter by student…" oninput="drawPrayerRecords()" aria-label="Filter records"></div>
+    <select class="fld" id="prRecDay" style="margin:0 0 12px 0" onchange="_prRecFilter=this.value;drawPrayerRecords()" aria-label="Show records from">${_faDayOpts().map(o=>`<option value="${o.v}"${o.v===_prRecFilter?' selected':''}>${esc(o.l)}</option>`).join('')}</select>
+    <div id="prRecList"></div>`,'Prayer records','Sensitive');
+  drawPrayerRecords();
+}
+function drawPrayerRecords(){
+  const box=document.getElementById('prRecList');if(!box)return;
+  if(!_faDayOpts().some(o=>o.v===_prRecFilter))_prRecFilter='today';
+  const cmap=window._prCamperMap||{};
+  const q=(val('prRecQ')||'').toLowerCase();
+  const list=(window._prRecsAll||[])
+    .filter(n=>_faKeep({n,amends:[]},_prRecFilter,localDateISO(),localDateISO))
+    .map(n=>({n,name:cmap[n.camperId]||'Student'}))
+    .filter(x=>!q||x.name.toLowerCase().includes(q));
+  box.innerHTML=list.length?`<div class="card">${list.map(x=>`<div class="fa-rec">
+    <div class="top"><span class="nm">${esc(x.name)}</span><span class="pill warn">Prayer</span><span class="tm">${dtFmt(x.n.createdAt)}</span></div>
+    <div class="ln" style="white-space:pre-wrap">${esc(x.n.body)}</div></div>`).join('')}</div>`
+    :emptyState('note',_prRecFilter==='today'?'No prayer records today.':'No prayer records for this filter.');
+}
+
 /* ===== SEARCH ===== */
 RENDER.search=function(){
-  if(ACTOR&&ACTOR.role==='firstAid'){renderSearchFirstAid();return;}
+  if(ACTOR&&(ACTOR.role==='firstAid'||ACTOR.role==='prayer')){renderSearchFirstAid();return;}
   _renderOtherChurches('search');
 };
 // Camp-wide contact lookup (masked leader phone reveal) rendered into `screenId`.
