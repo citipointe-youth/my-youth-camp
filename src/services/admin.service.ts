@@ -360,7 +360,7 @@ export function makeAdminService(
       if (before.campMode !== 'at-camp' && mode === 'at-camp') {
         // First-aid records logged during pre-camp are necessarily test/practice ones —
         // nobody is physically at camp yet for a real first-aid incident to happen (see
-        // note.service.ts's firstAidEligible, which lets a first-aider log/read a record
+        // note.service.ts's preCampEligible, which lets a first-aider log/read a record
         // against a not-yet-arrived registrant specifically so this can be tested before
         // going live). Wipe them all now that the real camp is starting.
         const allNotes = await noteRepo.findAll();

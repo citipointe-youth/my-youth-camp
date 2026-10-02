@@ -233,3 +233,102 @@ describe('note.service: forCamper sensitive-note filtering (profile view)', () =
     }
   });
 });
+
+describe('note.service: prayer records (write)', () => {
+  it('prayer creates a category:prayer note and it is ALWAYS sensitive, even if the client says false', async () => {
+    const a = await svc.add(actor('prayer'), { camperId: 'cam1', category: 'prayer', body: 'Recorded by: Sam\nprayed for x', sensitive: false });
+    const b = await svc.add(actor('prayer'), { camperId: 'cam1', category: 'prayer', body: 'Recorded by: Sam\nprayed for y' });
+    expect(a.category).toBe('prayer');
+    expect(a.sensitive).toBe(true);
+    expect(b.sensitive).toBe(true);
+  });
+
+  it('a prayer record requires a student', async () => {
+    await expect(svc.add(actor('prayer'), { category: 'prayer', body: 'x' })).rejects.toThrow(BadRequestError);
+  });
+
+  it('prayer cannot create general notes, testimonies or first-aid records', async () => {
+    for (const category of ['note', 'testimony', 'firstaid']) {
+      await expect(svc.add(actor('prayer'), { camperId: 'cam1', category, body: 'x' })).rejects.toThrow(ForbiddenError);
+    }
+  });
+
+  it('director can create a prayer record; zoneLeader and church cannot', async () => {
+    const n = await svc.add(actor('director'), { camperId: 'cam1', category: 'prayer', body: 'x' });
+    expect(n.sensitive).toBe(true);
+    await expect(svc.add(actor('zoneLeader', { zone: 'Yellow' }), { camperId: 'cam1', category: 'prayer', body: 'x' })).rejects.toThrow(ForbiddenError);
+    await expect(svc.add(actor('church', { churchId: 'c1' }), { camperId: 'cam1', category: 'prayer', body: 'x' })).rejects.toThrow(ForbiddenError);
+  });
+});
+
+describe('note.service: prayer records (read)', () => {
+  beforeEach(async () => {
+    await svc.add(actor('church', { churchId: 'c1' }), { camperId: 'cam1', category: 'note', body: 'leader note' });
+    await svc.add(actor('director'), { camperId: 'cam1', category: 'note', body: 'sensitive note', sensitive: true });
+    await svc.add(actor('firstAid'), { camperId: 'cam1', category: 'firstaid', body: 'Problem: graze\nTreatment: plaster' });
+    await svc.add(actor('prayer'), { camperId: 'cam1', category: 'prayer', body: 'Recorded by: Sam\nprayer 1' });
+    await svc.add(actor('prayer'), { camperId: 'cam2', category: 'prayer', body: 'Recorded by: Sam\nprayer 2' });
+  });
+
+  it('prayer sees EVERY note on the student it opens (leader, sensitive, first-aid, prayer)', async () => {
+    const recs = await svc.forCamper(actor('prayer'), 'cam1');
+    expect(recs.map((n) => n.body).sort()).toEqual(
+      ['Problem: graze\nTreatment: plaster', 'Recorded by: Sam\nprayer 1', 'leader note', 'sensitive note'].sort(),
+    );
+  });
+
+  it('church does NOT see the prayer record on its own student profile', async () => {
+    const recs = await svc.forCamper(actor('church', { churchId: 'c1' }), 'cam1');
+    expect(recs.some((n) => n.category === 'prayer')).toBe(false);
+  });
+
+  it('zoneLeader sees prayer records for its own zone only (profile + Notes feed)', async () => {
+    const yellow = actor('zoneLeader', { zone: 'Yellow' });
+    expect((await svc.forCamper(yellow, 'cam1')).some((n) => n.category === 'prayer')).toBe(true);
+    const feed = await svc.recent(yellow, 50);
+    expect(feed.filter((n) => n.category === 'prayer').map((n) => n.camperId)).toEqual(['cam1']);
+  });
+
+  it('prayer cannot read the camp-wide notes feed or the notes export', async () => {
+    await expect(svc.recent(actor('prayer'))).rejects.toThrow(ForbiddenError);
+    await expect(svc.exportRows(actor('prayer'))).rejects.toThrow(ForbiddenError);
+  });
+
+  it('firstAid still cannot read a student profile notes list (regression on the forCamper gate)', async () => {
+    await expect(svc.forCamper(actor('firstAid'), 'cam1')).rejects.toThrow(ForbiddenError);
+  });
+
+  it('recentPrayer returns ONLY prayer records (all students for prayer), newest first', async () => {
+    const recs = await svc.recentPrayer(actor('prayer'));
+    expect(recs.every((n) => n.category === 'prayer')).toBe(true);
+    expect(recs.map((n) => n.camperId).sort()).toEqual(['cam1', 'cam2']);
+  });
+
+  it('recentPrayer is refused for firstAid, church and zoneLeader', async () => {
+    await expect(svc.recentPrayer(actor('firstAid'))).rejects.toThrow(ForbiddenError);
+    await expect(svc.recentPrayer(actor('church', { churchId: 'c1' }))).rejects.toThrow(ForbiddenError);
+    await expect(svc.recentPrayer(actor('zoneLeader', { zone: 'Yellow' }))).rejects.toThrow(ForbiddenError);
+  });
+
+  it('recentFirstAid is unchanged: still only first-aid records', async () => {
+    const recs = await svc.recentFirstAid(actor('admin'));
+    expect(recs.every((n) => n.category === 'firstaid')).toBe(true);
+    expect(recs).toHaveLength(1);
+  });
+});
+
+describe('note.service: prayer pre-camp testing (registered, not-yet-arrived)', () => {
+  beforeEach(async () => {
+    await people.save(person({ id: 'reg1', churchId: 'c1', zone: 'Yellow', lifecycle: 'registered', atCamp: false }));
+  });
+
+  it('prayer can record against, and read notes for, a registered person', async () => {
+    await svc.add(actor('prayer'), { camperId: 'reg1', category: 'prayer', body: 'Recorded by: Sam\ntest' });
+    const recs = await svc.forCamper(actor('prayer'), 'reg1');
+    expect(recs).toHaveLength(1);
+  });
+
+  it('other roles keep the arrived-only rule on the profile notes list', async () => {
+    await expect(svc.forCamper(actor('zoneLeader', { zone: 'Yellow' }), 'reg1')).rejects.toThrow(NotFoundError);
+  });
+});

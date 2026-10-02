@@ -1,11 +1,11 @@
 import type { INoteRepository, IPersonRepository } from '../repositories/interfaces/entity-repositories';
 import type { StudentNote } from '../core/entities/note';
 import type { Actor } from '../core/entities/user';
-import { assertCan } from './access-control';
+import { assertCan, can } from './access-control';
 import { isCamper, isRegistrant } from '../core/entities/person';
 import type { Person } from '../core/entities/person';
 import { canAccessPerson } from './person.service';
-import { NotFoundError, BadRequestError } from '../core/errors/app-error';
+import { NotFoundError, BadRequestError, ForbiddenError } from '../core/errors/app-error';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { toCsvString } from '../utils/csv';
@@ -39,40 +39,61 @@ export interface NoteService {
    * testimonies or general notes — the first-aid Records tab and the church own-church view use this.
    */
   recentFirstAid(actor: Actor, limit?: number): Promise<StudentNote[]>;
+  /** Prayer records only (category 'prayer'), newest first, scoped by canAccessPerson. note:read:prayer. */
+  recentPrayer(actor: Actor, limit?: number): Promise<StudentNote[]>;
   exportRows(actor: Actor): Promise<string>;
 }
 
 const FIRSTAID_CATEGORY = 'firstaid';
+const PRAYER_CATEGORY = 'prayer';
 
-// A first-aider needs to be able to log/read records against real registrants during
-// pre-camp testing too — nobody is a "camper" yet (nothing arrives until the real
-// Day-1 sign-in), so the normal isCamper() gate would make first-aid record-keeping
-// untestable before the camp actually goes live. Every other role keeps the existing
-// arrived-only scope (mirrors the same fallback already used in search.service.ts).
-function firstAidEligible(actor: Actor, person: Person): boolean {
-  return isCamper(person) || (actor.role === 'firstAid' && isRegistrant(person));
+// First aid and the prayer team must be able to log/read records against real registrants during
+// pre-camp testing too — nobody is a "camper" until the Day-1 sign-in. Every other role keeps the
+// arrived-only scope (mirrors search.service.ts).
+function preCampEligible(actor: Actor, person: Person): boolean {
+  return isCamper(person) || ((actor.role === 'firstAid' || actor.role === 'prayer') && isRegistrant(person));
 }
 
 export function makeNoteService(
   noteRepo: INoteRepository,
   personRepo: IPersonRepository,
 ): NoteService {
+  // Category-only read (first aid / prayer): fetch a wide window, keep ONLY that category, scoped by
+  // canAccessPerson. Both categories always carry a camperId. Can never leak another category.
+  async function recentInCategory(actor: Actor, category: string, limit: number): Promise<StudentNote[]> {
+    const notes = await noteRepo.findRecent(Math.max(limit, 50) * 4);
+    const result: StudentNote[] = [];
+    for (const note of notes) {
+      if ((note.category ?? 'note') !== category) continue;
+      if (!note.camperId) continue;
+      const camper = await personRepo.findById(note.camperId);
+      if (!camper || !preCampEligible(actor, camper)) continue;
+      if (!canAccessPerson(actor, camper)) continue;
+      result.push(note);
+      if (result.length >= limit) break;
+    }
+    return result;
+  }
+
   return {
     async add(actor, input) {
       const data = AddNoteSchema.parse(input);
       const category = data.category ?? 'note';
       const isFirstAid = category === FIRSTAID_CATEGORY;
-      // Category-scoped authorization (Phase 4): a first-aid record needs note:write:firstaid
-      // (which firstAid holds WITHOUT general note:write); every other category needs note:write.
-      // So a first-aider can ONLY ever create category 'firstaid' notes — never testimonies/notes.
-      assertCan(actor, isFirstAid ? 'note:write:firstaid' : 'note:write');
+      const isPrayer = category === PRAYER_CATEGORY;
+      // Category-scoped authorization (Phase 4 + prayer): a first-aid record needs
+      // note:write:firstaid (which firstAid holds WITHOUT general note:write), a prayer record
+      // needs note:write:prayer; every other category needs note:write. So a first-aider/prayer
+      // team member can ONLY ever create their own category of notes — never testimonies/notes.
+      assertCan(actor, isFirstAid ? 'note:write:firstaid' : isPrayer ? 'note:write:prayer' : 'note:write');
       // A general testimony has no student; only validate/scope when one is given. A first-aid
-      // record is ALWAYS about a specific student.
+      // or prayer record is ALWAYS about a specific student.
       const camperId = data.camperId && data.camperId.length > 0 ? data.camperId : null;
       if (isFirstAid && !camperId) throw new BadRequestError('A first-aid record requires a camper');
+      if (isPrayer && !camperId) throw new BadRequestError('A prayer record requires a student');
       if (camperId) {
         const camper = await personRepo.findById(camperId);
-        if (!camper || !firstAidEligible(actor, camper)) throw new NotFoundError('Student not found');
+        if (!camper || !preCampEligible(actor, camper)) throw new NotFoundError('Student not found');
         if (!canAccessPerson(actor, camper)) throw new NotFoundError('Student not found');
       }
 
@@ -85,16 +106,21 @@ export function makeNoteService(
         authorChurchId: actor.churchId,
         sessionId: data.sessionId ?? null,
         category,
-        sensitive: data.sensitive ?? false,
+        // A prayer record is ALWAYS sensitive (owner decision 2026-10-02) — never trust the client.
+        sensitive: isPrayer ? true : data.sensitive ?? false,
         createdAt: nowISO(),
       };
       return noteRepo.save(note);
     },
 
     async forCamper(actor, camperId) {
-      assertCan(actor, 'note:write');
+      // church/zoneLeader/director/admin reach the profile notes list via note:write (unchanged);
+      // the prayer team via note:read:student (read-only, one student at a time).
+      if (!can(actor, 'note:write') && !can(actor, 'note:read:student')) {
+        throw new ForbiddenError(`Role '${actor.role}' cannot read student notes`);
+      }
       const camper = await personRepo.findById(camperId);
-      if (!camper || !isCamper(camper)) throw new NotFoundError('Student not found');
+      if (!camper || !preCampEligible(actor, camper)) throw new NotFoundError('Student not found');
       if (!canAccessPerson(actor, camper)) throw new NotFoundError('Student not found');
       const notes = await noteRepo.findByCamper(camperId);
       // A sensitive note is hidden from the individual student-profile view for church
@@ -124,22 +150,12 @@ export function makeNoteService(
 
     async recentFirstAid(actor, limit = 50) {
       assertCan(actor, 'note:read:firstaid');
-      // Fetch a wide window, then keep ONLY first-aid records the actor may see. Because a
-      // first-aid record always has a camperId, canAccessPerson does the per-role scoping
-      // (church→own church, zoneLeader→own zone, firstAid/director/admin→all). This path can
-      // never leak a testimony or general note: the category filter is applied first.
-      const notes = await noteRepo.findRecent(Math.max(limit, 50) * 4);
-      const result: StudentNote[] = [];
-      for (const note of notes) {
-        if ((note.category ?? 'note') !== FIRSTAID_CATEGORY) continue;
-        if (!note.camperId) continue; // first-aid records are always about a camper
-        const camper = await personRepo.findById(note.camperId);
-        if (!camper || !firstAidEligible(actor, camper)) continue;
-        if (!canAccessPerson(actor, camper)) continue;
-        result.push(note);
-        if (result.length >= limit) break;
-      }
-      return result;
+      return recentInCategory(actor, FIRSTAID_CATEGORY, limit);
+    },
+
+    async recentPrayer(actor, limit = 50) {
+      assertCan(actor, 'note:read:prayer');
+      return recentInCategory(actor, PRAYER_CATEGORY, limit);
     },
 
     async exportRows(actor) {

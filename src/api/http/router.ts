@@ -136,6 +136,8 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     // Authorised by note:read:firstaid (firstAid/zoneLeader/director/admin/church). Declared
     // before /notes/camper/:camperId; both are distinct literal prefixes so order is not critical.
     { method: 'GET', path: '/notes/firstaid', auth: true, handler: (r) => note.recentFirstAid(r) },
+    // Prayer records only (2026-10) — category 'prayer', scoped by canAccessPerson. note:read:prayer.
+    { method: 'GET', path: '/notes/prayer', auth: true, handler: (r) => note.recentPrayer(r) },
     { method: 'GET', path: '/notes/export', auth: true, handler: (r) => note.exportRows(r) },
     { method: 'GET', path: '/notes/camper/:camperId', auth: true, handler: (r) => note.forCamper(r) },
 
