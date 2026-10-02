@@ -3,6 +3,21 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-10-03 - Prayer-record amendments (camp-v145)
+-----------------------------------------------------------------------------------
+A prayer record is still never edited. `prayer`/`director`/`admin` logins can now add
+an amendment - its own category 'prayer' note on the same student, body "Amends: <id>
+/ Recorded by: <name> / <free text>" (no backend change). Amendments nest under their
+original (oldest first) via the existing first-aid `_faGroup`/`_faKeep`/`_faIsAmend`
+(unchanged, shared - they only read the `Amends:` line) on the prayer student card and
+Prayer Records tab; on the directors'/admins' Notes tab the Add-amendment button is
+director/admin only and the tab stays flat (no nesting), with a "Prayer . Amendment"
+badge. New pure helpers `_prParse`/`_prIsAmend`/`_prCanAmend`/`_prNoteById`; new flow
+`openPrayerAmend`/`savePrayerAmend`. New harness scripts/prayer-amend-harness.js. No
+migration. sw.js camp-v144 -> camp-v145. Verified: npm run typecheck clean, npm run
+test 1242 pass / 80 files (unchanged - SPA-only change), npm run harness all green
+(incl. the new harness), SPA + sw.js node --check OK.
+
 2026-10-02 - Prayer team role (camp-v144)
 -----------------------------------------------------------------------------------
 New `prayer` account type: camper:read + note:write:prayer/note:read:prayer (prayer
