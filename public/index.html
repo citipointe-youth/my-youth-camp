@@ -4319,16 +4319,32 @@ async function openPrayerInfo(id){
 async function _loadPrayerNotes(id){
   const box=document.getElementById('prNotes');if(!box)return;
   let notes=[];try{notes=await api('/notes/camper/'+id);}catch(e){box.innerHTML='<p class="note-hint">Could not load notes.</p>';return;}
-  notes=(notes||[]).slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  notes=(notes||[]).slice();
   const tag=n=>{const c=n.category||'note';
-    if(c==='prayer')return `<span class="pill warn">${icSm('alert')} Prayer</span>`;
     if(c==='firstaid')return '<span class="pill amb">First-aid</span>';
     if(c==='testimony')return '<span class="pill info">Testimony</span>';
     return n.sensitive?`<span class="pill warn">${icSm('alert')} Sensitive note</span>`:'<span class="pill ok">Leader note</span>';};
+  // Prayer records are grouped like first-aid (_faGroup): amendments nest under their original
+  // instead of appearing as their own top-level item. Every other note type is unchanged.
+  const otherNotes=notes.filter(n=>(n.category||'')!=='prayer');
+  const prayerGroups=_faGroup(notes.filter(n=>(n.category||'')==='prayer'));
+  const items=[
+    ...otherNotes.map(n=>({date:n.createdAt,html:`<div class="noteitem">${tag(n)}<div style="white-space:pre-wrap;margin-top:4px">${esc(n.body)}</div><div class="meta">${esc(n.authorName||'')} · ${dtFmt(n.createdAt)}</div></div>`})),
+    ...prayerGroups.map(g=>({date:g.n.createdAt,html:g.orphan?_prOrphanCardHtml(g.n):_prCardHtml(g)})),
+  ].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
   box.innerHTML=`<div class="lbl" style="margin-top:18px">Notes on this student (${notes.length})</div>`+
-    (notes.length?`<div class="card">${notes.map(n=>`<div class="noteitem">${tag(n)}<div style="white-space:pre-wrap;margin-top:4px">${esc(n.body)}</div><div class="meta">${esc(n.authorName||'')} · ${dtFmt(n.createdAt)}</div></div>`).join('')}</div>`
+    (items.length?`<div class="card">${items.map(x=>x.html).join('')}</div>`
       :'<p class="note-hint">No notes recorded for this student yet.</p>');
 }
+function _prCardHtml(g){const n=g.n,p=_prParse(n.body);
+  return `<div class="noteitem"><span class="pill warn">${icSm('alert')} Prayer</span>
+    <div style="white-space:pre-wrap;margin-top:4px">${esc(p.text)}</div>
+    <div class="meta">Recorded by ${esc(p.by||n.authorName||'')} · ${dtFmt(n.createdAt)}</div>
+    ${_prAmendsHtml(g)}${_prAmendBtn(n,'card')}</div>`;}
+function _prOrphanCardHtml(n){const p=_prParse(n.body);
+  return `<div class="noteitem"><span class="pill amb">Amendment</span>
+    <div style="white-space:pre-wrap;margin-top:4px">${esc(p.text)}</div>
+    <div class="meta">By ${esc(p.by||n.authorName||'')} · ${dtFmt(n.createdAt)} · amends an earlier record not shown here</div></div>`;}
 function openPrayerLog(id){
   const c=_currentStudent&&_currentStudent.id===id?_currentStudent:null;
   paint(_faScreen(),`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="openStudentInfo('${id}')">${icSm('arrowl')} Back</button></div>
@@ -4367,19 +4383,87 @@ async function renderPrayerRecords(){
     <div id="prRecList"></div>`,'Prayer records','Sensitive');
   drawPrayerRecords();
 }
+// Grouped like first-aid (_faGroup): each prayer record carries its amendments, nested oldest
+// first. _faKeep (shared, unchanged) keeps a group for a day filter if the record OR any of its
+// amendments was logged that day.
 function drawPrayerRecords(){
   const box=document.getElementById('prRecList');if(!box)return;
   if(!_faDayOpts().some(o=>o.v===_prRecFilter))_prRecFilter='today';
   const cmap=window._prCamperMap||{};
   const q=(val('prRecQ')||'').toLowerCase();
-  const list=(window._prRecsAll||[])
-    .filter(n=>_faKeep({n,amends:[]},_prRecFilter,localDateISO(),localDateISO))
-    .map(n=>({n,name:cmap[n.camperId]||'Student'}))
-    .filter(x=>!q||x.name.toLowerCase().includes(q));
-  box.innerHTML=list.length?`<div class="card">${list.map(x=>`<div class="fa-rec">
-    <div class="top"><span class="nm">${esc(x.name)}</span><span class="pill warn">Prayer</span><span class="tm">${dtFmt(x.n.createdAt)}</span></div>
-    <div class="ln" style="white-space:pre-wrap">${esc(x.n.body)}</div></div>`).join('')}</div>`
+  let list=_faGroup(window._prRecsAll||[]);
+  list=list.filter(g=>_faKeep(g,_prRecFilter,localDateISO(),localDateISO));
+  const named=list.map(g=>({g,name:cmap[g.n.camperId]||'Student'})).filter(x=>!q||x.name.toLowerCase().includes(q));
+  box.innerHTML=named.length?`<div class="card">${named.map(x=>{
+    if(x.g.orphan)return _prOrphanHtml(x.g.n,`<span class="nm">${esc(x.name||'Student')}</span>`);
+    const p=_prParse(x.g.n.body);
+    return `<div class="fa-rec">
+    <div class="top"><span class="nm">${esc(x.name)}</span><span class="pill warn">Prayer</span><span class="tm">${dtFmt(x.g.n.createdAt)}</span></div>
+    <div class="ln" style="white-space:pre-wrap">${esc(p.text)}</div>
+    <div class="sub" style="color:var(--ink-2);margin-top:3px">Recorded by ${esc(p.by||x.g.n.authorName||'')}</div>
+    ${_prAmendsHtml(x.g)}${_prAmendBtn(x.g.n,'records')}</div>`;}).join('')}</div>`
     :emptyState('note',_prRecFilter==='today'?'No prayer records today.':'No prayer records for this filter.');
+}
+/* ── Prayer AMENDMENTS (2026-10-03) ─────────────────────────────────────────────
+   Mirrors the first-aid amendment pattern (grep "First-aid AMENDMENTS"): an amendment is its own
+   category 'prayer' note on the same student, body "Amends: <id>\nRecorded by: <name>\n<text>".
+   The original is never changed; unlimited amendments. _faParse/_faGroup/_faKeep/_faIsAmend are
+   shared UNCHANGED with first-aid — they only ever read the "Amends:" line, so they work as-is on
+   this body shape. Who can add one: prayer, director, admin — and only to a prayer record that is
+   not itself an amendment. */
+function _prParse(body){
+  const lines=(body||'').split('\n');let i=0,amends='',by='';
+  const am=lines[0]&&lines[0].match(/^Amends:\s*(\S+)/);
+  if(am){amends=am[1];i=1;}
+  const br=lines[i]&&lines[i].match(/^Recorded by:\s*(.*)$/);
+  if(br){by=br[1];i++;}
+  const text=lines.slice(i).join('\n').replace(/\s+$/,'');
+  return {amends,by,text};
+}
+function _prIsAmend(n){return (n.category||'')==='prayer'&&/^Amends:\s*\S/.test(n.body||'');}
+function _prCanAmend(){return !!ACTOR&&['prayer','director','admin'].includes(ACTOR.role);}
+function _prNoteById(id){return (window._faNoteById||{})[id]||(window._notesAll||[]).find(n=>n.id===id);}
+function _prAmendsHtml(g){return g.amends.map((a,i)=>{const p=_prParse(a.body);
+  return `<div class="fa-amend"><div><span class="pill amb">Amendment ${i+1}</span> <span class="tm">${dtFmt(a.createdAt)}</span></div>
+    <div class="ln">${esc(p.text)}</div><div class="tm">By ${esc(p.by||a.authorName||'')}</div></div>`;}).join('');}
+function _prOrphanHtml(n,nameHtml){const p=_prParse(n.body);return `<div class="fa-rec">
+    <div class="top">${nameHtml}<span class="pill amb">Amendment</span><span class="tm">${dtFmt(n.createdAt)}</span></div>
+    <div class="ln">${esc(p.text)}</div>
+    <div class="sub" style="color:var(--ink-2);margin-top:3px">By ${esc(p.by||n.authorName||'')} · amends an earlier record not shown here</div></div>`;}
+function _prAmendBtn(n,from){if(!_prCanAmend())return '';return `<div style="margin-top:8px"><button class="btn ghost sm" onclick="openPrayerAmend('${n.id}','${from}')">${icSm('plus')} Add amendment</button></div>`;}
+function openPrayerAmend(origId,from){
+  if(!_prCanAmend())return;
+  const n=_prNoteById(origId);if(!n){toast('Record not found — reload and try again');return;}
+  const p=_prParse(n.body);
+  const back=from==='records'?`RENDER.records()`:from==='notes'?`RENDER.notes()`:`openStudentInfo('${n.camperId}')`;
+  const scr=from==='card'?_faScreen():from;
+  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${back}">${icSm('arrowl')} Back</button></div>
+    <div class="card">
+      <div class="lbl" style="margin-top:0">Original record · ${dtFmt(n.createdAt)}</div>
+      <div class="sub" style="color:var(--ink-2)">Recorded by ${esc(p.by||n.authorName||'')}</div>
+      <div class="ln" style="white-space:pre-wrap">${esc(p.text)}</div>
+      <label class="lbl" style="margin-top:12px">Who's filling this out? <span style="color:var(--danger)">*</span></label>
+      <input id="prAmendWho" class="fld" maxlength="80" value="${esc(LAST_LEADER||'')}" placeholder="Your name">
+      <label class="lbl" style="margin-top:12px">Amendment</label>
+      <textarea id="prAmendTx" class="fld" style="min-height:120px" maxlength="1800" placeholder="What needs correcting or adding?"></textarea>
+      <p class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:6px">The original record is kept unchanged. Time and login account are recorded automatically.</p>
+    </div>
+    <button class="btn" id="prAmendSave" onclick="savePrayerAmend('${origId}','${from}')">${icSm('check')} Save amendment</button>`,'Add amendment','');
+}
+async function savePrayerAmend(origId,from){
+  const n=_prNoteById(origId);if(!n)return;
+  const who=val('prAmendWho').replace(/\s*\n\s*/g,' ').trim(),text=val('prAmendTx');
+  if(!who){toast("Enter who's filling this out");return;}
+  if(!text){toast('Describe the amendment');return;}
+  LAST_LEADER=who;
+  const btn=document.getElementById('prAmendSave');if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  try{
+    await api('/notes',{method:'POST',body:{camperId:n.camperId,category:'prayer',body:`Amends: ${origId}\nRecorded by: ${who}\n${text}`}});
+    toast('Amendment saved');
+    if(from==='records')await RENDER.records();
+    else if(from==='notes')await RENDER.notes();
+    else await openStudentInfo(n.camperId);
+  }catch(e){toast(e.message);if(btn){btn.disabled=false;btn.innerHTML=`${icSm('check')} Save amendment`;}}
 }
 
 /* ===== SEARCH ===== */
@@ -7137,7 +7221,7 @@ function drawNotes(){
     if(c==='signedout')return '<span class="pill warn">Signed out</span>';
     if(c==='firstaid')return _faIsAmend(n)?'<span class="pill amb">First-aid · Amendment</span>':'<span class="pill amb">First-aid</span>';
     if(c==='incident')return n.severity==='high'?'<span class="pill warn">Incident · High</span>':'<span class="pill amb">Incident · Low</span>';
-    if(c==='prayer')return `<span class="pill warn">${icSm('alert')} Prayer</span>`;
+    if(c==='prayer')return _prIsAmend(n)?`<span class="pill warn">${icSm('alert')} Prayer · Amendment</span>`:`<span class="pill warn">${icSm('alert')} Prayer</span>`;
     if(c==='sensitive')return `<span class="pill warn">${icSm('alert')} Sensitive note</span>`;
     return '<span class="pill ok">Student note</span>';
   };
@@ -7152,6 +7236,15 @@ function drawNotes(){
         ${p.treatment?`<div style="white-space:pre-line"><b style="color:var(--consent-ok-ink)">Treatment:</b> ${esc(p.treatment)}</div>`:''}
         ${p.amendment?`<div style="white-space:pre-line"><b>Amendment:</b> ${esc(p.amendment)}</div>`:''}
         ${p.firstAider?`<div class="sub" style="color:var(--ink-2)">First-aider: ${esc(p.firstAider)}${p.broughtBy?' · brought by '+esc(p.broughtBy):''}</div>`:''}</div>`;
+    }else if(c==='prayer'){const p=_prParse(n.body);const isAmend=_prIsAmend(n);
+      const amendLine=isAmend?(()=>{const orig=_prNoteById(p.amends);
+        return orig?`Amends the prayer record from ${dtFmt(orig.createdAt)}`:'Amends an earlier prayer record';})():'';
+      const canAmendHere=!isAmend&&(ACTOR.role==='director'||ACTOR.role==='admin');
+      bodyHtml=`<div style="font-size:.86rem;margin:4px 0">
+        ${amendLine?`<div class="sub" style="color:var(--ink-2)">${esc(amendLine)}</div>`:''}
+        ${p.by?`<div class="sub" style="color:var(--ink-2)">Recorded by: ${esc(p.by)}</div>`:''}
+        <div style="white-space:pre-wrap">${esc(p.text)}</div>
+        ${canAmendHere?`<div style="margin-top:6px"><button class="btn ghost sm" onclick="openPrayerAmend('${n.id}','notes')">${icSm('plus')} Add amendment</button></div>`:''}</div>`;
     }else{bodyHtml=`<div style="font-size:.86rem;color:#475569;margin:4px 0">${esc(n.body)}</div>`;}
     /* 2026-08-03 (owner request): the record TYPE badge moved from the end of the footer line
        to the top-right of the tile, beside the year level. It used to be the last thing on a
