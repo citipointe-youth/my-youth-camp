@@ -33,11 +33,6 @@ export function makeAccommodationController(services: AccommodationControllerSer
       return { ok: true };
     },
 
-    async groups(req: HttpRequest) {
-      if (!req.ctx) throw new UnauthorizedError();
-      return services.accommodation.listGroups(req.ctx.actor);
-    },
-
     async allocations(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.accommodation.getAllocations(req.ctx.actor);

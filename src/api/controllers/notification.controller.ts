@@ -13,11 +13,6 @@ export function makeNotificationController(services: NotificationControllerServi
       return services.notification.feed(req.ctx.actor);
     },
 
-    async latest(req: HttpRequest) {
-      if (!req.ctx) throw new UnauthorizedError();
-      return services.notification.latest(req.ctx.actor);
-    },
-
     async send(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       return services.notification.send(req.ctx.actor, req.body);

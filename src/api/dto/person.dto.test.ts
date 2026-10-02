@@ -9,8 +9,8 @@ import type { Person } from '../../core/entities/person';
 
 // ---------------------------------------------------------------------------
 // PII regression guard (audit 2026-07-19): the LIST/BULK DTOs are mapped over
-// entire rosters (GET /campers, GET /registrants, listMedicalWatch, /search),
-// so they must NEVER serialize `medicareNumber` or `dateOfBirth`. The boolean
+// entire rosters (GET /campers, GET /registrants, /search), so they must
+// NEVER serialize `medicareNumber` or `dateOfBirth`. The boolean
 // `hasMedicare` replaces the value; the cleartext number is only ever returned
 // by the audited POST /campers/:id/reveal-medicare. The access-checked DETAIL
 // DTOs (single-person GET) may add dateOfBirth back — but never medicareNumber.

@@ -17,7 +17,6 @@ import { makeAttendanceController } from '../controllers/attendance.controller';
 import { makeContentController } from '../controllers/content.controller';
 import { makeImportController } from '../controllers/import.controller';
 import { makeAllocationController } from '../controllers/allocation.controller';
-import { makeChurchImportController } from '../controllers/church-import.controller';
 import { makeTicketImportController } from '../controllers/ticket-import.controller';
 import { makeInvoiceImportController } from '../controllers/invoice-import.controller';
 import { makeAuditController } from '../controllers/audit.controller';
@@ -45,7 +44,6 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const content = makeContentController({ content: services.content });
   const importCtrl = makeImportController({ importService: services.importService, settingsRepo: services.settingsRepo });
   const allocationCtrl = makeAllocationController({ allocation: services.allocation });
-  const churchImportCtrl = makeChurchImportController({ churchImport: services.churchImport });
   const ticketImportCtrl = makeTicketImportController({ ticketImport: services.ticketImport, settingsRepo: services.settingsRepo });
   const invoiceImportCtrl = makeInvoiceImportController({ invoiceImport: services.invoiceImport, settingsRepo: services.settingsRepo });
   const auditCtrl = makeAuditController({ auditExport: services.auditExport, settingsRepo: services.settingsRepo });
@@ -98,9 +96,6 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     // ----- Registrants (pre-camp / Hub) -----
     { method: 'GET', path: '/registrants', auth: true, handler: (r) => registrant.list(r) },
     { method: 'POST', path: '/registrants', auth: true, handler: (r) => registrant.create(r) },
-    { method: 'GET', path: '/registrants/chase', auth: true, handler: (r) => registrant.chase(r) },
-    { method: 'GET', path: '/registrants/breakdown', auth: true, handler: (r) => registrant.breakdown(r) },
-    { method: 'POST', path: '/registrants/remind', auth: true, handler: (r) => registrant.remind(r) },
     { method: 'GET', path: '/registrants/:id', auth: true, handler: (r) => registrant.get(r) },
     { method: 'PATCH', path: '/registrants/:id', auth: true, handler: (r) => registrant.update(r) },
     { method: 'DELETE', path: '/registrants/:id', auth: true, handler: (r) => registrant.remove(r) },
@@ -110,7 +105,6 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/accommodation/classrooms', auth: true, handler: (r) => accommodation.createClassroom(r) },
     { method: 'PATCH', path: '/accommodation/classrooms/:id', auth: true, handler: (r) => accommodation.updateClassroom(r) },
     { method: 'DELETE', path: '/accommodation/classrooms/:id', auth: true, handler: (r) => accommodation.deleteClassroom(r) },
-    { method: 'GET', path: '/accommodation/groups', auth: true, handler: (r) => accommodation.groups(r) },
     { method: 'GET', path: '/accommodation/allocations', auth: true, handler: (r) => accommodation.allocations(r) },
     { method: 'PATCH', path: '/accommodation/allocations', auth: true, handler: (r) => accommodation.setAllocations(r) },
     { method: 'GET', path: '/accommodation/state', auth: true, handler: (r) => accommodation.state(r) },
@@ -119,9 +113,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'GET', path: '/accommodation/church-rooms/:churchId', auth: true, handler: (r) => accommodation.churchRooms(r) },
 
     // ----- Campers (at-camp / Portal) -----
-    // NOTE: literal routes (/campers/medical) must be declared BEFORE parameterised (/campers/:id)
     { method: 'GET', path: '/campers', auth: true, handler: (r) => camper.list(r) },
-    { method: 'GET', path: '/campers/medical', auth: true, handler: (r) => camper.getMedicalWatch(r) },
     { method: 'POST', path: '/campers/:id/reveal-medicare', auth: true, handler: (r) => camper.revealMedicare(r) },
     { method: 'GET', path: '/campers/:id', auth: true, handler: (r) => camper.get(r) },
     { method: 'PATCH', path: '/campers/:id', auth: true, handler: (r) => camper.update(r) },
@@ -155,7 +147,6 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
 
     // ----- Notifications -----
     { method: 'GET', path: '/notifications', auth: true, handler: (r) => notification.feed(r) },
-    { method: 'GET', path: '/notifications/latest', auth: true, handler: (r) => notification.latest(r) },
     { method: 'GET', path: '/notifications/scheduled', auth: true, handler: (r) => notification.scheduled(r) },
     { method: 'POST', path: '/notifications', auth: true, handler: (r) => notification.send(r) },
     { method: 'PATCH', path: '/notifications/:id', auth: true, handler: (r) => notification.update(r) },
@@ -183,7 +174,6 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
 
     // ----- Import -----
     { method: 'POST', path: '/import/csv', auth: true, handler: (r) => importCtrl.run(r) },
-    { method: 'POST', path: '/import/churches', auth: true, handler: (r) => churchImportCtrl.run(r) },
     { method: 'POST', path: '/import/tickets', auth: true, handler: (r) => ticketImportCtrl.run(r) },
     { method: 'POST', path: '/import/invoices', auth: true, handler: (r) => invoiceImportCtrl.run(r) },
     { method: 'GET', path: '/import/unallocated', auth: true, handler: (r) => allocationCtrl.listUnallocated(r) },
@@ -225,7 +215,6 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'DELETE', path: '/accounts/users/:id', auth: true, handler: (r) => account.deleteUser(r) },
     { method: 'GET', path: '/accounts/churches', auth: true, handler: (r) => account.listChurches(r) },
     { method: 'POST', path: '/accounts/churches', auth: true, handler: (r) => account.createChurch(r) },
-    { method: 'POST', path: '/accounts/churches/split', auth: true, handler: (r) => account.splitChurches(r) },
     { method: 'POST', path: '/accounts/churches/randomize-passwords', auth: true, handler: (r) => account.randomizeChurchPasswords(r) },
     { method: 'POST', path: '/accounts/churches/randomize-church-passwords', auth: true, handler: (r) => account.randomizeChurchOnlyPasswords(r) },
     { method: 'POST', path: '/accounts/passwords/import', auth: true, handler: (r) => account.importPasswords(r) },

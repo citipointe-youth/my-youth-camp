@@ -13,7 +13,6 @@ import type { PushService } from './push.service';
 export interface NotificationService {
   send(actor: Actor, input: unknown): Promise<Notification>;
   feed(actor: Actor): Promise<Notification[]>;
-  latest(actor: Actor): Promise<Notification | null>;
   scheduled(actor: Actor): Promise<Notification[]>;
   update(actor: Actor, id: string, input: unknown): Promise<Notification>;
   remove(actor: Actor, id: string): Promise<{ ok: true }>;
@@ -131,11 +130,6 @@ export function makeNotificationService(
 
     async feed(actor) {
       return getActorFeed(actor);
-    },
-
-    async latest(actor) {
-      const feed = await getActorFeed(actor);
-      return feed[0] ?? null;
     },
 
     // Pending scheduled notices (publish time still in the future). The creator sees their

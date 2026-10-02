@@ -90,13 +90,6 @@ export function makeCamperController(services: CamperControllerServices) {
       return toCamperDto(await person.update(req.ctx.actor, id, patch));
     },
 
-    async getMedicalWatch(req: HttpRequest) {
-      if (!req.ctx) throw new UnauthorizedError();
-      assertCan(req.ctx.actor, 'camper:read:sensitive');
-      const people = await person.listMedicalWatch(req.ctx.actor);
-      return people.map(toCamperDto);
-    },
-
     async revealMedicare(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       assertCan(req.ctx.actor, 'camper:read:sensitive');

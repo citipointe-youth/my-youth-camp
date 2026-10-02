@@ -152,21 +152,5 @@ export function makeRegistrantController(services: RegistrantControllerServices)
       await person.remove(req.ctx.actor, id);
       return { ok: true };
     },
-
-    async chase(req: HttpRequest) {
-      if (!req.ctx) throw new UnauthorizedError();
-      return person.chase(req.ctx.actor);
-    },
-
-    async breakdown(req: HttpRequest) {
-      if (!req.ctx) throw new UnauthorizedError();
-      return person.breakdown(req.ctx.actor);
-    },
-
-    async remind(req: HttpRequest) {
-      if (!req.ctx) throw new UnauthorizedError();
-      const body = req.body as { ids?: string[] };
-      return person.remind(req.ctx.actor, body.ids ?? []);
-    },
   };
 }
