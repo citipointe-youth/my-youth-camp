@@ -4123,7 +4123,8 @@ function _faParse(body){const o={problem:'',treatment:'',firstAider:'',broughtBy
    `Amendment: <text>` / `First-aider: <name>`. No limit on how many a record can carry.
    _faGroup nests each amendment under its original (oldest first); an amendment whose original
    is outside the loaded window (/notes/firstaid limit) shows on its own as an "orphan". */
-function _faIsAmend(n){return /^Amends:\s*\S/m.test((n&&n.body)||'');}
+// First line only: free text (esp. prayer records) may contain a line starting "Amends:".
+function _faIsAmend(n){return /^Amends:\s*\S/.test((n&&n.body)||'');}
 function _faGroup(recs){
   const byId={},out=[];
   recs.forEach(n=>{if(_faIsAmend(n))return;const g={n,amends:[]};byId[n.id]=g;out.push(g);});

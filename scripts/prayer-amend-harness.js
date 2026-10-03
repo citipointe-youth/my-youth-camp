@@ -105,5 +105,12 @@ check('kept when the amendment (not the original) lands on the filtered day',
 check('rejected when neither the original nor any amendment lands on the filtered day',
   _faKeep(prGroup('2026-09-28T01:00Z', ['2026-09-29T02:00Z']), '2026-09-30', '2026-10-01', dayOf), false);
 
+/* ---- a free-text line that happens to start "Amends:" must not turn a record into an amendment ---- */
+const tricky = { id: 't1', category: 'prayer', createdAt: '2026-09-30T03:00Z', body: 'Recorded by: Sam\nShared about home.\nAmends: wants a follow-up call' };
+check('_faIsAmend only looks at the first line', ctx._faIsAmend(tricky), false);
+check('a record with an "Amends:" line mid-text stays an original (not an orphan)',
+  _faGroup([tricky]).map((g) => ({ id: g.n.id, orphan: !!g.orphan })), [{ id: 't1', orphan: false }]);
+check('a real first-aid amendment is still detected', ctx._faIsAmend({ body: 'Amends: n1\nAmendment: x\nFirst-aider: A' }), true);
+
 console.log(failures ? '\n' + failures + ' CHECK(S) FAILED' : '\nAll checks passed.');
 process.exit(failures ? 1 : 0);
