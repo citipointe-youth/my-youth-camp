@@ -72,7 +72,7 @@ Owner: *"church login, students screen, mask parents number until revealed by cl
 have it be clickable to call similar to the first aid account). Also check it gets logged."*
 
 `maskParentForFirstAid` → **`maskParentPhone`**, driven by
-**`PARENT_PHONE_MASKED_ROLES = {firstAid, church}`** (firstAid alone since 2026-07-17).
+**`PARENT_PHONE_MASKED_ROLES = {firstAid, church}`** (firstAid alone since 2026-07-17). **2026-11-03:** the mask also covers `/registrants` (list, get, create, update), `PATCH /campers` and `/search`, so the pre-camp church card shows it masked with Reveal and the audit row cannot be skipped.
 
 - ⚠️ **THE MASK HAS TO BE AT THE DTO BOUNDARY, NOT IN THE SPA.** Hiding it client-side while the
   real number still travels in the `/campers` JSON makes the reveal theatre — it is one devtools

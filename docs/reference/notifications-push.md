@@ -865,6 +865,8 @@ traps are baked in and must not be "cleaned up":
 
 ### S2 — check-in queue persistence
 
+> **Updated 2026-11-04 (`camp-v148`):** the queue is now loaded at sign-in, not only on the check-in screen. A 401 keeps the taps and resumes on same-user login; a 5xx/429 backs off 30 s to 5 min; taps over 48 h are not sent and are named. The "stale-session entries are dropped" rule below now judges only against a known current session. See `docs/reference/at-camp-screens.md`.
+
 `_ciqKey()` / `_persistQueue()` / `_restoreQueue()` (`public/index.html`). `CHECKIN_QUEUE` is now
 mirrored to `localStorage` under a **per-account** key (`ycp_ciq_<username>`) on every push/shift,
 and rehydrated once at boot (`window._ciqRestored` guard). Two things worth knowing:

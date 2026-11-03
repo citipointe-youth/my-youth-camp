@@ -4,6 +4,39 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## First-time-user QA round — `camp-v146` to `camp-v148` — 3-4 Nov 2026
+
+Five-persona QA of build `07a78d2`, then fixes on operator rulings. Findings and rulings are in the OneDrive `qa-camp-2026-11-03` folder (`MERGED.md`, `RULINGS.md`, `STATUS.md`); item numbers below are MERGED.md's. Nothing ran on real Postgres or a real iPhone. Batches: `7fec4b5` (`camp-v146`), `4f8ef6b` `2020e53` `cdfb68f` (`camp-v147`), `6b6647c` `01176e3` `2e810f8` `b1039ee` `6d25a08` (`camp-v148`).
+
+**Access (batch 1, server):**
+- **Church logins cannot delete a person**, in any mode. New action `person:delete` = director/admin (item 3). Director/admin hard delete of an arrived child is unchanged.
+- **First-aid text is hidden from church logins** (item 20): `note:read:firstaid` removed from church and `note.service.forCamper` filters `category:'firstaid'` (amendments too). Nothing stored changes. This reverses the Phase 4 owner decision Q3 (`docs/archive/PHASE-4-FIRSTAID-UX.md`).
+- **Sensitive notes**: church logins still never read them, the prayer team still does (with zone, director, admin). The form, review step, testimony form and prayer form now say so. The author gets a receipt. **No alert is sent** and none is to be added (ruled).
+- **Search**: a hit outside the actor's scope leaves through the allow-listed `toCrossScopeHitDto`, not a blank-list (item 2).
+- **Offline sign-in** skips rows failing `canAccessPerson`; they report as unmatched (item 10).
+- **Parent number masked with the audited Reveal everywhere** (item 15, and decision 6): `maskParentPhone` wraps `/search`, `/registrants` (list, get, create, update) and `PATCH /campers`. This includes the pre-camp church card and replaces the earlier decline recorded under "`parentPhone` is masked on `/registrants` too" below. Prayer still gets plain parent numbers (unchanged).
+- **Cross-church leader reveal** (batch 3): `revealContact` lets a church or zone login open the leader number that search offers for any arrived camper (`isCamper`). Still audited. The parent number never crosses scope.
+
+**Server rules (batch 2):** leader phones must be blank or phone-like; a church with people attached can't be deleted; camp dates must be real and ordered; check-in refuses unknown types and sessions; notes refuse blank, NUL, unknown category and over 2,000 characters; a repeat sign-in/out writes no second row; church, zone and first-aid logins can't sign someone in during pre-camp; a signed-out child leaves the CURRENT session roster (status returns `notOnSiteCount`), past sessions keep theirs.
+
+**Check-in and offline (SPA, batches 2-3):**
+- List taps are ignored for 500 ms after a write (a double tap checked in the next child). A tap the lock catches now shows "was ignored". Undo goes to the session tapped and names the child. "Undo check-in" replaces "Check out".
+- **Failed check-ins stay banner only** (owner ruling): an app refusal (4xx with the app's own `{code,message}`) is dropped, named in the banner and not retried. A plain network failure on a live tap is still banner only. Only taps saved while offline are kept.
+- **Queue storage:** `localStorage` `ycp_ciq_<login>`, one copy per login. A 401 stops draining and keeps the taps; they resume when the **same** login signs back in, no reload. Expiry empties memory and the retry timer, so nothing posts as another user; another login leaves them unsent for the owner. A saved tap's 5xx or 429 stays saved, is named on screen, other children's taps still send, retries back off 30 s to 5 min. A tap over 48 h old is not sent: named in a toast and banner, then removed. Only the app's own `{code,message}` answer ends a session; wifi sign-in pages and edge 401/403/429 count as "not reached". A 413 says the file is too large.
+- **Offline roster** (church logins only): `ycp_roster_<login>` keeps id, name, grade and checked-in for the current session, so Check-in works after reopening with no signal. No medical, parent, money or note data. Cleared on logout or a dead session, dropped after 48 h. A list from an earlier session shows names only, assumes nobody done, and is read-only if today isn't a check-in day or the window is shut. Reopening with no signal no longer logs the leader out (item 5).
+- **Note drafts** (item 17): `sessionStorage` `ycp_note_drafts_<login>`, by student; cleared on save, Cancel and logout. In-form Back arrows ask before discarding typed text.
+- Pulse and headline read one source (item 13). Masked leader numbers show as text; "Call primary" is the audited way to them (including the cross-church case above).
+
+**Money flag:** `payment_status` is plain text with no CHECK, so `free` and `refunded` need **no migration**. The Ticket import now keeps them (`mapPaymentStatus`). Existing rows change only at the next Ticket import. The church "Still needed" card (`_paymentMissing`) flags payment only when a ticket or invoice is matched and something is owing after discount; free, refunded, a hand-entered paid amount and a $0 invoice with no price don't flag.
+
+**Notices:** a sent notice returns `recipientLogins` (logins, not people; first aid and prayer excluded) and the toast shows it (item 26).
+
+**Item 30 wording pass, what landed:** grades and dates, zone on Home, "Testimony" explained, login error, labelled account buttons, badge help, schedule end times, dated notice times, a word list on Help. Form errors still appear only as a toast (shown longer); no inline errors.
+
+**Accepted limits (ruled, do not build without asking):** item 1 (deleted or demoted accounts keep access up to 48 h, no per-request check); no alert for sensitive notes; no single-church notices; director/admin delete and church cancel through the API unchanged; phone extensions and "or" numbers refused; junk numbers stay blocked until corrected.
+
+**Known leftovers:** over-48 h "not sent" banner is lost if the app reloads before Check-in opens (the toast still named them); the password-gate sign-in path skips queue load (`index.html:1879`); a render suspended across a relogin could judge taps (`:1783-1815`); storage full, and two tabs overwriting saved copies; patchy signal can still drop a live tap to the banner. After camp, the last session stays "current", so signed-out youth vanish from its roster (history kept).
+
 ## Pulse Unallocated bar + session stepping, first-aid day filter, Student Edit overrides — `camp-v142` — 2026-10-01
 
 SPA only (`public/index.html`), no route/permission/DTO/migration change, **no data change**. Owner

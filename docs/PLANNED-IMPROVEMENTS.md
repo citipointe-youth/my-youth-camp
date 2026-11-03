@@ -119,6 +119,7 @@ recorded here because "nobody thought of it" and "the owner said no" look identi
   most sensitive record type — **by explicit decision**, not by accident.
 - **Soft-delete incidents.** An append-only safeguarding record can be hard-deleted by admin or
   director with nothing recording that it existed, and the workbook export silently loses it.
+- **QA round 2026-11-03/04 (declined or ruled leave):** per-request check so deleted or demoted accounts lose access before 48 h; any alert or "tell X now" prompt for a sensitive note; single-church notices; queueing failed live check-ins (banner only); phone extensions and "or" numbers; changing director/admin delete of an arrived child, prayer's plain parent numbers, or church cancel via the API.
 
 ### Still open
 

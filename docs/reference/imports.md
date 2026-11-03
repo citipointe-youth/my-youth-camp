@@ -261,7 +261,7 @@ additive changes — no matching/merge logic needed to change.
   dietary. Ticket List owns `accommodationKind` (+ NEW `accommodationKindConfidence:
   'guessed'|'confirmed'|null` — Ticket List always sets `'confirmed'`, unconditional overwrite,
   unless `Church.accommodationOverride` applies, which still wins and is also `'confirmed'`), NEW
-  `ticketNumber`, NEW `invoiceNumber`, `paymentStatus`. Invoice owns `registrationCost` (reused as
+  `ticketNumber`, NEW `invoiceNumber`, `paymentStatus` (since 2026-11-04 it keeps `free` and `refunded` as well as `paid`/`deposit`/`unpaid`; `payment_status` is plain text, no migration, existing rows change at the next Ticket import). Invoice owns `registrationCost` (reused as
   "ticket total"), `discountCode` (reused), NEW `discountAmount`/`amountPaid`/`feesAmount`/
   `taxAmount`, and may **guess** `accommodationKind` (`confidence:'guessed'`, never overwrites a
   `'confirmed'` value) by exact-cents-matching the invoice total against a price→type table built

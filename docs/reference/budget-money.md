@@ -4,6 +4,19 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Payment status can be `free` or `refunded`; the church "Still needed" payment flag — `camp-v148` — 2026-11-04
+
+`Person.paymentStatus` is now `unpaid | deposit | paid | free | refunded`. `payment_status` is plain
+text with no CHECK, so there is **no migration**. Only the **Ticket import** sets it
+(`mapPaymentStatus`, now exported): Free and Refunded tickets keep their status instead of being
+left `unpaid`. **Existing rows stay as they are until the Ticket list is re-imported**, so
+already-imported Free/Refunded people keep their old flag until then. The Budget maths does not read
+`paymentStatus`; it uses the Invoice figures. The pre-camp "Still needed" card on a church login
+(`_paymentMissing`, `public/index.html`) flags payment only when a ticket or invoice has been matched
+and nothing is on record to settle it: not for `paid`/`free`/`refunded`, a refund on record, or a
+hand-entered paid amount. With a price on record it flags only if something is owing after discount;
+with no price, a $0 invoice is not flagged. The office edits money; the card only says what's missing.
+
 ## Registrant export: six override/accommodation columns appended — 2026-09-23
 
 Owner request. **Backend only** (`export.service.ts` + `container.ts`) — no SPA, schema or

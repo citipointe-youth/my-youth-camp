@@ -23,6 +23,9 @@ free-form box, stored `Recorded by: <name>\n<text>`), `RENDER.records`→`render
 `drawPrayerRecords` (`GET /notes/prayer`). Director/admin hold both prayer-note permissions;
 zone leaders read prayer records through their existing zone-scoped `note:read`; church logins
 never see them (sensitive notes are filtered from `church` in `note.service.forCamper`).
+**QA ruling 2026-11-03:** the prayer team stays a reader of sensitive notes, and the note forms now say so on screen. Nothing alerts anyone to a sensitive note (ruled, not to be added). Prayer's parent numbers stay plain (unchanged).
+
+**Church logins (2026-11-03):** no `person:delete` (director/admin only, in any mode), no first-aid records (`note:read:firstaid` removed; filtered on read), and the audited leader-number reveal works across churches for an arrived camper. Deleted or demoted accounts still keep access until their 48 h token expires (QA item 1, ruled don't fix).
 
 **No migration** — `users.role` is plain text and `notes.category`/`notes.sensitive` already
 exist. Inert until an admin creates a Prayer team login. This year's `PRAYER: ` director notes

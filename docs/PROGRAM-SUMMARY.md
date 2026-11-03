@@ -74,7 +74,7 @@ first-aid records stored as `StudentNote{category:'firstaid'}` (4-line body) —
 - **B-2** — `assertSessionSecret()` makes a production deploy **refuse to start** if `SESSION_SECRET`
   is unset/insecure (no-op in dev and when correctly set). Dead `JWT_SECRET` removed.
 - **B-1** — a check-in "N syncing… / N didn't save — tap to retry" **banner** (makes the existing
-  drop-on-error/tab-close loss visible; full queue durability deferred).
+  drop-on-error/tab-close loss visible; full queue durability deferred). *Update 2026-11-04: offline taps are now saved per login and survive logout, 401 and 5xx; refusals are still banner only. See `docs/reference/at-camp-screens.md`.*
 - **B-3** — cross-tab camp-mode sync via `localStorage` + `storage`/`visibilitychange`.
 - **B-4** — narrowed cache invalidation (no full clear on import). Visual M-1/M-2/M-3 + dead-token
   cleanup (L-1).
