@@ -4583,7 +4583,7 @@ function exportFaRecords(){
   const recs=window._faRecsAll||[];
   if(!recs.length){toast('No first-aid records to export yet');return;}
   const cmap=window._faCamperMap||{};
-  const q=v=>{v=String(v==null?'':v);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const q=v=>{v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
   const byId={};recs.forEach(n=>{byId[n.id]=n;});
   const header=['Student','Problem','Treatment','First-aider','Brought by','Amendment','Amends record logged at','Logged by','Logged at'];
   const rows=recs.map(n=>{const p=_faParse(n.body);const name=(cmap[n.camperId]||'').split(' · ')[0]||'Student';
@@ -8210,7 +8210,7 @@ async function _pwRandomiseExport(endpoint,filenamePrefix,noneMsg,toastVerb){
   try{ rows=await api(endpoint,{method:'POST',body:{}}); }
   catch(e){ toast(e.message||'Could not randomise passwords'); return; }
   if(!rows||!rows.length){ toast(noneMsg); try{await _rAccts();}catch(_){} return; }
-  const q=v=>{v=String(v==null?'':v);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const q=v=>{v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
   /* 2026-08-03: the export now covers leadership accounts too, so two columns changed.
      `Gender` is BLANK for a leadership login rather than echoing something — only church
      logins are gender-scoped, and printing a gender there would invent a split that does not
