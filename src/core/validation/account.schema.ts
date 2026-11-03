@@ -90,7 +90,8 @@ const isPhoneLike = (v: string) => {
 };
 const ChurchContactSchema = z.object({
   name: z.string().default(''),
-  phone: z.string().default('').refine(isPhoneLike, 'Check the phone number: use digits only, like 0411 222 333'),
+  // iOS wraps a pasted number in invisible direction marks; they must not be stored or refused.
+  phone: z.string().default('').transform((v) => v.replace(/[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g, '')).refine(isPhoneLike, 'Check the phone number: use digits only, like 0411 222 333'),
 });
 const ChurchContactsSchema = z.object({
   male: z.object({ primary: ChurchContactSchema, backup: ChurchContactSchema }),

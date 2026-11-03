@@ -2590,11 +2590,25 @@ function _armBack(){if(!history.state||!history.state.campTop)try{history.pushSt
 window.addEventListener('popstate',e=>{
   if((e.state&&e.state.campTop)||!ACTOR)return;
   if(document.getElementById('modal').classList.contains('show')){_armBack();_dismissModal();return;}
-  const top=STACK[STACK.length-1]||'home';
-  if(top===(['firstAid','prayer'].includes(ACTOR.role)?'search':'home'))return;
-  _armBack();
-  if(STACK.length>1)back();else gotoTab('home');
+  _popBack();
 });
+/* The first-aid and prayer forms paint onto Search or All Students with no STACK entry, so the
+   check has to be here as well as in back(). Discarding repaints the screen, which clears the form,
+   so the next Back can't ask again; keeping it leaves the entry re-armed; a second Back while the
+   question is up closes it as "keep". None of the three can trap anyone or loop. */
+async function _popBack(){
+  const top=STACK[STACK.length-1]||'home';
+  const atLanding=top===(['firstAid','prayer'].includes(ACTOR.role)?'search':'home');
+  const typed=_typed('#stage .screen.active textarea');
+  if(atLanding&&!typed)return;
+  _armBack();
+  if(typed&&!await _confirmDiscard())return;
+  if(atLanding)await _navTo(top);
+  else if(STACK.length>1)await _stepBack();
+  else await gotoTab('home');
+}
+const _confirmDiscard=()=>confirmSheet({title:'Discard what you typed?',confirmLabel:'Discard',danger:true});
+async function _stepBack(){STACK.pop();await _navTo(STACK[STACK.length-1]);}
 async function _navTo(id,arg){
   _armBack();
   if(id!==_navId)_ciQ=''; // name search resets on a real navigation (see _applyNameFilter)
@@ -2624,8 +2638,9 @@ async function gotoTab(id){
 }
 async function back(){
   // QA item 17: the first-aid log and other on-screen forms have no sheet to stay open.
-  if(_typed('#stage .screen.active textarea')&&!await confirmSheet({title:'Discard what you typed?',confirmLabel:'Discard',danger:true}))return;
-  if(STACK.length>1){STACK.pop();const id=STACK[STACK.length-1];await _navTo(id);}}
+  if(_typed('#stage .screen.active textarea')&&!await _confirmDiscard())return;
+  if(STACK.length>1)await _stepBack();
+}
 
 // Item 5b: persistent "Back to setup" chip. A tap on a WIZARD_STEPS row stores which step
 // number sent the admin here (sessionStorage — survives the navigation, cleared on return to
@@ -3469,7 +3484,15 @@ function _missingItems(s){
   return [!s.consentMedical&&'Emergency medical consent',
     s.medicationConsent!=='yes'&&s.medicationConsent!=='no'&&'Panadol/Ibuprofen/Antihistamine answer',
     !s.parentPhone&&'Parent phone number',
-    s.paymentStatus&&s.paymentStatus!=='paid'&&'Payment (shows as '+s.paymentStatus+')'].filter(Boolean);
+    _paymentMissing(s)&&'Payment (not marked paid)'].filter(Boolean);
+}
+/* paymentStatus starts as 'unpaid' for everyone and only the Ticket import ever changes it, so on
+   its own it says nothing. Only flag someone a ticket or invoice has actually been matched to, and
+   never against an invoice figure or refund on record: the Invoice import sets those, not the
+   status, and an amount of 0 there is how a free or refunded invoice looks. */
+function _paymentMissing(s){
+  if(s.paymentStatus==='paid'||!(s.ticketNumber||s.invoiceNumber))return false;
+  return s.paymentStatus==='deposit'||(s.amountPaid==null&&s.refundAmount==null);
 }
 function _missingCardHtml(s){
   const m=_missingItems(s);
@@ -3910,7 +3933,8 @@ function undoCheck(){
   _undoCamperId=null;_undoType=null;_hideUndoToast();
   if(!id)return;
   // Remove from queue if still pending, unless it is the one in flight at the head of the queue.
-  const idx=CHECKIN_QUEUE.findIndex(e=>e.camperId===id&&e.sessionId===sess);
+  // The latest entry of the undone type: offline in, then out, then Undo must drop the "out".
+  const idx=CHECKIN_QUEUE.map(e=>e.camperId===id&&e.sessionId===sess&&e.type===type).lastIndexOf(true);
   if(idx>=0&&!(idx===0&&_draining)){CHECKIN_QUEUE.splice(idx,1);_persistQueue();_rCheckin();return;}
   // Already sent — send the reverse, to the session the tap was on (QA item 14), not the one on screen.
   _queueEntry(id,type==='in'?'out':'in',sess);
@@ -10866,7 +10890,7 @@ function _updateContactPill(id,people){
   if(pill){pill.textContent=filled+'/4 Contacts';pill.className='pill '+(filled===4?'ok':filled?'amb':'info');}
 }
 // Same rule as isPhoneLike in account.schema.ts (the server enforces it too): blank, or 8-15 digits.
-function _phoneOk(v){const t=String(v||'').trim();if(!t)return true;const n=t.replace(/\D/g,'').length;return /^[\d\s()+.-]+$/.test(t)&&n>=8&&n<=15;}
+function _phoneOk(v){const t=String(v||'').replace(/[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g,'').trim();if(!t)return true;const n=t.replace(/\D/g,'').length;return /^[\d\s()+.-]+$/.test(t)&&n>=8&&n<=15;}
 async function saveContacts(id){const C=(n,p)=>({name:val(n),phone:val(p)});
   const mp=C('mp_n_'+id,'mp_p_'+id),mb=C('mb_n_'+id,'mb_p_'+id),fp=C('fp_n_'+id,'fp_p_'+id),fb=C('fb_n_'+id,'fb_p_'+id);
   const badPhone=[['mp_p_','Guys primary leader',mp],['mb_p_','Guys secondary leader',mb],['fp_p_','Girls primary leader',fp],['fb_p_','Girls secondary leader',fb]].find(x=>!_phoneOk(x[2].phone));
@@ -10943,8 +10967,10 @@ async function _offlineBootRecover(){
   if(!_bootOffline||!ACTOR)return;
   try{await api('/auth/me',{noCache:true});}
   catch(e){
-    if(e.transient)return; // still no signal
-    _bootOffline=false;_netStrip();TOKEN=null;ACTOR=null;
+    if(e.transient||e.code==='MUST_CHANGE_PASSWORD')return; // still no signal, or its gate is already up
+    // The server refused this session. A 401 has already shown the login screen; any other refusal
+    // needs it too, or clearing the token here would leave a shell that can't do anything.
+    _bootOffline=false;_netStrip();if(TOKEN)sessionExpired();TOKEN=null;ACTOR=null;
     localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');return;
   }
   _bootOffline=false;_netStrip();

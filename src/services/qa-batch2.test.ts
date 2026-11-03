@@ -66,6 +66,16 @@ describe('item 6: leader phone numbers', () => {
   });
 });
 
+describe('item 6: numbers pasted from iOS', () => {
+  it('strips invisible characters before checking, and stores the clean number', () => {
+    const parsed = UpdateChurchContactsSchema.parse(contacts('\u202A0411\u00A0222\u200B333\u202C'));
+    expect(parsed.contacts.male.primary.phone).toBe('0411\u00A0222333');
+  });
+  it.each(['0411 222 333 ext 4', '0411 222 333 or 0422 111 222', '\u202Aabc\u202C'])('still refuses %j', (phone) => {
+    expect(UpdateChurchContactsSchema.safeParse(contacts(phone)).success).toBe(false);
+  });
+});
+
 describe('item 11: deleting a church with people attached', () => {
   async function setup(withPerson: boolean) {
     const users = new InMemoryUserRepository();
