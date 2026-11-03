@@ -63,6 +63,13 @@ assert.strictEqual(pay({ ticketNumber: 'T1', invoiceNumber: 'I1', amountPaid: 0,
 assert.strictEqual(pay({ amountPaidOverride: 180 }), false, 'hand-entered amount, no invoice');
 assert.strictEqual(pay({ ticketNumber: 'T1', amountPaidOverride: 180 }), false, 'hand-entered amount beats ticket Unpaid');
 
+// Review of batch 3: a fully discounted place owes nothing; part-paid does.
+assert.strictEqual(pay({ ticketNumber: 'T1', registrationCost: 180, discountAmount: 180, amountPaid: 0 }), false, 'free place, $0 paid');
+assert.strictEqual(pay({ ticketNumber: 'T1', registrationCost: 180, discountAmount: 180 }), false, 'free place, no invoice figure');
+assert.strictEqual(pay({ ticketNumber: 'T1', registrationCost: 180, discountAmount: 30, amountPaid: 0 }), true, 'part discount, nothing paid');
+assert.strictEqual(pay({ ticketNumber: 'T1', registrationCost: 180, amountPaid: 100 }), true, 'part paid');
+assert.strictEqual(pay({ ticketNumber: 'T1', registrationCost: 180, amountPaid: 180 }), false, 'paid in full, status never set');
+
 // Batch 3: only the app's own answer counts.
 const answer = (status, type) => ({ ok: status < 400, status, headers: { get: () => type } });
 assert.strictEqual(ctx._isAppAnswer(null, answer(403, 'text/html')), false, 'wifi page 403');
@@ -107,7 +114,65 @@ function undo(queue, type) {
   c.undoCheck();
   return c.CHECKIN_QUEUE.map((e) => e.type);
 }
+// Review of batch 3: the saved list must follow the session running now, not the one it was saved in.
+function view({ date, time, restricted, cache }) {
+  const store = { ycp_roster_v: JSON.stringify(cache) };
+  const c = {
+    ACTOR: { role: 'church', username: 'v' }, Date, JSON, Array, Object, String,
+    SETTINGS: { churchCheckinTimeRestricted: !!restricted, checkinWindowAmStart: '06:00', checkinWindowAmEnd: '12:00', checkinWindowPmStart: '13:00', checkinWindowPmEnd: '22:00' },
+    localStorage: { getItem: (k) => store[k] ?? null, removeItem: (k) => { delete store[k]; }, setItem: (k, v) => { store[k] = v; } },
+    localDateISO: () => date, brisbaneNowTime: () => time, _ciLabel: (s) => s.label,
+  };
+  vm.createContext(c);
+  for (const fn of ['_rosterKey', '_rosterClear', '_rosterLoad', '_sessionNow', '_windowClosed', '_rosterView', '_rosterSynced']) vm.runInContext(extract('function ' + fn + '('), c);
+  return { v: c._rosterView(), c };
+}
+const sess = (day, sfx, label) => ({ id: day + '~' + sfx, day, startTime: sfx === 'am' ? '08:00' : '13:00', label });
+const MON_AM = sess('2026-07-06', 'am', 'Mon AM'), MON_PM = sess('2026-07-06', 'pm', 'Mon PM');
+const saved = (over = {}) => ({ savedAt: new Date().toISOString(), session: MON_AM, sessions: [MON_AM, MON_PM],
+  roster: [{ id: 'a', name: 'Ann', grade: 7, checkedIn: true }, { id: 'b', name: 'Bo', grade: 8, checkedIn: false }], ...over });
+{
+  const same = view({ date: '2026-07-06', time: '09:00', cache: saved() }).v;
+  assert.strictEqual(same.session.id, MON_AM.id);
+  assert.strictEqual(same.roster[0].checkedIn, true, 'same session keeps its saved state');
+  assert.strictEqual(same.readOnly, null);
+  const next = view({ date: '2026-07-06', time: '14:00', cache: saved() }).v;
+  assert.strictEqual(next.session.id, MON_PM.id, 'Mon AM save, Mon PM reopen shows Mon PM');
+  assert.ok(next.roster.every((r) => r.checkedIn === false), 'nobody assumed done in the new session');
+  assert.strictEqual(next.readOnly, null, 'taps are allowed, and queue to Mon PM');
+  assert.ok(next.savedFrom, 'it says the names came from the earlier session');
+  const after = view({ date: '2026-07-20', time: '14:00', cache: saved() }).v;
+  assert.ok(after.readOnly, 'no session today: read-only');
+  const noList = view({ date: '2026-07-06', time: '14:00', cache: saved({ sessions: undefined }) }).v;
+  assert.ok(noList.readOnly, 'no saved session list: read-only');
+  const closed = view({ date: '2026-07-06', time: '12:30', restricted: true, cache: saved() }).v;
+  assert.ok(closed.readOnly, 'restricted and between windows: read-only');
+  // A tap sent successfully while on the saved list stays checked in.
+  const { c } = view({ date: '2026-07-06', time: '14:00', cache: saved() });
+  c._rosterSynced({ camperId: 'b', sessionId: MON_PM.id, type: 'in' });
+  const v2 = c._rosterView();
+  assert.strictEqual(v2.roster.find((r) => r.id === 'b').checkedIn, true, 'sent tap stays in');
+  assert.strictEqual(v2.roster.find((r) => r.id === 'a').checkedIn, false);
+}
+// Review of batch 3: saved taps survive anything but the app's own refusal.
+async function drain(err, entry) {
+  const c = { CHECKIN_QUEUE: [{ camperId: 'a', sessionId: 's', type: 'in', ...entry }], navigator: { onLine: true }, _draining: false, _rosterInUse: false,
+    api: async () => { throw err; }, _persistQueue() {}, _markSynced() {}, _rCheckin: async () => {}, _hideUndoToast() {}, clearTimeout() {}, setTimeout() {},
+    _undoCamperId: null, _lastRoster: [], _checkinFailNames: [], _checkinFailed: 0, _checkinFailReason: '', _queueWaiting: false, _drainRetry: null, _bootOffline: false, LEADER_INITIALS: 'QA' };
+  vm.createContext(c);
+  vm.runInContext(extract('async function drainQueue('), c);
+  await c.drainQueue();
+  return c.CHECKIN_QUEUE.length;
+}
 (async () => {
+  const nonApp = Object.assign(new Error('x'), { transient: true, nonApp: true });
+  const net = Object.assign(new Error('x'), { transient: true });
+  const appNo = Object.assign(new Error('x'), { code: 'FORBIDDEN' });
+  assert.strictEqual(await drain(nonApp, { offline: true }), 1, 'wifi page: saved tap kept');
+  assert.strictEqual(await drain(nonApp, {}), 1, 'wifi page: live tap kept');
+  assert.strictEqual(await drain(net, { offline: true }), 1, 'flaky: saved tap kept');
+  assert.strictEqual(await drain(net, {}), 0, 'flaky: live tap is the ruled banner-only drop');
+  assert.strictEqual(await drain(appNo, { offline: true }), 0, 'the app refused it: dropped with the banner');
   const offline = await recover(Object.assign(new Error('x'), { transient: true }));
   assert.strictEqual(offline.expired + offline.removed, 0, 'no signal keeps the session');
   assert.strictEqual(offline.token, 't');

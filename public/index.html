@@ -1147,8 +1147,8 @@ async function _doFetch(path,opt){
   // QA batch 3: a wifi sign-in page or an edge proxy can answer 401/403/429 too. Only the app's own
   // {code,message} body can say anything about this session; anything else means "not reached".
   if(res.status!==204&&!_isAppAnswer(j,res)){
-    const na=new Error('Can’t reach the camp server. If this wifi has a sign-in page, finish that first, then try again.');
-    na.transient=true;throw na;
+    const na=new Error(res.status===413?'That is too large to send. Try a smaller file.':'Can’t reach the camp server. If this wifi has a sign-in page, finish that first, then try again.');
+    na.transient=true;na.nonApp=true;throw na;
   }
   if(res.status===401&&path.indexOf('/auth/login')!==0){
     if(TOKEN)sessionExpired();
@@ -3508,15 +3508,15 @@ function _missingItems(s){
 }
 /* paymentStatus starts as 'unpaid' for everyone and only the Ticket import ever changes it, so on
    its own it says nothing. The Invoice import sets amounts, not the status. In order: settled or
-   free; a hand-entered paid amount; nothing matched yet; a deposit; then the invoice figure. $0
-   only counts as owing when there is a price to owe, or a free invoice would be flagged. */
+   free; a hand-entered paid amount; nothing matched yet; then what is owing. With no price, a $0
+   invoice is not flagged, or every free invoice would be. */
 function _paymentMissing(s){
   if(['paid','free','refunded'].includes(s.paymentStatus)||s.refundAmount!=null)return false;
   if(s.amountPaidOverride>0)return false;
   if(!(s.ticketNumber||s.invoiceNumber))return false;
-  if(s.paymentStatus==='deposit')return true;
-  if(s.amountPaid==null)return true;
-  return s.amountPaid===0&&s.registrationCost>0;
+  // A price on record decides it: a discount covering the ticket is a free place (budget-money.md).
+  if(s.registrationCost!=null)return s.registrationCost-(s.discountAmount||0)-(s.amountPaid||0)>0;
+  return s.paymentStatus==='deposit'||s.amountPaid==null;
 }
 function _missingCardHtml(s){
   const m=_missingItems(s);
@@ -3598,17 +3598,20 @@ function _persistQueue(){
 // Rehydrate on boot. Entries for any session other than the one now selected are DROPPED
 // (owner decision) — their window has closed and the POST would 403. The drop is reported
 // so it can be reconciled against the paper sheet rather than vanishing.
-function _restoreQueue(){
+function _restoreQueue(keepAll){
   let saved=[];
   try{saved=JSON.parse(localStorage.getItem(_ciqKey())||'[]');}catch(_){saved=[];}
   if(!Array.isArray(saved)||!saved.length)return;
-  const fresh=saved.filter(e=>e&&e.camperId&&e.sessionId===SEL_SESSION);
+  // On the saved list nothing has answered yet, so no taps are judged: each keeps its own session
+  // and the server decides when it is reached. A persisted tap counts as saved offline (see drainQueue).
+  const fresh=saved.filter(e=>e&&e.camperId&&(keepAll||e.sessionId===SEL_SESSION)).map(e=>({...e,offline:true}));
   const dropped=saved.length-fresh.length;
   CHECKIN_QUEUE.push(...fresh);
   _persistQueue();
   if(dropped>0)toast(dropped+' queued check-in'+(dropped===1?'':'s')+' from an earlier session were discarded — check the paper sheet');
   if(CHECKIN_QUEUE.length&&!_draining)drainQueue();
 }
+let _queueWaiting=false,_drainRetry=null;
 let _undoTimer=null,_undoCamperId=null,_undoType=null,_undoSession=null,_undoName='';
 // QA item 4: the tapped row leaves the list and the next one slides under the finger, so a
 // double tap (100-350 ms) would check in the next child. Ignore list taps just after a write.
@@ -3631,22 +3634,25 @@ let _checkinFailReason='',_checkinFailNames=[];
 
 function _queueEntry(camperId,type,sessionId=SEL_SESSION){
   // initials captured NOW, not at drain time — a rehydrated entry must keep its original author.
-  CHECKIN_QUEUE.push({camperId,type,sessionId,initials:LEADER_INITIALS});
+  CHECKIN_QUEUE.push({camperId,type,sessionId,initials:LEADER_INITIALS,offline:!navigator.onLine||_bootOffline||_rosterInUse});
   _persistQueue();
   _updateSyncDots(camperId,'pending');
   if(!_draining)drainQueue();
   if(!_onlineHandlerAdded){window.addEventListener('online',drainQueue);_onlineHandlerAdded=true;}
 }
 async function drainQueue(){
-  if(_draining)return;_draining=true;
+  if(_draining)return;_draining=true;_queueWaiting=false;
   while(CHECKIN_QUEUE.length>0){
     const entry=CHECKIN_QUEUE[0];
     try{
       // entry.initials falls back for any entry queued before this change shipped.
       await api('/checkin',{method:'POST',body:{camperId:entry.camperId,sessionId:entry.sessionId,type:entry.type,initials:entry.initials||LEADER_INITIALS}});
       CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId);
+      if(_rosterInUse)_rosterSynced(entry);
     }catch(e){
-      if(!navigator.onLine)break; // wait for online event; queue stays persisted
+      // Wait, queue stays persisted: no signal; something other than the app answered (wifi sign-in
+      // page); or a tap saved offline hit a failed attempt. Only the app's own refusal may drop one.
+      if(!navigator.onLine||(e&&(e.nonApp||(e.transient&&entry.offline)))){_queueWaiting=true;break;}
       // Deliberate: an ONLINE failure is a hard drop + banner (owner chose banner only).
       if(!_checkinFailReason)_checkinFailReason=(e&&e.message)||'';
       CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId,'error');_checkinFailed++; // B-1: surface in the banner
@@ -3657,6 +3663,8 @@ async function drainQueue(){
     }
   }
   _draining=false;
+  // The 'online' event never fires when the phone already thinks it is online, so try again.
+  if(_queueWaiting&&navigator.onLine&&!_drainRetry)_drainRetry=setTimeout(()=>{_drainRetry=null;if(_bootOffline)_offlineBootRecover();drainQueue();},30000);
   await _rCheckin();
 }
 function _updateSyncDots(camperId,state){
@@ -3779,7 +3787,8 @@ function _rosterKey(){return 'ycp_roster_'+((ACTOR&&(ACTOR.username||ACTOR.id))|
 function _rosterClear(){try{localStorage.removeItem(_rosterKey());}catch(_){}}
 function _rosterSave(st){
   if(ACTOR.role!=='church'||PREVIEW_MODE||ACCOUNT_PREVIEW||!st.session)return;
-  try{localStorage.setItem(_rosterKey(),JSON.stringify({savedAt:new Date().toISOString(),session:{id:st.session.id,day:st.session.day,startTime:st.session.startTime,label:st.session.label},
+  const slim=s=>({id:s.id,day:s.day,startTime:s.startTime,label:s.label});
+  try{localStorage.setItem(_rosterKey(),JSON.stringify({savedAt:new Date().toISOString(),session:slim(st.session),sessions:SESSIONS.map(slim),
     roster:(st.roster||[]).map(r=>({id:r.camperId,name:(r.firstName+' '+r.lastName).trim(),grade:r.grade,checkedIn:!!r.checkedIn}))}));}catch(_){}
 }
 function _rosterLoad(){
@@ -3789,13 +3798,51 @@ function _rosterLoad(){
   if(Date.now()-new Date(c.savedAt).getTime()>48*36e5){_rosterClear();return null;}
   return c;
 }
+// The rule of currentSession() in checkin-sessions.ts, without its fallback to a nearby day: with no
+// server to ask, a tap must only ever land on a session that is really today's.
+function _sessionNow(sessions){
+  const todays=(sessions||[]).filter(s=>s.day===localDateISO());
+  if(!todays.length)return null;
+  const sfx=brisbaneNowTime()>='12:00'?'~pm':'~am';
+  return todays.find(s=>s.id.endsWith(sfx))||todays[0];
+}
+// The church window rule of allowedWindowSession(), from the saved settings.
+function _windowClosed(session){
+  const S=SETTINGS||{};if(!S.churchCheckinTimeRestricted)return false;
+  const am=session.id.endsWith('~am'),t=brisbaneNowTime();
+  return t<(am?S.checkinWindowAmStart||'06:00':S.checkinWindowPmStart||'12:00')||t>=(am?S.checkinWindowAmEnd||'12:00':S.checkinWindowPmEnd||'22:00');
+}
+/* What the saved list may show right now. A list saved in an earlier session gives the names only:
+   nobody is assumed done, and taps queue to the session running now. If that session can't be
+   worked out, or its window is shut, the list is read-only and says why. */
+function _rosterView(){
+  const c=_rosterLoad();if(!c)return null;
+  const now=_sessionNow(c.sessions),session=now||c.session,same=session.id===c.session.id;
+  const sent=(c.synced&&c.synced[session.id])||{};
+  return {savedAt:c.savedAt,session,savedFrom:same?null:_ciLabel(c.session),
+    roster:c.roster.map(r=>({...r,checkedIn:r.id in sent?sent[r.id]==='in':(same&&r.checkedIn)})),
+    readOnly:!now?'Today isn’t one of the saved check-in days, so nobody can be checked in until there is signal.'
+      :_windowClosed(now)?'Check-in is closed right now, so nobody can be checked in until the next window.':null};
+}
+// A tap that really reached the server while on the saved list must stay ticked on that list.
+function _rosterSynced(entry){
+  const c=_rosterLoad();if(!c)return;
+  c.synced=c.synced||{};(c.synced[entry.sessionId]=c.synced[entry.sessionId]||{})[entry.camperId]=entry.type;
+  try{localStorage.setItem(_rosterKey(),JSON.stringify(c));}catch(_){}
+}
 const _rosterStatus=c=>({session:c.session,roster:c.roster.map(r=>({camperId:r.id,firstName:r.name,lastName:'',grade:r.grade,checkedIn:r.checkedIn}))});
 let _rosterInUse=false;
 async function _renderDailyCheckin(){
-  let off=(!navigator.onLine||_bootOffline)?_rosterLoad():null;
-  if(off){SESSIONS=[off.session];SEL_SESSION=off.session.id;_rosterInUse=true;}
-  else if(_rosterInUse){SESSIONS=[];SEL_SESSION=null;_rosterInUse=false;} // back online: real sessions again
-  if(SESSIONS.length===0)SESSIONS=await api('/checkin/sessions');
+  let off=null;
+  const wasOffline=_rosterInUse;
+  const _useSaved=v=>{off=v;SESSIONS=[v.session];SEL_SESSION=v.session.id;_rosterInUse=true;};
+  const saved=(!navigator.onLine||_bootOffline)?_rosterView():null;
+  if(saved)_useSaved(saved);
+  else if(_rosterInUse||SESSIONS.length===0){
+    // Keep the saved list's session until the real ones have actually arrived.
+    try{const fresh=await api('/checkin/sessions');if(_rosterInUse){SEL_SESSION=null;_rosterInUse=false;}SESSIONS=fresh;}
+    catch(e){const v=e&&e.transient?_rosterView():null;if(!v)throw e;_useSaved(v);}
+  }
   // When the admin has restricted church check-in to the current session, a church login
   // is always pinned to whatever session is current right now — it can't linger on an
   // earlier/later one it picked before the restriction kicked in.
@@ -3803,7 +3850,7 @@ async function _renderDailyCheckin(){
   // Item 4: a church login can now BROWSE every session but only EDIT the one it's allowed to.
   // CUR_ID drives the "•" marker and the default selection for EVERY role.
   const _curSess=off?off.session:await api('/checkin/sessions/current').catch(()=>null);
-  const CUR_ID=(_curSess&&_curSess.id)||null;
+  let CUR_ID=(_curSess&&_curSess.id)||null;
   // ⚠ THE LOCK MUST NOT COME FROM CUR_ID. `/checkin/sessions/current` is a NAVIGATION helper —
   // once camp dates exist it never returns null, because it falls back to the nearest past or
   // upcoming session. The backend's WRITE rule (allowedWindowSession) returns null outside camp
@@ -3814,11 +3861,11 @@ async function _renderDailyCheckin(){
   // Fetched only when it can bite, and FAIL-CLOSED on error: no answer means no writing.
   const _allowed=(churchRestricted&&!off)?await api('/checkin/sessions/allowed').catch(()=>null):null;
   const ALLOWED_ID=(_allowed&&_allowed.session&&_allowed.session.id)||null;
-  const closedReason=(_allowed&&_allowed.reason)||null;
+  let closedReason=off?off.readOnly:(_allowed&&_allowed.reason)||null;
   if(!SEL_SESSION)SEL_SESSION=(churchRestricted?ALLOWED_ID:null)||CUR_ID||(SESSIONS[0]&&SESSIONS[0].id);
-  let sessionLocked=!off&&churchRestricted&&SEL_SESSION!==ALLOWED_ID;
+  let sessionLocked=off?!!off.readOnly:churchRestricted&&SEL_SESSION!==ALLOWED_ID;
   if(!SEL_SESSION){paint('checkin','<p class="note-hint">No check-in sessions configured. Set camp dates in admin settings.</p>','Daily Check-in','');return;}
-  if(!window._ciqRestored){window._ciqRestored=true;_restoreQueue();}
+  if(!window._ciqRestored){window._ciqRestored=true;_restoreQueue(!!off);}
   // Enriched RosterEntry now includes gender, grade, medicalFlag — no second /campers fetch needed.
   // "Not Signed In" (item 3) needs the students NOT on the roster at all (checkin.service's
   // roster only ever includes atCamp===true — see CLAUDE.md presence model), so fetch the
@@ -3834,9 +3881,11 @@ async function _renderDailyCheckin(){
   const [st,regList]=await Promise.all([
     previewSim?Promise.resolve({session:null,roster:[]}):off?Promise.resolve(_rosterStatus(off)):api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status').catch(e=>{
       // The phone says it has signal but the server wasn't reached (patchy signal, wifi sign-in page).
-      const c=e&&e.transient?_rosterLoad():null;
-      if(!c||c.session.id!==SEL_SESSION)throw e;
-      off=c;_rosterInUse=true;sessionLocked=false;return _rosterStatus(c);
+      const v=e&&e.transient?_rosterView():null;
+      // Knowingly browsing another session has nothing saved. CUR_ID is empty when its own fetch
+      // failed the same way, which is the normal case on a wifi sign-in page.
+      if(!v||(!wasOffline&&CUR_ID&&SEL_SESSION!==CUR_ID))throw e;
+      _useSaved(v);CUR_ID=v.session.id;sessionLocked=!!v.readOnly;closedReason=v.readOnly;return _rosterStatus(v);
     }),
     previewSim?api(_scoped('/registrants')).catch(()=>[]):Promise.resolve([]),
   ]);
@@ -3899,7 +3948,8 @@ async function _renderDailyCheckin(){
   // QA items 9/13: "all" means everyone on site. Who isn't on site is a separate, stated number.
   const notOnSite=(st&&st.notOnSiteCount)||0;
   const notOnSiteTxt=(notOnSite&&list.length===roster.length)?` · ${notOnSite} not on site`:'';
-  const completionBanner=dueShown===0?`<div class="card" style="background:#dcfce7;border:1px solid #16a34a;text-align:center;padding:18px 12px">
+  // Never from a saved list: it can't know who is really here.
+  const completionBanner=(dueShown===0&&!off)?`<div class="card" style="background:#dcfce7;border:1px solid #16a34a;text-align:center;padding:18px 12px">
     <div style="font-size:1.3rem;font-weight:800;color:#15803d">${icSm('check')} All here checked in</div>
     <div class="sub" style="color:#166534">${presentShown} of ${list.length}${list.length!==roster.length?' (filtered)':''}${notOnSiteTxt}</div></div>`:'';
   // B-1: surface unsynced (still draining) + failed (dropped on an online error) state so a
@@ -3908,12 +3958,12 @@ async function _renderDailyCheckin(){
   const syncBanner=(syncingN>0||_checkinFailed>0)?
     (_checkinFailed>0
       ?`<div class="ci-sync ci-sync-fail" role="button" onclick="_dismissFailedCheckins()">${icSm('alert')} <span>Not saved: ${esc(_checkinFailNames.join(', ')||(_checkinFailed+' check-in'+(_checkinFailed===1?'':'s')))}. Tap Check in again to retry.${_checkinFailReason?' '+esc(_checkinFailReason):''} Tap here to dismiss.</span></div>`
-      :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${navigator.onLine?`${syncingN} sending…`:`No signal. ${syncingN} saved on this phone, will send when you’re back.`}</div>`):'';
+      :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${(navigator.onLine&&!_queueWaiting&&!_bootOffline)?`${syncingN} sending…`:`No signal. ${syncingN} saved on this phone, will send when you’re back.`}</div>`):'';
   const doneSection=doneList.length>0?`<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · <span class="nm-cnt" data-total="${doneList.length}">${doneList.length}</span></summary>
     ${doneList.map(c=>rowHtml(c)).join('')}</details>`:'';
   // ("Not signed in" moved to the bottom of the My-students screen — see filterMyYouth.)
   const html=`<div class="seg" id="dayseg">${dayBtns}</div>
-    ${sessionLocked?`<div class="infobox" style="font-size:.8rem;margin-bottom:8px">${icSm('clock')} ${ALLOWED_ID
+    ${sessionLocked?`<div class="infobox" style="font-size:.8rem;margin-bottom:8px">${icSm('clock')} ${(ALLOWED_ID&&!off)
       ?`Viewing ${esc(label)} — only the current session can be checked in. Tap the highlighted session (•) to check people in.`
       :esc(closedReason||'Check-in is closed right now. You can look through the roster, but nobody can be checked in until a check-in window opens on a camp day.')}</div>`:''}
     ${(showZone||showChurch)?`<div class="filters">${showZone?`<select onchange="setFilter('zone',this.value)">${zoneSelOpts}</select>`:''}${showChurch?`<select onchange="setFilter('church',this.value)">${churchSelOpts}</select>`:''}</div>`:''}
@@ -3921,7 +3971,7 @@ async function _renderDailyCheckin(){
       <select onchange="setFilter('gender',this.value)"><option value="all" ${FILTER.gender==='all'?'selected':''}>All genders</option><option value="female" ${FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${FILTER.gender==='male'?'selected':''}>Guys</option></select>
       <select onchange="setFilter('grade',this.value)">${gradeOpts}</select>
     </div>`}
-    ${off?`<div class="ci-sync ci-sync-pending" id="ciLastSaved">${icSm('clock')} <span>No signal. This is the last saved list, from ${esc(dtFmt(off.savedAt))}. It may be out of date. ${navigator.onLine?'The server can’t be reached, so a tap may not save until it can.':'Your taps will send when you’re back.'}</span></div>`:''}
+    ${off?`<div class="ci-sync ci-sync-pending" id="ciLastSaved">${icSm('clock')} <span>No signal. This is the last saved list, from ${esc(dtFmt(off.savedAt))}. It may be out of date.${off.savedFrom?` The names are from ${esc(off.savedFrom)}, so everyone starts as not checked in for this session.`:''}${off.readOnly?'':' Your taps will send when you’re back.'}</span></div>`:''}
     ${syncBanner}
     ${off?'':_filterBanner('checkin',list.length,roster.length)}
     <div class="card" style="display:flex;justify-content:space-between;align-items:center">
