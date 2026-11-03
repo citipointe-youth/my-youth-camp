@@ -5,3 +5,4 @@ export * from './incident.schema';
 export * from './account.schema';
 export * from './content.schema';
 export * from './accommodation.schema';
+export * from './person.schema';

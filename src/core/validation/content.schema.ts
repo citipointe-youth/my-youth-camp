@@ -71,14 +71,22 @@ export const SetModeSchema = z.object({
 
 export type SetModeInput = z.infer<typeof SetModeSchema>;
 
+// QA item 12: a real YYYY-MM-DD or blank (blank = not set yet, the setup screens send it).
+const isRealDate = (v: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(v + 'T00:00:00Z');
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+};
+const campDate = z.string().refine((v) => v === '' || isRealDate(v), 'Enter a real date');
+
 export const UpdateSettingsSchema = z.object({
   campName: z.string().min(1).optional(),
   year: z.number().int().optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
+  startDate: campDate.optional(),
+  endDate: campDate.optional(),
   timezone: z.string().optional(),
   checkInBanner: z.string().nullable().optional(),
-  checkInDays: z.array(z.string()).optional(),
+  checkInDays: z.array(z.string().refine(isRealDate, 'Enter a real date')).optional(),
   accommodationLocked: z.boolean().optional(),
   churchLoginLocked: z.boolean().optional(),
   zoneLeaderLoginLocked: z.boolean().optional(),

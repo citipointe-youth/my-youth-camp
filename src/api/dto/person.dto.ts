@@ -337,7 +337,11 @@ export function toRosterEntry(p: Person, sessionId: string): RosterEntry {
     zone: p.zone,
     gender: p.gender,
     grade: p.grade ?? null,
-    medicalFlag: p.medicalConditions.length > 0 || p.otherMedications != null,
+    // Same allergy words as the first-aid card, so an allergen filed under "dietary" still flags.
+    medicalFlag:
+      p.medicalConditions.length > 0 ||
+      p.otherMedications != null ||
+      p.dietaryRequirements.some((d) => /allerg|anaphyl|intoleran|coeliac|celiac/i.test(d)),
     checkedIn: last?.type === 'in',
     lastEntry: last?.type ?? null,
   };

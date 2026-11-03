@@ -23,6 +23,8 @@ export interface SessionStatus {
   roster: RosterEntry[];
   checkedInCount: number;
   totalCount: number;
+  /** Youth in scope who are not on site and so not on this roster (not arrived or signed out). */
+  notOnSiteCount: number;
 }
 
 /** What `assertSessionAllowed` would decide right now, without throwing — so the UI can grey
@@ -106,7 +108,7 @@ export function makeCheckInService(
     async getSessionStatus(actor, sessionId) {
       assertCan(actor, 'checkin:write');
       const parsed = parseSessionId(sessionId);
-      const { days } = await ctx();
+      const { days, tz } = await ctx();
       if (!parsed || !days.includes(parsed.day)) throw new NotFoundError('Session not found');
 
       const session = sessionFor(parsed.day, parsed.sfx);
@@ -114,15 +116,20 @@ export function makeCheckInService(
       // Leaders are never on the twice-daily check-in roster (they're presence-tracked via
       // attendance sign-in/out on My Youth instead, not this session-based flow) — even
       // though they may well be atCamp (bulk-signed-in when the mode switches to at-camp).
-      // A person signed out later (picked up, end of camp) stays on any session they were
-      // checked in for, so past sessions keep their real roster and counts.
+      // A person signed out later (picked up, end of camp) stays on any PAST session they were
+      // checked in for, so those keep their real roster and counts. In the CURRENT session a
+      // signed-out person is off the list (QA item 13), so the roster agrees with the dashboard.
+      const { date, time } = zonedNow(tz);
+      const current = pickCurrentSession(days, date, time);
       const onRoster = (p: (typeof allPeople)[number]) =>
-        p.atCamp || p.checkInHistory.some((e) => e.sessionId === sessionId);
-      const scoped = allPeople.filter((p) => onRoster(p) && p.kind !== 'leader' && canAccessPerson(actor, p));
+        p.atCamp || (sessionId !== current?.id && p.checkInHistory.some((e) => e.sessionId === sessionId));
+      const youth = allPeople.filter((p) => p.kind !== 'leader' && canAccessPerson(actor, p));
+      const scoped = youth.filter(onRoster);
+      const notOnSiteCount = youth.filter((p) => !p.atCamp && p.lifecycle !== 'cancelled' && !onRoster(p)).length;
       const roster: RosterEntry[] = scoped.map((p) => toRosterEntry(p, sessionId));
       const checkedInCount = roster.filter((r) => r.checkedIn).length;
 
-      return { session, roster, checkedInCount, totalCount: roster.length };
+      return { session, roster, checkedInCount, totalCount: roster.length, notOnSiteCount };
     },
 
     async assertSessionAllowed(actor, sessionId) {

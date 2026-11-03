@@ -1,4 +1,4 @@
-import type { IPersonRepository } from '../repositories/interfaces/entity-repositories';
+import type { IPersonRepository, ISettingsRepository } from '../repositories/interfaces/entity-repositories';
 import type { Person } from '../core/entities/person';
 import { isCamper, isRegistrant } from '../core/entities/person';
 import type { CheckInEntry, SignOutEvent } from '../core/entities/person';
@@ -92,7 +92,7 @@ function canAccessByChurchZone(actor: Actor, person: Pick<Person, 'churchId' | '
   }
 }
 
-export function makePersonService(repo: IPersonRepository): PersonService {
+export function makePersonService(repo: IPersonRepository, settings?: ISettingsRepository): PersonService {
   function buildProfile(person: Person): PersonProfile {
     const lastSignOut =
       person.signOutHistory
@@ -320,6 +320,13 @@ export function makePersonService(repo: IPersonRepository): PersonService {
     async signEvent(actor, personId, event) {
       assertCan(actor, 'attendance:write');
       const person = await getOwned(actor, personId);
+      // QA item 21: nobody has arrived before camp, so a leader's sign-in would be a false record.
+      if (
+        event.type === 'in' && !['director', 'admin'].includes(actor.role) &&
+        (await settings?.getSingleton())?.campMode === 'pre-camp'
+      ) {
+        throw new BadRequestError('Camp has not started yet, so nobody can be signed in.');
+      }
       const full: SignOutEvent = { ...event, id: newId('so') };
       const saved = await repo.save(withSignEvent(person, full, nowISO()));
       // ⚠ `invalidateDashboardCache()` is DELIBERATELY NOT called here or in `checkIn`.

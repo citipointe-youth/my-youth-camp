@@ -11,6 +11,9 @@ import { nowISO } from '../utils/date';
 import { toCsvString } from '../utils/csv';
 import { z } from 'zod';
 
+const FIRSTAID_CATEGORY = 'firstaid';
+const PRAYER_CATEGORY = 'prayer';
+
 /* Bug 19 (2026-07-28) — "Validation failed" when adding a note from the Students screen.
    The SPA posts `sessionId: SEL_SESSION`, and `SEL_SESSION` is genuinely `null` anywhere outside
    the daily check-in screen (it is only set when a session is picked there). Zod's `.optional()`
@@ -23,9 +26,13 @@ const AddNoteSchema = z.object({
   // Optional: a testimony may be "general" (no specific student). Empty string is
   // treated as absent.
   camperId: z.string().nullish(),
-  body: z.string().min(1).max(2000),
+  // QA item 28: the messages are custom so the leader reads the limit, not "Validation failed".
+  body: z.string()
+    .refine((s) => s.trim().length > 0, 'Type a note first')
+    .refine((s) => s.length <= 2000, 'Notes can be up to 2,000 characters')
+    .refine((s) => !s.includes('\u0000'), 'The note has a character that cannot be saved'),
   sessionId: z.string().nullish(),
-  category: z.string().max(40).nullish(),
+  category: z.enum(['note', 'testimony', FIRSTAID_CATEGORY, PRAYER_CATEGORY]).nullish(),
   sensitive: z.boolean().nullish(),
 });
 
@@ -44,8 +51,6 @@ export interface NoteService {
   exportRows(actor: Actor): Promise<string>;
 }
 
-const FIRSTAID_CATEGORY = 'firstaid';
-const PRAYER_CATEGORY = 'prayer';
 
 // First aid and the prayer team must be able to log/read records against real registrants during
 // pre-camp testing too — nobody is a "camper" until the Day-1 sign-in. Every other role keeps the

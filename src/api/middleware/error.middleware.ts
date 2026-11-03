@@ -20,7 +20,8 @@ export function sendError(res: Response, err: unknown): void {
   if (err instanceof ZodError) {
     const body: ApiErrorBody = {
       code: 'VALIDATION_ERROR',
-      message: 'Validation failed',
+      // A custom refine message is written for the person reading it; surface the first one.
+      message: err.errors.find((e) => e.code === 'custom')?.message ?? 'Validation failed',
       details: err.errors,
     };
     res.status(422).json(body);

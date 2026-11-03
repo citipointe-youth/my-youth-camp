@@ -2,6 +2,7 @@ import type { HttpRequest } from '../http/types';
 import type { CheckInService } from '../../services/checkin.service';
 import type { PersonService } from '../../services/person.service';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
+import { CheckInInputSchema } from '../../core/validation';
 import { nowISO } from '../../utils/date';
 
 export interface CheckInControllerServices {
@@ -39,13 +40,16 @@ export function makeCheckInController(services: CheckInControllerServices) {
       if (!b.camperId) throw new BadRequestError('Missing camperId');
       if (!b.sessionId) throw new BadRequestError('Missing sessionId');
       if (!b.type) throw new BadRequestError('Missing type');
+      // QA item 28: last-entry-wins means a junk type would un-tick a child.
+      CheckInInputSchema.parse(b);
 
       await services.checkIn.assertSessionAllowed(req.ctx.actor, b.sessionId);
 
       // Look up session label from the schedule so the check-in history is readable.
       const sessions = await services.checkIn.getSessions();
       const session = sessions.find((s) => s.id === b.sessionId);
-      const sessionLabel = session?.label ?? b.sessionId;
+      if (!session) throw new BadRequestError('That check-in session does not exist');
+      const sessionLabel = session.label;
 
       // Feature 4: capture the acting leader's initials (church-account session prefill) in
       // the daily check-in audit entry. Reuses the existing free-text `leaderId` field — no

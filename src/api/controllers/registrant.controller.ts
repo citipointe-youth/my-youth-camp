@@ -3,6 +3,7 @@ import type { PersonService } from '../../services/person.service';
 import type { Person } from '../../core/entities/person';
 import { toRegistrantDto, toRegistrantDetailDto, maskParentPhone } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
+import { RegistrantPatchSchema } from '../../core/validation';
 
 export interface RegistrantControllerServices {
   person: PersonService;
@@ -32,7 +33,7 @@ export function makeRegistrantController(services: RegistrantControllerServices)
 
     async create(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
-      const b = req.body as Record<string, unknown>;
+      const b = RegistrantPatchSchema.parse(req.body) as Record<string, unknown>;
       const p = await person.create(req.ctx.actor, {
         firstName: b['firstName'] as string,
         lastName: b['lastName'] as string,
@@ -59,7 +60,7 @@ export function makeRegistrantController(services: RegistrantControllerServices)
       if (!req.ctx) throw new UnauthorizedError();
       const id = req.params['id'];
       if (!id) throw new BadRequestError('Missing id');
-      const b = req.body as Record<string, unknown>;
+      const b = RegistrantPatchSchema.parse(req.body) as Record<string, unknown>;
 
       // Map blueCardCollected boolean ↔ blueCardNumber string.
       // If blueCardNumber is provided directly, it takes precedence.

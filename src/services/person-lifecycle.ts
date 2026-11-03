@@ -79,6 +79,11 @@ export function withCheckIn(person: Person, entry: CheckInEntry, now: string): P
 
 /** Append a sign-out/sign-in event and apply the resulting transition immutably. */
 export function withSignEvent(person: Person, event: SignOutEvent, now: string): Person {
+  // QA item 16: a double tap must not write a second compliance row. A repeat only counts if the
+  // person is ALREADY in that state: the at-camp mode switch sets atCamp without an event, so a
+  // real sign-out can legitimately follow a recorded 'out'.
+  const last = person.signOutHistory[person.signOutHistory.length - 1];
+  if (last?.type === event.type && person.atCamp === (event.type === 'in')) return person;
   const next = applyCheckIn(person, event.type === 'in' ? 'in' : 'out');
   return {
     ...person,

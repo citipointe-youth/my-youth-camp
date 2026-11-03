@@ -80,9 +80,17 @@ export const CreateChurchWithAccountSchema = z.object({
 
 export type CreateChurchWithAccountInput = z.infer<typeof CreateChurchWithAccountSchema>;
 
+// QA item 6: first aid treats this number as "contact first", so junk is only found in an
+// emergency. Blank is fine (clears the row); otherwise phone characters and 8-15 digits.
+const isPhoneLike = (v: string) => {
+  const t = v.trim();
+  if (!t) return true;
+  const digits = t.replace(/\D/g, '').length;
+  return /^[\d\s()+.-]+$/.test(t) && digits >= 8 && digits <= 15;
+};
 const ChurchContactSchema = z.object({
   name: z.string().default(''),
-  phone: z.string().default(''),
+  phone: z.string().default('').refine(isPhoneLike, 'Check the phone number: use digits only, like 0411 222 333'),
 });
 const ChurchContactsSchema = z.object({
   male: z.object({ primary: ChurchContactSchema, backup: ChurchContactSchema }),

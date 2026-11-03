@@ -752,6 +752,14 @@ export function makeAccountService(
       assertCan(actor, 'admin:manage');
       const church = await churchRepo.findById(id);
       if (!church) throw new NotFoundError('Church not found');
+      // QA item 11: first aid's "contact first" leaders come from the church record, so deleting
+      // one with people attached strands them. Move or remove the people first.
+      const attached = (await personRepo.findByChurch(id)).length;
+      if (attached > 0) {
+        throw new BadRequestError(
+          `${church.name} still has ${attached} ${attached === 1 ? 'person' : 'people'} attached. Move or remove them first.`,
+        );
+      }
       // Also remove the church's shared account
       const users = await userRepo.findAll();
       for (const u of users.filter((u) => u.churchId === id)) {

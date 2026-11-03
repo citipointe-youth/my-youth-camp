@@ -6,7 +6,7 @@ import { SETTINGS_ID } from '../core/entities/settings';
 import type { CampMode } from '../core/types/enums';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
-import { NotFoundError } from '../core/errors/app-error';
+import { BadRequestError, NotFoundError } from '../core/errors/app-error';
 import { UpdateSettingsSchema } from '../core/validation/content.schema';
 import { nowISO } from '../utils/date';
 import { invalidateDashboardCache } from './dashboard-cache';
@@ -103,6 +103,9 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
         id: SETTINGS_ID,
         updatedAt: now,
       };
+      if (updated.startDate && updated.endDate && updated.endDate < updated.startDate) {
+        throw new BadRequestError('The end date is before the start date');
+      }
       // Session revocation epoch (2026-08-05): flipping a login lock false->true also stamps
       // that role's epoch, so tokens already handed out to it are killed within 60s (the cache
       // TTL `resolveToken` reads through), not just new logins from here on. This is the ONLY

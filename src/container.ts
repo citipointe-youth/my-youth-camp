@@ -216,7 +216,7 @@ export async function buildContainer(): Promise<Container> {
     // Item 3 (2026-07-28): the devotional + schedule repos let a camp-date change carry day-keyed
   // content across to the new dates (see remapDays in settings.service.ts).
   const settings = makeSettingsService(settingsRepo, { devotionals, schedule: scheduleRepo });
-    const personSvc = makePersonService(people);
+    const personSvc = makePersonService(people, settingsRepo);
     const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people, classroomFreeze);
     const checkIn = makeCheckInService(people, settingsRepo);
     // ⚠ `push` is constructed BEFORE notification/incident (moved 2026-08-03). Both of those
@@ -375,7 +375,7 @@ export async function buildContainer(): Promise<Container> {
   // Item 3 (2026-07-28): the devotional + schedule repos let a camp-date change carry day-keyed
   // content across to the new dates (see remapDays in settings.service.ts).
   const settings = makeSettingsService(settingsRepo, { devotionals, schedule: scheduleRepo });
-  const personSvc = makePersonService(people);
+  const personSvc = makePersonService(people, settingsRepo);
   const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people, classroomFreeze);
   const checkIn = makeCheckInService(people, settingsRepo);
   // ⚠ See the note in the other composition block above — `push` is built first so an urgent
