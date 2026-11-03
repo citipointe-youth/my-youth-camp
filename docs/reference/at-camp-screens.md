@@ -195,21 +195,13 @@ added to `_paintPerson`, both mirroring `openCamper`'s existing markup exactly:
   value, not by role — so if the DTO's masking ever changes (see the gap below), this row needs
   **no further edit** to pick up the Reveal flow.
 
-### ⚠️ `parentPhone` is UNMASKED in `/registrants` and `/registrants/:id` — a pre-existing gap, left open on purpose
-Unlike `camper.controller.ts` (which applies `maskParentPhone` for `firstAid`/`church` via
-`PARENT_PHONE_MASKED_ROLES`), **`registrant.controller.ts`'s `list`/`get` apply no masking at
-all.** The parent's phone number has always travelled in cleartext in the pre-camp JSON to every
-church/first-aid login — this was true before today's change and is unchanged by it; today's
-change only makes it *visible on screen* where it was previously sitting unrendered in the
-response body. **The owner was asked and explicitly declined closing this for now** — do not
-"fix" it unasked; check with the owner first if it resurfaces (e.g. in a security review).
-- The reveal audit infrastructure would need **no backend change** to close this if asked:
-  `search.service.ts`'s `resolveContacts`/`revealContact` already gate on `canAccessPerson`
-  alone (not `isCamper`/lifecycle — fixed 2026-07-28, bug 21), so `GET /search/contact/:id/parent`
-  already works for a pre-camp registrant today. Closing the gap would be: apply the same
-  `maskParentPhone`-shaped boundary function to `registrant.controller.ts`'s `list`/`get` (best
-  extracted to a shared helper rather than duplicated) — the SPA needs no change at all, since
-  `_parentPhoneCell` already branches on the mask character.
+### `parentPhone` is masked on `/registrants` too (operator ruling, QA item 15, 2026-11-03)
+This was a known gap the owner had declined to close: `registrant.controller.ts` sent the number in
+cleartext. The audited reveal could be skipped, so `maskParentPhone` (now in `person.dto.ts`) wraps
+`/registrants`, `/registrants/:id`, the create and update responses, `PATCH /campers/:id` and own-scope
+`/search` hits. So the pre-camp church card now shows the masked number with the Reveal button. The
+owner's separate question of masking that card (QA decision 6) is decided by this as a side effect;
+take it back to them if pre-camp ringing turns out to be routine.
 
 ### Follow-ups, same day
 - **Labels relabelled** on the two new pre-camp rows: `Parent`→**`Parent name`**,
@@ -278,6 +270,9 @@ side by side on every screen that shows either.
   Data table's free-text search box — owner's explicit call, out of scope for this change.
 
 ### `redactSensitive()` needed a line too — found by an independent review pass
+**Superseded 2026-11-03 (QA item 2):** a cross-scope hit now leaves the server through the allow-listed
+`toCrossScopeHitDto`, because this blank-list had missed sign-out reasons, check-in history and money
+fields. A new `Person` field no longer has to be added to the blank-list to stay private. History below:
 `search.service.ts`'s `redactSensitive()` blanks every sensitive field on a cross-scope "All
 churches" search hit (medical, dietary, parent contact, etc.) before it reaches a church/
 zoneLeader login outside that person's `canAccessPerson` scope. `medicationConsent` was missed on

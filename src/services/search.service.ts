@@ -11,6 +11,8 @@ import { maskPhone } from '../utils/mask';
 
 export interface SearchResult {
   camper: Person;
+  /** Outside the actor's canAccessPerson scope: the API serialises only `toCrossScopeHitDto`. */
+  limited: boolean;
   contacts: MaskedContact[];
 }
 
@@ -119,6 +121,8 @@ function makeParentContact(person: Person, opts?: { mask?: boolean }): MaskedCon
  * camper's church leaders (items 7 & 10), but must never see another church's (or another gender's)
  * medical/dietary/parent/medicare data (item 6). The single-person GET /campers/:id path still
  * gates on canAccessPerson, so a redacted hit can't be drilled into for the real values either.
+ * Not the privacy boundary: search.controller.ts sends these hits through the allow-listed
+ * `toCrossScopeHitDto`, so a field missed here still cannot leave the server.
  */
 function redactSensitive(person: Person): Person {
   return {
@@ -202,7 +206,7 @@ export function makeSearchService(
         }
         if (!visible) continue;
         const { masked } = await getContactsForPerson(person);
-        results.push({ camper: owned ? person : redactSensitive(person), contacts: masked });
+        results.push({ camper: owned ? person : redactSensitive(person), limited: !owned, contacts: masked });
       }
       return results;
     },

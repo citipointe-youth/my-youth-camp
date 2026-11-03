@@ -5,6 +5,9 @@ import { ForbiddenError } from '../core/errors/app-error';
 export type Action =
   | 'registrant:read'
   | 'registrant:write'
+  // Erase a person and their history. Held apart from registrant:write because a church login,
+  // which needs that for edits, must not be able to delete anyone (operator ruling 2026-11-03).
+  | 'person:delete'
   | 'reminder:send'
   | 'camper:read'
   | 'camper:read:sensitive'
@@ -14,7 +17,7 @@ export type Action =
   | 'note:write'
   | 'note:read'
   // First-aid records (Phase 4). A first-aid record is a StudentNote with category 'firstaid'.
-  // Kept as their own capabilities so firstAid (and church) get first-aid access WITHOUT gaining
+  // Kept as their own capabilities so firstAid gets first-aid access WITHOUT gaining
   // general note read/write. note.service asserts note:write:firstaid only when category==='firstaid'.
   | 'note:write:firstaid'
   | 'note:read:firstaid'
@@ -57,9 +60,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'checkin:write',
     'attendance:write',
     'note:write',
-    // Phase 4: church can READ first-aid records for its OWN church's campers (scoped by
-    // canAccessPerson). It gets no first-aid WRITE and no general note:read.
-    'note:read:firstaid',
+    // No first-aid read or write (operator ruling 2026-11-03, reversing Phase 4 decision Q3).
+    // note.service.forCamper filters first-aid records from the profile notes this role can read.
     'church:contacts:write',
   ]),
   zoneLeader: new Set<Action>([
@@ -77,6 +79,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
   director: new Set<Action>([
     'registrant:read',
     'registrant:write',
+    'person:delete',
     'reminder:send',
     'camper:read',
     'camper:read:sensitive',
@@ -101,6 +104,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
   admin: new Set<Action>([
     'registrant:read',
     'registrant:write',
+    'person:delete',
     'reminder:send',
     'camper:read',
     'camper:read:sensitive',

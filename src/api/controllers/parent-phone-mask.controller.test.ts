@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { makeCamperController } from './camper.controller';
+import { makeRegistrantController } from './registrant.controller';
 import type { PersonService } from '../../services/person.service';
 import type { Person } from '../../core/entities/person';
 import type { Actor } from '../../core/entities/user';
@@ -98,6 +99,52 @@ describe('parent phone masking at the DTO boundary', () => {
     it(`leaves the parent phone in cleartext for ${role} (oversight roles are unaffected)`, async () => {
       const out = (await controller().get(req(actor(role)))) as { parentPhone: string | null };
       expect(out.parentPhone).toBe(PARENT);
+    });
+  }
+});
+
+/**
+ * BRK-5 / QA item 15 (2026-11-03): masking only `/campers` let the audited reveal be skipped,
+ * because every other route that serialises a person sent the real number.
+ */
+describe('parent phone masking on the sibling person routes', () => {
+  function routes() {
+    const p = { ...person(), lifecycle: 'registered', atCamp: false } as Person;
+    const personSvc = {
+      listRegistrants: async () => [p],
+      get: async () => p,
+      create: async () => p,
+      update: async () => p,
+    } as unknown as PersonService;
+    return {
+      registrant: makeRegistrantController({ person: personSvc }),
+      camper: makeCamperController({ person: personSvc }),
+    };
+  }
+  const calls = {
+    'GET /registrants': (r: ReturnType<typeof routes>, q: HttpRequest) => r.registrant.list(q),
+    'GET /registrants/:id': (r: ReturnType<typeof routes>, q: HttpRequest) => r.registrant.get(q),
+    'POST /registrants': (r: ReturnType<typeof routes>, q: HttpRequest) => r.registrant.create(q),
+    'PATCH /registrants/:id': (r: ReturnType<typeof routes>, q: HttpRequest) => r.registrant.update(q),
+    'PATCH /campers/:id': (r: ReturnType<typeof routes>, q: HttpRequest) => r.camper.update(q),
+  };
+
+  for (const [name, call] of Object.entries(calls)) {
+    it(`${name} never carries the real number for a church login`, async () => {
+      const out = JSON.stringify(await call(routes(), req(actor('church'))));
+      expect(out).not.toContain(PARENT);
+      expect(out).toContain('****');
+    });
+  }
+
+  it('GET /registrants/:id never carries the real number for first aid', async () => {
+    const out = JSON.stringify(await routes().registrant.get(req(actor('firstAid'))));
+    expect(out).not.toContain(PARENT);
+  });
+
+  for (const role of ['admin', 'director', 'zoneLeader'] as const) {
+    it(`GET /registrants stays in cleartext for ${role}`, async () => {
+      expect(JSON.stringify(await routes().registrant.list(req(actor(role))))).toContain(PARENT);
     });
   }
 });

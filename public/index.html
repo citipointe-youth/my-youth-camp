@@ -3824,7 +3824,7 @@ function notePrompt(camperId,name){
   const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:_actingName(),body:'',sensitive:false};
   modal(`<h3>Note · ${esc(name)}</h3>
     <label>Note</label><textarea id="noteBody" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
-    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this note from church logins — zone leaders, directors and admins still see it.</div></div>
+    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this note from church logins — zone leaders, directors, admins and the prayer team still read it.</div></div>
     <label class="tgl"><input type="checkbox" id="noteSensitive" ${d.sensitive?'checked':''}><span class="track"></span></label></div>
     <button class="btn" style="margin-top:10px" onclick="reviewNote('${camperId}','${esc(jsq(name))}')">Review ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
@@ -3841,7 +3841,7 @@ function reviewNote(camperId,name){
     <div class="sub">Student</div><div class="nm">${esc(name)}</div>
     ${leader?`<div class="sub" style="margin-top:7px">Logged by</div><div class="nm">${esc(leader)}</div>`:''}
     <div class="sub" style="margin-top:7px">Note</div><div style="font-size:var(--t-body)">${esc(body)}</div>
-    ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:var(--t-body)">${icSm('alert')} Sensitive — hidden from church logins</div>`:''}</div>
+    ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:var(--t-body)">${icSm('alert')} Sensitive — hidden from church logins. Zone leaders, directors, admins and the prayer team can read it.</div>`:''}</div>
     <button class="btn" onclick="confirmNote('${camperId}')">Confirm &amp; submit</button>
     <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(jsq(name))}')">‹ Edit</button>`);
 }
@@ -4355,7 +4355,7 @@ function openPrayerLog(id){
       <input id="prWho" class="fld" maxlength="80" value="${esc(LAST_LEADER||'')}" placeholder="Your name">
       <label class="lbl" style="margin-top:12px">What was shared / prayed for <span style="color:var(--danger)">*</span></label>
       <textarea id="prBody" class="fld" style="min-height:140px" maxlength="1900" placeholder="What was disclosed or prayed for, and anything that may need a child-safety follow-up…"></textarea>
-      <p class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:6px">Saved as a sensitive record — hidden from church logins; zone leaders, directors and admins can see it. Time and login account are recorded automatically.</p>
+      <p class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:6px">Saved as a sensitive record — hidden from church logins; zone leaders, directors, admins and the prayer team can read it. Time and login account are recorded automatically.</p>
     </div>
     <button class="btn" id="prSave" onclick="savePrayerLog('${id}')">${icSm('check')} Save record</button>`,'Record prayer','');
 }
@@ -7074,7 +7074,7 @@ RENDER.testimonies=async function(){
     <div class="infobox" style="font-size:.82rem">Record a testimony or God-moment from camp. Pick a student if it's about one, or leave it as a general testimony. It is saved with the records that leaders &amp; directors review.</div>
     <div class="card"><label>Student (optional)</label><select id="tmCamper">${opts}</select>
     <label>Testimony</label><textarea id="tmBody" placeholder="What happened? Whose story is it? What did God do?" style="min-height:120px"></textarea>
-    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this testimony from church logins — zone leaders, directors and admins still see it.</div></div>
+    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this testimony from church logins — zone leaders, directors and admins still read it, and so does the prayer team if it names a student.</div></div>
     <label class="tgl"><input type="checkbox" id="tmSensitive"><span class="track"></span></label></div>
     <button class="btn" style="margin-top:10px" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','Open all camp');
 };

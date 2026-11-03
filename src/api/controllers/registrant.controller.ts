@@ -1,7 +1,7 @@
 import type { HttpRequest } from '../http/types';
 import type { PersonService } from '../../services/person.service';
 import type { Person } from '../../core/entities/person';
-import { toRegistrantDto, toRegistrantDetailDto } from '../dto/person.dto';
+import { toRegistrantDto, toRegistrantDetailDto, maskParentPhone } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 
 export interface RegistrantControllerServices {
@@ -17,7 +17,9 @@ export function makeRegistrantController(services: RegistrantControllerServices)
       const churchId = req.query['churchId'];
       // Budget/Data-Import widening only; PersonService re-gates it to director/admin.
       const includeCancelled = req.query['includeCancelled'] === '1' || req.query['includeCancelled'] === 'true';
-      return (await person.listRegistrants(req.ctx.actor, churchId, { includeCancelled })).map(toRegistrantDto);
+      return (await person.listRegistrants(req.ctx.actor, churchId, { includeCancelled })).map((p) =>
+        maskParentPhone(toRegistrantDto(p), req.ctx!.actor),
+      );
     },
 
     async get(req: HttpRequest) {
@@ -25,7 +27,7 @@ export function makeRegistrantController(services: RegistrantControllerServices)
       const id = req.params['id'];
       if (!id) throw new BadRequestError('Missing id');
       // Detail dto: single access-checked fetch, so dateOfBirth may ride along.
-      return toRegistrantDetailDto(await person.get(req.ctx.actor, id));
+      return maskParentPhone(toRegistrantDetailDto(await person.get(req.ctx.actor, id)), req.ctx.actor);
     },
 
     async create(req: HttpRequest) {
@@ -50,7 +52,7 @@ export function makeRegistrantController(services: RegistrantControllerServices)
         medicalConditions: b['medical'] ? [b['medical'] as string] : [],
         dietaryRequirements: b['dietary'] ? [b['dietary'] as string] : [],
       });
-      return toRegistrantDto(p);
+      return maskParentPhone(toRegistrantDto(p), req.ctx.actor);
     },
 
     async update(req: HttpRequest) {
@@ -142,7 +144,7 @@ export function makeRegistrantController(services: RegistrantControllerServices)
         ...(b['needsReviewReason'] !== undefined && { needsReviewReason: b['needsReviewReason'] as string | null }),
       };
 
-      return toRegistrantDto(await person.update(req.ctx.actor, id, patch));
+      return maskParentPhone(toRegistrantDto(await person.update(req.ctx.actor, id, patch)), req.ctx.actor);
     },
 
     async remove(req: HttpRequest) {

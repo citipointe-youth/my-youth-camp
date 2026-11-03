@@ -256,6 +256,21 @@ describe('PersonService write surface (Step 4)', () => {
     await svc.remove(actor('admin'), 'r1');
     expect(await repo.findById('r1')).toBeNull();
   });
+
+  // Operator ruling 2026-11-03: church logins cannot delete a person, in any mode.
+  it('remove is refused for a church login, even for its own person, and nothing is deleted', async () => {
+    const svc = makePersonService(repo);
+    await expect(svc.remove(actor('church', { churchId: 'c1' }), 'r1')).rejects.toThrow(ForbiddenError);
+    await expect(svc.remove(actor('church', { churchId: 'c1' }), 'c1p')).rejects.toThrow(ForbiddenError);
+    expect(await repo.findById('r1')).not.toBeNull();
+    expect(await repo.findById('c1p')).not.toBeNull();
+  });
+
+  it('remove still works for a director', async () => {
+    const svc = makePersonService(repo);
+    await svc.remove(actor('director'), 'r2');
+    expect(await repo.findById('r2')).toBeNull();
+  });
 });
 
 function baseInput() {

@@ -188,7 +188,7 @@ api (Express) → controllers → services → repositories (interfaces) → cor
 
 | Role | Scope | Key capabilities |
 |------|-------|-----------------|
-| `church` | Own church | Registrant read/write, daily check-in, write notes |
+| `church` | Own church | Registrant read/write, daily check-in, write notes. **Cannot delete a person** (`person:delete` = director/admin) and **cannot read first-aid records** (operator ruling 2026-11-03, reversing Phase 4 decision Q3). |
 | `zoneLeader` | Own zone | All of above (zone-scoped), read notes, send zone notices, read registrants in zone |
 | `director` | All | All of above (camp-wide), import, camp-wide notices |
 | `admin` | All + back office | Everything + admin:manage (settings, accounts, accommodation, FAQ, schedule, devotionals, mode switch) |
@@ -390,4 +390,4 @@ This file keeps only rules that stay true. Dated session write-ups were moved ou
 
 - **Migrations:** `supabase/migrations/` is the source of truth; any "next migration = 00NN" inside a dated note is as-of that date. Prod history is contiguous `0001`–`0030`. The post-camp plan (`docs/superpowers/plans/2026-10-02-post-camp-tidy-up.md`) adds `0031` (cron prune), `0032` (revoke anon/authenticated grants), `0033` (pg_net → `extensions`) — check the directory and `supabase_migrations.schema_migrations` for whether they have landed. Apply a migration to prod **before** pushing code that needs it, and reconcile its history label to `'00NN'`.
 - **Cron:** `camp-push-tick` (every 5 min, `0014`) reads its bearer from **Vault** (`cron_secret`), not a literal. Planned `0031` (not yet applied as of 2026-10-02) adds weekly `camp-cron-prune` (keeps 7 days of `cron.job_run_details`).
-- **Service worker:** `public/sw.js` `CACHE` is the SPA version label (`camp-v145` after prayer-record amendments; `camp-v144` was the prayer team role). `camp-v132` did ship (commit `075f2dd`) but no commit message names it — search `git log -S"camp-vNNN" -- public/sw.js`, not message text.
+- **Service worker:** `public/sw.js` `CACHE` is the SPA version label (`camp-v146` after the QA fixes of 2026-11-03; `camp-v145` was prayer-record amendments; `camp-v144` the prayer team role). `camp-v132` did ship (commit `075f2dd`) but no commit message names it — search `git log -S"camp-vNNN" -- public/sw.js`, not message text.

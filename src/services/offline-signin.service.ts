@@ -3,6 +3,7 @@ import type { IPersonRepository } from '../repositories/interfaces/entity-reposi
 import type { Person, SignOutEvent } from '../core/entities/person';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
+import { canAccessPerson } from './person.service';
 import { parseCsv } from '../utils/csv';
 import { withSignEvent } from './person-lifecycle';
 import { newId } from '../utils/id';
@@ -104,7 +105,9 @@ export function makeOfflineSignInService(personRepo: IPersonRepository): Offline
         if (!firstName || !lastName || !church) continue;
 
         const person = index.get(`${norm(church)}|${norm(firstName)}|${norm(lastName)}`);
-        if (!person) {
+        // Out of scope reads exactly like no match, so the sheet can't confirm who exists elsewhere.
+        // canAccessPerson keeps first aid camp-wide, as designed (QA item 10, 2026-11-03).
+        if (!person || !canAccessPerson(actor, person)) {
           unmatched.push(`${firstName} ${lastName} (${church})`);
           continue;
         }

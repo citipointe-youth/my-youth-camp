@@ -1,6 +1,6 @@
 import type { HttpRequest } from '../http/types';
 import type { SearchService } from '../../services/search.service';
-import { toCamperDto } from '../dto/person.dto';
+import { toCamperDto, toCrossScopeHitDto, maskParentPhone } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 import { createLogger } from '../../utils/logger';
 
@@ -19,8 +19,13 @@ export function makeSearchController(services: SearchControllerServices) {
       // Audit 2026-07-19: the service returns the full Person entity internally; never
       // serialize it in a bulk response — strip to the list CamperDto (no medicareNumber,
       // no dateOfBirth; hasMedicare boolean instead, same as GET /campers).
-      const results = await services.search.search(req.ctx.actor, q);
-      return results.map((r) => ({ ...r, camper: toCamperDto(r.camper) }));
+      // A hit outside the actor's scope gets the allow-listed locator only (QA item 2, 2026-11-03).
+      const actor = req.ctx.actor;
+      const results = await services.search.search(actor, q);
+      return results.map((r) => ({
+        camper: r.limited ? toCrossScopeHitDto(r.camper) : maskParentPhone(toCamperDto(r.camper), actor),
+        contacts: r.contacts,
+      }));
     },
 
     async resolveContacts(req: HttpRequest) {

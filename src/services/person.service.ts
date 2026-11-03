@@ -296,7 +296,7 @@ export function makePersonService(repo: IPersonRepository): PersonService {
     },
 
     async remove(actor, id) {
-      assertCan(actor, 'registrant:write');
+      assertCan(actor, 'person:delete');
       await getOwned(actor, id);
       await repo.delete(id);
       invalidateDashboardCache();

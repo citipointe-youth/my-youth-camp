@@ -2,39 +2,12 @@ import type { HttpRequest } from '../http/types';
 import type { PersonService } from '../../services/person.service';
 import type { RevealAuditService } from '../../services/reveal-audit.service';
 import type { Person } from '../../core/entities/person';
-import type { Actor } from '../../core/entities/user';
-import { toCamperDto, toCamperDetailDto } from '../dto/person.dto';
+import { toCamperDto, toCamperDetailDto, maskParentPhone } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 import { assertCan } from '../../services/access-control';
 import { createLogger } from '../../utils/logger';
-import { maskPhone } from '../../utils/mask';
 
 const logger = createLogger('audit');
-
-/**
- * Roles whose `/campers` response carries the parent/guardian phone MASKED.
- *
- * Bug 1 (2026-07-17) did this for `firstAid`. **`church` was added 2026-08-03** at the owner's
- * request, so a church leader now taps to reveal a parent's number exactly as first aid does.
- *
- * ⚠ The mask has to be at the DTO boundary, not in the SPA. Hiding it client-side while the
- * real number still travels in the JSON makes the reveal theatre — the number is in devtools,
- * and more importantly the AUDIT ROW is never written, because nothing forced a call to the
- * audited endpoint. Masking here is what makes `GET /search/contact/:id/parent` the only way
- * to see it, and that endpoint records a `parent-contact` reveal against the account.
- *
- * Church logins keep `camper:read:sensitive`, so the reveal itself still succeeds — this
- * changes HOW a church reads the number (one audited tap), not WHETHER it may.
- *
- * director/admin/zoneLeader are deliberately unaffected: they run the camp and a masked
- * roster would add an audited tap to routine oversight work for no safeguarding gain.
- */
-const PARENT_PHONE_MASKED_ROLES: ReadonlySet<Actor['role']> = new Set(['firstAid', 'church']);
-
-function maskParentPhone<T extends { parentPhone: string | null }>(dto: T, actor: Actor): T {
-  if (!PARENT_PHONE_MASKED_ROLES.has(actor.role) || !dto.parentPhone) return dto;
-  return { ...dto, parentPhone: maskPhone(dto.parentPhone) };
-}
 
 export interface CamperControllerServices {
   person: PersonService;
@@ -87,7 +60,7 @@ export function makeCamperController(services: CamperControllerServices) {
         ...(b['blueCardNumber'] !== undefined && { blueCardNumber: b['blueCardNumber'] as string }),
         ...(b['blueCardExpiry'] !== undefined && { blueCardExpiry: b['blueCardExpiry'] as string }),
       };
-      return toCamperDto(await person.update(req.ctx.actor, id, patch));
+      return maskParentPhone(toCamperDto(await person.update(req.ctx.actor, id, patch)), req.ctx.actor);
     },
 
     async revealMedicare(req: HttpRequest) {

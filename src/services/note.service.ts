@@ -35,8 +35,8 @@ export interface NoteService {
   recent(actor: Actor, limit?: number): Promise<StudentNote[]>;
   /**
    * First-aid records only (category 'firstaid'), newest first, scoped by canAccessPerson.
-   * Authorised by note:read:firstaid (firstAid/zoneLeader/director/admin/church). NEVER returns
-   * testimonies or general notes — the first-aid Records tab and the church own-church view use this.
+   * Authorised by note:read:firstaid (firstAid/zoneLeader/director/admin). NEVER returns
+   * testimonies or general notes — the first-aid Records tab uses this.
    */
   recentFirstAid(actor: Actor, limit?: number): Promise<StudentNote[]>;
   /** Prayer records only (category 'prayer'), newest first, scoped by canAccessPerson. note:read:prayer. */
@@ -123,11 +123,14 @@ export function makeNoteService(
       if (!camper || !preCampEligible(actor, camper)) throw new NotFoundError('Student not found');
       if (!canAccessPerson(actor, camper)) throw new NotFoundError('Student not found');
       const notes = await noteRepo.findByCamper(camperId);
-      // A sensitive note is hidden from the individual student-profile view for church
-      // logins only — zoneLeader/director/admin (who also reach this via openCamper) still
-      // see it. This is the only surface a church login can read notes on (church holds
-      // note:write but not the broader note:read used by the Notes tab/export).
-      return actor.role === 'church' ? notes.filter((n) => !n.sensitive) : notes;
+      // Sensitive notes and first-aid records (amendments included, they share the category) are
+      // hidden from the individual student-profile view for church logins only — zoneLeader/
+      // director/admin (who also reach this via openCamper) and prayer still see them. Filtered on
+      // read, so nothing stored changes. This is the only surface a church login can read notes on
+      // (church holds note:write but not the broader note:read used by the Notes tab/export).
+      return actor.role === 'church'
+        ? notes.filter((n) => !n.sensitive && n.category !== FIRSTAID_CATEGORY)
+        : notes;
     },
 
     async recent(actor, limit = 20) {

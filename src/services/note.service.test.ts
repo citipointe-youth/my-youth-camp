@@ -9,9 +9,10 @@ import { ForbiddenError, BadRequestError, NotFoundError } from '../core/errors/a
 // NoteService — Phase 4 first-aid records.
 // Pins the RBAC matrix that is the whole point of the feature:
 //   * firstAid can WRITE category 'firstaid' notes, but NOT general notes/testimonies.
-//   * firstAid/zoneLeader/director/admin/church can READ first-aid records via recentFirstAid,
+//   * firstAid/zoneLeader/director/admin can READ first-aid records via recentFirstAid,
 //     each scoped by canAccessPerson; the path NEVER returns testimonies or general notes.
-//   * church reads ONLY its own church's first-aid records, and cannot write them.
+//   * church can neither read nor write first-aid records (operator ruling 2026-11-03, which
+//     reverses Phase 4 owner decision Q3).
 // ---------------------------------------------------------------------------
 
 function person(over: Partial<Person> = {}): Person {
@@ -186,16 +187,21 @@ describe('note.service: recentFirstAid read scoping', () => {
     expect(recs.every((n) => n.category === 'firstaid')).toBe(true);
   });
 
-  it('church sees ONLY its own church\'s first-aid records', async () => {
-    const recs = await svc.recentFirstAid(actor('church', { churchId: 'c1' }));
-    expect(recs).toHaveLength(1);
-    expect(recs[0]?.camperId).toBe('cam1');
+  it('church is refused the first-aid feed, for its own church too', async () => {
+    await expect(svc.recentFirstAid(actor('church', { churchId: 'c1' }))).rejects.toThrow(ForbiddenError);
   });
 
-  it('church does NOT see another church\'s first-aid records', async () => {
-    const recs = await svc.recentFirstAid(actor('church', { churchId: 'c2' }));
-    expect(recs).toHaveLength(1);
-    expect(recs[0]?.camperId).toBe('cam2');
+  it('first-aid records and amendments never reach a church login through the student profile', async () => {
+    const orig = await svc.add(actor('firstAid'), { camperId: 'cam1', category: 'firstaid', body: 'Problem: secret-graze' });
+    await svc.add(actor('firstAid'), { camperId: 'cam1', category: 'firstaid', body: `Amends: ${orig.id}\nAmendment: secret-amend` });
+    await svc.add(actor('church', { churchId: 'c1' }), { camperId: 'cam1', category: 'note', body: 'ordinary note' });
+    const recs = await svc.forCamper(actor('church', { churchId: 'c1' }), 'cam1');
+    expect(JSON.stringify(recs)).not.toContain('secret-');
+    expect(recs.map((n) => n.body)).toContain('ordinary note');
+    // Records already stored are filtered on read, not deleted, and other readers keep them.
+    for (const reader of [actor('zoneLeader', { zone: 'Yellow' }), actor('prayer'), actor('admin'), actor('director')]) {
+      expect(JSON.stringify(await svc.forCamper(reader, 'cam1'))).toContain('secret-amend');
+    }
   });
 
   it('zoneLeader is zone-scoped', async () => {

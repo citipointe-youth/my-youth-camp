@@ -1,5 +1,7 @@
 import type { Person } from '../../core/entities/person';
+import type { Actor } from '../../core/entities/user';
 import { isCamper } from '../../core/entities/person';
+import { maskPhone } from '../../utils/mask';
 
 /**
  * The JSON shape /registrants returns — the SPA's pre-camp My Youth screen reads
@@ -151,6 +153,34 @@ export interface RosterEntry {
   lastEntry: 'in' | 'out' | null;
 }
 
+/**
+ * Roles whose responses carry the parent/guardian phone MASKED.
+ *
+ * Bug 1 (2026-07-17) did this for `firstAid`. **`church` was added 2026-08-03** at the owner's
+ * request, so a church leader now taps to reveal a parent's number exactly as first aid does.
+ *
+ * ⚠ The mask has to be at the DTO boundary, not in the SPA. Hiding it client-side while the
+ * real number still travels in the JSON makes the reveal theatre — the number is in devtools,
+ * and more importantly the AUDIT ROW is never written, because nothing forced a call to the
+ * audited endpoint. Masking here is what makes `GET /search/contact/:id/parent` the only way
+ * to see it, and that endpoint records a `parent-contact` reveal against the account.
+ * **Every route that serialises a person for these roles must pass through this** (QA item 15,
+ * 2026-11-03: /search and /registrants did not).
+ *
+ * Church logins keep `camper:read:sensitive`, so the reveal itself still succeeds — this
+ * changes HOW a church reads the number (one audited tap), not WHETHER it may.
+ *
+ * director/admin/zoneLeader are deliberately unaffected: they run the camp and a masked
+ * roster would add an audited tap to routine oversight work for no safeguarding gain.
+ * `prayer` has no reveal step (no `camper:read:sensitive`), so it is not in this set either.
+ */
+const PARENT_PHONE_MASKED_ROLES: ReadonlySet<Actor['role']> = new Set(['firstAid', 'church']);
+
+export function maskParentPhone<T extends { parentPhone: string | null }>(dto: T, actor: Actor): T {
+  if (!PARENT_PHONE_MASKED_ROLES.has(actor.role) || !dto.parentPhone) return dto;
+  return { ...dto, parentPhone: maskPhone(dto.parentPhone) };
+}
+
 export function toRegistrantDto(p: Person): RegistrantDto {
   return {
     id: p.id,
@@ -261,6 +291,39 @@ export function toCamperDto(p: Person): CamperDto {
 /** Detail (single-person, access-checked) view: the list dto plus dateOfBirth. */
 export function toCamperDetailDto(p: Person): CamperDetailDto {
   return { ...toCamperDto(p), dateOfBirth: p.dateOfBirth ?? null };
+}
+
+/**
+ * A /search hit OUTSIDE the actor's canAccessPerson scope (QA item 2, 2026-11-03): an ALLOW-LIST,
+ * so a new `Person` field stays private unless someone adds it here. Just enough to locate the
+ * person; their church's leader contacts travel beside this in the search result.
+ */
+export interface CrossScopeHitDto {
+  id: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  kind: 'student' | 'leader';
+  churchId: string;
+  churchName: string;
+  zone: string;
+  gender: Person['gender'];
+  grade: Person['grade'];
+}
+
+export function toCrossScopeHitDto(p: Person): CrossScopeHitDto {
+  return {
+    id: p.id,
+    firstName: p.firstName,
+    lastName: p.lastName,
+    fullName: `${p.firstName} ${p.lastName}`,
+    kind: p.kind === 'leader' ? 'leader' : 'student',
+    churchId: p.churchId,
+    churchName: p.churchName,
+    zone: p.zone,
+    gender: p.gender,
+    grade: p.grade ?? null,
+  };
 }
 
 export function toRosterEntry(p: Person, sessionId: string): RosterEntry {

@@ -55,7 +55,7 @@ working-root `ui-mocks.html`.
 Schedule** (no Medical Watch); "Student Info" screen led by **ministry-leader contacts** (parent is
 the bottom fallback), softened medical-alert/consent tone, a quick action-log form. Backend:
 category-scoped RBAC `note:write:firstaid` (firstAid+director+admin) / `note:read:firstaid`
-(+zoneLeader, +church own-church); routes `GET /notes/firstaid` and `GET /search/contacts/:id`;
+(+zoneLeader; church own-church read was removed by operator ruling 2026-11-03); routes `GET /notes/firstaid` and `GET /search/contacts/:id`;
 first-aid records stored as `StudentNote{category:'firstaid'}` (4-line body) — **no migration**. New
 `note.service.test.ts` + extended `access-control.test.ts`. Admin Notes gained a "First-aid" filter.
 

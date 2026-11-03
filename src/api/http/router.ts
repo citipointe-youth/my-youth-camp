@@ -133,7 +133,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/notes', auth: true, handler: (r) => note.add(r) },
     { method: 'GET', path: '/notes/recent', auth: true, handler: (r) => note.recent(r) },
     // First-aid records only (Phase 4) — category 'firstaid', scoped by canAccessPerson.
-    // Authorised by note:read:firstaid (firstAid/zoneLeader/director/admin/church). Declared
+    // Authorised by note:read:firstaid (firstAid/zoneLeader/director/admin). Declared
     // before /notes/camper/:camperId; both are distinct literal prefixes so order is not critical.
     { method: 'GET', path: '/notes/firstaid', auth: true, handler: (r) => note.recentFirstAid(r) },
     // Prayer records only (2026-10) — category 'prayer', scoped by canAccessPerson. note:read:prayer.

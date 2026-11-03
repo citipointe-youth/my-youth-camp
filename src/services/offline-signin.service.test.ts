@@ -103,6 +103,43 @@ describe('OfflineSignInService', () => {
   });
 
   describe('importSignIns', () => {
+    // Operator ruling 2026-11-03: a church or zone login cannot mark another church's child on site.
+    describe('scope', () => {
+      const other = () => person({ id: 'pOther', firstName: 'Zed', lastName: 'Other', gender: 'male', churchId: 'c2', churchName: 'Grace', zone: 'Blue' });
+      const csv = sheet([['Zed', 'Other', 'Grace', 'male', '9', 'Y']]);
+
+      it("church login: another church's child stays off site and the row reports as unmatched", async () => {
+        await people.save(other());
+        const result = await svc.importSignIns(church(), csv);
+        expect(result.signedIn).toBe(0);
+        expect(result.unmatched).toEqual(['Zed Other (Grace)']);
+        const after = await people.findById('pOther');
+        expect(after?.atCamp).toBe(false);
+        expect(after?.signOutHistory).toEqual([]);
+      });
+
+      it('zone login: a child outside the zone stays off site', async () => {
+        await people.save(other());
+        const zone: Actor = { id: 'u3', role: 'zoneLeader', churchId: null, churchName: null, zone: 'Yellow', displayName: 'Yellow' };
+        const result = await svc.importSignIns(zone, csv);
+        expect(result.signedIn).toBe(0);
+        expect((await people.findById('pOther'))?.atCamp).toBe(false);
+      });
+
+      it('church login: its own child still signs in', async () => {
+        await people.save(person({ id: 'p1' }));
+        const result = await svc.importSignIns(church(), sheet([['Ada', 'Lovelace', 'Victory Church', 'female', '9', 'Y']]));
+        expect(result.signedIn).toBe(1);
+      });
+
+      it('first aid is camp-wide by design and still signs anyone in', async () => {
+        await people.save(other());
+        const fa: Actor = { id: 'u4', role: 'firstAid', churchId: null, churchName: null, zone: null, displayName: 'First aid' };
+        const result = await svc.importSignIns(fa, csv);
+        expect(result.signedIn).toBe(1);
+      });
+    });
+
     it('signs in a matched student not already at camp', async () => {
       await people.save(person({ id: 'p1', firstName: 'Ada', lastName: 'Lovelace', churchName: 'Victory Church', atCamp: false, lifecycle: 'registered' }));
       const csv = sheet([['Ada', 'Lovelace', 'Victory Church', 'female', '9', 'Y']]);

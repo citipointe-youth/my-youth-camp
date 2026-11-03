@@ -12,7 +12,7 @@ export interface StudentNote {
   /** Record category: 'note' | 'testimony' | (attendance kinds), free-form for forward compatibility. */
   category?: string | null;
   /** When true, hidden from the individual student-profile note list for church logins only
-   * (zoneLeader/director/admin still see it there). Defaults false. */
+   * (zoneLeader/director/admin/prayer still see it there). Defaults false. */
   sensitive?: boolean;
   createdAt: ISODateString;
 }

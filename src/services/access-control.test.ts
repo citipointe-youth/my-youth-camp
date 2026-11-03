@@ -28,9 +28,9 @@ describe('access-control: can()', () => {
     expect(can(c, 'notification:send:camp')).toBe(false);
   });
 
-  it('church can READ first-aid records (own church) but cannot WRITE them or read general notes (Phase 4)', () => {
+  it('church cannot read or write first-aid records or read general notes (ruling 2026-11-03)', () => {
     const c = actor('church');
-    expect(can(c, 'note:read:firstaid')).toBe(true);
+    expect(can(c, 'note:read:firstaid')).toBe(false);
     expect(can(c, 'note:write:firstaid')).toBe(false);
     expect(can(c, 'note:read')).toBe(false);
   });
