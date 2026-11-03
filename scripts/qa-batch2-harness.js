@@ -159,7 +159,7 @@ function drainCtx(queue, apiFn) {
   const c = { CHECKIN_QUEUE: queue, navigator: { onLine: true }, _draining: false, _rosterInUse: false, Set, Math, TOKEN: 't', timers: [],
     api: apiFn, _persistQueue() {}, _markSynced() {}, _rCheckin: async () => {}, _hideUndoToast() {}, clearTimeout() {}, setTimeout: (f, ms) => { c.timers.push(ms); return 1; },
     _undoCamperId: null, _lastRoster: [], _checkinFailNames: [], _checkinFailed: 0, _checkinFailReason: '', _queueWaiting: false, _drainRetry: null, _bootOffline: false, LEADER_INITIALS: 'QA',
-    _queueGen: 0, _drainDelay: 30000, _inFlight: null, _qKey: (e) => e.camperId + '|' + e.sessionId };
+    _queueGen: 0, _drainDelay: 30000, _inFlight: null, _qKey: (e) => e.camperId + '|' + e.sessionId, _queuePurgeOld() {} };
   vm.createContext(c);
   vm.runInContext(extract('function _qRemove(') + extract('async function drainQueue('), c);
   return c;
@@ -215,11 +215,11 @@ async function queueRules() {
 }
 // Final review: a saved queue belongs to its login.
 function restoreCtx(store, actor) {
-  const c = { CHECKIN_QUEUE: [], ACTOR: actor, SEL_SESSION: null, JSON, Array, toast() {}, drained: 0, _draining: false, drainQueue() { c.drained++; },
+  const c = { CHECKIN_QUEUE: [], ACTOR: actor, SEL_SESSION: null, JSON, Array, Date, Set, toasts: [], toast(m) { c.toasts.push(m); }, drained: 0, _draining: false, drainQueue() { c.drained++; },
     localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } }, window: { _ciqRestored: false } };
   vm.createContext(c);
-  for (const fn of ['_ciqKey', '_persistQueue', '_restoreQueue', '_queueStop']) vm.runInContext(extract('function ' + fn + '('), c);
-  vm.runInContext('var _drainRetry=null,_queueGen=0,_draining=false,_inFlight=null,_queueWaiting=false;function clearTimeout(){}', c);
+  for (const fn of ['_ciqKey', '_persistQueue', '_restoreQueue', '_queueStop', '_queueLoad', '_queuePurgeOld', '_qRemove']) vm.runInContext(extract('function ' + fn + '('), c);
+  vm.runInContext('var PREVIEW_MODE=false,ACCOUNT_PREVIEW=false,_drainRetry=null,_queueGen=0,_draining=false,_inFlight=null,_queueWaiting=false,_checkinOldNames=[],_checkinOldCount=0;function clearTimeout(){}', c);
   return c;
 }
 function queueOwners() {
@@ -227,8 +227,16 @@ function queueOwners() {
   let c = restoreCtx(store, { username: 'a' });
   c._queueStop();
   assert.ok(store.ycp_ciq_a, 'expiry before restore must not wipe the saved queue');
-  c._restoreQueue(true);
+  // Expiry part-way through a render: no login means nothing is loaded or marked loaded.
+  c.ACTOR = null; c._queueLoad(false, 'cur');
+  assert.strictEqual(c.window._ciqRestored, false, 'no login: not marked as loaded');
+  c.ACTOR = { username: 'a' };
+  c.CHECKIN_QUEUE.push({ camperId: 'z', sessionId: 's', type: 'in' }); c._persistQueue(); c.CHECKIN_QUEUE.length = 0;
+  assert.strictEqual(JSON.parse(store.ycp_ciq_a).length, 1, 'not loaded yet: a write can never overwrite the saved queue');
+  c._queueLoad(true);
   assert.strictEqual(c.CHECKIN_QUEUE.length, 1, 'relogin keeps a tap from an earlier session');
+  c._queueLoad(true);
+  assert.strictEqual(c.CHECKIN_QUEUE.length, 1, 'loading twice adds nothing');
   assert.strictEqual(c.drained, 1, 'restoring a non-empty queue starts the drain');
   c.CHECKIN_QUEUE.push({ camperId: 'y', sessionId: 's', type: 'in' }); c._persistQueue();
   assert.strictEqual(JSON.parse(store.ycp_ciq_a).length, 2, 'a later tap adds to the saved queue');
@@ -239,9 +247,28 @@ function queueOwners() {
   c.ACTOR = null; c._persistQueue();
   assert.strictEqual(JSON.parse(store.ycp_ciq_a).length, 2, 'no login: nothing written');
   const b = restoreCtx(store, { username: 'b' });
-  b._restoreQueue(true);
+  b._queueLoad(true);
   assert.strictEqual(b.CHECKIN_QUEUE.length, 0, 'another login never picks up these taps');
   assert.strictEqual(JSON.parse(store.ycp_ciq_a).length, 2, 'and leaves them saved for the owner');
+  // Which taps a known current session may keep.
+  const mix = { ycp_ciq_d: JSON.stringify([{ camperId: 'x', sessionId: 'cur', type: 'in' }, { camperId: 'y', sessionId: 'old', type: 'in' }]) };
+  const d = restoreCtx(mix, { username: 'd' }); d._queueLoad(false, 'cur');
+  assert.strictEqual(d.CHECKIN_QUEUE.length, 1, 'known session: the owner rule drops only the other session');
+  assert.strictEqual(d.CHECKIN_QUEUE[0].sessionId, 'cur', 'never the same-session tap');
+  // Older than 48 h: not sent, named, removed. Without a time it gets stamped, not dropped.
+  const H = 36e5;
+  const aged = { ycp_ciq_e: JSON.stringify([
+    { camperId: 'x', sessionId: 's', type: 'in', name: 'Ann', at: Date.now() - 49 * H },
+    { camperId: 'n', sessionId: 's', type: 'in', at: Date.now() - 49 * H },
+    { camperId: 'y', sessionId: 's', type: 'in', name: 'Bo', at: Date.now() - 47 * H },
+    { camperId: 'z', sessionId: 's', type: 'in' }]) };
+  const e = restoreCtx(aged, { username: 'e' }); e._queueLoad(true);
+  assert.deepStrictEqual(e.CHECKIN_QUEUE.map((q) => q.camperId), ['y', 'z'], 'over 48 h removed, the rest stay');
+  assert.ok(e.CHECKIN_QUEUE[1].at > 0, 'an untimed tap is stamped');
+  assert.strictEqual(JSON.parse(aged.ycp_ciq_e).length, 2, 'removed from the saved copy too');
+  assert.deepStrictEqual(Array.from(vm.runInContext('_checkinOldNames', e)), ['Ann'], 'named');
+  assert.strictEqual(vm.runInContext('_checkinOldCount', e), 2, 'and counted, for the one with no name');
+  assert.ok(/Ann/.test(e.toasts[0]), 'told straight away');
 }
 (async () => {
   const nonApp = Object.assign(new Error('x'), { transient: true, nonApp: true });
@@ -252,6 +279,9 @@ function queueOwners() {
   assert.strictEqual(await drain(net, { offline: true }), 1, 'flaky: saved tap kept');
   assert.strictEqual(await drain(net, {}), 0, 'flaky: live tap is the ruled banner-only drop');
   assert.strictEqual(await drain(appNo, { offline: true }), 0, 'the app refused it: dropped with the banner');
+  const named = drainCtx([{ camperId: 'a', sessionId: 's', type: 'in', offline: true, name: 'Ann' }], async () => { throw appNo; });
+  await named.drainQueue();
+  assert.deepStrictEqual(Array.from(named._checkinFailNames), ['Ann'], 'a refusal after a reload names the child from the saved tap');
   await queueRules();
   queueOwners();
   const offline = await recover(Object.assign(new Error('x'), { transient: true }));
