@@ -110,7 +110,7 @@ async function recover(err) {
 function undo(queue, type) {
   const c = { CHECKIN_QUEUE: queue, clearTimeout() {}, _hideUndoToast() {}, _persistQueue() {}, _rCheckin() {}, _queueEntry() { c.reversed = true; } };
   vm.createContext(c);
-  vm.runInContext(`var _undoTimer=null,_undoCamperId="a",_undoType="${type}",_undoSession="s",_draining=false;` + extract('function undoCheck('), c);
+  vm.runInContext(`var _undoTimer=null,_undoCamperId="a",_undoType="${type}",_undoSession="s",_draining=false,_inFlight=null;` + extract('function undoCheck('), c);
   c.undoCheck();
   return c.CHECKIN_QUEUE.map((e) => e.type);
 }
@@ -155,14 +155,93 @@ const saved = (over = {}) => ({ savedAt: new Date().toISOString(), session: MON_
   assert.strictEqual(v2.roster.find((r) => r.id === 'a').checkedIn, false);
 }
 // Review of batch 3: saved taps survive anything but the app's own refusal.
-async function drain(err, entry) {
-  const c = { CHECKIN_QUEUE: [{ camperId: 'a', sessionId: 's', type: 'in', ...entry }], navigator: { onLine: true }, _draining: false, _rosterInUse: false,
-    api: async () => { throw err; }, _persistQueue() {}, _markSynced() {}, _rCheckin: async () => {}, _hideUndoToast() {}, clearTimeout() {}, setTimeout() {},
-    _undoCamperId: null, _lastRoster: [], _checkinFailNames: [], _checkinFailed: 0, _checkinFailReason: '', _queueWaiting: false, _drainRetry: null, _bootOffline: false, LEADER_INITIALS: 'QA' };
+function drainCtx(queue, apiFn) {
+  const c = { CHECKIN_QUEUE: queue, navigator: { onLine: true }, _draining: false, _rosterInUse: false, Set, Math, TOKEN: 't', timers: [],
+    api: apiFn, _persistQueue() {}, _markSynced() {}, _rCheckin: async () => {}, _hideUndoToast() {}, clearTimeout() {}, setTimeout: (f, ms) => { c.timers.push(ms); return 1; },
+    _undoCamperId: null, _lastRoster: [], _checkinFailNames: [], _checkinFailed: 0, _checkinFailReason: '', _queueWaiting: false, _drainRetry: null, _bootOffline: false, LEADER_INITIALS: 'QA',
+    _queueGen: 0, _drainDelay: 30000, _inFlight: null, _qKey: (e) => e.camperId + '|' + e.sessionId };
   vm.createContext(c);
-  vm.runInContext(extract('async function drainQueue('), c);
+  vm.runInContext(extract('function _qRemove(') + extract('async function drainQueue('), c);
+  return c;
+}
+async function drain(err, entry) {
+  const c = drainCtx([{ camperId: 'a', sessionId: 's', type: 'in', ...entry }], async () => { throw err; });
   await c.drainQueue();
   return c.CHECKIN_QUEUE.length;
+}
+// Final review: a 401 is not a refusal; a stuck saved tap can't block other children.
+async function queueRules() {
+  const ended = Object.assign(new Error('x'), { code: 'UNAUTHORIZED', sessionEnded: true });
+  const q2 = () => [{ camperId: 'a', sessionId: 's', type: 'in', offline: true }, { camperId: 'b', sessionId: 's', type: 'in', offline: true }];
+  let calls = 0;
+  let c = drainCtx(q2(), async () => { calls++; throw ended; });
+  await c.drainQueue();
+  assert.strictEqual(c.CHECKIN_QUEUE.length, 2, '401: every saved tap kept');
+  assert.strictEqual(calls, 1, '401: stops at the first');
+  assert.strictEqual(c._checkinFailed, 0, '401: no "not saved" banner');
+  assert.strictEqual(c.timers.length, 0, '401: no retry until signed back in');
+  // Session ends while the POST is in the air (sessionExpired bumps the generation).
+  c = drainCtx(q2(), async () => { c._queueGen++; c.CHECKIN_QUEUE.length = 0; throw ended; });
+  await c.drainQueue();
+  assert.strictEqual(c._checkinFailed, 0, 'mid-flight expiry: not counted as a refusal');
+  // No token: nothing goes out at all.
+  calls = 0;
+  c = drainCtx(q2(), async () => { calls++; }); c.TOKEN = null;
+  await c.drainQueue();
+  assert.strictEqual(calls, 0, 'never sends tokenless');
+  // Persistent 5xx on one child: the other still sends, the stuck one stays saved and marked, with backoff.
+  const boom = Object.assign(new Error('x'), { transient: true, status: 500 });
+  const sent = [];
+  c = drainCtx(q2(), async (p, o) => { if (o.body.camperId === 'a') throw boom; sent.push(o.body.camperId); });
+  await c.drainQueue();
+  assert.deepStrictEqual(sent, ['b'], '5xx: the other child still sends');
+  assert.strictEqual(c.CHECKIN_QUEUE.length, 1, '5xx: stuck tap stays saved');
+  assert.strictEqual(c.CHECKIN_QUEUE[0].tries, 1, '5xx: marked as tried');
+  assert.deepStrictEqual(c.timers, [30000], '5xx: one retry timer');
+  c._drainRetry = null;
+  await c.drainQueue();
+  assert.strictEqual(c.timers[1], 60000, '5xx: backs off');
+  for (let i = 0; i < 6; i++) { c._drainRetry = null; await c.drainQueue(); }
+  assert.ok(c.timers[c.timers.length - 1] <= 300000, '5xx: backoff is capped');
+  // Same child in then out: the out must not overtake a stuck in.
+  const seq = [];
+  c = drainCtx([{ camperId: 'a', sessionId: 's', type: 'in', offline: true }, { camperId: 'a', sessionId: 's', type: 'out', offline: true }],
+    async (p, o) => { seq.push(o.body.type); throw boom; });
+  await c.drainQueue();
+  assert.deepStrictEqual(seq, ['in'], 'same child keeps its order');
+  // A live tap's 5xx stays the ruled banner-only drop.
+  assert.strictEqual(await drain(boom, {}), 0, 'live 5xx: dropped with the banner');
+  assert.strictEqual(await drain(boom, { offline: true }), 1, 'saved 5xx: kept');
+}
+// Final review: a saved queue belongs to its login.
+function restoreCtx(store, actor) {
+  const c = { CHECKIN_QUEUE: [], ACTOR: actor, SEL_SESSION: null, JSON, Array, toast() {}, drained: 0, _draining: false, drainQueue() { c.drained++; },
+    localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } }, window: { _ciqRestored: false } };
+  vm.createContext(c);
+  for (const fn of ['_ciqKey', '_persistQueue', '_restoreQueue', '_queueStop']) vm.runInContext(extract('function ' + fn + '('), c);
+  vm.runInContext('var _drainRetry=null,_queueGen=0,_draining=false,_inFlight=null,_queueWaiting=false;function clearTimeout(){}', c);
+  return c;
+}
+function queueOwners() {
+  const store = { ycp_ciq_a: JSON.stringify([{ camperId: 'x', sessionId: 'old', type: 'in' }]) };
+  let c = restoreCtx(store, { username: 'a' });
+  c._queueStop();
+  assert.ok(store.ycp_ciq_a, 'expiry before restore must not wipe the saved queue');
+  c._restoreQueue(true);
+  assert.strictEqual(c.CHECKIN_QUEUE.length, 1, 'relogin keeps a tap from an earlier session');
+  assert.strictEqual(c.drained, 1, 'restoring a non-empty queue starts the drain');
+  c.CHECKIN_QUEUE.push({ camperId: 'y', sessionId: 's', type: 'in' }); c._persistQueue();
+  assert.strictEqual(JSON.parse(store.ycp_ciq_a).length, 2, 'a later tap adds to the saved queue');
+  c._queueStop();
+  assert.strictEqual(c.CHECKIN_QUEUE.length, 0, 'expiry empties memory');
+  assert.strictEqual(JSON.parse(store.ycp_ciq_a).length, 2, 'and keeps the saved copy');
+  assert.strictEqual(c.window._ciqRestored, false, 'and the next login restores again');
+  c.ACTOR = null; c._persistQueue();
+  assert.strictEqual(JSON.parse(store.ycp_ciq_a).length, 2, 'no login: nothing written');
+  const b = restoreCtx(store, { username: 'b' });
+  b._restoreQueue(true);
+  assert.strictEqual(b.CHECKIN_QUEUE.length, 0, 'another login never picks up these taps');
+  assert.strictEqual(JSON.parse(store.ycp_ciq_a).length, 2, 'and leaves them saved for the owner');
 }
 (async () => {
   const nonApp = Object.assign(new Error('x'), { transient: true, nonApp: true });
@@ -173,6 +252,8 @@ async function drain(err, entry) {
   assert.strictEqual(await drain(net, { offline: true }), 1, 'flaky: saved tap kept');
   assert.strictEqual(await drain(net, {}), 0, 'flaky: live tap is the ruled banner-only drop');
   assert.strictEqual(await drain(appNo, { offline: true }), 0, 'the app refused it: dropped with the banner');
+  await queueRules();
+  queueOwners();
   const offline = await recover(Object.assign(new Error('x'), { transient: true }));
   assert.strictEqual(offline.expired + offline.removed, 0, 'no signal keeps the session');
   assert.strictEqual(offline.token, 't');

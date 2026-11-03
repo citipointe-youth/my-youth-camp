@@ -1152,12 +1152,13 @@ async function _doFetch(path,opt){
   }
   if(res.status===401&&path.indexOf('/auth/login')!==0){
     if(TOKEN)sessionExpired();
-    throw new Error('Session expired — please sign in again.');
+    const se=new Error('Session expired — please sign in again.');se.sessionEnded=true;throw se;
   }
   if(res.status===204)return null;
   if(!res.ok){
     const err=new Error((j&&(j.message||j.error))||('Request failed ('+res.status+')'));
     err.code=j&&j.code;
+    err.status=res.status;
     if(res.status>=500||res.status===429)err.transient=true;
     // A stale cached ACTOR (e.g. an admin reset this account's password in another tab) can
     // drift out of sync with the server; if the server says the gate is up, trust it.
@@ -1671,6 +1672,9 @@ function dayFmt(d){try{return new Date(d+'T12:00:00Z').toLocaleDateString('en-AU
 
 function sessionExpired(){
   _rosterClear(); // the session is over, so nothing of the group stays on the phone
+  _queueStop();
+  clearTimeout(_undoTimer);_undoCamperId=null;_hideUndoToast();
+  _bootOffline=false;_netStrip();
   Cache.clear();
   TOKEN=null;ACTOR=null;SESSIONS=[];SEL_SESSION=null;SETTINGS=null;STACK=['home'];
   document.getElementById('bar').style.display='none';
@@ -1810,6 +1814,7 @@ async function doLogin(){
     _loadLeaderInitials();
     enforceInitials();
     _offerNoteDraft();
+    _resumeQueue(true);         // this login's saved taps, if any, carry on from where they stopped
     _offerAlertsAfterLogin();   // non-church roles only — church gets it after initials
   }catch(e){
     const msg=e.message==='Invalid credentials'?'That username or password is not right. Check for capital letters, or ask your camp admin.':e.message;
@@ -1827,6 +1832,7 @@ function logout(){
   api('/auth/logout',{method:'POST'}).catch(()=>{});
   localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
   sessionStorage.removeItem('ycp_wizardReturn');
+  clearTimeout(_drainRetry);_drainRetry=null;
   try{sessionStorage.removeItem(_ndKey());}catch(_){}
   _rosterClear();
   try{localStorage.removeItem(_ciqKey());}catch(_){}
@@ -3583,13 +3589,32 @@ function _ciLabel(session){
 }
 /* ===== DAILY CHECK-IN ===== */
 // Optimistic check-in queue — queued writes drain in order, survive brief offline.
-const CHECKIN_QUEUE=[];let _draining=false,_onlineHandlerAdded=false;
+const CHECKIN_QUEUE=[];let _draining=false;
+window.addEventListener('online',()=>{if(ACTOR&&TOKEN&&CHECKIN_QUEUE.length)drainQueue();});
 // S2 (2026-07-26): the queue is persisted per account so a reload, tab eviction, or iOS
 // reclaiming a backgrounded PWA no longer discards queued attendance taps. Key mirrors
 // _initialsKey()'s convention. Entries carry the initials captured AT QUEUE TIME — draining
 // under LEADER_INITIALS would misattribute a rehydrated entry to whoever is logged in now.
+/* The saved queue belongs to one login: its key is the login, so another user can't read or send
+   it. When a session ends, memory is emptied and the saved copy stays for that login's return. */
+function _queueStop(){
+  if(window._ciqRestored)_persistQueue(); // not restored yet means memory is empty, and would wipe it
+  CHECKIN_QUEUE.length=0;window._ciqRestored=false;
+  _queueGen++;_draining=false;_inFlight=null;_queueWaiting=false;
+  clearTimeout(_drainRetry);_drainRetry=null;
+}
+// Load and start sending at sign-in or reopen, without waiting for the check-in screen.
+// keepAll: signing back in, or the server can't say which session is current. Nothing is judged.
+async function _resumeQueue(keepAll){
+  if(window._ciqRestored||!ACTOR||PREVIEW_MODE||ACCOUNT_PREVIEW||!_savedQueueCount())return;
+  const who=ACTOR;
+  const cur=keepAll?null:await api('/checkin/sessions/current').catch(()=>null);
+  if(ACTOR!==who||window._ciqRestored)return;
+  window._ciqRestored=true;_restoreQueue(keepAll||!cur,cur&&cur.id);
+}
 function _ciqKey(){return 'ycp_ciq_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
 function _persistQueue(){
+  if(!ACTOR)return; // the key is the login: with nobody signed in there is nowhere safe to write
   try{
     if(CHECKIN_QUEUE.length)localStorage.setItem(_ciqKey(),JSON.stringify(CHECKIN_QUEUE));
     else localStorage.removeItem(_ciqKey());
@@ -3598,20 +3623,22 @@ function _persistQueue(){
 // Rehydrate on boot. Entries for any session other than the one now selected are DROPPED
 // (owner decision) — their window has closed and the POST would 403. The drop is reported
 // so it can be reconciled against the paper sheet rather than vanishing.
-function _restoreQueue(keepAll){
+function _restoreQueue(keepAll,sessionId=SEL_SESSION){
   let saved=[];
   try{saved=JSON.parse(localStorage.getItem(_ciqKey())||'[]');}catch(_){saved=[];}
   if(!Array.isArray(saved)||!saved.length)return;
   // On the saved list nothing has answered yet, so no taps are judged: each keeps its own session
   // and the server decides when it is reached. A persisted tap counts as saved offline (see drainQueue).
-  const fresh=saved.filter(e=>e&&e.camperId&&(keepAll||e.sessionId===SEL_SESSION)).map(e=>({...e,offline:true}));
+  const fresh=saved.filter(e=>e&&e.camperId&&(keepAll||e.sessionId===sessionId)).map(e=>({...e,offline:true}));
   const dropped=saved.length-fresh.length;
   CHECKIN_QUEUE.push(...fresh);
   _persistQueue();
   if(dropped>0)toast(dropped+' queued check-in'+(dropped===1?'':'s')+' from an earlier session were discarded — check the paper sheet');
   if(CHECKIN_QUEUE.length&&!_draining)drainQueue();
 }
-let _queueWaiting=false,_drainRetry=null;
+let _queueWaiting=false,_drainRetry=null,_queueGen=0,_drainDelay=30000,_inFlight=null;
+const _qKey=e=>e.camperId+'|'+e.sessionId;
+function _qRemove(e){const i=CHECKIN_QUEUE.indexOf(e);if(i>=0)CHECKIN_QUEUE.splice(i,1);}
 let _undoTimer=null,_undoCamperId=null,_undoType=null,_undoSession=null,_undoName='';
 // QA item 4: the tapped row leaves the list and the next one slides under the finger, so a
 // double tap (100-350 ms) would check in the next child. Ignore list taps just after a write.
@@ -3633,38 +3660,55 @@ let _checkinFailed=0;
 let _checkinFailReason='',_checkinFailNames=[];
 
 function _queueEntry(camperId,type,sessionId=SEL_SESSION){
+  if(!window._ciqRestored){window._ciqRestored=true;_restoreQueue(true);} // add to what's saved, never over it
   // initials captured NOW, not at drain time — a rehydrated entry must keep its original author.
   CHECKIN_QUEUE.push({camperId,type,sessionId,initials:LEADER_INITIALS,offline:!navigator.onLine||_bootOffline||_rosterInUse});
   _persistQueue();
   _updateSyncDots(camperId,'pending');
   if(!_draining)drainQueue();
-  if(!_onlineHandlerAdded){window.addEventListener('online',drainQueue);_onlineHandlerAdded=true;}
 }
 async function drainQueue(){
-  if(_draining)return;_draining=true;_queueWaiting=false;
-  while(CHECKIN_QUEUE.length>0){
-    const entry=CHECKIN_QUEUE[0];
+  if(_draining||!TOKEN)return;_draining=true;_queueWaiting=false;
+  // gen changes when the session ends: this pass then touches nothing, and the saved copy stands.
+  const gen=_queueGen,blocked=new Set();let sent=false;
+  for(;;){
+    // A stuck tap holds back only later taps for the same child and session, to keep their order.
+    const entry=CHECKIN_QUEUE.find(e=>!blocked.has(_qKey(e)));
+    if(!entry)break;
+    _inFlight=entry;
     try{
       // entry.initials falls back for any entry queued before this change shipped.
       await api('/checkin',{method:'POST',body:{camperId:entry.camperId,sessionId:entry.sessionId,type:entry.type,initials:entry.initials||LEADER_INITIALS}});
-      CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId);
+      if(gen!==_queueGen)return;
+      _qRemove(entry);_persistQueue();_markSynced(entry.camperId);sent=true;
       if(_rosterInUse)_rosterSynced(entry);
     }catch(e){
+      if(gen!==_queueGen)return;
+      // A 401 says the session ended, nothing about the tap. It stays saved for the same login.
+      if(e&&e.sessionEnded){_draining=false;_inFlight=null;return;}
       // Wait, queue stays persisted: no signal; something other than the app answered (wifi sign-in
       // page); or a tap saved offline hit a failed attempt. Only the app's own refusal may drop one.
-      if(!navigator.onLine||(e&&(e.nonApp||(e.transient&&entry.offline)))){_queueWaiting=true;break;}
+      if(!navigator.onLine||(e&&(e.nonApp||(e.transient&&entry.offline&&!e.status)))){_queueWaiting=true;break;}
+      // The app answered with a 5xx or 429: keep the saved tap, say so on screen, move to the next child.
+      if(e&&e.transient&&entry.offline){entry.tries=(entry.tries||0)+1;_persistQueue();blocked.add(_qKey(entry));continue;}
       // Deliberate: an ONLINE failure is a hard drop + banner (owner chose banner only).
       if(!_checkinFailReason)_checkinFailReason=(e&&e.message)||'';
-      CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId,'error');_checkinFailed++; // B-1: surface in the banner
+      _qRemove(entry);_persistQueue();_markSynced(entry.camperId,'error');_checkinFailed++; // B-1: surface in the banner
       // QA item 19: say who, and take back the "Checked in · Undo" toast the failure just contradicted.
       const failed=(_lastRoster||[]).find(r=>r.id===entry.camperId);
       if(failed&&!_checkinFailNames.includes(failed.name))_checkinFailNames.push(failed.name);
       if(_undoCamperId===entry.camperId){clearTimeout(_undoTimer);_undoCamperId=null;_hideUndoToast();}
     }
   }
-  _draining=false;
-  // The 'online' event never fires when the phone already thinks it is online, so try again.
-  if(_queueWaiting&&navigator.onLine&&!_drainRetry)_drainRetry=setTimeout(()=>{_drainRetry=null;if(_bootOffline)_offlineBootRecover();drainQueue();},30000);
+  _draining=false;_inFlight=null;
+  // The 'online' event never fires when the phone already thinks it is online, so try again:
+  // 30 s, doubling to 5 min while nothing gets through, back to 30 s when something does.
+  const again=_queueWaiting||blocked.size>0;
+  if(sent||!again)_drainDelay=30000;
+  if(again&&navigator.onLine&&!_drainRetry){
+    _drainRetry=setTimeout(()=>{_drainRetry=null;if(_bootOffline)_offlineBootRecover();drainQueue();},_drainDelay);
+    _drainDelay=Math.min(_drainDelay*2,300000);
+  }
   await _rCheckin();
 }
 function _updateSyncDots(camperId,state){
@@ -3955,10 +3999,13 @@ async function _renderDailyCheckin(){
   // B-1: surface unsynced (still draining) + failed (dropped on an online error) state so a
   // leader never silently believes a tap saved. Failed banner offers a retry.
   const syncingN=CHECKIN_QUEUE.length;
-  const syncBanner=(syncingN>0||_checkinFailed>0)?
+  const stuck=CHECKIN_QUEUE.filter(e=>e.tries>0);
+  const stuckNames=[...new Set(stuck.map(e=>(roster.find(r=>r.id===e.camperId)||{}).name||''))].filter(Boolean);
+  const stuckBanner=stuck.length?`<div class="ci-sync ci-sync-pending" id="ciStuck">${icSm('alert')} <span>Not sent yet: ${esc(stuckNames.join(', ')||(stuck.length+' check-in'+(stuck.length===1?'':'s')))}. The server had a problem. Saved on this phone and still trying.</span></div>`:'';
+  const syncBanner=(syncingN>stuck.length||_checkinFailed>0)?
     (_checkinFailed>0
       ?`<div class="ci-sync ci-sync-fail" role="button" onclick="_dismissFailedCheckins()">${icSm('alert')} <span>Not saved: ${esc(_checkinFailNames.join(', ')||(_checkinFailed+' check-in'+(_checkinFailed===1?'':'s')))}. Tap Check in again to retry.${_checkinFailReason?' '+esc(_checkinFailReason):''} Tap here to dismiss.</span></div>`
-      :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${(navigator.onLine&&!_queueWaiting&&!_bootOffline)?`${syncingN} sending…`:`No signal. ${syncingN} saved on this phone, will send when you’re back.`}</div>`):'';
+      :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${(navigator.onLine&&!_queueWaiting&&!_bootOffline)?`${syncingN-stuck.length} sending…`:`No signal. ${syncingN-stuck.length} saved on this phone, will send when you’re back.`}</div>`):'';
   const doneSection=doneList.length>0?`<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · <span class="nm-cnt" data-total="${doneList.length}">${doneList.length}</span></summary>
     ${doneList.map(c=>rowHtml(c)).join('')}</details>`:'';
   // ("Not signed in" moved to the bottom of the My-students screen — see filterMyYouth.)
@@ -3972,7 +4019,7 @@ async function _renderDailyCheckin(){
       <select onchange="setFilter('grade',this.value)">${gradeOpts}</select>
     </div>`}
     ${off?`<div class="ci-sync ci-sync-pending" id="ciLastSaved">${icSm('clock')} <span>No signal. This is the last saved list, from ${esc(dtFmt(off.savedAt))}. It may be out of date.${off.savedFrom?` The names are from ${esc(off.savedFrom)}, so everyone starts as not checked in for this session.`:''}${off.readOnly?'':' Your taps will send when you’re back.'}</span></div>`:''}
-    ${syncBanner}
+    ${stuckBanner}${syncBanner}
     ${off?'':_filterBanner('checkin',list.length,roster.length)}
     <div class="card" style="display:flex;justify-content:space-between;align-items:center">
       <div><div class="nm">${esc(label)} check-in ${helpTip('Tap a name to mark that person present for this session. Pick a different session with the buttons up top: AM is morning, PM is afternoon, and • marks the session happening now.')}</div><div class="sub">Still need ${dueShown}${list.length!==roster.length?' · filtered':''}${notOnSiteTxt}</div></div>
@@ -4039,10 +4086,10 @@ function undoCheck(){
   const id=_undoCamperId,type=_undoType,sess=_undoSession;
   _undoCamperId=null;_undoType=null;_hideUndoToast();
   if(!id)return;
-  // Remove from queue if still pending, unless it is the one in flight at the head of the queue.
+  // Remove from queue if still pending, unless it is the one in flight.
   // The latest entry of the undone type: offline in, then out, then Undo must drop the "out".
   const idx=CHECKIN_QUEUE.map(e=>e.camperId===id&&e.sessionId===sess&&e.type===type).lastIndexOf(true);
-  if(idx>=0&&!(idx===0&&_draining)){CHECKIN_QUEUE.splice(idx,1);_persistQueue();_rCheckin();return;}
+  if(idx>=0&&CHECKIN_QUEUE[idx]!==_inFlight){CHECKIN_QUEUE.splice(idx,1);_persistQueue();_rCheckin();return;}
   // Already sent — send the reverse, to the session the tap was on (QA item 14), not the one on screen.
   _queueEntry(id,type==='in'?'out':'in',sess);
   _rCheckin();
@@ -11061,6 +11108,7 @@ async function _tryRestoreSession(){
     _loadLeaderInitials(); // restore the badge/prefill
     enforceInitials();     // item 7: a restored church session with no initials is still gated
     _offerNoteDraft();
+    _resumeQueue(_bootOffline);
     if(_bootOffline){_netStrip();return;}
     _offerAlertsAfterLogin();  // reopening the installed app counts as a sign-in for this offer
     // Cold start from a tapped notification (sw.js openWindow('/?nav=…')). Done AFTER
