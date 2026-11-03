@@ -904,10 +904,10 @@ textarea{min-height:84px;resize:vertical;}
     <div class="bk" onclick="back()">&#8249;</div>
     <div class="ttl"><span class="t" id="barT" onclick="_vpDbgTap()">Camp Platform</span><span class="s" id="barS"></span></div>
     <div class="bar-actions">
-      <div class="mode-badge" id="modeBadge"></div>
+      <div class="mode-badge" id="modeBadge" onclick="_badgeHelp('mode')"></div>
       <div class="mode-badge" id="dayBadge" onclick="switchPreviewPhase()" style="cursor:pointer;display:none" title="Tap to switch the previewed check-in view"></div>
       <div class="role-badge" id="initialsBadge" style="display:none;cursor:pointer" title="Your initials — tap to change" onclick="promptInitials(true)"></div>
-      <div class="role-badge" id="roleBadge"></div>
+      <div class="role-badge" id="roleBadge" onclick="_badgeHelp('role')"></div>
       <div class="sign-out" onclick="confirmLogout()">Sign out</div>
     </div>
   </header>
@@ -1115,6 +1115,10 @@ function _npDone(){
     _npResetTimer=setTimeout(()=>{if(_npCount===0)el.style.width='0';},320);
   },180);
 }
+function _isAppAnswer(j,res){
+  if(res.ok)return !String(res.headers.get('content-type')||'').includes('text/html'); // a portal can answer 200 with its page
+  return !!j&&typeof j.code==='string'&&typeof j.message==='string';
+}
 async function _doFetch(path,opt){
   _npStart();
   try{
@@ -1122,6 +1126,7 @@ async function _doFetch(path,opt){
   const ctrl=new AbortController();
   const timer=setTimeout(()=>ctrl.abort(),isImport?API_IMPORT_TIMEOUT_MS:API_TIMEOUT_MS);
   let res;
+  let j=null;
   try{
     res=await fetch(path,{method:opt.method||'GET',signal:ctrl.signal,
       headers:{'Content-Type':'application/json',...(TOKEN?{Authorization:'Bearer '+TOKEN}:{})},
@@ -1131,6 +1136,7 @@ async function _doFetch(path,opt){
     const ne=new Error(e&&e.name==='AbortError'?'That took too long. Check your signal and try again.':'No signal. Check your connection and try again.');
     ne.transient=true;throw ne;
   }finally{clearTimeout(timer);}
+  try{j=await res.json();}catch(e){j=null;}
   // A 401 on any path except the login POST means the session is gone. This used to be guarded
   // on `TOKEN`, which broke on a CASCADE: _prefetch() fires 5 requests at once, the first 401
   // runs sessionExpired() (which nulls TOKEN), and the remaining four then fell through this
@@ -1138,16 +1144,21 @@ async function _doFetch(path,opt){
   // that a refresh appeared to "fix". sessionExpired() is idempotent, so the cascade now
   // collapses into one banner. /auth/login is excluded because ITS 401 is "wrong password",
   // which must keep its own message on the login form.
+  // QA batch 3: a wifi sign-in page or an edge proxy can answer 401/403/429 too. Only the app's own
+  // {code,message} body can say anything about this session; anything else means "not reached".
+  if(res.status!==204&&!_isAppAnswer(j,res)){
+    const na=new Error('Can’t reach the camp server. If this wifi has a sign-in page, finish that first, then try again.');
+    na.transient=true;throw na;
+  }
   if(res.status===401&&path.indexOf('/auth/login')!==0){
     if(TOKEN)sessionExpired();
     throw new Error('Session expired — please sign in again.');
   }
   if(res.status===204)return null;
-  let j=null;try{j=await res.json();}catch(e){j=null;}
   if(!res.ok){
     const err=new Error((j&&(j.message||j.error))||('Request failed ('+res.status+')'));
     err.code=j&&j.code;
-    if(res.status>=500)err.transient=true;
+    if(res.status>=500||res.status===429)err.transient=true;
     // A stale cached ACTOR (e.g. an admin reset this account's password in another tab) can
     // drift out of sync with the server; if the server says the gate is up, trust it.
     if(err.code==='MUST_CHANGE_PASSWORD'){
@@ -1659,10 +1670,7 @@ function dtFmt(iso){try{return new Date(iso).toLocaleString('en-AU',{day:'numeri
 function dayFmt(d){try{return new Date(d+'T12:00:00Z').toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'});}catch{return d;}}
 
 function sessionExpired(){
-  // QA item 17: keep a half-typed note for the same login to pick up after signing back in.
-  const nb=document.getElementById('noteBody');
-  if(nb&&nb.value.trim()&&window._noteCtx)window._draft={...window._noteCtx,leader:_actingName(),body:nb.value,sensitive:!!document.getElementById('noteSensitive')?.checked};
-  if(window._draft&&ACTOR)window._draft.owner=ACTOR.username||ACTOR.id;
+  _rosterClear(); // the session is over, so nothing of the group stays on the phone
   Cache.clear();
   TOKEN=null;ACTOR=null;SESSIONS=[];SEL_SESSION=null;SETTINGS=null;STACK=['home'];
   document.getElementById('bar').style.display='none';
@@ -1819,6 +1827,8 @@ function logout(){
   api('/auth/logout',{method:'POST'}).catch(()=>{});
   localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
   sessionStorage.removeItem('ycp_wizardReturn');
+  try{sessionStorage.removeItem(_ndKey());}catch(_){}
+  _rosterClear();
   try{localStorage.removeItem(_ciqKey());}catch(_){}
   TOKEN=null;ACTOR=null;location.reload();
 }
@@ -2089,8 +2099,14 @@ function _applyModeChange(mode){
    only open on day 2 (they are always open). The toggle now names the faces directly, and
    whichever one is inactive renders greyed on Home so both are visible at once. */
 let _previewPhase='signin';
+// QA item 30: these look like buttons, so a tap says what they mean.
+function _badgeHelp(which){
+  if(which==='day')toast('Which day of camp it is today.');
+  else if(which==='mode')toast(CAMP_MODE==='at-camp'?'The app is in camp mode, for while camp is running.':'The app is in pre-camp mode, for the lead-up to camp.');
+  else toast('The kind of login you are using. It sets what you can see.');
+}
 function switchPreviewPhase(){
-  if(!PREVIEW_MODE)return;
+  if(!PREVIEW_MODE){_badgeHelp('day');return;}
   _previewPhase=_previewPhase==='signin'?'checkin':'signin';
   updateModeUI();
   _syncNavPhase(); // the bottom nav's Sign-in/Check-in label must follow the toggle
@@ -2607,6 +2623,8 @@ async function _popBack(){
   else if(STACK.length>1)await _stepBack();
   else await gotoTab('home');
 }
+// In-content Back arrows on the first-aid and prayer forms leave by repainting, with no STACK step.
+async function _leaveForm(go){if(_typed('#stage .screen.active textarea')&&!await _confirmDiscard())return;go();}
 const _confirmDiscard=()=>confirmSheet({title:'Discard what you typed?',confirmLabel:'Discard',danger:true});
 async function _stepBack(){STACK.pop();await _navTo(STACK[STACK.length-1]);}
 async function _navTo(id,arg){
@@ -2950,7 +2968,7 @@ function _digestCardHtml(d){
   const seg=(html,onclick)=>`<span${onclick?` style="cursor:pointer;text-decoration:underline dotted" onclick="${onclick}"`:''}>${html}</span>`;
   return `<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.25);display:flex;flex-wrap:wrap;gap:6px 10px;font-size:.78rem;color:#e0e7ff">
     ${seg('Day '+day)}<span style="opacity:.55">·</span>
-    ${seg(checkedIn+'/'+expected+' checked in this session',"gotoTab('checkin')")}<span style="opacity:.55">·</span>
+    ${seg('<span id="digestCheckin">'+checkedIn+'/'+expected+'</span> checked in this session',"gotoTab('checkin')")}<span style="opacity:.55">·</span>
     ${seg('<span id="digestChurches">…</span>',"gotoTab('checkin')")}<span style="opacity:.55">·</span>
     ${seg('<span id="digestFirstAid">…</span>',"go('notes','firstaid')")}
   </div>`;
@@ -2968,6 +2986,8 @@ async function _renderDirectorDigest(){
         byChurch[r.church].total++;
         if(r.checkedIn)byChurch[r.church].done++;
       });
+      // QA item 13: the same status the pulse reads, so this headline and the bars can't disagree.
+      const dc=document.getElementById('digestCheckin');if(dc&&st)dc.textContent=st.checkedInCount+'/'+st.totalCount;
       const churches=Object.values(byChurch);
       const complete=churches.filter(c=>c.total>0&&c.done===c.total).length;
       if(el)el.textContent=`${complete}/${churches.length} churches complete`;
@@ -3487,12 +3507,16 @@ function _missingItems(s){
     _paymentMissing(s)&&'Payment (not marked paid)'].filter(Boolean);
 }
 /* paymentStatus starts as 'unpaid' for everyone and only the Ticket import ever changes it, so on
-   its own it says nothing. Only flag someone a ticket or invoice has actually been matched to, and
-   never against an invoice figure or refund on record: the Invoice import sets those, not the
-   status, and an amount of 0 there is how a free or refunded invoice looks. */
+   its own it says nothing. The Invoice import sets amounts, not the status. In order: settled or
+   free; a hand-entered paid amount; nothing matched yet; a deposit; then the invoice figure. $0
+   only counts as owing when there is a price to owe, or a free invoice would be flagged. */
 function _paymentMissing(s){
-  if(s.paymentStatus==='paid'||!(s.ticketNumber||s.invoiceNumber))return false;
-  return s.paymentStatus==='deposit'||(s.amountPaid==null&&s.refundAmount==null);
+  if(['paid','free','refunded'].includes(s.paymentStatus)||s.refundAmount!=null)return false;
+  if(s.amountPaidOverride>0)return false;
+  if(!(s.ticketNumber||s.invoiceNumber))return false;
+  if(s.paymentStatus==='deposit')return true;
+  if(s.amountPaid==null)return true;
+  return s.amountPaid===0&&s.registrationCost>0;
 }
 function _missingCardHtml(s){
   const m=_missingItems(s);
@@ -3590,6 +3614,9 @@ let _undoTimer=null,_undoCamperId=null,_undoType=null,_undoSession=null,_undoNam
 // double tap (100-350 ms) would check in the next child. Ignore list taps just after a write.
 let _ciTapLockUntil=0;
 const _ciTapLocked=()=>Date.now()<_ciTapLockUntil;
+let _ciLastTapId=null;
+// The lock can also catch a real tap on another child, so say so rather than doing nothing.
+function _ciTapIgnored(id,name){if(id!==_ciLastTapId)toast('That tap on '+(name||'the next child')+' was ignored. Tap again if you meant it.');}
 let _lastRoster=null;
 // B-1 (Phase 5): count entries that were hard-dropped on an ONLINE error (4xx etc.) so the
 // check-in screen can surface a "N didn't save" banner. We deliberately keep the existing
@@ -3744,7 +3771,30 @@ async function _previewSimCampers(){
     createdAt:r.createdAt,updatedAt:r.updatedAt,
   };});
 }
+/* QA item 5 (batch 3): a church login's last list for the current session, so check-in still works
+   after reopening with no signal. Only id, name, grade and whether they were checked in: no
+   medical, parent, money or note data. Per login, cleared on logout and on an ended session,
+   ignored and removed after 48 h (the session length). Taps feed the normal queue. */
+function _rosterKey(){return 'ycp_roster_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
+function _rosterClear(){try{localStorage.removeItem(_rosterKey());}catch(_){}}
+function _rosterSave(st){
+  if(ACTOR.role!=='church'||PREVIEW_MODE||ACCOUNT_PREVIEW||!st.session)return;
+  try{localStorage.setItem(_rosterKey(),JSON.stringify({savedAt:new Date().toISOString(),session:{id:st.session.id,day:st.session.day,startTime:st.session.startTime,label:st.session.label},
+    roster:(st.roster||[]).map(r=>({id:r.camperId,name:(r.firstName+' '+r.lastName).trim(),grade:r.grade,checkedIn:!!r.checkedIn}))}));}catch(_){}
+}
+function _rosterLoad(){
+  if(!ACTOR||ACTOR.role!=='church')return null;
+  let c=null;try{c=JSON.parse(localStorage.getItem(_rosterKey()));}catch(_){}
+  if(!c||!c.session||!Array.isArray(c.roster))return null;
+  if(Date.now()-new Date(c.savedAt).getTime()>48*36e5){_rosterClear();return null;}
+  return c;
+}
+const _rosterStatus=c=>({session:c.session,roster:c.roster.map(r=>({camperId:r.id,firstName:r.name,lastName:'',grade:r.grade,checkedIn:r.checkedIn}))});
+let _rosterInUse=false;
 async function _renderDailyCheckin(){
+  let off=(!navigator.onLine||_bootOffline)?_rosterLoad():null;
+  if(off){SESSIONS=[off.session];SEL_SESSION=off.session.id;_rosterInUse=true;}
+  else if(_rosterInUse){SESSIONS=[];SEL_SESSION=null;_rosterInUse=false;} // back online: real sessions again
   if(SESSIONS.length===0)SESSIONS=await api('/checkin/sessions');
   // When the admin has restricted church check-in to the current session, a church login
   // is always pinned to whatever session is current right now — it can't linger on an
@@ -3752,7 +3802,7 @@ async function _renderDailyCheckin(){
   const churchRestricted=ACTOR.role==='church'&&!!(SETTINGS&&SETTINGS.churchCheckinTimeRestricted);
   // Item 4: a church login can now BROWSE every session but only EDIT the one it's allowed to.
   // CUR_ID drives the "•" marker and the default selection for EVERY role.
-  const _curSess=await api('/checkin/sessions/current').catch(()=>null);
+  const _curSess=off?off.session:await api('/checkin/sessions/current').catch(()=>null);
   const CUR_ID=(_curSess&&_curSess.id)||null;
   // ⚠ THE LOCK MUST NOT COME FROM CUR_ID. `/checkin/sessions/current` is a NAVIGATION helper —
   // once camp dates exist it never returns null, because it falls back to the nearest past or
@@ -3762,11 +3812,11 @@ async function _renderDailyCheckin(){
   // into the generic "N check-ins didn't save" banner (reported 2026-07-31, church logins only —
   // admin bypasses the rule entirely). `/checkin/sessions/allowed` is that write rule, as data.
   // Fetched only when it can bite, and FAIL-CLOSED on error: no answer means no writing.
-  const _allowed=churchRestricted?await api('/checkin/sessions/allowed').catch(()=>null):null;
+  const _allowed=(churchRestricted&&!off)?await api('/checkin/sessions/allowed').catch(()=>null):null;
   const ALLOWED_ID=(_allowed&&_allowed.session&&_allowed.session.id)||null;
   const closedReason=(_allowed&&_allowed.reason)||null;
   if(!SEL_SESSION)SEL_SESSION=(churchRestricted?ALLOWED_ID:null)||CUR_ID||(SESSIONS[0]&&SESSIONS[0].id);
-  const sessionLocked=churchRestricted&&SEL_SESSION!==ALLOWED_ID;
+  let sessionLocked=!off&&churchRestricted&&SEL_SESSION!==ALLOWED_ID;
   if(!SEL_SESSION){paint('checkin','<p class="note-hint">No check-in sessions configured. Set camp dates in admin settings.</p>','Daily Check-in','');return;}
   if(!window._ciqRestored){window._ciqRestored=true;_restoreQueue();}
   // Enriched RosterEntry now includes gender, grade, medicalFlag — no second /campers fetch needed.
@@ -3782,7 +3832,12 @@ async function _renderDailyCheckin(){
   // The "Not signed in" list moved to the My-students screen, so the check-in load no longer needs
   // /campers; /registrants is only needed to build the simulated roster during a preview.
   const [st,regList]=await Promise.all([
-    previewSim?Promise.resolve({session:null,roster:[]}):api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status'),
+    previewSim?Promise.resolve({session:null,roster:[]}):off?Promise.resolve(_rosterStatus(off)):api('/checkin/sessions/'+encodeURIComponent(SEL_SESSION)+'/status').catch(e=>{
+      // The phone says it has signal but the server wasn't reached (patchy signal, wifi sign-in page).
+      const c=e&&e.transient?_rosterLoad():null;
+      if(!c||c.session.id!==SEL_SESSION)throw e;
+      off=c;_rosterInUse=true;sessionLocked=false;return _rosterStatus(c);
+    }),
     previewSim?api(_scoped('/registrants')).catch(()=>[]):Promise.resolve([]),
   ]);
   const roster=previewSim?_previewSimRoster(regList):(st.roster||[]).map(r=>({
@@ -3792,6 +3847,7 @@ async function _renderDailyCheckin(){
     present:_optimisticState(r.camperId,[{id:r.camperId,present:!!r.checkedIn}],CHECKIN_QUEUE.filter(e=>e.sessionId===SEL_SESSION)),
   }));
   _lastRoster=roster;
+  if(!off&&!previewSim&&SEL_SESSION===CUR_ID)_rosterSave(st);
   const DUE=roster.filter(c=>!c.present).length;
   const tb=document.getElementById('tabDue');if(tb){if(DUE>0){tb.style.display='grid';tb.textContent=DUE;}else tb.style.display='none';}
   // 2026-09-28 (owner): no zone filter here any more — admin/director pick a CHURCH from the whole
@@ -3802,7 +3858,7 @@ async function _renderDailyCheckin(){
   const showChurch=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zonesOpt=['all'];
   const churchesOpt=['all',...[...new Set(roster.map(c=>c.church))].sort((a,b)=>String(a).localeCompare(String(b)))];
-  let list=roster.filter(c=>(FILTER.gender==='all'||c.gender===FILTER.gender)&&
+  let list=off?roster:roster.filter(c=>(FILTER.gender==='all'||c.gender===FILTER.gender)&&
     (FILTER.grade==='all'||String(c.grade)===FILTER.grade)&&
     (FILTER.zone==='all'||c.zone===FILTER.zone)&&
     (FILTER.church==='all'||c.church===FILTER.church));
@@ -3861,12 +3917,13 @@ async function _renderDailyCheckin(){
       ?`Viewing ${esc(label)} — only the current session can be checked in. Tap the highlighted session (•) to check people in.`
       :esc(closedReason||'Check-in is closed right now. You can look through the roster, but nobody can be checked in until a check-in window opens on a camp day.')}</div>`:''}
     ${(showZone||showChurch)?`<div class="filters">${showZone?`<select onchange="setFilter('zone',this.value)">${zoneSelOpts}</select>`:''}${showChurch?`<select onchange="setFilter('church',this.value)">${churchSelOpts}</select>`:''}</div>`:''}
-    <div class="filters">
+    ${off?'':`<div class="filters">
       <select onchange="setFilter('gender',this.value)"><option value="all" ${FILTER.gender==='all'?'selected':''}>All genders</option><option value="female" ${FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${FILTER.gender==='male'?'selected':''}>Guys</option></select>
       <select onchange="setFilter('grade',this.value)">${gradeOpts}</select>
-    </div>
+    </div>`}
+    ${off?`<div class="ci-sync ci-sync-pending" id="ciLastSaved">${icSm('clock')} <span>No signal. This is the last saved list, from ${esc(dtFmt(off.savedAt))}. It may be out of date. ${navigator.onLine?'The server can’t be reached, so a tap may not save until it can.':'Your taps will send when you’re back.'}</span></div>`:''}
     ${syncBanner}
-    ${_filterBanner('checkin',list.length,roster.length)}
+    ${off?'':_filterBanner('checkin',list.length,roster.length)}
     <div class="card" style="display:flex;justify-content:space-between;align-items:center">
       <div><div class="nm">${esc(label)} check-in ${helpTip('Tap a name to mark that person present for this session. Pick a different session with the buttons up top: AM is morning, PM is afternoon, and • marks the session happening now.')}</div><div class="sub">Still need ${dueShown}${list.length!==roster.length?' · filtered':''}${notOnSiteTxt}</div></div>
       ${dueShown>0?`<div style="text-align:right"><div style="font-weight:800;font-size:var(--t-h1);line-height:1;color:var(--warn)">${dueShown}</div><div class="sub" style="font-size:var(--t-2xs)">not yet in</div></div>`:''}
@@ -3895,9 +3952,9 @@ function _rCheckin(){
   return Promise.resolve(RENDER.checkin()).then(()=>{const e2=_scroller(document.getElementById('checkin'));if(e2)e2.scrollTop=y;});
 }
 function _performCheck(camperId,type,name){
-  if(_ciTapLocked())return;
+  if(_ciTapLocked()){_ciTapIgnored(camperId,name);return;}
   if(!_ensureInitials())return; // item 7: church initials gate (no-op once set; other roles pass)
-  _ciTapLockUntil=Date.now()+500;
+  _ciTapLockUntil=Date.now()+500;_ciLastTapId=camperId;
   // Fix 4 (review 2026-07-17, MEDIUM-LOW): during the preview simulation there is no real
   // check-in session — the api() write-guard blocks the POST `_queueEntry` would fire, so the
   // row never actually flipped AND drainQueue's caught error ticked up `_checkinFailed`, so a
@@ -3944,25 +4001,37 @@ async function doCheck(camperId,type){_performCheck(camperId,type,'');}
 /* QA item 16: one send at a time from a sheet, with its buttons disabled while it goes. */
 let _sheetBusy=false;
 function _sheetSending(on){_sheetBusy=on;document.querySelectorAll('#sheet .btn').forEach(b=>{b.disabled=on;});}
-/* QA item 17: after signing back in, the same login gets its unsent note back. */
+/* QA item 17: unsent notes survive a reload or an expired session for the same login, in
+   sessionStorage so sensitive text dies with the tab. Keyed by login, then by student. Cleared on
+   save, on Cancel/Discard and on logout. */
+function _ndKey(){return 'ycp_note_drafts_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
+function _ndAll(){try{return JSON.parse(sessionStorage.getItem(_ndKey())||'{}')||{};}catch(_){return {};}}
+function _ndPut(id,d){
+  const a=_ndAll();if(d)a[id]=d;else delete a[id];
+  try{if(Object.keys(a).length)sessionStorage.setItem(_ndKey(),JSON.stringify(a));else sessionStorage.removeItem(_ndKey());}catch(_){}
+}
+function _noteDraftSave(){
+  const c=window._noteCtx,b=document.getElementById('noteBody');if(!c||!b)return;
+  _ndPut(c.camperId,b.value.trim()?{name:c.name,body:b.value,sensitive:!!document.getElementById('noteSensitive')?.checked}:null);
+}
 function _offerNoteDraft(){
-  const d=window._draft;if(!d||!d.name)return;
-  if(d.owner&&d.owner!==(ACTOR.username||ACTOR.id)){window._draft=null;return;}
+  const all=_ndAll(),id=Object.keys(all)[0];if(!id)return;
+  const d={...all[id],camperId:id};
   if(document.getElementById('modal').classList.contains('show'))return;
   modal(`<h3>You have an unsent note</h3><p class="sub" style="margin:4px 0 10px">Your note about ${esc(d.name)} wasn’t saved before you were signed out.</p>
     <button class="btn" onclick="closeModal();notePrompt('${d.camperId}','${esc(jsq(d.name))}')">Open the note</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="window._draft=null;closeModal()">Discard it</button>`);
+    <button class="btn ghost" style="margin-top:6px" onclick="_ndPut('${d.camperId}',null);closeModal()">Discard it</button>`);
 }
 function notePrompt(camperId,name){
-  if(_ciTapLocked())return; // QA item 4: same stray second tap, landing on the next row's Add note
+  if(_ciTapLocked()){_ciTapIgnored(camperId,name);return;} // QA item 4: same stray second tap, landing on the next row's Add note
   window._noteCtx={camperId,name};
-  const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:_actingName(),body:'',sensitive:false};
+  const d=_ndAll()[camperId]||{body:'',sensitive:false};
   modal(`<h3>Note · ${esc(name)}</h3>
-    <label>Note</label><textarea id="noteBody" maxlength="1900" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
+    <label>Note</label><textarea id="noteBody" maxlength="1900" oninput="_noteDraftSave()" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
     <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this note from church logins, including yours — zone leaders, directors, admins and the prayer team still read it. Saving it does not alert anyone.</div></div>
-    <label class="tgl"><input type="checkbox" id="noteSensitive" ${d.sensitive?'checked':''}><span class="track"></span></label></div>
+    <label class="tgl"><input type="checkbox" id="noteSensitive" onchange="_noteDraftSave()" ${d.sensitive?'checked':''}><span class="track"></span></label></div>
     <button class="btn" style="margin-top:10px" onclick="reviewNote('${camperId}','${esc(jsq(name))}')">Review ${icSm('arrowr')}</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+    <button class="btn ghost" style="margin-top:6px" onclick="_ndPut('${camperId}',null);closeModal()">Cancel</button>`);
 }
 function reviewNote(camperId,name){
   const leader=_actingName(); // item 2: account name (church initials / account display name)
@@ -3971,7 +4040,7 @@ function reviewNote(camperId,name){
   // Item 7e: the leader name is optional — the backend already attributes the note to the
   // logged-in actor (see confirmNote below); this field is only a "logged by" annotation.
   if(!body){toast('Type a note first');return;}
-  if(leader)LAST_LEADER=leader;window._draft={camperId,name,leader,body,sensitive};
+  if(leader)LAST_LEADER=leader;window._draft={camperId,name,leader,body,sensitive};_ndPut(camperId,{name,body,sensitive});
   modal(`<h3>Review note</h3><div class="card" style="margin:6px 0 10px">
     <div class="sub">Student</div><div class="nm">${esc(name)}</div>
     ${leader?`<div class="sub" style="margin-top:7px">Logged by</div><div class="nm">${esc(leader)}</div>`:''}
@@ -3989,7 +4058,7 @@ async function confirmNote(camperId){const d=window._draft;if(!d||_sheetBusy)ret
   if(SEL_SESSION)payload.sessionId=SEL_SESSION;
   _sheetSending(true);
   try{
-    await api('/notes',{method:'POST',body:payload});window._draft=null;_sheetSending(false);
+    await api('/notes',{method:'POST',body:payload});window._draft=null;_ndPut(camperId,null);_sheetSending(false);
     // QA item 8: the author can't see a sensitive note afterwards, so this is their only receipt.
     if(d.sensitive)modal(`<h3>${icSm('check')} Sensitive note saved</h3><div class="card" style="margin:6px 0 10px">
       <div class="sub">About</div><div class="nm">${esc(d.name||'')}</div>
@@ -4178,7 +4247,7 @@ async function openStudentInfo(id){
     ${c.parentGuardianName?`<div class="kv"><span class="k">${esc(c.parentGuardianName)}${c.parentRelation?' ('+esc(c.parentRelation)+')':''}</span><span class="v"></span></div>`:''}
     ${parentContact?`<button class="btn fa-parent" onclick="faRevealLeader('${c.id}','${esc(jsq(parentContact.role))}',this)">${icSm('phone')} ${esc(fmtPhone(parentContact.phone))}</button>
     <div class="sub" style="font-size:var(--t-2xs);color:var(--ink-2);margin-top:4px">Revealing is recorded in the <b>Sensitive Reveals</b> sheet of the compliance workbook — your account, the student's name and the time. The number itself is never recorded.</div>`:''}</div>`:'';
-  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${_faBackExpr(scr)}">${icSm('arrowl')} Back</button></div>
+  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="_leaveForm(()=>${_faBackExpr(scr)})">${icSm('arrowl')} Back</button></div>
     <div class="fa-id">${_faBubble(c)}<div><h2>${esc(c.firstName+' '+c.lastName)}</h2>
       <div class="meta">${c.kind==='leader'?'Leader':'Student'+(c.grade?' · Grade '+c.grade:'')} · ${esc(c.churchName)} · ${esc(c.zone)} Zone</div>
       ${CAMP_MODE==='at-camp'?`<span class="fa-status ${c.atCamp?'on':'off'}">${c.atCamp?'On site':'Not on site'}</span>`:''}</div></div>
@@ -4306,7 +4375,7 @@ function openFaAmend(origId,from){
   const p=_faParse(n.body);
   const back=from==='records'?`RENDER.records()`:`openStudentInfo('${n.camperId}')`;
   const scr=from==='records'?'records':_faScreen();
-  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${back}">${icSm('arrowl')} Back</button></div>
+  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="_leaveForm(()=>${back})">${icSm('arrowl')} Back</button></div>
     <div class="card">
       <div class="lbl" style="margin-top:0">Original record · ${dtFmt(n.createdAt)}</div>
       ${p.problem?`<div class="ln"><b>What happened:</b> ${esc(p.problem)}</div>`:''}
@@ -4340,7 +4409,7 @@ function openFirstAidLog(id){
   const who=c?esc(c.firstName+' '+c.lastName):'student';
   // The log form is a transient view painted onto the active first-aid screen (Search or All
   // Students — same pattern as Student Info); the in-content Back button returns to Student Info.
-  paint(_faScreen(),`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="openStudentInfo('${id}')">${icSm('arrowl')} Back</button></div>
+  paint(_faScreen(),`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="_leaveForm(()=>openStudentInfo('${id}'))">${icSm('arrowl')} Back</button></div>
     <div class="card">
       ${c?`<div class="fa-id" style="margin-bottom:8px">${_faBubble(c)}<div><h2 style="font-size:var(--t-h3)">${who}</h2><div class="meta">${c.kind==='leader'?'Leader':'Student'+(c.grade?' · Grade '+c.grade:'')} · ${esc(c.churchName)}</div></div></div>`:''}
       <label class="lbl" style="margin-top:4px">What happened?</label>
@@ -4464,7 +4533,7 @@ async function openPrayerInfo(id){
   const medCard=(med.length||diet.length)?`<div class="card"><div class="lbl" style="margin-top:0">Medical &amp; dietary</div>
     ${med.map(m=>`<div class="sub" style="color:var(--ink-2)">${esc(m)}</div>`).join('')}
     ${diet.map(d=>`<span class="fa-diet">${esc(d)}</span>`).join('')}</div>`:'';
-  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${_faBackExpr(scr)}">${icSm('arrowl')} Back</button></div>
+  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="_leaveForm(()=>${_faBackExpr(scr)})">${icSm('arrowl')} Back</button></div>
     <div class="fa-id">${_faBubble(c)}<div><h2>${esc(c.firstName+' '+c.lastName)}</h2>
       <div class="meta">${c.kind==='leader'?'Leader':'Student'+(c.grade?' · Grade '+c.grade:'')} · ${esc(c.churchName)} · ${esc(c.zone)} Zone</div>
       ${CAMP_MODE==='at-camp'?`<span class="fa-status ${c.atCamp?'on':'off'}">${c.atCamp?'On site':'Not on site'}</span>`:''}</div></div>
@@ -4505,7 +4574,7 @@ function _prOrphanCardHtml(n){const p=_prParse(n.body);
     <div class="meta">By ${esc(p.by||n.authorName||'')} · ${dtFmt(n.createdAt)} · amends an earlier record not shown here</div></div>`;}
 function openPrayerLog(id){
   const c=_currentStudent&&_currentStudent.id===id?_currentStudent:null;
-  paint(_faScreen(),`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="openStudentInfo('${id}')">${icSm('arrowl')} Back</button></div>
+  paint(_faScreen(),`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="_leaveForm(()=>openStudentInfo('${id}'))">${icSm('arrowl')} Back</button></div>
     <div class="card">
       ${c?`<div class="fa-id" style="margin-bottom:8px">${_faBubble(c)}<div><h2 style="font-size:var(--t-h3)">${esc(c.firstName+' '+c.lastName)}</h2><div class="meta">${esc(c.churchName)}</div></div></div>`:''}
       <label class="lbl" style="margin-top:4px">Who's filling this out? <span style="color:var(--danger)">*</span></label>
@@ -4595,7 +4664,7 @@ function openPrayerAmend(origId,from){
   const p=_prParse(n.body);
   const back=from==='records'?`RENDER.records()`:from==='notes'?`RENDER.notes()`:`openStudentInfo('${n.camperId}')`;
   const scr=from==='card'?_faScreen():from;
-  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="${back}">${icSm('arrowl')} Back</button></div>
+  paint(scr,`<div style="padding:12px 0 4px 0"><button class="btn ghost sm" onclick="_leaveForm(()=>${back})">${icSm('arrowl')} Back</button></div>
     <div class="card">
       <div class="lbl" style="margin-top:0">Original record · ${dtFmt(n.createdAt)}</div>
       <div class="sub" style="color:var(--ink-2)">Recorded by ${esc(p.by||n.authorName||'')}</div>
@@ -4672,6 +4741,7 @@ function switchStudentsTab(sub){
   const btns=document.querySelectorAll('#studentsSeg button');if(btns[idx])btns[idx].classList.add('on');
   _renderStudentsBody();
 }
+const _maskedOrTel=p=>String(p||'').includes('*')?esc(p):telLink(p);
 let sT;function doSearch(v){clearTimeout(sT);sT=setTimeout(()=>runSearch(v),200);}
 async function runSearch(v){const box=document.getElementById('results');if(!box)return;
   if(!v.trim()){box.innerHTML='<p class="note-hint">Type a name to find any student or leader across the camp.</p>';return;}
@@ -4684,8 +4754,8 @@ async function runSearch(v){const box=document.getElementById('results');if(!box
       return `<div class="findcard"><div style="display:flex;justify-content:space-between"><b>${esc(name)}</b><span class="pill info"${chClr?` style="color:${chClr};font-weight:700"`:''}>${esc(c.churchName||'')}</span></div>
       <div class="sub" style="margin:3px 0">${esc(c.zone||'')} Zone · ${c.kind==='leader'?'Leader':'Grade '+(c.grade||'—')}</div>
       ${med.map(m=>`<span class="med">${esc(m)}</span> `).join('')}
-      ${prim?`<div class="kv"><span class="k">Primary leader</span><span class="v">${esc(prim.name)} · ${telLink(prim.phone)}</span></div>`:''}
-      ${back?`<div class="kv"><span class="k">Secondary leader</span><span class="v">${esc(back.name)} · ${telLink(back.phone)}</span></div>`:''}
+      ${prim?`<div class="kv"><span class="k">Primary leader</span><span class="v">${esc(prim.name)} · ${_maskedOrTel(prim.phone)}</span></div>`:''}
+      ${back?`<div class="kv"><span class="k">Secondary leader</span><span class="v">${esc(back.name)} · ${_maskedOrTel(back.phone)}</span></div>`:''}
       ${!prim&&!back?'<div class="sub" style="color:var(--warn)">No leader contact set — ask admin to add one.</div>':''}
       <div style="display:flex;gap:8px;margin-top:9px">
         ${prim?`<button class="btn sm" style="flex:1" onclick="reveal('${c.id}','${esc(jsq(prim.role))}')">${icSm('phone')} Call primary</button>`:''}
@@ -4699,7 +4769,7 @@ async function reveal(id,role){
   try{
     const c=await api('/search/contact/'+id+'/'+encodeURIComponent(role)+'?initials='+encodeURIComponent(LEADER_INITIALS));
     modal(`<div class="sheet"><h3>${esc(c.name)}</h3>
-      <p class="sub">${esc(c.role||role)}</p>
+      <p class="sub">${c.type==='backup'?'Secondary leader':c.type==='primary'?'Primary leader':esc(c.role||role)}</p>
       <a class="btn" href="tel:${esc(c.phone)}">${icSm('phone')} Call ${esc(fmtPhone(c.phone))}</a>
       <button class="btn ghost" onclick="closeModal()">Close</button></div>`);
   }catch(e){toast(e.message);}
@@ -4737,7 +4807,7 @@ RENDER.notifs=async function(sub){
     ${feed.length?'':`<p class="note-hint">No ${CAMP_MODE==='pre-camp'?'pre-camp':'camp'} notices yet. Directors, zone leaders and admins can post camp, zone or church updates here.</p>`}${feed.map(n=>`<div class="ncard ${n.priority==='urgent'?'urgent':n.scope==='zone'?'zone':''}">
       <div class="ntop"><span class="ntag">${n.scope==='camp'?icSm('diamond')+' Camp-wide':n.scope==='church'?'Church':esc(n.zone||'')+' Zone'}</span>
       ${n.priority==='urgent'?'<span class="ntag" style="background:#fdecec;color:var(--danger)">Urgent</span>':''}
-      <span class="ntime">${timeFmt(n.createdAt)}</span></div>
+      <span class="ntime">${dtFmt(n.createdAt)}</span></div>
       <div class="ntitle">${esc(n.title)}</div><div class="nbody">${esc(n.body)}</div>
       <div class="rowsb" style="align-items:center;margin-top:6px"><div class="nfrom" style="margin:0">— ${esc(n.senderName)}</div>${canDelete?`<button class="btn ghost sm" onclick="deleteNotice('${n.id}')">Delete</button>`:''}</div></div>`).join('')}`,'Notices',CAMP_MODE==='pre-camp'?'Pre-camp updates':'Camp & zone updates');
   // Async, self-contained, and writes only into the `#pushCard` div painted above.
@@ -6617,10 +6687,10 @@ function _isoToLocalInput(iso){if(!iso)return '';const d=new Date(iso);if(isNaN(
   const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Australia/Brisbane',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(d);
   const g=t=>((p.find(x=>x.type===t)||{}).value||'');let hh=g('hour');if(hh==='24')hh='00';
   return `${g('year')}-${g('month')}-${g('day')}T${hh}:${g('minute')}`;}
-function _schedLabel(iso){const li=_isoToLocalInput(iso);if(!li)return '';return li.slice(0,10)+' · '+_ampm(li.slice(11));}
+function _schedLabel(iso){const li=_isoToLocalInput(iso);if(!li)return '';return dayFmt(li.slice(0,10))+' · '+_ampm(li.slice(11));}
 // QA item 26: who a notice reaches, matching canSeeNotification (notification-visibility.ts).
 function _noticeAudience(p,pri){
-  const who=p.scope==='camp'?'Every login at camp':'The '+p.zone+' zone churches and zone leaders, plus directors and admins,';
+  const who=p.scope==='camp'?'All church and leadership logins':'The '+p.zone+' zone churches and zone leader, plus directors and admins,';
   return who+(pri==='urgent'?' will see it next time they open the app. Phones with alerts on also get a notification.':' will see it next time they open the app. No phone notification is sent.');
 }
 async function sendNotif(){const title=document.getElementById('ntitle').value.trim(),body=document.getElementById('nbody').value.trim();
@@ -6642,9 +6712,9 @@ async function sendNotif(){const title=document.getElementById('ntitle').value.t
   }
   try{
     if(editingId){await api('/notifications/'+editingId,{method:'PATCH',body:p});window._editNotice=null;window._editNoticeId=null;toast('Notice updated');NOTICE_SUB='scheduled';gotoTab('notifs');}
-    else{await api('/notifications',{method:'POST',body:p});
+    else{const sent=await api('/notifications',{method:'POST',body:p});
       if(scheduledFor){toast('Scheduled for '+_schedLabel(scheduledFor));NOTICE_SUB='scheduled';gotoTab('notifs');}
-      else{toast('Sent. '+_noticeAudience(p,window._pri));back();}}
+      else{toast((sent&&sent.recipientLogins!=null?'Sent to '+sent.recipientLogins+' login'+(sent.recipientLogins===1?'':'s')+'. ':'Sent. ')+_noticeAudience(p,window._pri));back();}}
   }catch(e){toast(e.message);}}
 // Scheduled notices management (item 9) — creator sees own; director/admin see all.
 /* One pending-notice card — extracted so the merged Notices screen (item 10) owns the markup. */
@@ -7115,6 +7185,8 @@ function _schedMinutes(a,b){
    30-minute item has to stay tappable and an 8-hour block must not push the day off screen. */
 function _schedHeight(mins){return Math.round(Math.min(133,Math.max(38,28+mins*0.27)));}
 function _schedDur(mins){const h=Math.floor(mins/60),m=mins%60;return h&&m?h+'h '+m+'m':h?h+'h':m+'m';}
+// The end is when the next item starts; the day's last item has nothing to end it, so shows none.
+function _schedEnd(start,mins){const [h,m]=String(start||'0:0').split(':').map(Number);const t=(h*60+m+mins)%1440;return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');}
 let SCHED_DAY=null;
 /* Which day the Schedule screen opens on (2026-08-03, owner request).
    It used to always open on day 1, so from day 2 of camp every single visit began with the
@@ -7142,7 +7214,7 @@ RENDER.schedule=async function(){
     const mins=_schedMinutes(i.startTime,ix+1<items.length?items[ix+1].startTime:null);
     const cat=schedCategory(i.title);
     return `<div class="sch-item sch-${cat}" style="min-height:${_schedHeight(mins)}px">
-      <div class="sch-time">${esc(i.startTime||'')} <span class="sch-dur">&middot; ${_schedDur(mins)}</span></div>
+      <div class="sch-time">${esc(i.startTime||'')}${ix+1<items.length?`<span class="sch-dur">&ndash;${esc(_schedEnd(i.startTime,mins))}</span>`:''}</div>
       <div class="sch-body"><div class="sch-title">${esc(i.title)}</div></div></div>`;
   }).join('');
   const legend=items.length?`<div class="sch-legend">${SCHED_CATEGORIES.map(c=>`<span class="sch-key sch-${c[0]}">${esc(c[1])}</span>`).join('')}</div>`:'';
@@ -7693,8 +7765,8 @@ RENDER.adminAccounts=async function(){
     <div class="card"><div class="lbl" style="margin-top:0">All login passwords</div>
       <p class="note-hint" style="margin:2px 0 8px">Issues fresh memorable passwords and downloads the list as a CSV. Two options below: change every login, or church logins only (leadership passwords stay the same). The original admin account (this one) is never changed either way.</p>
       <div style="display:flex;gap:8px;align-items:stretch;flex-wrap:wrap">
-        <button class="btn ghost" onclick="randomizeChurchPasswords()" style="flex:1;min-width:150px;margin-top:0">${icSm('key')} Randomise all logins</button>
-        <button class="btn ghost" onclick="randomizeChurchOnlyPasswords()" style="flex:1;min-width:150px;margin-top:0">${icSm('key')} Randomise church logins only</button>
+        <button class="btn ghost" onclick="randomizeChurchPasswords()" style="flex:1;min-width:150px;margin-top:0">${icSm('key')} New passwords: all logins</button>
+        <button class="btn ghost" onclick="randomizeChurchOnlyPasswords()" style="flex:1;min-width:150px;margin-top:0">${icSm('key')} New passwords: church logins only</button>
         <button class="btn ghost sm" onclick="document.getElementById('pwUpIn').click()" style="flex:0 0 auto;width:auto;margin-top:0;min-width:92px">${icSm('upload')} Upload</button>
         <input type="file" id="pwUpIn" accept=".csv,.xlsx,.xls" style="display:none" onchange="uploadPasswords()">
       </div>
@@ -7716,7 +7788,7 @@ RENDER.adminAccounts=async function(){
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Church name</label><input class="fld" id="ncName" placeholder="e.g. Northside" style="flex:1"></div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Zone</label><div style="flex:1">${zoneSel('ncZone')}</div></div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><label style="flex:0 0 78px;font-size:.72rem">Username</label><input class="fld" id="ncUser" placeholder="e.g. northside (letters, numbers, . _ -)" style="flex:1" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off"></div>
-      <p class="note-hint" style="margin:6px 0 0">Two logins are created — <b>b-username</b> (boys) and <b>g-username</b> (girls). Passwords are auto-generated; use “Randomise &amp; export passwords” at the top of this screen to retrieve them.</p>
+      <p class="note-hint" style="margin:6px 0 0">Two logins are created — <b>b-username</b> (boys) and <b>g-username</b> (girls). Passwords are auto-generated; use the “All login passwords” card at the top of this screen to retrieve them.</p>
       <button class="btn" onclick="addChurch()" style="margin-top:10px;width:100%">Create church + accounts</button></div>`,'Accounts & churches','Admin');
 };
 /* ===== LOGIN ACTIVITY ===== */
@@ -7982,7 +8054,7 @@ async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter churc
   // typed password is not used — each account is given a memorable password. Use "Randomise &
   // export passwords" to retrieve them.
   const body={churchName:name,zone:sel('ncZone'),accountUsername:username};
-  try{await api('/accounts/churches',{method:'POST',body});toast('Church created — boys/girls logins added. Use “Randomise & export passwords” to get their passwords.');await _rAccts();}catch(e){toast(e.message);}}
+  try{await api('/accounts/churches',{method:'POST',body});toast('Church created — boys/girls logins added. Use the “All login passwords” card to get their passwords.');await _rAccts();}catch(e){toast(e.message);}}
 /* 2026-09-14: the OPTIONAL third per-church login (username "all-<slug>") that sees both
    genders — additive to, and independent of, the church's existing b-/g- logins. This is the
    only place its password is ever shown outright (there is no bulk CSV for a single ad-hoc
@@ -7993,7 +8065,7 @@ async function addDualLogin(churchId){
   catch(e){toast(e.message||'Could not create dual-gender login');return;}
   await _rAccts();
   modal(`<h3>Dual-gender login created</h3>
-    <p class="sub" style="margin:2px 0 10px">Sees both boys and girls for this church. The existing logins are untouched. Write this down now — “Randomise &amp; export passwords” will regenerate it later, but this is the only time it's shown here.</p>
+    <p class="sub" style="margin:2px 0 10px">Sees both boys and girls for this church. The existing logins are untouched. Write this down now — the “All login passwords” card will regenerate it later, but this is the only time it's shown here.</p>
     <label>Username</label><input class="fld" value="${esc(res.credential.username)}" readonly onclick="this.select()">
     <label>Password</label><input class="fld" value="${esc(res.credential.password)}" readonly onclick="this.select()">
     <button class="btn" style="margin-top:10px" onclick="closeModal()">Done</button>`);
@@ -8032,14 +8104,14 @@ async function _pwRandomiseExport(endpoint,filenamePrefix,noneMsg,toastVerb){
   try{await _rAccts();}catch(_){/* UI refresh only — export already succeeded */}
 }
 async function randomizeChurchPasswords(){
-  if(!await confirmSheet({title:'Re-randomise ALL login passwords and download the list?',body:'Every church login AND every leadership login (director, zone leader, first aid, any extra admin) gets a new password. The only account left alone is the original admin — this one. Every other current password stops working immediately, so hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
-  await _pwRandomiseExport('/accounts/churches/randomize-passwords','camp-passwords','No church accounts to export','Passwords randomised & exported');
+  if(!await confirmSheet({title:'Issue new passwords for ALL logins and download the list?',body:'Every church login AND every leadership login (director, zone leader, first aid, any extra admin) gets a new password. The only account left alone is the original admin — this one. Every other current password stops working immediately, so hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
+  await _pwRandomiseExport('/accounts/churches/randomize-passwords','camp-passwords','No church accounts to export','New passwords issued and downloaded');
 }
 /* Church accounts ONLY — leadership logins (director/zone leader/first aid/any extra admin) are
    left completely alone. Same confirm-then-download-first shape as the all-accounts version. */
 async function randomizeChurchOnlyPasswords(){
-  if(!await confirmSheet({title:'Re-randomise CHURCH login passwords only and download the list?',body:'Every church login (boys/girls, every ministry) gets a new password. Leadership passwords — director, zone leader, first aid, any extra admin — are NOT changed and keep working. Every current church password stops working immediately, so hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
-  await _pwRandomiseExport('/accounts/churches/randomize-church-passwords','church-passwords','No church accounts to export','Church passwords randomised & exported');
+  if(!await confirmSheet({title:'Issue new passwords for CHURCH logins only and download the list?',body:'Every church login (boys/girls, every ministry) gets a new password. Leadership passwords — director, zone leader, first aid, any extra admin — are NOT changed and keep working. Every current church password stops working immediately, so hand out the new CSV.',confirmLabel:'Re-randomise & download',danger:true}))return;
+  await _pwRandomiseExport('/accounts/churches/randomize-church-passwords','church-passwords','No church accounts to export','New church passwords issued and downloaded');
 }
 
 /* ===== PASSWORD UPLOAD — the reverse of "Randomise & export passwords" =====
@@ -8325,7 +8397,7 @@ RENDER.adminCloseOut=async function(){
     ? `<div class="kv" style="background:var(--consent-ok-bg);border:1px solid #a7f3d0;border-radius:10px;padding:9px 11px;margin-bottom:12px"><span class="k" style="color:#065f46">${icSm('check')} Defaults saved</span><span class="v" style="color:#065f46">${esc(defaultsSaved)}</span></div>`
     : `<div class="warnbox" style="margin-bottom:12px">${icSm('alert')} <b>Defaults not saved yet.</b> Run <b>Save Defaults</b> on the Data screen before rolling over — the rollover restores from that baseline. <button class="btn alt sm" style="margin-top:6px" onclick="go('adminData')">Go to Data</button></div>`;
   paint('adminCloseOut',`
-    <div style="padding:12px 0 4px"><button class="btn ghost sm" onclick="go('adminData')">${icSm('arrowl')} Back</button></div>
+    <div style="padding:12px 0 4px"><button class="btn ghost sm" onclick="_leaveForm(()=>go('adminData'))">${icSm('arrowl')} Back</button></div>
     <div class="card">
       <div class="lbl" style="margin-top:0">Close-out checklist</div>
       <div class="note-hint" style="text-align:left;margin:-2px 0 12px">Before you roll over: make sure you've run <b>Save Defaults</b> (on the Data screen) at least once this setup — the rollover restores your churches, accounts &amp; content from that baseline. If you haven't, it'll stop and send you there (nothing is purged).</div>
@@ -10938,6 +11010,7 @@ async function _tryRestoreSession(){
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
     _loadLeaderInitials(); // restore the badge/prefill
     enforceInitials();     // item 7: a restored church session with no initials is still gated
+    _offerNoteDraft();
     if(_bootOffline){_netStrip();return;}
     _offerAlertsAfterLogin();  // reopening the installed app counts as a sign-in for this offer
     // Cold start from a tapped notification (sw.js openWindow('/?nav=…')). Done AFTER
@@ -10980,8 +11053,10 @@ async function _offlineBootRecover(){
   // Open check-in if taps are waiting, which restores and sends them; else refresh this screen.
   if(_savedQueueCount()&&CAMP_MODE==='at-camp')await gotoTab('checkin');
   else await _navTo(STACK[STACK.length-1]||'home');
+  if(CHECKIN_QUEUE.length&&!_draining)drainQueue();
 }
 window.addEventListener('online',_offlineBootRecover);
+window.addEventListener('online',()=>{if(_rosterInUse&&!_bootOffline&&ACTOR&&STACK[STACK.length-1]==='checkin')_rCheckin();});
 /* ===== BOOT ===== */
 // Enter-to-submit is now handled natively by #loginForm's onsubmit (real <form>, added for iOS
 // PWA Keychain autofill) — no manual keydown listeners needed here, avoids a double doLogin() call.

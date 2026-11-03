@@ -26,7 +26,7 @@ const ctx = { String, Array, Object };
 vm.createContext(ctx);
 const escLine = SRC.slice(SRC.indexOf('const esc='), SRC.indexOf('\n', SRC.indexOf('const esc='))); // its body contains ';'
 vm.runInContext(escLine + stmt('const _FA_KEYS=') + stmt('const _ALLERGY_RE='), ctx);
-for (const fn of ['_phoneOk', '_faParse', '_faIsAmend', '_noteBodyHtml', '_paymentMissing', '_missingItems', '_medAlertRows']) {
+for (const fn of ['_phoneOk', '_faParse', '_faIsAmend', '_noteBodyHtml', '_paymentMissing', '_missingItems', '_medAlertRows', '_schedEnd', '_isAppAnswer']) {
   vm.runInContext(extract('function ' + fn + '('), ctx);
 }
 
@@ -56,6 +56,25 @@ assert.strictEqual(pay({ ticketNumber: 'T1', refundAmount: 50 }), false, 'refund
 assert.strictEqual(pay({ ticketNumber: 'T1', paymentStatus: 'paid' }), false, 'paid');
 assert.strictEqual(pay({ ticketNumber: 'T1' }), true, 'ticket says unpaid, no invoice figure');
 assert.strictEqual(pay({ ticketNumber: 'T1', paymentStatus: 'deposit', amountPaid: 50 }), true, 'deposit only');
+// Batch 3.
+assert.strictEqual(pay({ ticketNumber: 'T1', paymentStatus: 'free' }), false, 'ticket Free, no invoice');
+assert.strictEqual(pay({ ticketNumber: 'T1', paymentStatus: 'refunded' }), false, 'ticket Refunded, no invoice');
+assert.strictEqual(pay({ ticketNumber: 'T1', invoiceNumber: 'I1', amountPaid: 0, registrationCost: 180 }), true, 'Paid $0 of $180');
+assert.strictEqual(pay({ amountPaidOverride: 180 }), false, 'hand-entered amount, no invoice');
+assert.strictEqual(pay({ ticketNumber: 'T1', amountPaidOverride: 180 }), false, 'hand-entered amount beats ticket Unpaid');
+
+// Batch 3: only the app's own answer counts.
+const answer = (status, type) => ({ ok: status < 400, status, headers: { get: () => type } });
+assert.strictEqual(ctx._isAppAnswer(null, answer(403, 'text/html')), false, 'wifi page 403');
+assert.strictEqual(ctx._isAppAnswer({ error: { code: 'x' } }, answer(429, 'application/json')), false, 'edge 429');
+assert.strictEqual(ctx._isAppAnswer({ code: 'FORBIDDEN', message: 'no' }, answer(403, 'application/json')), true, 'app refusal');
+assert.strictEqual(ctx._isAppAnswer({ code: 'UNAUTHORIZED', message: 'no' }, answer(401, 'application/json')), true, 'app 401');
+assert.strictEqual(ctx._isAppAnswer(null, answer(200, 'text/html; charset=utf-8')), false, 'portal page answering 200');
+assert.strictEqual(ctx._isAppAnswer([], answer(200, 'application/json')), true, 'normal answer');
+
+// Batch 3: schedule end times.
+assert.strictEqual(ctx._schedEnd('14:00', 300), '19:00');
+assert.strictEqual(ctx._schedEnd('23:30', 60), '00:30');
 assert.deepStrictEqual(Array.from(ctx._missingItems({ kind: 'leader', blueCardCollected: false })), ['Blue card']);
 
 // Item 7: an allergen filed under dietary still raises the alert; a preference doesn't.
@@ -73,7 +92,7 @@ async function recover(err) {
     localStorage: { removeItem: () => { calls.removed++; } },
     api: async (p) => { if (err) throw err; return {}; },
     sessionExpired: () => { calls.expired++; }, _netStrip() {}, updateModeUI() {}, buildTabs() {}, _prefetch() {},
-    gotoTab: async () => {}, _navTo: async () => {}, _savedQueueCount: () => 0,
+    gotoTab: async () => {}, _navTo: async () => {}, _savedQueueCount: () => 0, CHECKIN_QUEUE: [], _draining: false,
   };
   vm.createContext(c);
   vm.runInContext('var _bootOffline=true,ACTOR={},TOKEN="t",SETTINGS={},CAMP_MODE="at-camp",STACK=["home"];' + extract('async function _offlineBootRecover('), c);
