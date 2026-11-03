@@ -229,7 +229,7 @@ export async function buildContainer(): Promise<Container> {
       users,
       settings: settingsRepo,
     });
-    const notification = makeNotificationService(notifications, push);
+    const notification = makeNotificationService(notifications, push, { users, settings: settingsRepo });
     const incident = makeIncidentService(incidents, notifications, push);
     const revealAuditSvc = makeRevealAuditService(revealAudit, users);
     const search = makeSearchService(people, churches, revealAuditSvc);
@@ -386,7 +386,7 @@ export async function buildContainer(): Promise<Container> {
     users,
     settings: settingsRepo,
   });
-  const notification = makeNotificationService(notifications, push);
+  const notification = makeNotificationService(notifications, push, { users, settings: settingsRepo });
   const incident = makeIncidentService(incidents, notifications, push);
   const revealAuditSvc = makeRevealAuditService(revealAudit, users);
   const search = makeSearchService(people, churches, revealAuditSvc);

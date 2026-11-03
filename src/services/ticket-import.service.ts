@@ -57,11 +57,13 @@ function mapTicketType(raw: string): AccommodationKind | null {
 }
 
 /** Common Payment Status spellings → PaymentStatus; anything else → null (unrecognized). */
-function mapPaymentStatus(raw: string): PaymentStatus | null {
+export function mapPaymentStatus(raw: string): PaymentStatus | null {
   const v = raw.trim().toLowerCase();
   if (v === 'paid' || v === 'complete' || v === 'completed') return 'paid';
   if (v === 'partial' || v === 'part paid' || v === 'part-paid' || v === 'deposit') return 'deposit';
   if (v === 'pending' || v === 'unpaid' || v === 'not paid' || v === 'awaiting payment') return 'unpaid';
+  if (v === 'free') return 'free';
+  if (v === 'refunded') return 'refunded';
   return null;
 }
 

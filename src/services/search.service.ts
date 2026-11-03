@@ -244,7 +244,12 @@ export function makeSearchService(
       // tapping it returned "Camper not found". The two must agree on who is resolvable; the
       // real access gate is `canAccessPerson` below, which is unchanged.
       if (!person) throw new NotFoundError('Student not found');
-      if (!canAccessPerson(actor, person)) {
+      // A leader may find any arrived camper to reach that camper's church leaders (items 6/7/10
+      // in search() above), so the leader contact search offers must also open. The same reach as
+      // search: church and zone leader, arrived campers only. The parent number never crosses scope.
+      const crossScopeLeader =
+        contactRole !== PARENT_ROLE && (actor.role === 'church' || actor.role === 'zoneLeader') && isCamper(person);
+      if (!canAccessPerson(actor, person) && !crossScopeLeader) {
         throw new NotFoundError('Student not found');
       }
       // Record AFTER every access check and AFTER the contact is known to exist, so a

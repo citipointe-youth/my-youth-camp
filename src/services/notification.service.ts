@@ -1,4 +1,4 @@
-import type { INotificationRepository } from '../repositories/interfaces/entity-repositories';
+import type { INotificationRepository, ISettingsRepository, IUserRepository } from '../repositories/interfaces/entity-repositories';
 import type { Notification } from '../core/entities/notification';
 import type { Actor } from '../core/entities/user';
 import { assertCanSendNotification } from './access-control';
@@ -8,10 +8,11 @@ import { nowISO } from '../utils/date';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
 import { invalidateDashboardCache } from './dashboard-cache';
 import { canSeeNotification, byPublishedDesc } from './notification-visibility';
-import type { PushService } from './push.service';
+import { resolvePushAudience, type PushService } from './push.service';
 
 export interface NotificationService {
-  send(actor: Actor, input: unknown): Promise<Notification>;
+  /** `recipientLogins` is how many other logins can open it; absent when scheduled or not known. */
+  send(actor: Actor, input: unknown): Promise<Notification & { recipientLogins?: number }>;
   feed(actor: Actor): Promise<Notification[]>;
   scheduled(actor: Actor): Promise<Notification[]>;
   update(actor: Actor, id: string, input: unknown): Promise<Notification>;
@@ -73,7 +74,27 @@ export function makeNotificationService(
    * = the old behaviour exactly: the row is written and the 5-minute cron tick pushes it.
    */
   push?: Pick<PushService, 'sendNow'>,
+  audience?: { users: Pick<IUserRepository, 'findAll'>; settings: Pick<ISettingsRepository, 'getSingleton'> },
 ): NotificationService {
+  /* QA item 26: tells the sender how many logins can open this, from the same audience rule the
+     feed and push use, over the users table (tens of rows, see the estimateAudience note). Logins,
+     not people: a church login is shared. First aid and prayer have no Notices screen. A failure
+     here must never fail a notice that has already saved. */
+  async function countRecipients(n: Notification, sender: Actor, nowIso: string): Promise<{ recipientLogins?: number }> {
+    if (!audience) return {};
+    try {
+      const [users, settings] = await Promise.all([audience.users.findAll(), audience.settings.getSingleton()]);
+      if (!settings) return {};
+      return {
+        recipientLogins: resolvePushAudience(n, users, settings, nowIso).filter(
+          (u) => u.id !== sender.id && u.role !== 'firstAid' && u.role !== 'prayer',
+        ).length,
+      };
+    } catch {
+      return {};
+    }
+  }
+
   async function getActorFeed(actor: Actor): Promise<Notification[]> {
     const active = await notifRepo.findActive();
     const now = nowISO();
@@ -125,7 +146,7 @@ export function makeNotificationService(
          published. Gate explicitly instead. */
       const publishesNow = !notif.scheduledFor || notif.scheduledFor <= createdAt;
       if (push && publishesNow) await push.sendNow(saved);
-      return saved;
+      return { ...saved, ...(publishesNow ? await countRecipients(saved, actor, createdAt) : {}) };
     },
 
     async feed(actor) {

@@ -14,7 +14,8 @@ export type UserRole = (typeof USER_ROLES)[number];
 export const ACCOMMODATION_KINDS = ['tent', 'classroom'] as const;
 export type AccommodationKind = (typeof ACCOMMODATION_KINDS)[number];
 
-export const PAYMENT_STATUSES = ['unpaid', 'deposit', 'paid'] as const;
+// 'free' and 'refunded' come only from the Ticket import. payment_status is plain text, no CHECK.
+export const PAYMENT_STATUSES = ['unpaid', 'deposit', 'paid', 'free', 'refunded'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
 export const REGISTRANT_STATUSES = ['registered', 'cancelled'] as const;
