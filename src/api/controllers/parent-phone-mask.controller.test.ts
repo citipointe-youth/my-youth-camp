@@ -137,9 +137,8 @@ describe('parent phone masking on the sibling person routes', () => {
     });
   }
 
-  it('GET /registrants/:id never carries the real number for first aid', async () => {
-    const out = JSON.stringify(await routes().registrant.get(req(actor('firstAid'))));
-    expect(out).not.toContain(PARENT);
+  it('GET /registrants/:id is refused for first aid (no registrant:read), so no number leaves', async () => {
+    await expect(routes().registrant.get(req(actor('firstAid')))).rejects.toMatchObject({ statusCode: 403 });
   });
 
   for (const role of ['admin', 'director', 'zoneLeader'] as const) {

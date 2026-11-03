@@ -14,8 +14,11 @@ SHA=$(git rev-parse "$BR")
 git merge-base --is-ancestor origin/master "$SHA" || { echo "FAIL: $BR is not a fast-forward of origin/master (rebase first)"; exit 1; }
 
 # SW cache rule (CLAUDE.md "Service worker"): anything under public/ other than sw.js changed => CACHE must be bumped.
-if git diff --name-only origin/master "$SHA" -- public/ | grep -qv '^public/sw\.js$'; then
-  git diff origin/master "$SHA" -- public/sw.js | grep -q '^+const CACHE = ' \
+# Capture first, then match: `grep -q` exits early and, under pipefail, the writer's SIGPIPE can turn a match into a miss.
+PUB=$(git diff --name-only origin/master "$SHA" -- public/)
+SWD=$(git diff origin/master "$SHA" -- public/sw.js)
+if [ -n "$(printf '%s\n' "$PUB" | grep -v '^public/sw\.js$' || true)" ]; then
+  [ -n "$(printf '%s\n' "$SWD" | grep '^+const CACHE = ' || true)" ] \
     || { echo "FAIL: public/ changed but public/sw.js CACHE (camp-vN) was not bumped"; exit 1; }
 fi
 

@@ -104,3 +104,21 @@ describe('PATCH /registrants/:id — amountPaidOverride/refundAmount bounds', ()
     );
   });
 });
+
+describe('GET /registrants/:id — payment and email need registrant:read', () => {
+  const paid = () => ({ ...person(), email: 'ivy@example.test', amountPaid: 250, invoiceNumber: 'INV-1' }) as unknown as Person;
+  const call = (role: Actor['role']) =>
+    makeRegistrantController({ person: { get: async () => paid() } as unknown as PersonService }).get({
+      ctx: { actor: { ...actor(), role }, token: 't' }, params: { id: 'p1' }, query: {}, body: {},
+    });
+
+  for (const role of ['prayer', 'firstAid'] as const) {
+    it(`${role} is refused, so no payment or email field is returned`, async () => {
+      await expect(call(role)).rejects.toMatchObject({ statusCode: 403 });
+    });
+  }
+
+  it('a role with registrant:read still gets amountPaid, invoice and email', async () => {
+    expect(await call('church')).toMatchObject({ amountPaid: 250, invoiceNumber: 'INV-1', email: 'ivy@example.test' });
+  });
+});

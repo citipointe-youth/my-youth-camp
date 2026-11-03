@@ -68,8 +68,6 @@ const ALLOW: Record<string, string> = {
   'firstAid GET /search': 'camper:read',
   'prayer GET /search/contacts/:camperId': 'camper:read',
   'firstAid GET /search/contacts/:camperId': 'camper:read',
-  'prayer GET /registrants/:id': 'camper:read (REPORTED 4 Nov: detail view is open to both low roles)',
-  'firstAid GET /registrants/:id': 'camper:read (REPORTED 4 Nov: detail view is open to both low roles)',
   'prayer GET /accounts/churches': 'canAccessChurch grants every church (REPORTED 4 Nov: no permission check)',
   'firstAid GET /accounts/churches': 'canAccessChurch grants every church (REPORTED 4 Nov: no permission check)',
   'prayer GET /checkin/sessions': 'session labels only, no person data',

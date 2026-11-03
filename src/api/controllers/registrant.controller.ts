@@ -4,6 +4,7 @@ import type { Person } from '../../core/entities/person';
 import { toRegistrantDto, toRegistrantDetailDto, maskParentPhone } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 import { RegistrantPatchSchema } from '../../core/validation';
+import { assertCan } from '../../services/access-control';
 
 export interface RegistrantControllerServices {
   person: PersonService;
@@ -27,6 +28,8 @@ export function makeRegistrantController(services: RegistrantControllerServices)
       if (!req.ctx) throw new UnauthorizedError();
       const id = req.params['id'];
       if (!id) throw new BadRequestError('Missing id');
+      // prayer/firstAid have camper:read but not registrant:read; this dto carries payment and email.
+      assertCan(req.ctx.actor, 'registrant:read');
       // Detail dto: single access-checked fetch, so dateOfBirth may ride along.
       return maskParentPhone(toRegistrantDetailDto(await person.get(req.ctx.actor, id)), req.ctx.actor);
     },
