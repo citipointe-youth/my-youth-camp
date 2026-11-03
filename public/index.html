@@ -359,6 +359,7 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 .iconbtn{background:#f1f0ff;border:1px solid var(--line);border-radius:9px;width:32px;height:32px;display:grid;place-items:center;cursor:pointer;color:var(--blue);padding:0;position:relative;}
 .iconbtn::before{content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44px;height:44px;}
 .iconbtn .ic-svg{width:17px;height:17px;}
+.iconbtn.lab{height:auto;min-height:44px;gap:2px;padding:5px 2px;font-size:var(--t-micro);font-weight:700;}
 .iconbtn:active{background:#e0ddff;}
 .iconbtn.danger{color:var(--danger);background:#fef2f2;border-color:#fecaca;}
 .acct-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:var(--t-xs);color:var(--muted);background:var(--tint);border-radius:10px;padding:9px 11px;margin-bottom:10px;}
@@ -644,6 +645,7 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,te
 /* B-1: check-in sync banner — amber while draining, red (tappable) when an online error
    dropped a tap. Uses status tokens; no new hex. */
 .ci-sync{display:flex;align-items:center;gap:8px;border-radius:12px;padding:10px 13px;margin-bottom:10px;font-size:var(--t-sm);font-weight:700;}
+#dayseg button{min-height:44px;}
 .ci-sync-pending{background:#fef3c7;color:var(--warn);border:1px solid #fcd34d;}
 .ci-sync-fail{background:#fee2e2;color:var(--danger);border:1px solid #fecaca;cursor:pointer;}
 .ci-sync-fail:active{background:#fecaca;}
@@ -906,7 +908,7 @@ textarea{min-height:84px;resize:vertical;}
       <div class="mode-badge" id="dayBadge" onclick="switchPreviewPhase()" style="cursor:pointer;display:none" title="Tap to switch the previewed check-in view"></div>
       <div class="role-badge" id="initialsBadge" style="display:none;cursor:pointer" title="Your initials — tap to change" onclick="promptInitials(true)"></div>
       <div class="role-badge" id="roleBadge"></div>
-      <div class="sign-out" onclick="logout()">Sign out</div>
+      <div class="sign-out" onclick="confirmLogout()">Sign out</div>
     </div>
   </header>
   <div class="stage" id="stage" style="display:none">
@@ -955,7 +957,7 @@ textarea{min-height:84px;resize:vertical;}
     <section class="screen" id="sitemap"></section>
   </div>
   <nav class="tabs" id="tabs" style="display:none"></nav>
-  <div class="modal" id="modal" role="dialog" aria-modal="true" onclick="if(event.target===this)closeModal()"><div class="sheet" id="sheet"></div></div>
+  <div class="modal" id="modal" role="dialog" aria-modal="true" onclick="if(event.target===this)_dismissModal()"><div class="sheet" id="sheet"></div></div>
   <div class="ig-wrap" id="impGuide" onclick="if(event.target===this)closeImportGuide()" role="dialog" aria-label="How to export from Elvanto">
     <div class="ig-card">
       <div class="ig-hd"><span class="t">Exporting from Elvanto</span><button class="ig-x" onclick="closeImportGuide()" aria-label="Close">&times;</button></div>
@@ -1125,8 +1127,9 @@ async function _doFetch(path,opt){
       headers:{'Content-Type':'application/json',...(TOKEN?{Authorization:'Bearer '+TOKEN}:{})},
       ...(opt.body!==undefined?{body:JSON.stringify(opt.body)}:{})});
   }catch(e){
-    if(e&&e.name==='AbortError')throw new Error('Request timed out — check your connection and try again.');
-    throw new Error('Network error — is the server running?');
+    // QA items 5/19: `transient` = the server never answered, so this says nothing about the session.
+    const ne=new Error(e&&e.name==='AbortError'?'That took too long. Check your signal and try again.':'No signal. Check your connection and try again.');
+    ne.transient=true;throw ne;
   }finally{clearTimeout(timer);}
   // A 401 on any path except the login POST means the session is gone. This used to be guarded
   // on `TOKEN`, which broke on a CASCADE: _prefetch() fires 5 requests at once, the first 401
@@ -1144,6 +1147,7 @@ async function _doFetch(path,opt){
   if(!res.ok){
     const err=new Error((j&&(j.message||j.error))||('Request failed ('+res.status+')'));
     err.code=j&&j.code;
+    if(res.status>=500)err.transient=true;
     // A stale cached ACTOR (e.g. an admin reset this account's password in another tab) can
     // drift out of sync with the server; if the server says the gate is up, trust it.
     if(err.code==='MUST_CHANGE_PASSWORD'){
@@ -1166,7 +1170,11 @@ async function api(path,opt={}){
   if(!opt.noCache){const cached=Cache.get(path);if(cached!==null)return cached;}
   if(_inflight.has(path))return _inflight.get(path);
   const p=_doFetch(path,opt)
-    .then(d=>{if(!opt.noCache&&d!==null)Cache.set(path,d);return d;})
+    .then(d=>{if(!opt.noCache&&d!==null)Cache.set(path,d);
+      // /settings is public (the login screen reads it), so it is safe on disk; it is what lets a
+      // reopen with no signal still open the shell (QA item 5).
+      if(path==='/settings'&&d)try{localStorage.setItem('ycp_settings',JSON.stringify(d));}catch(_){}
+      return d;})
     .finally(()=>_inflight.delete(path));
   _inflight.set(path,p);
   return p;
@@ -1304,7 +1312,7 @@ function _filterBanner(which,shown,total){
   if(f.zone&&f.zone!=='all')bits.push(f.zone+' Zone');
   if(f.church&&f.church!=='all')bits.push(f.church);
   if(f.gender&&f.gender!=='all')bits.push(f.gender==='male'?'Guys':'Girls');
-  if(f.grade&&f.grade!=='all')bits.push(f.grade==='leaders'?'Leaders':'Yr '+f.grade);
+  if(f.grade&&f.grade!=='all')bits.push(f.grade==='leaders'?'Leaders':'Grade '+f.grade);
   const count=(typeof shown==='number'&&typeof total==='number'&&total>0)?` · ${shown} of ${total}`:'';
   return `<div class="filtban"><div style="flex:1;min-width:0">
     <span class="fb-eye">${icSm('preview')}</span> Showing <b>${esc(bits.join(' · '))}</b>${count}
@@ -1515,7 +1523,8 @@ const canManageIncident=()=>ACTOR&&['zoneLeader','director','admin'].includes(AC
    the camper's church. */
 const canReadCamperNotes=()=>ACTOR&&['church','zoneLeader','director','admin'].includes(ACTOR.role);
 let tT;
-function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),2400);}
+// Longer messages stay up long enough to read (QA item 30: form errors only ever appear here).
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),Math.max(2400,String(m).length*70));}
 let _modalReturnFocus=null;      // element focused before the modal opened (restored on close)
 let _confirmResolver=null;       // pending confirmSheet() Promise resolver (see confirmSheet)
 function modal(html){
@@ -1541,6 +1550,13 @@ function _trapModalTab(e){
   const first=f[0],last=f[f.length-1];
   if(e.shiftKey){if(document.activeElement===first||!sheet.contains(document.activeElement)){e.preventDefault();last.focus();}}
   else if(document.activeElement===last||!sheet.contains(document.activeElement)){e.preventDefault();first.focus();}
+}
+/* QA item 17: a stray backdrop tap, Escape or Back must not throw away typed text. Buttons in the
+   sheet still call closeModal directly, so Cancel stays the deliberate way out. */
+function _typed(sel){return [...document.querySelectorAll(sel)].some(el=>el.value.trim()&&el.value!==el.defaultValue);}
+function _dismissModal(){
+  if(_typed('#sheet textarea,#sheet input[type=text],#sheet input:not([type])')){toast('Kept what you typed. Tap Cancel to discard it.');return;}
+  closeModal();
 }
 function closeModal(){
   document.getElementById('modal').classList.remove('show');
@@ -1638,9 +1654,15 @@ document.addEventListener('click',e=>{if(!e.target.closest('.htip'))document.que
 document.addEventListener('mouseover',e=>{const b=e.target.closest&&e.target.closest('.htip');if(b)_clampTip(b);});
 function dayLong(d){try{return new Date(d+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'long',timeZone:'UTC'});}catch{return d;}}
 function timeFmt(iso){try{return new Date(iso).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}catch{return iso;}}
-function dtFmt(iso){try{return new Date(iso).toLocaleString();}catch{return iso;}}
+// A named month, because 03/11/2026 reads as March to half the people holding this phone.
+function dtFmt(iso){try{return new Date(iso).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});}catch{return iso;}}
+function dayFmt(d){try{return new Date(d+'T12:00:00Z').toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'});}catch{return d;}}
 
 function sessionExpired(){
+  // QA item 17: keep a half-typed note for the same login to pick up after signing back in.
+  const nb=document.getElementById('noteBody');
+  if(nb&&nb.value.trim()&&window._noteCtx)window._draft={...window._noteCtx,leader:_actingName(),body:nb.value,sensitive:!!document.getElementById('noteSensitive')?.checked};
+  if(window._draft&&ACTOR)window._draft.owner=ACTOR.username||ACTOR.id;
   Cache.clear();
   TOKEN=null;ACTOR=null;SESSIONS=[];SEL_SESSION=null;SETTINGS=null;STACK=['home'];
   document.getElementById('bar').style.display='none';
@@ -1779,8 +1801,16 @@ async function doLogin(){
     // Item 7: church accounts must set initials once per login (enforced, no skip).
     _loadLeaderInitials();
     enforceInitials();
+    _offerNoteDraft();
     _offerAlertsAfterLogin();   // non-church roles only — church gets it after initials
-  }catch(e){if(err){err.textContent=e.message;err.style.display='block';}else toast(e.message);}
+  }catch(e){
+    const msg=e.message==='Invalid credentials'?'That username or password is not right. Check for capital letters, or ask your camp admin.':e.message;
+    if(err){err.textContent=msg;err.style.display='block';}else toast(msg);}
+}
+// QA item 24: the header chip is a small target beside the day badges, and getting back in needs signal.
+async function confirmLogout(){
+  const n=_savedQueueCount();
+  if(await confirmSheet({title:'Sign out of this app?',body:(n?n+' check-in'+(n===1?'':'s')+' waiting to send will be lost. ':'')+'You will need your password and signal to get back in. This does not sign anyone out of camp.',confirmLabel:'Sign out',danger:n>0}))logout();
 }
 function logout(){
   // Clear preview state before the POST so the write guard doesn't block the logout call.
@@ -2553,7 +2583,20 @@ function _spinner(id,label){
   if(el){el.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">'+(label||'Loading…')+'</div></div>';const sc=_scroller(el);if(sc)sc.scrollTop=0;}
   _showScreen(id);
 }
+/* QA item 18: one spare history entry sits on top while the app is open, so Back lands here
+   instead of leaving: close the sheet, else step back a screen, else go Home. From the landing
+   screen nothing is re-armed, so a second Back leaves as normal. */
+function _armBack(){if(!history.state||!history.state.campTop)try{history.pushState({campTop:1},'');}catch(_){}}
+window.addEventListener('popstate',e=>{
+  if((e.state&&e.state.campTop)||!ACTOR)return;
+  if(document.getElementById('modal').classList.contains('show')){_armBack();_dismissModal();return;}
+  const top=STACK[STACK.length-1]||'home';
+  if(top===(['firstAid','prayer'].includes(ACTOR.role)?'search':'home'))return;
+  _armBack();
+  if(STACK.length>1)back();else gotoTab('home');
+});
 async function _navTo(id,arg){
+  _armBack();
   if(id!==_navId)_ciQ=''; // name search resets on a real navigation (see _applyNameFilter)
   const tok=++_navToken; _navId=id;
   // PHONE body-scroll: all screens share the one document scroll, so a genuine navigation must
@@ -2579,7 +2622,10 @@ async function gotoTab(id){
   STACK=keepHome.includes(id)?['home',id]:[id];
   await _navTo(id);
 }
-async function back(){if(STACK.length>1){STACK.pop();const id=STACK[STACK.length-1];await _navTo(id);}}
+async function back(){
+  // QA item 17: the first-aid log and other on-screen forms have no sheet to stay open.
+  if(_typed('#stage .screen.active textarea')&&!await confirmSheet({title:'Discard what you typed?',confirmLabel:'Discard',danger:true}))return;
+  if(STACK.length>1){STACK.pop();const id=STACK[STACK.length-1];await _navTo(id);}}
 
 // Item 5b: persistent "Back to setup" chip. A tap on a WIZARD_STEPS row stores which step
 // number sent the admin here (sessionStorage — survives the navigation, cleared on return to
@@ -2776,7 +2822,7 @@ RENDER.home=async function renderHome(skipModeSync){
   // variants — incidents can be, and have been, logged pre-camp. 2026-07-27: the banner moved
   // off the top of the screen to just above the "Notices" heading, matching the at-camp home.
   let body=`<div class="hero">${heroMapBtn()}${heroMark()}<div class="k">${esc((s&&s.campName)||h.campName)}</div><h2${_heroNameCls(ACTOR.displayName)}>Hi ${esc(ACTOR.displayName)}</h2>
-    <div class="cd"><div class="big">${h.daysToGo??'—'}</div><div class="meta">days to go<br>${esc(h.startDate||'')}${s&&s.endDate?' – '+esc(s.endDate):''}</div></div></div>`;
+    <div class="cd"><div class="big">${h.daysToGo??'—'}</div><div class="meta">days to go<br>${h.startDate?esc(dayFmt(h.startDate)):''}${s&&s.endDate?' – '+esc(dayFmt(s.endDate)):''}</div></div></div>`;
   // Bug-2: registrations split by who (Student/Leader) × where they sleep (Tent/Classroom).
   // Replaces the old Campers/Leaders/Ldr-blue-card band. Counts come from the already-loaded
   // /registrants (`regs`), so they reflect this login's scope (own church / zone / all).
@@ -2974,7 +3020,11 @@ async function renderHomeAtCamp(){
   // (Admin can still edit FAQ anytime via the Admin console.)
   // Latest 3 REAL notices — `_noticeFeed` strips incident auto-alerts (they render in the banner
   // above the hero instead of eating the three home slots; reported 2026-07-26).
-  const notices=_noticeFeed(feed).slice(0,3);
+  // QA item 23: an urgent notice from the last 24 h goes above the tiles, because below them it is
+  // off the first phone screen. Older ones return to the normal list so nothing stays pinned.
+  const urgentTop=_noticeFeed(feed).filter(n=>n.priority==='urgent'&&Date.now()-new Date(n.scheduledFor||n.createdAt).getTime()<864e5).slice(0,2);
+  const urgentTopHtml=urgentTop.length?`<div id="homeUrgent" style="margin-bottom:10px">${urgentTop.map(noticeCard).join('')}</div>`:'';
+  const notices=_noticeFeed(feed).filter(n=>!urgentTop.includes(n)).slice(0,3);
   const noticesHtml=notices.length?notices.map(noticeCard).join(''):'<p class="note-hint">All caught up — no notices right now.</p>';
   const myDayHtml=ACTOR.role==='church'?renderMyDay(d):'';
   // New Feature 2: director + admin get a glanceable digest strip inside the hero card.
@@ -2987,7 +3037,9 @@ async function renderHomeAtCamp(){
   // (the zone colour already signals identity). admin/director keep the default hero + a subtitle.
   const _zoneClr=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?ZONE_COLORS[ACTOR.zone]:null;
   const _heroStyle=_zoneClr?` style="background:linear-gradient(135deg,${_zoneClr} 0%,#1e1b4b 78%)"`:'';
-  const _heroSub=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')?'':`<div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':'Director'}</div>`;
+  const _heroSub=(ACTOR.role==='zoneLeader'||ACTOR.role==='church')
+    ?(ACTOR.zone?`<div style="color:#cfe0ff;font-size:.82rem">${esc(ACTOR.zone)} Zone</div>`:'')
+    :`<div style="color:#cfe0ff;font-size:.82rem">${ACTOR.role==='admin'?'Back office':'Director'}</div>`;
   // 2026-07-27: the alert banner is NO LONGER at the head of the screen — it sits immediately
   // above the "Notices" heading near the bottom (owner request; see the block below).
   const html=`<div class="hero"${_heroStyle}>${heroMapBtn()}${heroMark()}<div class="k">${esc(SETTINGS?.campName||'Youth Camp')} · Live</div>
@@ -3004,6 +3056,7 @@ async function renderHomeAtCamp(){
     const blockedMsg=PREVIEW_MODE?'Tap the “Through camp” badge up top to switch to the sign-in view':'Sign-in closed. Sign late arrivals in on the Students screen';
     return `<button class="btn wide-signin${disabled?' bdis':''}" onclick="${disabled?`toast('${blockedMsg}')`:"openCheckinFace('signin')"}">${icSm('check')} First Day Sign In</button>`;
   })()}
+  ${urgentTopHtml}
   <div class="tiles">${tiles.join('')}</div>
   ${notesLinkHtml}
   <div id="homePulse"></div>
@@ -3193,7 +3246,7 @@ async function renderOversightPulse(sessId){
     const nav=SESSIONS.length>1
       ?`<div style="display:flex;align-items:center;gap:6px;flex:0 0 auto">${arrow(-1,'‹',idx<=0)}<span style="font-size:.8rem;font-weight:700;min-width:62px;text-align:center">${esc(_ciLabel(sess))}${_pulseSess===curId?' •':''}</span>${arrow(1,'›',idx<0||idx>=SESSIONS.length-1)}</div>`
       :`<span style="font-size:.8rem;font-weight:700">${esc(_ciLabel(sess))}</span>`;
-    return `<div class="card" id="homePulse"><div class="rowsb" style="align-items:center;margin-bottom:8px"><div class="lbl" style="margin:0">Check-in pulse</div>${nav}</div>${bars||'<p class="note-hint" style="margin:0">No students on this roster.</p>'}</div>`;
+    return `<div class="card" id="homePulse"><div class="rowsb" style="align-items:center;margin-bottom:8px"><div class="lbl" style="margin:0">Check-in pulse ${helpTip('Checked in for this session, out of the youth on site. People not on site are not counted.')}</div>${nav}</div>${bars||'<p class="note-hint" style="margin:0">No students on this roster.</p>'}</div>`;
   }catch(e){return '';}
 }
 async function _pulseStep(dir){
@@ -3280,7 +3333,7 @@ RENDER.people=async function renderPeople(){
   CHURCHES=Object.entries(map).map(([id,name])=>({id,name}));
   const isDir=_isWideRole();
   const genderSel=`<div><label>Gender</label><select id="myGender" onchange="drawPeople()"><option value="all">All</option><option value="male">Guys</option><option value="female">Girls</option></select></div>`;
-  const gradeSel=`<div><label>Grade</label><select id="myGrade" onchange="drawPeople()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Gr ${g}</option>`).join('')}</select></div>`;
+  const gradeSel=`<div><label>Grade</label><select id="myGrade" onchange="drawPeople()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}">Grade ${g}</option>`).join('')}</select></div>`;
   const churchSel=isDir?`<div><label>Church</label><select id="myChurch" onchange="drawPeople()"><option value="all">All churches</option>${CHURCHES.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>`:'';
   const snapHtml=buildPeopleSnap(ALLREG);
   paint('people',`<div id="psnap">${snapHtml}</div>
@@ -3338,9 +3391,10 @@ function personRow(s){
   const dot=flag?`<span style="width:8px;height:8px;border-radius:50%;background:var(--rose);display:inline-block;margin-left:6px"></span>`:'';
   const tags=[];
   if(isL)tags.push(s.blueCardCollected?'<span class="pill ok">'+icSm('check')+' Blue card</span>':'<span class="pill warn">No blue card</span>');
-  if(s.medicalConditions&&s.medicalConditions.length)tags.push(`<span class="pill info">${icSm('medical')} ${esc(s.medicalConditions.join(', '))}</span>`);
+  if(_medAlertRows(s).length)tags.push(`<span class="pill" style="background:var(--alert-bg);color:var(--alert-ink);border:1px solid var(--alert-bd)">${icSm('medical')} ${esc(_medAlertRows(s).map(r=>r.b).join(', '))}</span>`);
+  if(!isL&&_missingItems(s).length)tags.push(`<span class="pill warn">${_missingItems(s).length} still needed</span>`);
   if(!tags.length)tags.push('<span class="pill ok">All good</span>');
-  const tag=isL?'<span class="lead-tag">LEADER</span>':`<span class="gradepill">Gr ${s.grade}</span>`;
+  const tag=isL?'<span class="lead-tag">LEADER</span>':`<span class="gradepill">Grade ${s.grade}</span>`;
   return `<div class="row" role="button" tabindex="0" onclick="openPerson('${s.id}')"><div class="av ${esc(s.gender)}">${initials(s.firstName+' '+s.lastName)}</div>
     <div style="flex:1;min-width:0"><div class="nm">${esc(s.firstName+' '+s.lastName)}${tag}${dot}</div>
     <div class="sub">${esc(accDisplay(s))}${_isWideRole()?' · '+esc(s.churchName):''}</div>
@@ -3397,7 +3451,8 @@ function _medicationConsentRow(p,kvCls){
     : v==='no'
       ? `<span class="pill warn">No</span>`
       : `<span class="pill amb">Not specified</span>`;
-  return `<div class="${kvCls||'kv'}"><span class="k">Panadol/Ibuprofen/Antihistamine</span><span class="v">${pill}</span></div>`;
+  return `<div class="${kvCls||'kv'}"><span class="k">Panadol/Ibuprofen/Antihistamine</span><span class="v">${pill}</span></div>`
+    +(v==='yes'||v==='no'?'':'<p class="note-hint" style="text-align:left;margin:2px 0 0">No answer on file — contact the parent/guardian before giving these medications.</p>');
 }
 // Item 7a: registrationCost is the ticket price, not what was actually paid — an Invoice
 // import can record a real amountPaid (partial payment/discount cases where the two differ).
@@ -3408,17 +3463,33 @@ function _paidOrCostRow(s){
   if(s.registrationCost!=null)return `<div class="kv2"><span class="k">Cost</span><span class="v">$${Number(s.registrationCost).toLocaleString()}</span></div>`;
   return '';
 }
+/* QA item 25 (decision 8): a church can see what's outstanding; the edits stay with the office. */
+function _missingItems(s){
+  if(s.kind==='leader')return s.blueCardCollected?[]:['Blue card'];
+  return [!s.consentMedical&&'Emergency medical consent',
+    s.medicationConsent!=='yes'&&s.medicationConsent!=='no'&&'Panadol/Ibuprofen/Antihistamine answer',
+    !s.parentPhone&&'Parent phone number',
+    s.paymentStatus&&s.paymentStatus!=='paid'&&'Payment (shows as '+s.paymentStatus+')'].filter(Boolean);
+}
+function _missingCardHtml(s){
+  const m=_missingItems(s);
+  if(!m.length)return '';
+  return `<div class="card"><div class="lbl" style="margin-top:0">Still needed</div>
+    ${m.map(x=>`<div class="kv2"><span class="k">${esc(x)}</span><span class="v"><span class="pill warn">Missing</span></span></div>`).join('')}
+    <p class="note-hint" style="text-align:left;margin:6px 0 0">The camp office updates these. Contact them if something here looks wrong.</p></div>`;
+}
 function _paintPerson(s){
   const isL=s.kind==='leader';
   const body=`<div class="detail-hd"><div class="av-lg">${initials(s.firstName+' '+s.lastName)}</div>
     <h2>${esc(s.firstName+' '+s.lastName)}</h2>
     <div style="color:#cfe0ff;font-size:.82rem">${esc(s.churchName)} · ${esc(s.zone)} Zone · ${isL?'Leader (18+)':'Grade '+(s.grade||'—')}</div></div>
+    ${isL?'':_medAlertHtml(s)}
     <div class="card">
       <div class="kv2"><span class="k">Accommodation</span><span class="v">${esc(accDisplay(s))}</span></div>
       <div class="kv2"><span class="k">${isL?'Mobile':'Student mobile'}</span><span class="v"><a href="tel:${esc(s.mobile||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(s.mobile)||'—')}</a></span></div>
       <div class="kv2"><span class="k">${isL?'Email':'Student email'}</span><span class="v">${s.email?`<a href="mailto:${esc(s.email)}" style="color:var(--blue);text-decoration:none">${esc(s.email)}</a>`:'—'}</span></div>
-      ${isL?'':`<div class="kv2"><span class="k">Dietary</span><span class="v">${esc((s.dietaryRequirements||[]).join(', ')||'—')}</span></div>
-      <div class="kv2"><span class="k">Medical</span><span class="v">${esc((s.medicalConditions||[]).join(', ')||'—')}</span></div>
+      ${isL?'':`<div class="kv2"><span class="k">Dietary</span><span class="v">${esc((s.dietaryRequirements||[]).join(', ')||'None listed')}</span></div>
+      ${_medAlertRows(s).length?'':'<div class="kv2"><span class="k">Medical</span><span class="v">None listed</span></div>'}
       <div class="kv2"><span class="k">Parent name</span><span class="v">${esc(s.parentGuardianName||'—')}</span></div>
       <div class="kv2"><span class="k">Parent number</span><span class="v">${_parentPhoneCell(s,s.id)}</span></div>
       ${_medConsentRow(s,'kv2')}
@@ -3427,11 +3498,13 @@ function _paintPerson(s){
       ${_paidOrCostRow(s)}`}
       ${isL?`<div class="kv2"><span class="k">Blue card (WWC) ${helpTip(_BLUE_CARD_HELP)}</span><span class="v">${s.blueCardCollected?`<span class="pill ok">${icSm('check')} Collected</span>`:'<span class="pill warn">Outstanding</span>'}</span></div>`:''}
     </div>
+    ${isL?'':_missingCardHtml(s)}
     ${isL?`<div class="card"><div class="lbl" style="margin-top:0">Blue card (WWC) ${helpTip(_BLUE_CARD_HELP)}</div>
       ${s.blueCardCollected?'<p class="note-hint">Blue card collected</p>':(['director','admin'].includes(ACTOR.role)?`<button class="btn alt" onclick="markReg('${s.id}',{blueCardCollected:true})">Mark blue card collected</button>`:'<p class="note-hint">Not yet collected — a director or admin can mark this.</p>')}
     </div>`:''}`;
-  paint('student',body,isL?'Leader':'Student',esc(s.churchName));
+  // Push first: paint's stale-render guard drops a screen that isn't on the stack yet (QA item 22).
   if(STACK[STACK.length-1]!=='student')STACK.push('student');
+  paint('student',body,isL?'Leader':'Student',esc(s.churchName));
 }
 async function markReg(id,patch){try{const u=await api('/registrants/'+id,{method:'PATCH',body:patch});toast('Updated');if(ALLREG){const i=ALLREG.findIndex(r=>r.id===id);if(i>=0)ALLREG[i]=u;else ALLREG.push(u);}_paintPerson(u);}catch(e){toast(e.message);}}
 
@@ -3440,7 +3513,16 @@ async function markReg(id,patch){try{const u=await api('/registrants/'+id,{metho
 RENDER.help=async function(){
   const faqs=await api('/faq');
   paint('help',`<h3 class="sec" style="margin-top:2px">Frequently asked</h3>`+
-    faqs.map(f=>`<div class="faq-item"><div class="q" onclick="this.parentElement.classList.toggle('open')">${esc(f.question)}<span class="pm">+</span></div><div class="a">${esc(f.answer)}</div></div>`).join('')
+    faqs.map(f=>`<div class="faq-item"><div class="q" onclick="this.parentElement.classList.toggle('open')">${esc(f.question)}<span class="pm">+</span></div><div class="a">${esc(f.answer)}</div></div>`).join('')+
+    `<h3 class="sec">Words used in this app</h3><div class="card">
+      ${[['Check-in','Who is here for this session, twice a day. AM is morning, PM is afternoon.'],
+        ['Sign in / sign out of camp','Arriving at or leaving the campsite. Use Sign out when a parent collects a child.'],
+        ['Sign out (top of screen)','Leaves this app. It does not change anyone’s attendance.'],
+        ['Ministry','A church group.'],
+        ['Zone','A set of churches with one zone leader. Your zone is on your Home screen.'],
+        ['Sensitive note','Hidden from church logins. Zone leaders, directors, admins and the prayer team can read it.'],
+        ['Testimony','A true story of something God did at camp.']]
+        .map(w=>`<div class="kv2"><span class="k">${esc(w[0])}</span><span class="v" style="font-weight:400;text-align:right">${esc(w[1])}</span></div>`).join('')}</div>`
   ,'Help & FAQ','Answers for the lead-up');
 };
 
@@ -3480,7 +3562,11 @@ function _restoreQueue(){
   if(dropped>0)toast(dropped+' queued check-in'+(dropped===1?'':'s')+' from an earlier session were discarded — check the paper sheet');
   if(CHECKIN_QUEUE.length&&!_draining)drainQueue();
 }
-let _undoTimer=null,_undoCamperId=null,_undoType=null;
+let _undoTimer=null,_undoCamperId=null,_undoType=null,_undoSession=null,_undoName='';
+// QA item 4: the tapped row leaves the list and the next one slides under the finger, so a
+// double tap (100-350 ms) would check in the next child. Ignore list taps just after a write.
+let _ciTapLockUntil=0;
+const _ciTapLocked=()=>Date.now()<_ciTapLockUntil;
 let _lastRoster=null;
 // B-1 (Phase 5): count entries that were hard-dropped on an ONLINE error (4xx etc.) so the
 // check-in screen can surface a "N didn't save" banner. We deliberately keep the existing
@@ -3491,11 +3577,11 @@ let _checkinFailed=0;
 // morning window is 06:00–12:00 …"). That message used to be swallowed by drainQueue's catch and
 // replaced with a bare "tap to retry", which is actively misleading on a 4xx — retrying a refusal
 // can never succeed. Keep the FIRST reason and show it in the banner. Cleared by the retry.
-let _checkinFailReason='';
+let _checkinFailReason='',_checkinFailNames=[];
 
-function _queueEntry(camperId,type){
+function _queueEntry(camperId,type,sessionId=SEL_SESSION){
   // initials captured NOW, not at drain time — a rehydrated entry must keep its original author.
-  CHECKIN_QUEUE.push({camperId,type,sessionId:SEL_SESSION,initials:LEADER_INITIALS});
+  CHECKIN_QUEUE.push({camperId,type,sessionId,initials:LEADER_INITIALS});
   _persistQueue();
   _updateSyncDots(camperId,'pending');
   if(!_draining)drainQueue();
@@ -3514,6 +3600,10 @@ async function drainQueue(){
       // Deliberate: an ONLINE failure is a hard drop + banner (owner chose banner only).
       if(!_checkinFailReason)_checkinFailReason=(e&&e.message)||'';
       CHECKIN_QUEUE.shift();_persistQueue();_markSynced(entry.camperId,'error');_checkinFailed++; // B-1: surface in the banner
+      // QA item 19: say who, and take back the "Checked in · Undo" toast the failure just contradicted.
+      const failed=(_lastRoster||[]).find(r=>r.id===entry.camperId);
+      if(failed&&!_checkinFailNames.includes(failed.name))_checkinFailNames.push(failed.name);
+      if(_undoCamperId===entry.camperId){clearTimeout(_undoTimer);_undoCamperId=null;_hideUndoToast();}
     }
   }
   _draining=false;
@@ -3528,12 +3618,11 @@ function _optimisticState(camperId,roster,queue){
   if(!pending.length)return roster.find(r=>r.id===camperId)?.present??false;
   return pending[pending.length-1].type==='in';
 }
-// B-1: clear the failed badge and re-attempt any entries still queued. We do NOT reconstruct
-// dropped taps (no persistence by design) — the toast tells the user to re-tap red rows.
-function _retryFailedCheckins(){
-  _checkinFailed=0;_checkinFailReason='';
+// B-1: dropped taps are not reconstructed (banner only, owner ruling). The banner names them and
+// says to tap again; tapping the banner only clears it.
+function _dismissFailedCheckins(){
+  _checkinFailed=0;_checkinFailReason='';_checkinFailNames=[];
   if(CHECKIN_QUEUE.length)drainQueue();else _rCheckin();
-  toast('Re-tap any row still marked red to check them in');
 }
 
 // Unified entry: one nav id, phase-branched. Arrival sign-in before the switchover, daily after.
@@ -3677,7 +3766,7 @@ async function _renderDailyCheckin(){
     id:r.camperId,name:(r.firstName+' '+r.lastName).trim(),
     church:r.church,zone:r.zone,
     gender:r.gender,grade:r.grade,medicalFlag:!!r.medicalFlag,
-    present:_optimisticState(r.camperId,[{id:r.camperId,present:!!r.checkedIn}],CHECKIN_QUEUE),
+    present:_optimisticState(r.camperId,[{id:r.camperId,present:!!r.checkedIn}],CHECKIN_QUEUE.filter(e=>e.sessionId===SEL_SESSION)),
   }));
   _lastRoster=roster;
   const DUE=roster.filter(c=>!c.present).length;
@@ -3713,30 +3802,34 @@ async function _renderDailyCheckin(){
   const showChurchOnTile=ACTOR.role!=='church';
   function rowHtml(c){
     const subTxt=showChurchOnTile?esc(c.church||c.zone||''):'';
-    const rowClick=sessionLocked?'':` onclick="_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')"`;
+    // QA item 9: only a row still to check in is tappable. Undoing needs the labelled button.
+    const rowClick=(sessionLocked||c.present)?'':` onclick="_performCheck('${c.id}','in','${esc(jsq(c.name))}')"`;
     const actionBtn=sessionLocked
-      ?`<span class="pill ${c.present?'ok':'warn'}" style="flex:none">${c.present?'In':'Out'}</span>`
-      :`<button class="btn ${c.present?'ghost ':''}sm" style="z-index:1;flex:none;padding:8px 14px;font-size:var(--t-sm)" aria-label="${c.present?'Check out':'Check in'}" onclick="event.stopPropagation();_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')">${c.present?'Check out':'Check in'}</button>`;
-    return `<div class="row${c.present?' checked':''}" role="button" tabindex="0" data-nm="${esc(_nmKey(c.name))}"${rowClick}>
+      ?`<span class="pill ${c.present?'ok':'warn'}" style="flex:none">${c.present?'In':'Not in'}</span>`
+      :`<button class="btn ${c.present?'ghost ':''}sm" style="z-index:1;flex:none;min-height:44px;padding:8px 14px;font-size:var(--t-sm)" aria-label="${c.present?'Undo check-in':'Check in'}" onclick="event.stopPropagation();_performCheck('${c.id}','${c.present?'out':'in'}','${esc(jsq(c.name))}')">${c.present?'Undo check-in':'Check in'}</button>`;
+    return `<div class="row${c.present?' checked':''}"${rowClick?' role="button" tabindex="0"':''} data-nm="${esc(_nmKey(c.name))}"${rowClick}>
       ${gbadge(c)}
       <div style="flex:1;min-width:0">
-        <div class="nm">${esc(c.name)}</div>
+        <div class="nm">${esc(c.name)}${c.medicalFlag?_medPill():''}</div>
         ${subTxt?`<div class="sub">${subTxt}</div>`:''}
       </div>
-      <button class="btn ghost sm" style="z-index:1;flex:none;padding:8px 12px" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(jsq(c.name))}')">Add note</button>
+      <button class="btn ghost sm" style="z-index:1;flex:none;min-height:44px;padding:8px 12px" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(jsq(c.name))}')">Add note</button>
       ${actionBtn}
     </div>`;
   }
+  // QA items 9/13: "all" means everyone on site. Who isn't on site is a separate, stated number.
+  const notOnSite=(st&&st.notOnSiteCount)||0;
+  const notOnSiteTxt=(notOnSite&&list.length===roster.length)?` · ${notOnSite} not on site`:'';
   const completionBanner=dueShown===0?`<div class="card" style="background:#dcfce7;border:1px solid #16a34a;text-align:center;padding:18px 12px">
-    <div style="font-size:1.3rem;font-weight:800;color:#15803d">${icSm('check')} All checked in</div>
-    <div class="sub" style="color:#166534">${presentShown} of ${list.length}${list.length!==roster.length?' (filtered)':''}</div></div>`:'';
+    <div style="font-size:1.3rem;font-weight:800;color:#15803d">${icSm('check')} All here checked in</div>
+    <div class="sub" style="color:#166534">${presentShown} of ${list.length}${list.length!==roster.length?' (filtered)':''}${notOnSiteTxt}</div></div>`:'';
   // B-1: surface unsynced (still draining) + failed (dropped on an online error) state so a
   // leader never silently believes a tap saved. Failed banner offers a retry.
   const syncingN=CHECKIN_QUEUE.length;
   const syncBanner=(syncingN>0||_checkinFailed>0)?
     (_checkinFailed>0
-      ?`<div class="ci-sync ci-sync-fail" onclick="_retryFailedCheckins()">${icSm('alert')} ${_checkinFailed} check-in${_checkinFailed===1?'':'s'} didn’t save — ${_checkinFailReason?esc(_checkinFailReason):'tap to retry'}</div>`
-      :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${syncingN} syncing…</div>`):'';
+      ?`<div class="ci-sync ci-sync-fail" role="button" onclick="_dismissFailedCheckins()">${icSm('alert')} <span>Not saved: ${esc(_checkinFailNames.join(', ')||(_checkinFailed+' check-in'+(_checkinFailed===1?'':'s')))}. Tap Check in again to retry.${_checkinFailReason?' '+esc(_checkinFailReason):''} Tap here to dismiss.</span></div>`
+      :`<div class="ci-sync ci-sync-pending">${icSm('clock')} ${navigator.onLine?`${syncingN} sending…`:`No signal. ${syncingN} saved on this phone, will send when you’re back.`}</div>`):'';
   const doneSection=doneList.length>0?`<details data-nmopen style="margin-top:8px"><summary class="row" style="cursor:pointer;color:var(--muted);font-size:.85rem;padding:8px 12px">Done · <span class="nm-cnt" data-total="${doneList.length}">${doneList.length}</span></summary>
     ${doneList.map(c=>rowHtml(c)).join('')}</details>`:'';
   // ("Not signed in" moved to the bottom of the My-students screen — see filterMyYouth.)
@@ -3752,7 +3845,7 @@ async function _renderDailyCheckin(){
     ${syncBanner}
     ${_filterBanner('checkin',list.length,roster.length)}
     <div class="card" style="display:flex;justify-content:space-between;align-items:center">
-      <div><div class="nm">${esc(label)} check-in ${helpTip('Tap a name to mark that person present for this session; tap again to undo. Pick a different session with the buttons up top.')}</div><div class="sub">Still need ${dueShown}${list.length!==roster.length?' · filtered':''}</div></div>
+      <div><div class="nm">${esc(label)} check-in ${helpTip('Tap a name to mark that person present for this session. Pick a different session with the buttons up top: AM is morning, PM is afternoon, and • marks the session happening now.')}</div><div class="sub">Still need ${dueShown}${list.length!==roster.length?' · filtered':''}${notOnSiteTxt}</div></div>
       ${dueShown>0?`<div style="text-align:right"><div style="font-weight:800;font-size:var(--t-h1);line-height:1;color:var(--warn)">${dueShown}</div><div class="sub" style="font-size:var(--t-2xs)">not yet in</div></div>`:''}
     </div>
     ${completionBanner}
@@ -3760,7 +3853,7 @@ async function _renderDailyCheckin(){
     ${_NM_NONE}
     ${dueList.map(c=>rowHtml(c)).join('')}
     ${doneSection}
-    <p class="note-hint">Tap a row to check in/out. Notes show on the student's profile to your church too, unless marked sensitive.</p>`;
+    <p class="note-hint">Check-in only says who is here for this session. If a child leaves camp, open them on the Students tab and use Sign out of camp. Notes show on the student's profile to your church too, unless marked sensitive.</p>`;
   paint('checkin',html,'Daily Check-in',label);
   _applyNameFilter('checkin',_ciQ); // re-apply the name search after the in-place re-render
   // Show undo toast if pending
@@ -3779,7 +3872,9 @@ function _rCheckin(){
   return Promise.resolve(RENDER.checkin()).then(()=>{const e2=_scroller(document.getElementById('checkin'));if(e2)e2.scrollTop=y;});
 }
 function _performCheck(camperId,type,name){
+  if(_ciTapLocked())return;
   if(!_ensureInitials())return; // item 7: church initials gate (no-op once set; other roles pass)
+  _ciTapLockUntil=Date.now()+500;
   // Fix 4 (review 2026-07-17, MEDIUM-LOW): during the preview simulation there is no real
   // check-in session — the api() write-guard blocks the POST `_queueEntry` would fire, so the
   // row never actually flipped AND drainQueue's caught error ticked up `_checkinFailed`, so a
@@ -3787,7 +3882,7 @@ function _performCheck(camperId,type,name){
   // ONLY (no queue, no network) and bail before any of that.
   if(_previewSimActive()){
     _previewLocalFlips[camperId]=(type==='in');
-    toast(type==='in'?'Checked in (preview)':'Checked out (preview)');
+    toast(type==='in'?'Checked in (preview)':'Check-in undone (preview)');
     _rCheckin();
     return;
   }
@@ -3796,35 +3891,51 @@ function _performCheck(camperId,type,name){
   // Optimistic flip
   _queueEntry(camperId,type);
   // Start undo window
-  clearTimeout(_undoTimer);_undoCamperId=camperId;_undoType=type;
+  clearTimeout(_undoTimer);_undoCamperId=camperId;_undoType=type;_undoSession=SEL_SESSION;_undoName=name||'';
   _undoTimer=setTimeout(()=>{_undoCamperId=null;_hideUndoToast();},4000);
   // Immediate local re-render (keeps scroll position)
   _rCheckin();
 }
 function _showUndoToast(type){
   let el=document.getElementById('undoToast');
-  if(!el){el=document.createElement('div');el.id='undoToast';el.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1e293b;color:var(--card);border-radius:10px;padding:10px 18px;display:flex;align-items:center;gap:10px;z-index:9999;font-size:var(--t-body)';document.body.appendChild(el);}
-  el.innerHTML=`${icSm('check')} ${type==='out'?'Checked out':'Checked in'} <button onclick="undoCheck()" style="background:var(--blue);color:var(--card);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-size:.85rem;font-family:inherit;font-weight:700">Undo</button>`;
+  if(!el){el=document.createElement('div');el.id='undoToast';el.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);width:max-content;max-width:92vw;background:#1e293b;color:var(--card);border-radius:10px;padding:10px 18px;display:flex;align-items:center;gap:10px;z-index:9999;font-size:var(--t-body)';document.body.appendChild(el);}
+  // QA item 19: while offline the tap is only on the phone, so don't claim more than that.
+  el.innerHTML=`${icSm('check')} <span>${type==='out'?'Check-in undone':'Checked in'}${_undoName?': '+esc(_undoName):''}${navigator.onLine?'':' (will send when you’re back)'}</span> <button onclick="undoCheck()" style="background:var(--blue);color:var(--card);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-size:.85rem;font-family:inherit;font-weight:700">Undo</button>`;
   el.style.display='flex';
 }
 function _hideUndoToast(){const el=document.getElementById('undoToast');if(el)el.style.display='none';}
 function undoCheck(){
   clearTimeout(_undoTimer);
-  const id=_undoCamperId,type=_undoType;
+  const id=_undoCamperId,type=_undoType,sess=_undoSession;
   _undoCamperId=null;_undoType=null;_hideUndoToast();
   if(!id)return;
-  // Remove from queue if still pending
-  const idx=CHECKIN_QUEUE.findIndex(e=>e.camperId===id);
-  if(idx>=0){CHECKIN_QUEUE.splice(idx,1);_rCheckin();return;}
-  // Already sent — send the reverse
-  _queueEntry(id,type==='in'?'out':'in');
+  // Remove from queue if still pending, unless it is the one in flight at the head of the queue.
+  const idx=CHECKIN_QUEUE.findIndex(e=>e.camperId===id&&e.sessionId===sess);
+  if(idx>=0&&!(idx===0&&_draining)){CHECKIN_QUEUE.splice(idx,1);_persistQueue();_rCheckin();return;}
+  // Already sent — send the reverse, to the session the tap was on (QA item 14), not the one on screen.
+  _queueEntry(id,type==='in'?'out':'in',sess);
+  _rCheckin();
 }
 async function doCheck(camperId,type){_performCheck(camperId,type,'');}
+/* QA item 16: one send at a time from a sheet, with its buttons disabled while it goes. */
+let _sheetBusy=false;
+function _sheetSending(on){_sheetBusy=on;document.querySelectorAll('#sheet .btn').forEach(b=>{b.disabled=on;});}
+/* QA item 17: after signing back in, the same login gets its unsent note back. */
+function _offerNoteDraft(){
+  const d=window._draft;if(!d||!d.name)return;
+  if(d.owner&&d.owner!==(ACTOR.username||ACTOR.id)){window._draft=null;return;}
+  if(document.getElementById('modal').classList.contains('show'))return;
+  modal(`<h3>You have an unsent note</h3><p class="sub" style="margin:4px 0 10px">Your note about ${esc(d.name)} wasn’t saved before you were signed out.</p>
+    <button class="btn" onclick="closeModal();notePrompt('${d.camperId}','${esc(jsq(d.name))}')">Open the note</button>
+    <button class="btn ghost" style="margin-top:6px" onclick="window._draft=null;closeModal()">Discard it</button>`);
+}
 function notePrompt(camperId,name){
+  if(_ciTapLocked())return; // QA item 4: same stray second tap, landing on the next row's Add note
+  window._noteCtx={camperId,name};
   const d=(window._draft&&window._draft.camperId===camperId)?window._draft:{leader:_actingName(),body:'',sensitive:false};
   modal(`<h3>Note · ${esc(name)}</h3>
-    <label>Note</label><textarea id="noteBody" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
-    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this note from church logins — zone leaders, directors, admins and the prayer team still read it.</div></div>
+    <label>Note</label><textarea id="noteBody" maxlength="1900" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
+    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this note from church logins, including yours — zone leaders, directors, admins and the prayer team still read it. Saving it does not alert anyone.</div></div>
     <label class="tgl"><input type="checkbox" id="noteSensitive" ${d.sensitive?'checked':''}><span class="track"></span></label></div>
     <button class="btn" style="margin-top:10px" onclick="reviewNote('${camperId}','${esc(jsq(name))}')">Review ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
@@ -3836,23 +3947,33 @@ function reviewNote(camperId,name){
   // Item 7e: the leader name is optional — the backend already attributes the note to the
   // logged-in actor (see confirmNote below); this field is only a "logged by" annotation.
   if(!body){toast('Type a note first');return;}
-  if(leader)LAST_LEADER=leader;window._draft={camperId,leader,body,sensitive};
+  if(leader)LAST_LEADER=leader;window._draft={camperId,name,leader,body,sensitive};
   modal(`<h3>Review note</h3><div class="card" style="margin:6px 0 10px">
     <div class="sub">Student</div><div class="nm">${esc(name)}</div>
     ${leader?`<div class="sub" style="margin-top:7px">Logged by</div><div class="nm">${esc(leader)}</div>`:''}
     <div class="sub" style="margin-top:7px">Note</div><div style="font-size:var(--t-body)">${esc(body)}</div>
-    ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:var(--t-body)">${icSm('alert')} Sensitive — hidden from church logins. Zone leaders, directors, admins and the prayer team can read it.</div>`:''}</div>
+    ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:var(--t-body)">${icSm('alert')} Sensitive — hidden from church logins. Zone leaders, directors, admins and the prayer team can read it. Saving it does not alert anyone.</div>`:''}</div>
     <button class="btn" onclick="confirmNote('${camperId}')">Confirm &amp; submit</button>
     <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(jsq(name))}')">‹ Edit</button>`);
 }
-async function confirmNote(camperId){const d=window._draft;if(!d)return;
+async function confirmNote(camperId){const d=window._draft;if(!d||_sheetBusy)return;
   // Backend attributes the note to the logged-in actor; the typed leader name is folded into the body.
   const body=d.leader&&d.leader!==ACTOR.displayName?`${d.body}\n— logged by ${d.leader}`:d.body;
   // Bug 19: SEL_SESSION is null outside the check-in screen — omit the key entirely rather than
   // posting `sessionId: null` (see AddNoteSchema in src/services/note.service.ts).
   const payload={camperId,body,category:'note',sensitive:!!d.sensitive};
   if(SEL_SESSION)payload.sessionId=SEL_SESSION;
-  try{await api('/notes',{method:'POST',body:payload});window._draft=null;closeModal();toast('Note submitted');}catch(e){toast(e.message);}}
+  _sheetSending(true);
+  try{
+    await api('/notes',{method:'POST',body:payload});window._draft=null;_sheetSending(false);
+    // QA item 8: the author can't see a sensitive note afterwards, so this is their only receipt.
+    if(d.sensitive)modal(`<h3>${icSm('check')} Sensitive note saved</h3><div class="card" style="margin:6px 0 10px">
+      <div class="sub">About</div><div class="nm">${esc(d.name||'')}</div>
+      <div class="sub" style="margin-top:7px">Saved</div><div style="font-size:var(--t-body)">${dtFmt(new Date().toISOString())}</div></div>
+      <p class="sub" style="margin:0 0 10px">It won’t show on the student’s card for you or any church login. Zone leaders, directors, admins and the prayer team can read it. Saving it did not alert anyone.</p>
+      <button class="btn" onclick="closeModal()">OK</button>`);
+    else{closeModal();toast(d.name?'Note saved for '+d.name:'Note saved');}
+  }catch(e){_sheetSending(false);toast(e.message);}}
 
 /* ===== FIRST AID ===== */
 /* ===== FIRST AID (Phase 4) =====
@@ -3864,6 +3985,15 @@ function _faBubble(c){const g=c.gender==='female'?'female':'male';return `<div c
 // Allergy-type dietary items are surfaced in the medical alert too (so an allergen can't hide in a
 // "dietary" card). Anything matching /allerg|anaphyl|intoleran|coeliac|celiac/ is treated as clinical.
 const _ALLERGY_RE=/allerg|anaphyl|intoleran|coeliac|celiac/i;
+/* QA item 7: the first-aid amber alert, shared with the leader's cards and rows. */
+function _medAlertRows(c){return [
+  ...(c.dietaryRequirements||[]).filter(d=>_ALLERGY_RE.test(d)).map(d=>({tag:'Allergy',b:d})),
+  ...(c.medicalConditions||[]).map(m=>({tag:'Condition',b:m})),
+  ...(c.otherMedications?[{tag:'Meds',b:c.otherMedications}]:[]),
+];}
+function _medAlertHtml(c){const rows=_medAlertRows(c);return rows.length?`<div class="fa-alert"><div class="ah">${icSm('medical')} Medical alert</div>
+  ${rows.map(r=>`<div class="row"><span class="tag">${esc(r.tag)}</span><span class="b">${esc(r.b)}</span></div>`).join('')}</div>`:'';}
+const _medPill=()=>' <span class="pill" style="background:var(--alert-bg);color:var(--alert-ink);border:1px solid var(--alert-bd)">medical</span>';
 /* Bug 20 (2026-07-28): "Signed in" filter, ON by default on BOTH first-aid lists. A first-aider
    is almost always dealing with someone physically on site, so the default view hides people who
    have not signed in (or have signed out). Toggling it off restores the full roster — the rows
@@ -3908,15 +4038,15 @@ let faT;function runFaSearch(v){clearTimeout(faT);faT=setTimeout(async()=>{
 // yet, so flagging every single row would be noise (the expected state), not a genuine
 // exception worth calling out.
 function faResultRow(c){
-  const hasMed=(c.medicalConditions||[]).length>0||c.otherMedications||(c.dietaryRequirements||[]).some(d=>_ALLERGY_RE.test(d));
+  const hasMed=_medAlertRows(c).length>0;
   const showPresence=CAMP_MODE==='at-camp';
   const offSite=showPresence&&!c.atCamp;
   const flag=offSite?` <span class="pill warn" style="border:1px solid #fecaca">${icSm('alert')} Not on site</span>`:'';
-  const grade=c.grade?` · Yr ${c.grade}`:(c.kind==='leader'?' · Leader':'');
+  const grade=c.grade?` · Grade ${c.grade}`:(c.kind==='leader'?' · Leader':'');
   const presence=showPresence?(offSite?'<span style="color:var(--danger);font-weight:700">signed out / not on site</span>':'on site'):'';
   const metaBits=[esc(c.churchName||''),esc(c.zone||'')+' Zone',presence].filter(Boolean).join(' · ');
   return `<div class="row" role="button" tabindex="0" onclick="openStudentInfo('${c.id}')">
-    <div style="flex:1;min-width:0"><div class="nm">${esc((c.firstName||'')+' '+(c.lastName||''))}${hasMed?' <span class="pill" style="background:var(--alert-bg);color:var(--alert-ink);border:1px solid var(--alert-bd)">medical</span>':''}${flag}</div>
+    <div style="flex:1;min-width:0"><div class="nm">${esc((c.firstName||'')+' '+(c.lastName||''))}${hasMed?_medPill():''}${flag}</div>
     <div class="sub" style="color:var(--ink-2)">${metaBits}${grade}</div></div>
     <span style="color:var(--lav-2)">${ic('chevron')}</span></div>`;
 }
@@ -3985,15 +4115,9 @@ async function openStudentInfo(id){
   const parentContact=contacts.find(x=>x.role==='parent');
   const prim=leaderContacts.find(x=>x.type==='primary');const back=leaderContacts.find(x=>x.type==='backup');
   // Merge allergy-type dietary items into the clinical alert; keep the rest for the Dietary card.
-  const diet=(c.dietaryRequirements||[]);const allergyDiet=diet.filter(d=>_ALLERGY_RE.test(d));const otherDiet=diet.filter(d=>!_ALLERGY_RE.test(d));
-  const alertRows=[
-    ...allergyDiet.map(d=>({tag:'Allergy',b:d})),
-    ...(c.medicalConditions||[]).map(m=>({tag:'Condition',b:m})),
-    ...(c.otherMedications?[{tag:'Meds',b:c.otherMedications}]:[]),
-  ];
-  const alert=alertRows.length
-    ? `<div class="fa-alert"><div class="ah">${icSm('medical')} Medical alert</div>
-        ${alertRows.map(r=>`<div class="row"><span class="tag">${esc(r.tag)}</span><span class="b">${esc(r.b)}</span></div>`).join('')}</div>`
+  const diet=(c.dietaryRequirements||[]);const otherDiet=diet.filter(d=>!_ALLERGY_RE.test(d));
+  const alert=_medAlertRows(c).length
+    ? _medAlertHtml(c)
     : `<div class="fa-neutral"><div class="ah">${icSm('check')} No medical conditions recorded</div><div class="fa-calm">Nothing flagged for this student.</div></div>`;
   /* The clause sits behind a tooltip rather than on the card because a first-aider standing over
      an injured student needs "Granted / Not granted" in one glance — but when the question is what
@@ -4125,6 +4249,15 @@ function _faParse(body){const o={problem:'',treatment:'',firstAider:'',broughtBy
    is outside the loaded window (/notes/firstaid limit) shows on its own as an "orphan". */
 // First line only: free text (esp. prayer records) may contain a line starting "Amends:".
 function _faIsAmend(n){return /^Amends:\s*\S/.test((n&&n.body)||'');}
+/* QA item 20: on the general notes list, show a first-aid record in words and never the
+   "Amends: note_…" id line. Anything else, or text that doesn't parse, stays exactly as written. */
+function _noteBodyHtml(n){
+  if(n.category==='prayer'&&_faIsAmend(n))return 'Amendment: '+esc(n.body.replace(/^Amends:\s*\S+\s*/,''));
+  if(n.category!=='firstaid')return esc(n.body);
+  const p=_faParse(n.body);
+  const bits=[p.problem&&'What happened: '+esc(p.problem),p.treatment&&'Treatment: '+esc(p.treatment),p.amendment&&'Amendment: '+esc(p.amendment),p.firstAider&&'First-aider: '+esc(p.firstAider)].filter(Boolean);
+  return bits.length?bits.join('<br>'):esc(n.body);
+}
 function _faGroup(recs){
   const byId={},out=[];
   recs.forEach(n=>{if(_faIsAmend(n))return;const g={n,amends:[]};byId[n.id]=g;out.push(g);});
@@ -4221,7 +4354,7 @@ RENDER.records=async function(){
   try{[recs,page]=await Promise.all([api('/notes/firstaid?limit=1000'),api(_scoped('/campers?pageSize=300')).catch(()=>[])]);}
   catch(e){paint('records','<p class="err" style="display:block">'+esc(e.message)+'</p>','First-aid records','');return;}
   window._faRecsAll=recs||[];
-  const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c.firstName+' '+c.lastName+(c.grade?' · Gr '+c.grade:'');});window._faCamperMap=cmap;
+  const camps=Array.isArray(page)?page:page.items||[];const cmap={};camps.forEach(c=>{cmap[c.id]=c.firstName+' '+c.lastName+(c.grade?' · Grade '+c.grade:'');});window._faCamperMap=cmap;
   paint('records',`<div class="search" style="padding:9px 14px"><span>${ic('search')}</span><input id="faRecQ" placeholder="Filter by student…" oninput="drawFaRecords()" aria-label="Filter records"></div>
     <div class="rowsb" style="margin-bottom:12px;align-items:center">
       <select class="fld" id="faRecDay" style="flex:1;min-width:0;margin:0 8px 0 0" onchange="faRecDay(this.value)" aria-label="Show records from">${_faDayOpts().map(o=>`<option value="${o.v}"${o.v===_faRecFilter?' selected':''}>${esc(o.l)}</option>`).join('')}</select>
@@ -4505,7 +4638,7 @@ async function _renderStudentsBody(){
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const churchFilterHtml=isWide?_myChurchFilterHtml(items):'';
   window._myYouthAll=items;
-  host.innerHTML=`<div class="filters">${churchFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div>${_nameSearchHtml('students',true)}${_NM_NONE}<div id="myYouthList"></div>`;
+  host.innerHTML=`<div class="filters">${churchFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Grade ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div>${_nameSearchHtml('students',true)}${_NM_NONE}<div id="myYouthList"></div>`;
   filterMyYouth();
 }
 function switchStudentsTab(sub){
@@ -6461,6 +6594,11 @@ function _isoToLocalInput(iso){if(!iso)return '';const d=new Date(iso);if(isNaN(
   const g=t=>((p.find(x=>x.type===t)||{}).value||'');let hh=g('hour');if(hh==='24')hh='00';
   return `${g('year')}-${g('month')}-${g('day')}T${hh}:${g('minute')}`;}
 function _schedLabel(iso){const li=_isoToLocalInput(iso);if(!li)return '';return li.slice(0,10)+' · '+_ampm(li.slice(11));}
+// QA item 26: who a notice reaches, matching canSeeNotification (notification-visibility.ts).
+function _noticeAudience(p,pri){
+  const who=p.scope==='camp'?'Every login at camp':'The '+p.zone+' zone churches and zone leaders, plus directors and admins,';
+  return who+(pri==='urgent'?' will see it next time they open the app. Phones with alerts on also get a notification.':' will see it next time they open the app. No phone notification is sent.');
+}
 async function sendNotif(){const title=document.getElementById('ntitle').value.trim(),body=document.getElementById('nbody').value.trim();
   if(!title||!body){toast('Enter title + message');return;}
   let p={priority:window._pri,title,body};
@@ -6476,13 +6614,13 @@ async function sendNotif(){const title=document.getElementById('ntitle').value.t
   const editingId=window._editNoticeId;
   // Confirm loud/immediate sends only — a scheduled or edited notice skips the "send now?" gate.
   if(!editingId&&!scheduledFor&&(p.scope==='camp'||window._pri==='urgent')){
-    if(!await confirmSheet({title:'Send '+(window._pri==='urgent'?'URGENT ':'')+(p.scope==='camp'?'camp-wide':p.zone+' zone')+' notice?',confirmLabel:'Send'}))return;
+    if(!await confirmSheet({title:'Send '+(window._pri==='urgent'?'URGENT ':'')+(p.scope==='camp'?'camp-wide':p.zone+' zone')+' notice?',body:_noticeAudience(p,window._pri),confirmLabel:'Send'}))return;
   }
   try{
     if(editingId){await api('/notifications/'+editingId,{method:'PATCH',body:p});window._editNotice=null;window._editNoticeId=null;toast('Notice updated');NOTICE_SUB='scheduled';gotoTab('notifs');}
     else{await api('/notifications',{method:'POST',body:p});
       if(scheduledFor){toast('Scheduled for '+_schedLabel(scheduledFor));NOTICE_SUB='scheduled';gotoTab('notifs');}
-      else{toast('Delivered');back();}}
+      else{toast('Sent. '+_noticeAudience(p,window._pri));back();}}
   }catch(e){toast(e.message);}}
 // Scheduled notices management (item 9) — creator sees own; director/admin see all.
 /* One pending-notice card — extracted so the merged Notices screen (item 10) owns the markup. */
@@ -6550,12 +6688,12 @@ function fdDraw(){
   // AC-3: the gender/grade filter applies to the already-signed-in section too.
   const visibleIn=alreadyIn.filter(matchFilter);
   const pending=window._fdPending||(window._fdPending=new Set());
-  const gradeOpts=['all',...GRADES,'leader'].map(g=>`<option value="${g}" ${String(g)===gr?'selected':''}>${g==='all'?'All grades':g==='leader'?'Leaders':'Yr '+g}</option>`).join('');
+  const gradeOpts=['all',...GRADES,'leader'].map(g=>`<option value="${g}" ${String(g)===gr?'selected':''}>${g==='all'?'All grades':g==='leader'?'Leaders':'Grade '+g}</option>`).join('');
   function fdRow(c,done){
     // AC-4: initials bubble is gender-coloured via .av.male/.av.female (blue/pink).
     const av=`<div class="av ${esc(c.gender)}">${initials(c.firstName+' '+c.lastName)}</div>`;
     // Leaders have no grade — badge them "Leader" rather than showing "Yr —".
-    const gradeLabel=c.kind==='leader'?'Leader':'Yr '+(c.grade||'—');
+    const gradeLabel=c.kind==='leader'?'Leader':'Grade '+(c.grade||'—');
     // 2026-09-28: small pink fork & knife beside the badge when the person (student or leader) has
     // any dietary requirement; tooltip lists them. Nil/None answers are already stripped on import.
     const diet=(c.dietaryRequirements||[]).filter(Boolean);
@@ -6644,7 +6782,7 @@ async function _renderMyGroup(screenId){
   const isWide=['zoneLeader','director','admin'].includes(ACTOR.role);
   const churchFilterHtml=isWide?_myChurchFilterHtml(items):'';
   window._myYouthAll=items;
-  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not signed in. Tap a name to see their details and contacts.')}</div><div class="filters">${churchFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Yr ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div><div id="myYouthList"></div>`;
+  const base=`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Your group</span>${helpTip('Everyone in your group, split into At camp, Signed out, and Not signed in. Tap a name to see their details and contacts.')}</div><div class="filters">${churchFilterHtml}<select id="myGenderF" onchange="setMyFilter()"><option value="all">All genders</option><option value="female" ${MY_FILTER.gender==='female'?'selected':''}>Girls</option><option value="male" ${MY_FILTER.gender==='male'?'selected':''}>Guys</option></select><select id="myGradeF" onchange="setMyFilter()"><option value="all">All grades</option>${GRADES.map(g=>`<option value="${g}" ${String(MY_FILTER.grade)===String(g)?'selected':''}>Grade ${g}</option>`).join('')}<option value="leaders" ${MY_FILTER.grade==='leaders'?'selected':''}>Leaders</option></select></div><div id="myYouthList"></div>`;
   document.getElementById(screenId).innerHTML=base;
   filterMyYouth();
 }
@@ -6730,7 +6868,7 @@ function filterMyYouth(){
     if(showChurchOnTile){subParts.push(esc(c.zone)+' Zone');subParts.push(esc(c.churchName));}
     const sub=subParts.join(' · ');
     return `<div class="row" role="button" tabindex="0" data-nm="${esc(_nmKey(c.firstName+' '+c.lastName))}" onclick="openCamper('${c.id}')">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
-      <div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}</div>
+      <div style="flex:1;min-width:0"><div class="nm">${esc(c.firstName+' '+c.lastName)}${_medAlertRows(c).length?_medPill():''}</div>
       ${sub?`<div class="sub">${sub}</div>`:''}</div><span class="chev">›</span></div>`;
   }
   // Item 14: a leader row carries its own presence pill, because this list deliberately mixes
@@ -6753,7 +6891,7 @@ function filterMyYouth(){
     // only, not lifecycle, so it works for registered-not-arrived people (as leaderRow already does).
     return `<div class="row" role="button" tabindex="0" style="cursor:pointer" data-nm="${esc(_nmKey(nm))}" onclick="openCamper('${c.id}')">${gbadge({kind:c.kind,gender:c.gender,grade:c.grade})}
       <div style="flex:1;min-width:0"><div class="nm">${esc(nm)}</div>${showChurchOnTile?`<div class="sub">${esc(c.churchName||'')}</div>`:''}</div>
-      <button class="btn ghost sm" style="flex:none;padding:8px 12px" onclick="event.stopPropagation();signInConfirmList('${c.id}','${esc(jsq(nm))}',${c.kind==='leader'})">Sign in to camp</button>
+      ${CAMP_MODE==='pre-camp'?'':`<button class="btn ghost sm" style="flex:none;padding:8px 12px" onclick="event.stopPropagation();signInConfirmList('${c.id}','${esc(jsq(nm))}',${c.kind==='leader'})">Sign in to camp</button>`}
     </div>`;
   }
   const groupByChurch=ACTOR.role==='zoneLeader';
@@ -6774,7 +6912,7 @@ function filterMyYouth(){
   let html='';
   html+=section('At camp',atCamp);
   html+=dropdown('Signed out of camp',signedOut,myRow);
-  html+=dropdown('Not signed in',notSignedIn,nsRow);
+  html+=dropdown(CAMP_MODE==='pre-camp'?'Not arrived yet':'Not signed in',notSignedIn,nsRow);
   // Item 14: sits BELOW "Not signed in", collapsed by default. `dropdown` groups by church for a
   // zoneLeader, which is what they want here too — but the sort inside each group would be lost,
   // so leaders get their own un-grouped block with the signed-in-first ordering intact.
@@ -6812,22 +6950,22 @@ async function openCamper(id,push=true){
   }
   const lastSignOut=atCamp?null:(p.signOutHistory||[]).filter(e=>e.type==='out').slice(-1)[0]||null;
   if(canReadCamperNotes()){try{const notes=await api('/notes/camper/'+id);
-    notesHtml=`<div class="h3">Notes</div>${notes.length?notes.map(n=>`<div class="noteitem">${n.sensitive?`<span class="pill warn" style="margin-bottom:4px">${icSm('alert')} Sensitive</span> `:''}${esc(n.body)}<div class="meta">${n.category&&n.category!=='note'?esc(n.category)+' · ':''}${esc(n.authorName)} · ${dtFmt(n.createdAt)}</div></div>`).join(''):'<p class="sub">No notes.</p>'}`;
+    notesHtml=`<div class="h3">Notes</div>${notes.length?notes.map(n=>`<div class="noteitem">${n.sensitive?`<span class="pill warn" style="margin-bottom:4px">${icSm('alert')} Sensitive</span> `:''}${_noteBodyHtml(n)}<div class="meta">${n.category&&n.category!=='note'?esc(n.category)+' · ':''}${esc(n.authorName)} · ${dtFmt(n.createdAt)}</div></div>`).join(''):'<p class="sub">No notes.</p>'}`;
   }catch(e){}}
   const camp=`<div class="card"><div class="h3" style="margin-top:0">Camp attendance</div>
-    <div class="kv"><span class="k">Status</span><span class="v">${atCamp?'<span class="pill ok">Signed in</span>':'<span class="pill warn">Signed out</span>'}</span></div>
+    <div class="kv"><span class="k">Status</span><span class="v">${atCamp?'<span class="pill ok">Signed in</span>':lastSignOut?'<span class="pill warn">Signed out</span>':'<span class="pill info">Not arrived yet</span>'}</span></div>
     ${!atCamp&&lastSignOut?`<div class="kv"><span class="k">Signed out by</span><span class="v">${esc(lastSignOut.leaderName)}</span></div>
     <div class="kv"><span class="k">Reason</span><span class="v">${esc(lastSignOut.reason||'—')}</span></div>`:''}
-    ${atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
+    ${(!atCamp&&CAMP_MODE==='pre-camp')?'':atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
   const fullName=p.fullName||p.firstName+' '+p.lastName;
   document.getElementById('camper').innerHTML=`<div class="detail-hd"><div class="av-lg">${initials(fullName)}</div>
     <h2>${esc(fullName)}</h2><div style="color:#cfe0ff;font-size:.82rem">${esc(p.zone)} Zone · ${lead?'Leader (18+)':'Grade '+(p.grade||'—')}</div></div>
+    ${lead?'':_medAlertHtml(p)}
     <div class="card">
       <div class="kv"><span class="k">Church</span><span class="v">${esc(p.churchName)}</span></div>
       <div class="kv"><span class="k">${lead?'Mobile':'Student mobile'}</span><span class="v"><a href="tel:${esc(p.mobile||'')}" style="color:var(--blue);text-decoration:none">${esc(fmtPhone(p.mobile)||'—')}</a></span></div>
-      ${lead?'':`<div class="kv"><span class="k">Medical</span><span class="v">${esc((p.medicalConditions||[]).join(', ')||'—')}</span></div>
-      <div class="kv"><span class="k">Dietary</span><span class="v">${esc((p.dietaryRequirements||[]).join(', ')||'—')}</span></div>
-      ${p.otherMedications?`<div class="kv"><span class="k">Medication</span><span class="v">${esc(p.otherMedications)}</span></div>`:''}
+      ${lead?'':`${_medAlertRows(p).length?'':'<div class="kv"><span class="k">Medical</span><span class="v">None listed</span></div>'}
+      <div class="kv"><span class="k">Dietary</span><span class="v">${esc((p.dietaryRequirements||[]).join(', ')||'None listed')}</span></div>
       ${_medConsentRow(p)}
       ${_medicationConsentRow(p)}`}
       <!-- AC-6 removed the whole consents line from this card; MEDICAL consent came back on
@@ -6890,8 +7028,9 @@ function signOutReview(id,name,isLeader){
     <button class="btn red" onclick="signOutConfirm()">Confirm &amp; sign out</button>
     <button class="btn ghost" style="margin-top:6px" onclick="signOutPrompt('${id}','${esc(jsq(name))}',${!!isLeader})">‹ Edit</button>`);
 }
-async function signOutConfirm(){const d=window._soDraft;if(!d)return;
-  try{await api('/attendance/sign-out',{method:'POST',body:{camperId:d.id,leaderName:d.leader,reason:d.reason}});window._soDraft=null;closeModal();toast('Signed out');_refreshAfterAttendance(d.id);}catch(e){toast(e.message);}}
+async function signOutConfirm(){const d=window._soDraft;if(!d||_sheetBusy)return;
+  _sheetSending(true);
+  try{await api('/attendance/sign-out',{method:'POST',body:{camperId:d.id,leaderName:d.leader,reason:d.reason}});window._soDraft=null;_sheetSending(false);closeModal();toast('Signed out');_refreshAfterAttendance(d.id);}catch(e){_sheetSending(false);toast(e.message);}}
 function signInPrompt(id,name,isLeader){
   // Item 2+3: sign-in is now ONE tap for every role — the acting name is the account's own name
   // (church → its initials; other roles → the account display name), never a typed field, and the
@@ -7070,13 +7209,13 @@ RENDER.testimonies=async function(){
      churches, which was accepted as rare. `churchName` stays on `items` — it costs nothing. */
   const opts=`<option value="" selected>No specific student identified</option>`
     +items.map(c=>`<option value="${c.id}">${esc(c.firstName+' '+c.lastName)}</option>`).join('');
-  paint('testimonies',`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Submit a testimony</span>${helpTip('Record a God-moment from camp. Choosing a student is optional — leave it blank for a general testimony. Saved for leaders and directors to review.')}</div>
-    <div class="infobox" style="font-size:.82rem">Record a testimony or God-moment from camp. Pick a student if it's about one, or leave it as a general testimony. It is saved with the records that leaders &amp; directors review.</div>
+  paint('testimonies',`<div class="rowsb" style="margin-bottom:8px"><span class="lbl" style="margin:0">Submit a testimony</span>${helpTip('A testimony is a true story of something God did at camp. Choosing a student is optional. Saved for leaders and directors to review.')}</div>
+    <div class="infobox" style="font-size:.82rem">A testimony is a true story of something God did at camp. Pick a student if it's about one, or leave it blank. Leaders and directors can read it.</div>
     <div class="card"><label>Student (optional)</label><select id="tmCamper">${opts}</select>
-    <label>Testimony</label><textarea id="tmBody" placeholder="What happened? Whose story is it? What did God do?" style="min-height:120px"></textarea>
-    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this testimony from church logins — zone leaders, directors and admins still read it, and so does the prayer team if it names a student.</div></div>
+    <label>Testimony</label><textarea id="tmBody" maxlength="1900" placeholder="What happened? Whose story is it? What did God do?" style="min-height:120px"></textarea>
+    <div class="tglrow" style="margin-top:10px"><div><div class="tgl-l">Mark as sensitive</div><div class="sub">Hides this testimony from church logins — zone leaders, directors and admins still read it, and so does the prayer team if it names a student. Saving it does not alert anyone.</div></div>
     <label class="tgl"><input type="checkbox" id="tmSensitive"><span class="track"></span></label></div>
-    <button class="btn" style="margin-top:10px" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','Open all camp');
+    <button class="btn" style="margin-top:10px" onclick="submitTestimony()">Submit testimony</button></div>`,'Submit Testimonies','');
 };
 async function submitTestimony(){const camperId=sel('tmCamper'),body=val('tmBody');
   const leader=_actingName(); // item 2: account name (church initials / account display name)
@@ -7227,7 +7366,7 @@ function drawNotes(){
     return '<span class="pill ok">Student note</span>';
   };
   box.innerHTML=list.length?list.map(n=>{const c=n.cat||'note';
-    const right=(n.gender)?`<span class="sub" style="white-space:nowrap">${n.grade?'Yr '+n.grade:(n.gender==='male'?'Guys':'Girls')}</span>`:'';
+    const right=(n.gender)?`<span class="sub" style="white-space:nowrap">${n.grade?'Grade '+n.grade:(n.gender==='male'?'Guys':'Girls')}</span>`:'';
     // First-aid records carry a 4-line body (Problem/Treatment/First-aider/Brought by) — render
     // the Problem + Treatment lines distinctly rather than as one blob.
     let bodyHtml;
@@ -7323,7 +7462,7 @@ async function submitIncident(){
   if(!summary){toast('Describe the incident');return;}
   try{
     await api('/incidents',{method:'POST',body:{summary,severity:_incSeverity,occurredAt:_incOccurredISO()}});
-    toast(_incSeverity==='high'?'Incident logged · everyone notified':'Incident logged');
+    toast(_incSeverity==='high'?'Incident logged. Zone leaders, directors and admins are alerted.':'Incident logged');
     await RENDER.incidents();
   }catch(e){toast(e.message);}
 }
@@ -7448,10 +7587,10 @@ RENDER.adminAccounts=async function(){
       <div style="font-weight:700;font-size:var(--t-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px">${o.title}</div>
       <div style="font-size:var(--t-micro);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px">${o.sub}</div>
       <div style="display:flex;gap:4px;margin-top:auto;flex-wrap:nowrap">
-        <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Account Info" aria-label="Account Info" onclick="${o.onName}">${ic('edit')}</button>
-        <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="${o.onPass}">${ic('key')}</button>
-        ${o.onPreview?`<button class="iconbtn" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="${o.onPreview}">${ic('preview')}</button>`:''}
-        <button class="iconbtn danger" style="flex:1 1 0;min-width:0" title="Delete" aria-label="Delete" onclick="${o.onDel}">${ic('trash')}</button>
+        <button class="iconbtn lab" style="flex:1 1 0;min-width:0" title="Account Info" aria-label="Account Info" onclick="${o.onName}">${ic('edit')}<span>Info</span></button>
+        <button class="iconbtn lab" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="${o.onPass}">${ic('key')}<span>Password</span></button>
+        ${o.onPreview?`<button class="iconbtn lab" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="${o.onPreview}">${ic('preview')}<span>Preview</span></button>`:''}
+        <button class="iconbtn lab danger" style="flex:1 1 0;min-width:0" title="Delete" aria-label="Delete" onclick="${o.onDel}">${ic('trash')}<span>Delete</span></button>
       </div></div>`;
   const tileGrid=items=>items.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-top:4px">${items.join('')}</div>`:'<p class="note-hint">None yet.</p>';
   const lr=tileGrid(leaders.map(u=>{
@@ -7492,13 +7631,13 @@ RENDER.adminAccounts=async function(){
           <button class="iconbtn danger" title="Delete church + both logins" aria-label="Delete church and both logins" onclick="delChurch('${c.id}')">${ic('trash')}</button>
         </div></div>`;
     if(!accts.length)return `<div class="ch-pair">${head}<p class="note-hint" style="margin:8px 0 0">No login accounts for this church yet.</p></div>`;
-    const half=cu=>{const male=cu.genderScope==='male';
-      return `<div class="ch-half ${male?'ch-m':'ch-f'}">
-        <div class="ch-g">${male?'Boys':'Girls'}${cu.status==='inactive'?' · inactive':''}</div>
+    const half=cu=>{const male=cu.genderScope==='male',female=cu.genderScope==='female';
+      return `<div class="ch-half ${male?'ch-m':female?'ch-f':''}">
+        <div class="ch-g">${male?'Boys':female?'Girls':'Both'}${cu.status==='inactive'?' · inactive':''}</div>
         <div class="ch-u">@${esc(cu.username||'—')}</div>
         <div style="display:flex;gap:4px;margin-top:8px">
-          <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="changePassword('${cu.id}')">${ic('key')}</button>
-          ${cu.status!=='inactive'?`<button class="iconbtn" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="confirmEnterAccountPreview('${cu.id}')">${ic('preview')}</button>`:''}
+          <button class="iconbtn lab" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="changePassword('${cu.id}')">${ic('key')}<span>Password</span></button>
+          ${cu.status!=='inactive'?`<button class="iconbtn lab" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="confirmEnterAccountPreview('${cu.id}')">${ic('preview')}<span>Preview</span></button>`:''}
         </div></div>`;};
     // The optional dual-gender login: a slim add button when absent, a small account row
     // (password/preview/delete — the SAME generic changePassword/confirmEnterAccountPreview/
@@ -7509,9 +7648,9 @@ RENDER.adminAccounts=async function(){
           <div class="ch-g">${icSm('users')} All — both genders${dual.status==='inactive'?' · inactive':''}</div>
           <div class="ch-u">@${esc(dual.username||'—')}</div>
           <div style="display:flex;gap:4px;margin-top:8px">
-            <button class="iconbtn" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="changePassword('${dual.id}')">${ic('key')}</button>
-            ${dual.status!=='inactive'?`<button class="iconbtn" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="confirmEnterAccountPreview('${dual.id}')">${ic('preview')}</button>`:''}
-            <button class="iconbtn danger" style="flex:1 1 0;min-width:0" title="Remove dual-gender login" aria-label="Remove dual-gender login" onclick="delAcct('${dual.id}')">${ic('trash')}</button>
+            <button class="iconbtn lab" style="flex:1 1 0;min-width:0" title="Change password" aria-label="Change password" onclick="changePassword('${dual.id}')">${ic('key')}<span>Password</span></button>
+            ${dual.status!=='inactive'?`<button class="iconbtn lab" style="flex:1 1 0;min-width:0" title="Preview this login" aria-label="Preview this login" onclick="confirmEnterAccountPreview('${dual.id}')">${ic('preview')}<span>Preview</span></button>`:''}
+            <button class="iconbtn lab danger" style="flex:1 1 0;min-width:0" title="Remove dual-gender login" aria-label="Remove dual-gender login" onclick="delAcct('${dual.id}')">${ic('trash')}<span>Delete</span></button>
           </div></div>`
       :`<div class="ch-dual"><button class="btn ghost sm" style="width:100%;margin-top:0" onclick="addDualLogin('${c.id}')">${icSm('users')} Add dual-gender login (sees both boys &amp; girls)</button></div>`;
     return `<div class="ch-pair">${head}<div class="ch-halves">${accts.map(half).join('')}</div>${dualBlock}</div>`;
@@ -7528,7 +7667,7 @@ RENDER.adminAccounts=async function(){
      describing itself wrongly as much as it was hard to find. */
   paint('adminAccounts',`
     <div class="card"><div class="lbl" style="margin-top:0">All login passwords</div>
-      <p class="note-hint" style="margin:2px 0 8px">Issues fresh memorable passwords and downloads the list as a CSV. Two options below — rotate every login, or churches only (leadership passwords stay put). The original admin account (this one) is never changed either way.</p>
+      <p class="note-hint" style="margin:2px 0 8px">Issues fresh memorable passwords and downloads the list as a CSV. Two options below: change every login, or church logins only (leadership passwords stay the same). The original admin account (this one) is never changed either way.</p>
       <div style="display:flex;gap:8px;align-items:stretch;flex-wrap:wrap">
         <button class="btn ghost" onclick="randomizeChurchPasswords()" style="flex:1;min-width:150px;margin-top:0">${icSm('key')} Randomise all logins</button>
         <button class="btn ghost" onclick="randomizeChurchOnlyPasswords()" style="flex:1;min-width:150px;margin-top:0">${icSm('key')} Randomise church logins only</button>
@@ -7805,8 +7944,12 @@ async function savePassword(id){const password=document.getElementById('cpP').va
   try{await api('/accounts/users/password',{method:'POST',body:{userId:id,password}});closeModal();toast('Password updated');}catch(e){toast(e.message);}}
 async function delAcct(id){if(!await confirmSheet({title:'Delete this account?',confirmLabel:'Delete',danger:true}))return;
   try{await api("/accounts/users/"+id,{method:"DELETE"});toast("Account deleted");await _rAccts();}catch(e){toast(e.message);}}
-async function delChurch(id){if(!await confirmSheet({title:'Delete this church and its login account?',confirmLabel:'Delete',danger:true}))return;
-  try{await api("/accounts/churches/"+id,{method:"DELETE"});toast("Church deleted");await _rAccts();}catch(e){toast(e.message);}}
+async function delChurch(id){
+  const c=((await api('/accounts/churches').catch(()=>[]))||[]).find(x=>x.id===id);
+  if(!await confirmSheet({title:'Delete '+(c?c.name:'this church')+'?',body:'This also deletes its logins. It is refused while any people are attached.',confirmLabel:'Delete',danger:true}))return;
+  // A refusal names the church and the count, too long for a toast: keep it up until read.
+  try{await api("/accounts/churches/"+id,{method:"DELETE"});toast("Church deleted");await _rAccts();}
+  catch(e){modal(`<h3>Not deleted</h3><p class="sub" style="margin:4px 0 10px">${esc(e.message)}</p><button class="btn" onclick="closeModal()">OK</button>`);}}
 async function addChurch(){if(!val('ncName')||!val('ncUser')){toast('Enter church name + login username');return;}
   const username=val('ncUser');
   if(!/^[A-Za-z0-9._-]{2,40}$/.test(username)){toast('Username: letters, numbers, . _ - only (min 2 chars)');return;}
@@ -8523,7 +8666,14 @@ async function testCheckinWarning(){
 
 async function saveSettings(){
   try{
-    const days=_datesBetween(val('stStart'),val('stEnd'));
+    // QA item 12: one typo here can stop every church checking in, so check before it saves.
+    const newStart=val('stStart'),newEnd=val('stEnd');
+    if(newStart&&newEnd&&newEnd<newStart){toast('The end date is before the start date');return;}
+    if(_modeSwitchLocked()&&(newStart!==SETTINGS.startDate||newEnd!==SETTINGS.endDate)){
+      const today=localDateISO(),closes=!(newStart<=today&&today<=newEnd);
+      if(!await confirmSheet({title:'Change the dates while camp is running?',body:(closes?'Today would no longer be a camp day, so check-in would close for every church. ':'')+'Devotionals and the schedule move with the dates.',confirmLabel:'Change dates',danger:closes}))return;
+    }
+    const days=_datesBetween(newStart,newEnd);
     // tentPrice/classroomPrice came BACK 2026-07-29 (migration 0017) for the budget's ticket
     // classification, after being dropped by PC-4/migration 0004. Their job is narrower now:
     // a REFERENCE price used to value a "paid in person" ticket, not the source of anyone's
@@ -10695,14 +10845,14 @@ RENDER.mycontacts=async function(){
   const ct=c.contacts||{};
   const mp=ct.male?.primary||{},mb=ct.male?.backup||{},fp=ct.female?.primary||{},fb=ct.female?.backup||{};
   const pair=(lbl,n,p,nv,pv)=>`<label>${lbl}</label><div style="display:flex;gap:6px"><input class="fld" id="${n}" placeholder="Name" value="${esc(nv||'')}"><input class="fld" id="${p}" placeholder="Phone" value="${esc(pv||'')}" inputmode="tel"></div>`;
-  paint('mycontacts',`<div class="infobox" style="font-size:.82rem">These are the leaders first aid and the camp office call about one of your students. Keep them current — a wrong number here is only discovered in an emergency.</div>
+  paint('mycontacts',`<div class="infobox" style="font-size:.82rem">First aid and the camp office call these leaders about one of your students. They see these numbers straight away, so please check each one. A wrong number is only found in an emergency.</div>
     <div class="card">
       ${pair('Guys — primary leader','mp_n_'+c.id,'mp_p_'+c.id,mp.name,mp.phone)}
       ${pair('Guys — secondary leader','mb_n_'+c.id,'mb_p_'+c.id,mb.name,mb.phone)}
       ${pair('Girls — primary leader','fp_n_'+c.id,'fp_p_'+c.id,fp.name,fp.phone)}
       ${pair('Girls — secondary leader','fb_n_'+c.id,'fb_p_'+c.id,fb.name,fb.phone)}
       <button class="btn" style="margin-top:12px" onclick="saveContacts('${c.id}')">Save contacts</button>
-      <p class="note-hint" style="text-align:left">Leave a row blank to clear it. Your students' leaders see these plainly; first aid reveals them through an audited tap.</p>
+      <p class="note-hint" style="text-align:left">Leave a row blank to clear it.</p>
     </div>`,'Leader contacts',esc(c.name));
 };
 function toggleContactCard(id){const b=document.getElementById('contactBody_'+id),ch=document.getElementById('contactChev_'+id);if(!b)return;const open=b.style.display!=='none';b.style.display=open?'none':'block';if(ch)ch.style.transform=open?'':'rotate(90deg)';}
@@ -10715,8 +10865,12 @@ function _updateContactPill(id,people){
   const pill=document.getElementById('contactPill_'+id);
   if(pill){pill.textContent=filled+'/4 Contacts';pill.className='pill '+(filled===4?'ok':filled?'amb':'info');}
 }
+// Same rule as isPhoneLike in account.schema.ts (the server enforces it too): blank, or 8-15 digits.
+function _phoneOk(v){const t=String(v||'').trim();if(!t)return true;const n=t.replace(/\D/g,'').length;return /^[\d\s()+.-]+$/.test(t)&&n>=8&&n<=15;}
 async function saveContacts(id){const C=(n,p)=>({name:val(n),phone:val(p)});
   const mp=C('mp_n_'+id,'mp_p_'+id),mb=C('mb_n_'+id,'mb_p_'+id),fp=C('fp_n_'+id,'fp_p_'+id),fb=C('fb_n_'+id,'fb_p_'+id);
+  const badPhone=[['mp_p_','Guys primary leader',mp],['mb_p_','Guys secondary leader',mb],['fp_p_','Girls primary leader',fp],['fb_p_','Girls secondary leader',fb]].find(x=>!_phoneOk(x[2].phone));
+  if(badPhone){const el=document.getElementById(badPhone[0]+id);if(el){el.style.borderColor='var(--danger)';el.focus();}toast('Check the phone number for the '+badPhone[1]+': use digits, like 0411 222 333');return;}
   try{
     /* Item 11 (2026-07-31): the contacts-only endpoint, not the general church PATCH. Both work
        for an admin, but a CHURCH login only holds `church:contacts:write` — and this same
@@ -10744,8 +10898,11 @@ async function _tryRestoreSession(){
     // are stateless HMAC with a 48h TTL (auth.service.ts), so this fires for anyone returning
     // the next day. On failure _doFetch() already runs sessionExpired(); the catch below clears
     // localStorage so the next load goes straight to a clean login screen.
-    await api('/auth/me',{noCache:true});
-    SETTINGS=await api('/settings');
+    // QA item 5: only a real refusal ends the session. No signal, a timeout or a 5xx keeps the
+    // token and opens the shell from the saved settings; _offlineBootRecover finishes the job.
+    _bootOffline=false;
+    await api('/auth/me',{noCache:true}).catch(e=>{if(!e.transient)throw e;_bootOffline=true;});
+    SETTINGS=_bootOffline?_savedSettings():await api('/settings').catch(e=>{if(!e.transient)throw e;_bootOffline=true;return _savedSettings();});
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
     document.getElementById('login').style.display='none';
     document.getElementById('bar').style.display='flex';
@@ -10757,6 +10914,7 @@ async function _tryRestoreSession(){
     updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
     _loadLeaderInitials(); // restore the badge/prefill
     enforceInitials();     // item 7: a restored church session with no initials is still gated
+    if(_bootOffline){_netStrip();return;}
     _offerAlertsAfterLogin();  // reopening the installed app counts as a sign-in for this offer
     // Cold start from a tapped notification (sw.js openWindow('/?nav=…')). Done AFTER
     // gotoTab('home') so 'home' stays on the stack and Back behaves normally. Routed through
@@ -10768,12 +10926,42 @@ async function _tryRestoreSession(){
     localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
   }
 }
+/* QA item 5: reopened with no signal. The roster is deliberately NOT saved on the phone (names of
+   minors plus a medical flag), so check-in can't list anyone until signal returns; the persisted
+   queue stays safe and is counted in the strip. */
+let _bootOffline=false;
+function _savedSettings(){try{return JSON.parse(localStorage.getItem('ycp_settings'))||{};}catch(_){return {};}}
+function _savedQueueCount(){try{return JSON.parse(localStorage.getItem(_ciqKey())||'[]').length;}catch(_){return 0;}}
+function _netStrip(){
+  let el=document.getElementById('netStrip');
+  if(!_bootOffline){if(el)el.remove();return;}
+  if(!el){el=document.createElement('div');el.id='netStrip';el.className='ci-sync ci-sync-pending';el.style.cursor='pointer';el.onclick=_offlineBootRecover;document.getElementById('stage').prepend(el);}
+  const n=_savedQueueCount();
+  el.innerHTML=icSm('clock')+' <span>No signal. You are still signed in.'+(n?' '+n+' check-in'+(n===1?'':'s')+' saved on this phone will send when you are back.':'')+' Tap to try again.</span>';
+}
+async function _offlineBootRecover(){
+  if(!_bootOffline||!ACTOR)return;
+  try{await api('/auth/me',{noCache:true});}
+  catch(e){
+    if(e.transient)return; // still no signal
+    _bootOffline=false;_netStrip();TOKEN=null;ACTOR=null;
+    localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');return;
+  }
+  _bootOffline=false;_netStrip();
+  SETTINGS=await api('/settings',{noCache:true}).catch(()=>SETTINGS);
+  CAMP_MODE=SETTINGS.campMode||CAMP_MODE;
+  updateModeUI();buildTabs();_prefetch();
+  // Open check-in if taps are waiting, which restores and sends them; else refresh this screen.
+  if(_savedQueueCount()&&CAMP_MODE==='at-camp')await gotoTab('checkin');
+  else await _navTo(STACK[STACK.length-1]||'home');
+}
+window.addEventListener('online',_offlineBootRecover);
 /* ===== BOOT ===== */
 // Enter-to-submit is now handled natively by #loginForm's onsubmit (real <form>, added for iOS
 // PWA Keychain autofill) — no manual keydown listeners needed here, avoids a double doLogin() call.
 document.addEventListener('keydown',e=>{
   const modalOpen=document.getElementById('modal').classList.contains('show');
-  if(e.key==='Escape'&&modalOpen){closeModal();return;}
+  if(e.key==='Escape'&&modalOpen){_dismissModal();return;}
   if(e.key==='Tab'&&modalOpen){_trapModalTab(e);return;}   // keep focus inside the open dialog
   // Keyboard activation for the app's clickable non-<button> rows (role="button" tabindex="0"):
   // Enter/Space fires the same onclick as a tap. Native <button>/<a> already do this themselves.
@@ -10786,6 +10974,7 @@ document.addEventListener('keydown',e=>{
 });
 _initDemoLogin();_loginTips();_installBanner();_tryRestoreSession();
 
+let _noticeRefreshAt=0;
 /* B-3: cross-tab + on-focus mode sync. A second tab (or a tab not on Home) used to keep stale
    pre-camp/at-camp nav after an admin switched mode until the user navigated Home. */
 window.addEventListener('storage',e=>{
@@ -10793,6 +10982,13 @@ window.addEventListener('storage',e=>{
 });
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState!=='visible'||!ACTOR||PREVIEW_MODE)return;
+  if(_bootOffline)_offlineBootRecover();
+  // QA item 23: the in-app notice is the guaranteed channel, so returning to the app refreshes it.
+  // 30 s throttle: everyone unlocks their phone at once at the same moments of the day.
+  const onTop=STACK[STACK.length-1];
+  if(['home','notifs'].includes(onTop)&&Date.now()-_noticeRefreshAt>30000&&!document.getElementById('modal').classList.contains('show')){
+    _noticeRefreshAt=Date.now();Cache.del('/notifications');Promise.resolve(RENDER[onTop]()).catch(()=>{});
+  }
   // A backgrounded tab may have missed the storage event — re-check the authoritative mode.
   api('/settings').then(s=>{if(s&&s.campMode)_applyModeChange(s.campMode);}).catch(()=>{});
 });

@@ -138,7 +138,7 @@ check('nothing rendered when no filter is set', ctx._filterBanner('checkin', 10,
 ctx.FILTER.grade = '8'; ctx.FILTER.gender = 'male';
 const b = ctx._filterBanner('checkin', 12, 47);
 checkTrue('strip appears', b.indexOf('filtban') >= 0);
-checkTrue('names the saved view', b.indexOf('Guys') >= 0 && b.indexOf('Yr 8') >= 0, b);
+checkTrue('names the saved view', b.indexOf('Guys') >= 0 && b.indexOf('Grade 8') >= 0, b);
 checkTrue('states shown-of-total', b.indexOf('12 of 47') >= 0, b);
 checkTrue('offers a way back to everyone', b.indexOf('Show all') >= 0, b);
 /* ⚠ THE POINT OF THE 2026-08-04 REWORK. A leader whose standing job is Yr 7 boys sees this on
