@@ -635,6 +635,8 @@ and its SPA mirror (`public/index.html`) both learned to respect the two overrid
 the server API, the Form-import delete guard, and the Budget/accommodation/Data-Import screens
 were all updated to keep cancelled people visible where their money or their room still matters.
 
+**Undo cancel (`camp-v150`):** the cancelled card's button sends the same `PATCH /registrants/:id` with `status:'registered'`. The person returns as `registered` with `atCamp:false`, so anyone already at camp must be signed in again; refunds are left alone. An undone person loses the cancel's protection from the Form import's absent-row delete (`isProtected`), like any other registered person with no history or override.
+
 ### The mapper chokepoint and its raw carrier — read this before patching `accommodationKind`
 `accommodationKind` on a mapped `Person` is the **EFFECTIVE** value — `toPerson` resolves it as
 `accommodationOverride ?? accommodationKindRaw`. `accommodationKindRaw` is what `personColumns`

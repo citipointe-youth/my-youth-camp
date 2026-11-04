@@ -10062,7 +10062,7 @@ function _renderAllocCards(){
       <div class="sub">${cancelled?'<b>Registration cancelled</b>':'Registered'}</div>
       <div class="rowsb" style="gap:6px;margin-top:8px">
         <button class="btn ghost" onclick="crRemove('${esc(p.id)}')">Remove from list</button>
-        ${cancelled?'':`<button class="btn" style="width:auto;flex:0 0 auto;margin-top:0" onclick="crCancel('${esc(p.id)}')">Cancel registration</button>`}
+        ${cancelled?`<button class="btn" style="width:auto;flex:0 0 auto;margin-top:0" onclick="crUndoCancel('${esc(p.id)}')">Undo cancel</button>`:`<button class="btn" style="width:auto;flex:0 0 auto;margin-top:0" onclick="crCancel('${esc(p.id)}')">Cancel registration</button>`}
       </div>
       <div class="rowsb" style="gap:6px;margin-top:8px">
         <input class="fld" id="crAmt_${esc(p.id)}" type="number" step="0.01" inputmode="decimal" placeholder="Refund amount" style="flex:1">
@@ -10072,7 +10072,7 @@ function _renderAllocCards(){
   }).join('');
   const cardE=`<div class="card"><details data-ac="crcard">
     <summary style="cursor:pointer;font-weight:700">Registration cancels / refunds (${_crIds.length})</summary>
-    <p class="note-hint" style="text-align:left">Cancelling removes someone from the check-in roster and every on-screen list, but keeps their money in the budget — record a refund separately. The two actions are independent.</p>
+    <p class="note-hint" style="text-align:left">Cancelling removes someone from the check-in roster and every on-screen list, but keeps their money in the budget — record a refund separately. The two actions are independent. Undo cancel makes them registered again; anyone already at camp must then be signed in again.</p>
     <input class="fld" id="crSearch" oninput="_renderCrSearch()" placeholder="Search a student to add…">
     <div id="crSearchResults"></div>
     ${crRows}
@@ -10200,6 +10200,14 @@ async function crCancelConfirm(id){
   try{
     await api('/registrants/'+id,{method:'PATCH',body:{status:'cancelled'}});
     closeModal();toast('Registration cancelled');_invalidate('/registrants');await _loadAllocation();
+  }catch(e){toast(e.message||'Failed');}
+}
+
+/* Same PATCH and same role gate as crCancelConfirm. The service clears cancelledAt but leaves atCamp false. */
+async function crUndoCancel(id){
+  try{
+    await api('/registrants/'+id,{method:'PATCH',body:{status:'registered'}});
+    toast('Cancel undone. Sign them in again if they were at camp.');_invalidate('/registrants');await _loadAllocation();
   }catch(e){toast(e.message||'Failed');}
 }
 

@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { makeRegistrantController } from './registrant.controller';
-import type { PersonService } from '../../services/person.service';
+import { makePersonService, type PersonService } from '../../services/person.service';
+import { InMemoryPersonRepository } from '../../repositories/in-memory';
 import type { Person } from '../../core/entities/person';
 import type { Actor } from '../../core/entities/user';
 import type { HttpRequest } from '../http/types';
-import { BadRequestError } from '../../core/errors/app-error';
+import { BadRequestError, ForbiddenError } from '../../core/errors/app-error';
 
 /**
  * Final-review fix (2026-09-03): `PATCH /registrants/:id` validated
@@ -120,5 +123,39 @@ describe('GET /registrants/:id — payment and email need registrant:read', () =
 
   it('a role with registrant:read still gets amountPaid, invoice and email', async () => {
     expect(await call('church')).toMatchObject({ amountPaid: 250, invoiceNumber: 'INV-1', email: 'ivy@example.test' });
+  });
+});
+
+describe('Undo cancel on the Data Import card', () => {
+  it('sends what the real controller and service need, with no wider rights than cancel', async () => {
+    const html = readFileSync(resolve(__dirname, '../../../public/index.html'), 'utf8');
+    expect(html).toMatch(/\$\{cancelled\?`<button[^`]*crUndoCancel\('\$\{esc\(p\.id\)\}'\)/);
+
+    // The SPA has no build step, so run the real handler from its source with stubs.
+    const src = html.slice(html.indexOf('async function crUndoCancel('), html.indexOf('async function crRefund('));
+    const calls: Array<{ path: string; method: string; body: Record<string, unknown> }> = [];
+    const api = async (path: string, o: { method: string; body: Record<string, unknown> }) => {
+      calls.push({ path, method: o.method, body: o.body });
+    };
+    const noop = () => undefined;
+    await new Function('api', 'toast', '_invalidate', '_loadAllocation', `${src}; return crUndoCancel('p1');`)(
+      api, noop, noop, noop,
+    );
+    expect(calls).toEqual([{ path: '/registrants/p1', method: 'PATCH', body: { status: 'registered' } }]);
+
+    const repo = new InMemoryPersonRepository();
+    await repo.init();
+    await repo.save({ ...person(), lifecycle: 'cancelled', cancelledAt: '2026-11-01T00:00:00.000Z' });
+    const ctl = makeRegistrantController({ person: makePersonService(repo) });
+
+    const firstAid: Actor = { ...actor(), role: 'firstAid' };
+    await expect(ctl.update({ ...req(calls[0]!.body), ctx: { actor: firstAid, token: 't' } })).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    expect((await repo.findById('p1'))!.lifecycle).toBe('cancelled');
+
+    const out = (await ctl.update(req(calls[0]!.body))) as { status: string; cancelledAt: string | null };
+    expect(out.status).toBe('registered');
+    expect(out.cancelledAt).toBeNull();
   });
 });
