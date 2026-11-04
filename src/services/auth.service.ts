@@ -28,7 +28,7 @@ const DUMMY_PASSWORD_HASH = `${'0'.repeat(32)}:${'0'.repeat(128)}`;
 // Map, logging every user out, and a token minted on instance A was unknown to
 // instance B). The signed token carries the full actor so authenticated requests
 // need no DB lookup; the HMAC guarantees it wasn't tampered with. Trade-off: a
-// role/zone change only takes effect on the user's next login (within the 24h TTL).
+// role/zone change only takes effect on the user's next login (within the 48h TTL).
 const INSECURE_FALLBACK = 'camp-platform-dev-secret-change-in-production';
 const SESSION_SECRET = process.env['SESSION_SECRET'] ?? INSECURE_FALLBACK;
 

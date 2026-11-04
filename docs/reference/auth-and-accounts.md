@@ -534,8 +534,8 @@ both fixed. `sw.js` → `camp-v50`.
    `sessionExpired()` is idempotent so a cascade collapses into one banner, and `/auth/login` stays
    excluded because **its** 401 means *wrong password* and must keep its own message on the form.
 
-Not a bug, worth knowing: sessions are **stateless HMAC, 24h TTL, no sliding refresh**
-(`TOKEN_TTL_MS`, `auth.service.ts:10`). Everyone re-logs in daily; the fix just makes that land as
+Not a bug, worth knowing: sessions are **stateless HMAC, 48h TTL, no sliding refresh**
+(`TOKEN_TTL_MS`, `auth.service.ts:10`). Everyone re-logs in every two days; the fix just makes that land as
 "Session expired — please sign in again." instead of a raw error.
 
 ### Still outstanding (owner decision)
