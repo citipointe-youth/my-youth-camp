@@ -385,7 +385,7 @@ Both destructive ops use bulk `deleteAll()` (Supabase: `TRUNCATE`), not row-by-r
 This file keeps only rules that stay true. Dated session write-ups were moved out on 2026-10-02:
 - `docs/reference/` — topic notes: accommodation, budget-money, imports, notifications-push, auth-and-accounts, infrastructure-and-safety, at-camp-screens, spa-platform-lessons. **Read the matching file before editing that area.**
 - `docs/archive/early-batches-2026-06-to-07.md` — June/July batches. `docs/archive/CLAUDE.full-2026-10-02.md` — the full original file.
-- Dates in these docs are hand-written and have drifted. **Trust `git log` over a dated heading.** Post-camp review: `docs/POST-CAMP-REVIEW-2026-10-01.md`.
+- Dates in these docs are hand-written and have drifted. **Trust `git log` over a dated heading.** The post-camp review (2026-10-01) is not kept in this repo.
 - `CHANGELOG.txt` stops at 2026-07-31; later history (incl. Camp 2026, 28 Sep – 1 Oct) is in `git log` only.
 
 ## Current facts (verified 2026-10-02 — re-check before relying on them)

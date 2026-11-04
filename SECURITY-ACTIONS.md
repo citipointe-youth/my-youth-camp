@@ -67,7 +67,7 @@ set passwords by hand any more.
 
   Separately, note that changing a password does **not** currently revoke that user's
   existing signed session tokens — a session issued before a reset/rotation stays valid
-  until its own 12h TTL expires, regardless of any password change made in the meantime.
+  until its own 48h TTL expires, regardless of any password change made in the meantime.
 
 Note: the temp passwords live in plaintext in `settings.lastTempPasswords` only between
 rollover and the first export-or-view, then are wiped. Treat the audit workbook (which
