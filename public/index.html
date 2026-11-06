@@ -1677,6 +1677,8 @@ function sessionExpired(){
   _bootOffline=false;_netStrip();
   Cache.clear();
   TOKEN=null;ACTOR=null;SESSIONS=[];SEL_SESSION=null;SETTINGS=null;STACK=['home'];
+  // A-5 + B-11: no preview state (the stash holds an admin token) or last "who" name outlives the session.
+  LAST_LEADER='';PREVIEW_MODE=false;ACCOUNT_PREVIEW=false;_previewStash=null;_previewLocalFlips={};try{localStorage.removeItem('ycp_preview_stash');}catch(_){}document.getElementById('previewBanner').classList.remove('show');
   document.getElementById('bar').style.display='none';
   document.getElementById('stage').style.display='none';
   document.getElementById('tabs').style.display='none';
@@ -1779,6 +1781,9 @@ async function doLogin(){
   const err=document.getElementById('loginErr');if(err)err.style.display='none';
   try{
     Cache.clear(); // never carry one user's cached data into another's session
+    // A-5: a password login is never a preview. Drop any stale stash (it can hold an admin token)
+    // and the flags before the POST, or the write guard in api() refuses the login.
+    PREVIEW_MODE=false;ACCOUNT_PREVIEW=false;_previewStash=null;try{localStorage.removeItem('ycp_preview_stash');}catch(_){}document.getElementById('previewBanner').classList.remove('show');
     const d=await api('/auth/login',{method:'POST',body:{username:document.getElementById('username').value.trim(),password:document.getElementById('password').value}});
     TOKEN=d.token;ACTOR={...d.user,displayName:((d.user.firstName||'')+' '+(d.user.lastName||'')).trim()};
     localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
@@ -11115,7 +11120,9 @@ async function _tryRestoreSession(){
   try{
     ACTOR=JSON.parse(actorJson);
     const stash=localStorage.getItem('ycp_preview_stash');
-    if(stash){try{_previewStash=JSON.parse(stash);ACCOUNT_PREVIEW=true;document.getElementById('previewBanner').classList.add('show');}catch(_){}}
+    // A-5: a stash whose actor is the signed-in actor is stale (nobody previews themselves), so drop it.
+    if(stash){try{const st=JSON.parse(stash);if(st&&st.actor&&st.actor.id===ACTOR.id)localStorage.removeItem('ycp_preview_stash');
+      else{_previewStash=st;ACCOUNT_PREVIEW=true;document.getElementById('previewBanner').classList.add('show');}}catch(_){}}
     if(MUST_CHANGE_PASSWORD_ENFORCED&&ACTOR.mustChangePassword){_showChangePasswordGate();return;}
     // Validate the stored token against an AUTHENTICATED route before showing the app.
     // GET /settings is deliberately auth:false (the login screen needs the camp name/branding),
