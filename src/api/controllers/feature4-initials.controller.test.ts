@@ -56,6 +56,22 @@ describe('Feature 4: daily check-in threads leader initials into CheckInEntry.le
     expect(captured.entry?.leaderId).toBe('acct-b-victory');
   });
 
+  // A-Q8 / IA OQ-7: unbounded client text would land in the audit. The offline queue drops any
+  // app 4xx, so the cap truncates and NEVER refuses.
+  it('truncates over-long initials to 60 characters and never throws', async () => {
+    const captured: { entry?: Omit<CheckInEntry, 'id'> } = {};
+    const ctrl = controllerCapturing(captured);
+    await ctrl.checkIn(reqOf({ body: { camperId: 'p1', sessionId: '2026-07-02~am', type: 'in', initials: ` ${'x'.repeat(10_000)} ` } }, churchActor));
+    expect(captured.entry?.leaderId).toBe('x'.repeat(60));
+  });
+
+  it('keeps the silent fallback to the account id for non-string initials', async () => {
+    const captured: { entry?: Omit<CheckInEntry, 'id'> } = {};
+    const ctrl = controllerCapturing(captured);
+    await ctrl.checkIn(reqOf({ body: { camperId: 'p1', sessionId: '2026-07-02~am', type: 'in', initials: 123 } }, churchActor));
+    expect(captured.entry?.leaderId).toBe('acct-b-victory');
+  });
+
   it('falls back to the account id when no initials field is present', async () => {
     const captured: { entry?: Omit<CheckInEntry, 'id'> } = {};
     const ctrl = controllerCapturing(captured);

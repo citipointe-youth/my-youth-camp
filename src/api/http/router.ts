@@ -79,7 +79,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'GET', path: '/home', auth: true, handler: (r) => dashboard.home(r) },
 
     // ----- Settings -----
-    { method: 'GET', path: '/settings', auth: false, handler: (r) => settingsCtrl.get(r) },
+    { method: 'GET', path: '/settings', auth: true, handler: (r) => settingsCtrl.get(r) },
     { method: 'PATCH', path: '/settings', auth: true, handler: (r) => settingsCtrl.update(r) },
     { method: 'PATCH', path: '/settings/discount-tags', auth: true, handler: (r) => settingsCtrl.updateDiscountTags(r) },
 

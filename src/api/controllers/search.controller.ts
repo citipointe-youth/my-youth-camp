@@ -23,7 +23,7 @@ export function makeSearchController(services: SearchControllerServices) {
       const actor = req.ctx.actor;
       const results = await services.search.search(actor, q);
       return results.map((r) => ({
-        camper: r.limited ? toCrossScopeHitDto(r.camper) : maskParentPhone(toCamperDto(r.camper), actor),
+        camper: r.limited ? toCrossScopeHitDto(r.camper) : maskParentPhone(toCamperDto(r.camper, actor), actor),
         contacts: r.contacts,
       }));
     },

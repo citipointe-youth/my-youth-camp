@@ -55,7 +55,9 @@ export function makeCheckInController(services: CheckInControllerServices) {
       // the daily check-in audit entry. Reuses the existing free-text `leaderId` field — no
       // new column. Falls back to the account id when no initials were supplied (e.g. a
       // non-church role, which never gets the initials prompt).
-      const actorInitials = typeof b.initials === 'string' ? b.initials.trim() : '';
+      // A-Q8 / IA OQ-7: capped at 60 by TRUNCATING, never a 4xx — this call drains from the offline
+      // queue, which drops the tap on any app refusal.
+      const actorInitials = typeof b.initials === 'string' ? b.initials.trim().slice(0, 60) : '';
       await services.person.checkIn(req.ctx.actor, b.camperId, {
         sessionId: b.sessionId,
         sessionLabel,

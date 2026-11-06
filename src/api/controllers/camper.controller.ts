@@ -33,7 +33,7 @@ export function makeCamperController(services: CamperControllerServices) {
         req.query['scope'] === 'all'
           ? await person.list(req.ctx.actor, opts)
           : await person.listCampers(req.ctx.actor, opts);
-      return people.map((p) => maskParentPhone(toCamperDto(p), req.ctx!.actor));
+      return people.map((p) => maskParentPhone(toCamperDto(p, req.ctx!.actor), req.ctx!.actor));
     },
 
     async get(req: HttpRequest) {
@@ -43,7 +43,7 @@ export function makeCamperController(services: CamperControllerServices) {
       const profile = await person.getProfile(req.ctx.actor, id);
       // Detail dto: single access-checked fetch, so dateOfBirth may ride along.
       // medicareNumber never does — only the audited reveal below returns it.
-      const dto = maskParentPhone(toCamperDetailDto(profile), req.ctx.actor);
+      const dto = maskParentPhone(toCamperDetailDto(profile, req.ctx.actor), req.ctx.actor);
       return { ...dto, age: profile.age, lastSignOut: profile.lastSignOut };
     },
 
@@ -60,7 +60,7 @@ export function makeCamperController(services: CamperControllerServices) {
         ...(b['blueCardNumber'] !== undefined && { blueCardNumber: b['blueCardNumber'] as string }),
         ...(b['blueCardExpiry'] !== undefined && { blueCardExpiry: b['blueCardExpiry'] as string }),
       };
-      return maskParentPhone(toCamperDto(await person.update(req.ctx.actor, id, patch)), req.ctx.actor);
+      return maskParentPhone(toCamperDto(await person.update(req.ctx.actor, id, patch), req.ctx.actor), req.ctx.actor);
     },
 
     async revealMedicare(req: HttpRequest) {

@@ -244,8 +244,16 @@ export function toRegistrantDetailDto(p: Person): RegistrantDetailDto {
   return { ...toRegistrantDto(p), dateOfBirth: p.dateOfBirth ?? null };
 }
 
-export function toCamperDto(p: Person): CamperDto {
-  return {
+/**
+ * Roles that never see payment, refund, discount or blue-card data on the camper routes (A-6,
+ * ruling Q4 + IA OQ-17). Church is deliberately NOT here (Q4: unchanged); the oversight roles
+ * need the figures.
+ */
+const MONEY_HIDDEN_ROLES: ReadonlySet<Actor['role']> = new Set(['firstAid', 'prayer']);
+
+/** `actor` is optional only so the pure mapper tests can call it bare; every route passes it. */
+export function toCamperDto(p: Person, actor?: Actor): CamperDto {
+  const dto: CamperDto = {
     id: p.id,
     firstName: p.firstName,
     lastName: p.lastName,
@@ -286,11 +294,24 @@ export function toCamperDto(p: Person): CamperDto {
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
+  if (!actor || !MONEY_HIDDEN_ROLES.has(actor.role)) return dto;
+  return {
+    ...dto,
+    amountPaidOverride: null,
+    refundAmount: null,
+    refundedAt: null,
+    registrationType: null,
+    registrationCost: null,
+    discountCode: null,
+    discountAmount: null,
+    blueCardNumber: null,
+    blueCardExpiry: null,
+  };
 }
 
 /** Detail (single-person, access-checked) view: the list dto plus dateOfBirth. */
-export function toCamperDetailDto(p: Person): CamperDetailDto {
-  return { ...toCamperDto(p), dateOfBirth: p.dateOfBirth ?? null };
+export function toCamperDetailDto(p: Person, actor?: Actor): CamperDetailDto {
+  return { ...toCamperDto(p, actor), dateOfBirth: p.dateOfBirth ?? null };
 }
 
 /**
