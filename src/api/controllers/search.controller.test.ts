@@ -37,6 +37,9 @@ function person(over: Partial<Person>): Person {
     parentGuardianName: 'Robin Walker',
     parentPhone: PARENT,
     registrationCost: 111,
+    registrationType: 'SECRETTIER',
+    blueCardNumber: 'BLUE999',
+    blueCardExpiry: '2030-01-01',
     discountCode: 'SECRETCODE',
     discountAmount: 222,
     amountPaidOverride: 333,
@@ -129,6 +132,38 @@ describe("GET /search: a hit inside the actor's scope", () => {
   ] as const) {
     it(`${role}: parent number stays plain`, async () => {
       expect((await hit(a)).camper['parentPhone']).toBe(PARENT);
+    });
+  }
+});
+
+// A-6 (Q4, 7 Nov 2026): money and blue-card fields stop at the DTO for firstAid and prayer.
+const MONEY = /SECRETCODE|SECRETTIER|BLUE999|2030-01-01|"registrationCost":111|"discountAmount":222|"amountPaidOverride":333|"refundAmount":444/;
+describe('GET /search: payment, refund, discount and blue-card fields by role (A-6)', () => {
+  for (const [role, a] of [
+    ['firstAid', actor('firstAid')],
+    ['prayer', actor('prayer')],
+  ] as const) {
+    it(`${role}: all nulled, keys kept`, async () => {
+      const r = await hit(a);
+      expect(JSON.stringify(r.camper)).not.toMatch(MONEY);
+      for (const k of ['amountPaidOverride', 'refundAmount', 'refundedAt', 'registrationType', 'registrationCost', 'discountCode', 'discountAmount', 'blueCardNumber', 'blueCardExpiry']) {
+        expect(r.camper[k]).toBeNull();
+      }
+    });
+  }
+
+  for (const [role, a] of [
+    ['church', actor('church', { churchId: 'c2', churchName: 'Grace', zone: 'Blue' })],
+    ['zoneLeader', actor('zoneLeader', { zone: 'Blue' })],
+    ['director', actor('director')],
+    ['admin', actor('admin')],
+  ] as const) {
+    it(`${role}: unchanged`, async () => {
+      const r = await hit(a);
+      expect(r.camper['discountCode']).toBe('SECRETCODE');
+      expect(r.camper['registrationType']).toBe('SECRETTIER');
+      expect(r.camper['registrationCost']).toBe(111);
+      expect(r.camper['blueCardNumber']).toBe('BLUE999');
     });
   }
 });
