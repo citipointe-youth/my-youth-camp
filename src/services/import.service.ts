@@ -19,7 +19,7 @@ import { parseCsv } from '../utils/csv';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import {
-  CARE_COLUMNS, cleanCareText, field, isBlankRow, missingColumns, normalizeDate,
+  CARE_COLUMNS, CONSENT_COLUMNS, cleanCareText, field, isBlankRow, missingColumns, normalizeDate,
   parseGradeOrLeader, parseMedicationConsent, submissionSortKey, titleCaseName, yesToConsent,
 } from './elvanto-mapping';
 import { invalidateDashboardCache } from './dashboard-cache';
@@ -136,6 +136,16 @@ export function makeImportService(
         });
       }
 
+      /* A-1 (ruling Q3): a missing or renamed CONSENT column is a hard stop, not a warning. It
+         would read as blank for everyone, and blank now means "keep" on an update but "not
+         granted" on a create. Thrown before anything is written or stamped. */
+      const missingConsent = missingColumns(rawRows[0], CONSENT_COLUMNS);
+      if (missingConsent.length > 0) {
+        throw new BadRequestError(
+          `Consent column missing from this file: "${missingConsent.join('", "')}". Import stopped — check the Elvanto export includes every consent question.`,
+        );
+      }
+
       const churches = await churchRepo.findAll();
       const churchIdByName = new Map<string, string>();
       const churchZoneById = new Map<string, string>();
@@ -213,15 +223,17 @@ export function makeImportService(
         return id;
       }
 
-      function buildConsents(med: boolean, media: boolean, sup: boolean, ts: string): Person['consents'] {
-        const mk = (granted: boolean): { granted: boolean; timestamp: string | null } => ({
-          granted,
-          timestamp: granted ? ts : null,
-        });
-        return { medical: mk(med), media: mk(media), supervision: mk(sup) } as Record<
-          ConsentType,
-          { granted: boolean; timestamp: string | null }
-        >;
+      /* A-1 (Q3 + IA OQ-2): each answer is tri-state. `undefined` = blank cell: on an update it
+         keeps the earlier value AND timestamp (`prior`); on a create it is not granted. Any
+         non-blank answer applies, so an explicit "No" revokes. */
+      type ConsentAnswers = Record<ConsentType, boolean | undefined>;
+      function buildConsents(answers: ConsentAnswers, ts: string, prior?: Person['consents']): Person['consents'] {
+        const mk = (t: ConsentType): { granted: boolean; timestamp: string | null } => {
+          const granted = answers[t];
+          if (granted === undefined) return prior ? { ...prior[t] } : { granted: false, timestamp: null };
+          return { granted, timestamp: granted ? ts : null };
+        };
+        return { medical: mk('medical'), media: mk('media'), supervision: mk('supervision') };
       }
 
       const touched = new Map<string, Person>();
@@ -355,12 +367,15 @@ export function makeImportService(
 
           const submitted = normalizeDate(field(row, 'Date Submitted'));
           const consentTs = submitted ? `${submitted}T00:00:00.000Z` : now;
-          const consents = buildConsents(
-            yesToConsent(field(row, 'I give medical consent for my child as listed above.')),
-            yesToConsent(field(row, 'I give photography and video consent for my child as listed above.')),
-            yesToConsent(field(row, 'I understand and agree to the Supervision policy.')),
-            consentTs,
-          );
+          const answer = (col: string): boolean | undefined => {
+            const v = field(row, col);
+            return v ? yesToConsent(v) : undefined;
+          };
+          const consentAnswers: ConsentAnswers = {
+            medical: answer('I give medical consent for my child as listed above.'),
+            media: answer('I give photography and video consent for my child as listed above.'),
+            supervision: answer('I understand and agree to the Supervision policy.'),
+          };
 
           const nck = nameChurchKey(resolvedChurchId, firstName, lastName);
 
@@ -445,7 +460,7 @@ export function makeImportService(
               registrationType: registrationType ?? match.registrationType,
               registrationCost: registrationCost ?? match.registrationCost,
               discountCode: discountCode ?? match.discountCode,
-              consents,
+              consents: buildConsents(consentAnswers, consentTs, match.consents),
               parentGuardianName: parentName ?? match.parentGuardianName,
               parentRelation: parentRelation ?? match.parentRelation,
               parentPhone: parentPhone ?? match.parentPhone,
@@ -485,7 +500,7 @@ export function makeImportService(
               medicareNumber,
               churchUnlistedNote,
               elvantoMeta,
-              consents,
+              consents: buildConsents(consentAnswers, consentTs),
               parentGuardianName: parentName,
               parentPhone,
               parentRelation,

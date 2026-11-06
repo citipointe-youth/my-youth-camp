@@ -5,6 +5,7 @@ import type { Church } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
 import { ForbiddenError, BadRequestError } from '../core/errors/app-error';
 import { UNALLOCATED_CHURCH_ID } from './church-allocation';
+import { CONSENT_COLUMNS } from './elvanto-mapping';
 
 // ---------------------------------------------------------------------------
 // ImportService tests — focus on the C1 fix: church/camper indexing, in-file
@@ -32,8 +33,26 @@ async function build(churches: Church[] = [church({ id: 'c1', name: 'Victory' })
   await churchRepo.init();
   await overrideRepo.init();
   for (const c of churches) await churchRepo.save(c);
-  const svc = makeImportService(personRepo, churchRepo, overrideRepo);
-  return { svc, personRepo, churchRepo, overrideRepo };
+  const rawSvc = makeImportService(personRepo, churchRepo, overrideRepo);
+  // A-1: a missing consent column now stops the import. Most fixtures here predate that, so
+  // `svc` appends the three consent headers (blank cells) when a fixture lacks them. Use
+  // `rawSvc` to exercise the hard stop itself.
+  const svc: typeof rawSvc = {
+    ...rawSvc,
+    importCsv: (a, input) => {
+      const i = input as { csvData: string };
+      return rawSvc.importCsv(a, { ...i, csvData: withConsentColumns(i.csvData) });
+    },
+  };
+  return { svc, rawSvc, personRepo, churchRepo, overrideRepo };
+}
+
+function withConsentColumns(csv: string): string {
+  const nl = csv.indexOf('\n');
+  const header = nl < 0 ? csv : csv.slice(0, nl);
+  const missing = CONSENT_COLUMNS.filter((c) => !header.includes(c));
+  if (missing.length === 0) return csv;
+  return `${header},${missing.join(',')}${nl < 0 ? '' : csv.slice(nl)}`;
 }
 
 describe('ImportService.importCsv — RBAC + validation', () => {
@@ -314,6 +333,46 @@ describe('ImportService.importCsv — Elvanto export shape', () => {
     expect(p.medicalConditions).toEqual([]);   // blank
     expect(p.otherMedications).toBe('Ritalin\nFluexotine');
     expect(p.mobile).toBe('0499 259 222');
+  });
+});
+
+/* A-1 (camp arch 2026-11-07, report bug 1, ruling Q3 + IA OQ-2): consents on a Form re-import.
+   Blank cell keeps the earlier value AND timestamp; an explicit non-blank answer applies (No
+   revokes); a missing/renamed consent column stops the import before anything is written. */
+describe('ImportService.importCsv — consents tri-state (A-1)', () => {
+  const H = `First Name,Last Name,Church,Grade,Date Submitted,${CONSENT_COLUMNS.join(',')}`;
+
+  it('a blank consent cell on re-import keeps the earlier grant and its timestamp', async () => {
+    const { svc, personRepo } = await build();
+    await svc.importCsv(actor('admin'), { csvData: `${H}\nAda,Lovelace,Victory,9,01/08/2026,Yes,Yes,Yes` });
+    await svc.importCsv(actor('admin'), { csvData: `${H}\nAda,Lovelace,Victory,9,01/09/2026,,,`, updateExisting: true });
+    const p = (await personRepo.findAll())[0]!;
+    for (const t of ['medical', 'media', 'supervision'] as const) {
+      expect(p.consents[t]).toEqual({ granted: true, timestamp: '2026-08-01T00:00:00.000Z' });
+    }
+  });
+
+  it('an explicit No on re-import revokes (an answer, not a silent revoke)', async () => {
+    const { svc, personRepo } = await build();
+    await svc.importCsv(actor('admin'), { csvData: `${H}\nAda,Lovelace,Victory,9,01/08/2026,Yes,Yes,Yes` });
+    await svc.importCsv(actor('admin'), { csvData: `${H}\nAda,Lovelace,Victory,9,01/09/2026,No,,Yes`, updateExisting: true });
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.consents.medical).toEqual({ granted: false, timestamp: null });
+    expect(p.consents.media.granted).toBe(true);
+    expect(p.consents.supervision).toEqual({ granted: true, timestamp: '2026-09-01T00:00:00.000Z' });
+  });
+
+  it('a missing consent column stops the import (dry run and commit), nothing written', async () => {
+    const { rawSvc, personRepo } = await build();
+    const csv = 'First Name,Last Name,Church,Grade,' +
+      'I give photography and video consent for my child as listed above.,' +
+      'I understand and agree to the Supervision policy.\nAda,Lovelace,Victory,9,Yes,Yes';
+    for (const dryRun of [true, false]) {
+      await expect(rawSvc.importCsv(actor('admin'), { csvData: csv, dryRun })).rejects.toThrow(
+        /I give medical consent for my child as listed above\./,
+      );
+    }
+    expect(await personRepo.findAll()).toHaveLength(0);
   });
 });
 

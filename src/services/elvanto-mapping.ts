@@ -96,6 +96,17 @@ export const CARE_COLUMNS = [
 ] as const;
 
 /**
+ * The three consent columns. Unlike the care columns, a missing one STOPS the import
+ * (ruling Q3, 2026-11-07): consent is never silently revoked, and a renamed column would
+ * otherwise read as blank for everyone.
+ */
+export const CONSENT_COLUMNS = [
+  'I give medical consent for my child as listed above.',
+  'I give photography and video consent for my child as listed above.',
+  'I understand and agree to the Supervision policy.',
+] as const;
+
+/**
  * Which of `expected` are absent from a parsed row's headers, compared the same
  * normalised way `field()` matches them.
  *
