@@ -34,12 +34,8 @@ export function makeAuditController(services: AuditControllerServices) {
     async exportSignInOutCsv(req: HttpRequest): Promise<Buffer> {
       if (!req.ctx) throw new UnauthorizedError();
       const csv = await auditExport.exportSignInOutCsv(req.ctx.actor);
-
-      // Read settings AFTER the service runs for consistency.
-      const settings = await settingsRepo.getSingleton();
-      if (settings) {
-        await settingsRepo.saveSingleton({ ...settings, lastExportedAt: nowISO(), updatedAt: nowISO() });
-      }
+      // A-2 (OQ-25): this partial CSV (sign events only) does not stamp lastExportedAt; only
+      // the full workbook can back a wipe.
       logger.info(`[audit] sign-in/out CSV exported by ${req.ctx.actor.displayName} from ${req.ip ?? 'unknown'}`);
 
       return Buffer.from(csv, 'utf-8');

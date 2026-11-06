@@ -363,14 +363,12 @@ describe('AdminService.reset', () => {
     await expect(svc.reset(actor('admin'))).rejects.toBeInstanceOf(WipeGuardError);
   });
 
-  it('wipe guard: reset passes with force + confirmWipe string', async () => {
+  it('wipe guard (A-2, Q7): force + confirmWipe no longer skips the export check', async () => {
     await repos.settingsRepo.saveSingleton(settings({ lastExportedAt: null }));
     const svc = build(repos);
-    const result = await svc.reset(actor('admin'), {
-      force: true,
-      confirmWipe: 'I understand this cannot be undone',
-    });
-    expect(result).toEqual({ ok: true });
+    await expect(
+      svc.reset(actor('admin'), { force: true, confirmWipe: 'I understand this cannot be undone' }),
+    ).rejects.toBeInstanceOf(WipeGuardError);
   });
 
   it('wipe guard: force:true alone (without confirmWipe) throws BadRequestError', async () => {
@@ -468,15 +466,14 @@ describe('AdminService.newYear', () => {
     }
   });
 
-  it('throws NotFoundError when settings are not initialised', async () => {
+  it('refuses with WipeGuardError when settings are not initialised (no export recorded)', async () => {
+    // A-2 (Q7): force no longer bypasses the export check, so a missing settings row (no
+    // lastExportedAt) now stops at the guard before settingsService.get() is reached.
     const fresh = await makeRepos();
-    // No settings saved -> settingsService.get() throws NotFoundError.
-    // The wipe guard runs first and would throw WipeGuardError on an un-exported
-    // system, so bypass it with force+confirmWipe to reach the settings check.
     const svc = build(fresh);
     await expect(
       svc.newYear(actor('admin'), 2027, { force: true, confirmWipe: 'I understand this cannot be undone' }),
-    ).rejects.toBeInstanceOf(NotFoundError);
+    ).rejects.toBeInstanceOf(WipeGuardError);
   });
 
   it('throws NotFoundError when no defaults snapshot exists (cannot restore scaffold)', async () => {
@@ -570,15 +567,13 @@ describe('AdminService.newYear', () => {
     await expect(svc.newYear(actor('admin'), 2027)).rejects.toBeInstanceOf(WipeGuardError);
   });
 
-  it('wipe guard: newYear passes with force + confirmWipe', async () => {
+  it('wipe guard (A-2, Q7): newYear with force + confirmWipe still needs an export', async () => {
     await repos.settingsRepo.saveSingleton(settings({ lastExportedAt: null }));
     await saveBaseline();
     const svc = build(repos);
-    const result = await svc.newYear(actor('admin'), 2027, {
-      force: true,
-      confirmWipe: 'I understand this cannot be undone',
-    });
-    expect(result.year).toBe(2027);
+    await expect(
+      svc.newYear(actor('admin'), 2027, { force: true, confirmWipe: 'I understand this cannot be undone' }),
+    ).rejects.toBeInstanceOf(WipeGuardError);
   });
 
   it('wipe guard: bare force:true alone (without confirmWipe) throws BadRequestError for newYear', async () => {
@@ -888,7 +883,7 @@ describe('AdminService.resetLogs', () => {
     expect(gone.lifecycle).toBe('cancelled');
   });
 
-  it('is guarded by the export-or-force wipe guard like a full reset', async () => {
+  it('is guarded by the export-after-last-wipe guard like a full reset', async () => {
     await repos.settingsRepo.saveSingleton(settings({ lastExportedAt: null }));
     const svc = build(repos);
     await expect(svc.resetLogs(actor('admin'))).rejects.toBeInstanceOf(WipeGuardError);
@@ -902,5 +897,121 @@ describe('AdminService.reset — bug 16: incidents were surviving a full reset',
     expect(await repos.incidentRepo.findAll()).toHaveLength(1);
     await build(repos).reset(actor('admin'));
     expect(await repos.incidentRepo.findAll()).toEqual([]);
+  });
+});
+
+// =============================================================================
+// A-2 (ruling Q7, bug 9): each wipe needs an export taken AFTER the last wipe, and
+// Reset logs really deletes history even where saveMany only appends history rows.
+// =============================================================================
+describe('AdminService wipes — A-2: export after the last wipe', () => {
+  const FORCE = { force: true, confirmWipe: 'I understand this cannot be undone' };
+  let repos: Repos;
+  beforeEach(async () => {
+    repos = await makeRepos();
+    await seedEverything(repos);
+  });
+  async function stamp(): Promise<void> {
+    const s = (await repos.settingsRepo.getSingleton())!;
+    await repos.settingsRepo.saveSingleton({ ...s, lastExportedAt: NOW });
+  }
+
+  it('reset nulls the export stamp, so a second reset (even forced) needs a fresh export', async () => {
+    const svc = build(repos);
+    await svc.reset(actor('admin'), FORCE);
+    expect((await repos.settingsRepo.getSingleton())!.lastExportedAt).toBeNull();
+    await expect(svc.reset(actor('admin'), FORCE)).rejects.toBeInstanceOf(WipeGuardError);
+    await stamp();
+    await expect(svc.reset(actor('admin'), FORCE)).resolves.toEqual({ ok: true });
+  });
+
+  it('resetLogs nulls the export stamp, so a second resetLogs (even forced) needs a fresh export', async () => {
+    const svc = build(repos);
+    await svc.resetLogs(actor('admin'), FORCE);
+    expect((await repos.settingsRepo.getSingleton())!.lastExportedAt).toBeNull();
+    await expect(svc.resetLogs(actor('admin'), FORCE)).rejects.toBeInstanceOf(WipeGuardError);
+    await stamp();
+    await expect(svc.resetLogs(actor('admin'), FORCE)).resolves.toBeDefined();
+  });
+
+  it('newYear nulls the export stamp (incl. its final settings write), so a second newYear needs a fresh export', async () => {
+    await repos.snapshotRepo.saveDefaults({
+      id: 'defaults', churches: [], users: [], classrooms: [], faqs: [], schedule: [], devotionals: [], createdAt: NOW,
+    });
+    const svc = build(repos);
+    const result = await svc.newYear(actor('admin'), 2027, FORCE);
+    expect(result.lastExportedAt).toBeNull();
+    expect((await repos.settingsRepo.getSingleton())!.lastExportedAt).toBeNull();
+    await expect(svc.newYear(actor('admin'), 2028, FORCE)).rejects.toBeInstanceOf(WipeGuardError);
+    await stamp();
+    await expect(svc.newYear(actor('admin'), 2028, FORCE)).resolves.toMatchObject({ year: 2028 });
+  });
+
+  it('newYear without a defaults snapshot keeps the export stamp (the wipe never started)', async () => {
+    const svc = build(repos);
+    await expect(svc.newYear(actor('admin'), 2027, FORCE)).rejects.toBeInstanceOf(NotFoundError);
+    expect((await repos.settingsRepo.getSingleton())!.lastExportedAt).toBe(NOW);
+  });
+
+  it('nulling the stamp writes only that field (a lock flipped after the guard read survives)', async () => {
+    const svc = build(repos);
+    const realGet = repos.settingsRepo.getSingleton.bind(repos.settingsRepo);
+    let first = true;
+    const spy = vi.spyOn(repos.settingsRepo, 'getSingleton').mockImplementation(async () => {
+      const s = await realGet();
+      if (first) {
+        // Another device locks church logins right after the guard read settings.
+        first = false;
+        await repos.settingsRepo.saveSingleton({ ...s!, churchLoginLocked: true });
+      }
+      return s;
+    });
+    await svc.resetLogs(actor('admin'), FORCE);
+    spy.mockRestore();
+    const s = (await repos.settingsRepo.getSingleton())!;
+    expect(s.churchLoginLocked).toBe(true);
+    expect(s.lastExportedAt).toBeNull();
+  });
+
+  it('resetLogs empties history even when saveMany only appends history (Supabase semantics)', async () => {
+    // Supabase saveMany upserts the person row and INSERTs history ON CONFLICT DO NOTHING, so
+    // saving a person with empty arrays deletes nothing. Model that in memory.
+    class AppendOnlyHistoryRepo extends InMemoryPersonRepository {
+      override async saveMany(people: Person[]): Promise<Person[]> {
+        const merged: Person[] = [];
+        for (const p of people) {
+          const old = await this.findById(p.id);
+          const ci = new Set(p.checkInHistory.map((e) => e.id));
+          const so = new Set(p.signOutHistory.map((e) => e.id));
+          merged.push(old ? {
+            ...p,
+            checkInHistory: [...old.checkInHistory.filter((e) => !ci.has(e.id)), ...p.checkInHistory],
+            signOutHistory: [...old.signOutHistory.filter((e) => !so.has(e.id)), ...p.signOutHistory],
+          } : p);
+        }
+        return super.saveMany(merged);
+      }
+    }
+    const personRepo = new AppendOnlyHistoryRepo();
+    await personRepo.init();
+    await personRepo.save(person({
+      id: 'active', lifecycle: 'arrived', atCamp: true,
+      checkInHistory: [
+        { id: 'ci1', sessionId: '2026-07-01~pm', sessionLabel: 'Wed PM', type: 'in', leaderId: 'AB', timestamp: NOW },
+      ],
+      signOutHistory: [{ id: 'so1', type: 'in', leaderName: 'AB', authorId: 'u1', timestamp: NOW }],
+    }));
+    await personRepo.save(person({
+      id: 'left', lifecycle: 'checked_out', atCamp: false,
+      signOutHistory: [{ id: 'so2', type: 'out', leaderName: 'AB', authorId: 'u1', timestamp: NOW }],
+    }));
+    const svc = build({ ...repos, personRepo });
+    await svc.resetLogs(actor('admin'), FORCE);
+    for (const p of await personRepo.findAll()) {
+      expect(p.checkInHistory).toEqual([]);
+      expect(p.signOutHistory).toEqual([]);
+      expect(p.atCamp).toBe(false);
+    }
+    expect((await personRepo.findById('left'))!.lifecycle).toBe('registered');
   });
 });

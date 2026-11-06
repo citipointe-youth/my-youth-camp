@@ -45,6 +45,8 @@ export interface IPersonRepository extends IRepository<Person> {
   findByLifecycle(lifecycle: string): Promise<Person[]>;
   findCampers(): Promise<Person[]>; // lifecycle ∈ {arrived, checked_out, departed}
   findAtCamp(): Promise<Person[]>; // atCamp === true (currently signed in)
+  /** Delete every check-in and sign-in/out history entry, for everyone (Reset logs, A-2). P3 absorbs it as clearPresence. */
+  clearPresenceHistory(): Promise<void>;
   // deleteAll() inherited from IRepository (bulk clear; Supabase: TRUNCATE).
 }
 
@@ -132,7 +134,14 @@ export interface IFaqRepository extends IRepository<FaqItem> {
 
 export interface ISettingsRepository {
   getSingleton(): Promise<CampSettings | null>;
+  /** Seed and first insert only. Every other settings write goes through patchSingleton. */
   saveSingleton(settings: CampSettings): Promise<CampSettings>;
+  /**
+   * Column-scoped update of the existing row: writes only the keys present in `fields` (a key
+   * set to null is written, an undefined key is skipped) plus updatedAt, so it can never revert
+   * a concurrent change to another column. Returns the row after the write.
+   */
+  patchSingleton(fields: Partial<CampSettings>): Promise<CampSettings>;
   init(): Promise<void>;
 }
 

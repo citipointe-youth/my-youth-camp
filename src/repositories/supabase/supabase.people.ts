@@ -320,6 +320,14 @@ export class SupabasePersonRepository implements IPersonRepository {
     // children cascade; for a hard reset prefer `truncate people cascade` (no count).
     return rows.length;
   }
+
+  /** Reset logs (A-2): saveMany only appends history (appendHistories), so the delete is explicit. */
+  async clearPresenceHistory(): Promise<void> {
+    await this.sql.begin(async (tx: TxClient) => {
+      await tx`delete from check_in_history`;
+      await tx`delete from sign_out_history`;
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +435,8 @@ const PERSON_UPDATE_COLS = [
  * History entries are immutable, append-only audit events: ids are unique (both child
  * tables have `id text primary key`), a row is never edited after creation, and no
  * domain flow removes an individual entry — entries only disappear when the person row
- * itself is deleted (ON DELETE CASCADE) or on reset/new-year (deleteAll).
+ * itself is deleted (ON DELETE CASCADE), on reset/new-year (deleteAll), or all at once on
+ * Reset logs (clearPresenceHistory). Saving a person with empty arrays deletes nothing.
  *
  * This used to DELETE-then-reinsert the whole history from the in-memory copy, which
  * meant two concurrent writers to the same person could silently drop an entry the

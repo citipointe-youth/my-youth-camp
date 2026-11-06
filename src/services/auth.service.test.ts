@@ -25,6 +25,7 @@ function fakeSettings(over: Partial<CampSettings> = {}): ISettingsRepository {
     async init() {},
     async getSingleton() { return settings; },
     async saveSingleton(s: CampSettings) { return s; },
+    async patchSingleton() { throw new Error('not used'); },
   };
 }
 
@@ -538,6 +539,7 @@ describe('AuthService — per-role session revocation epoch', () => {
         throw new Error('DB blip');
       },
       async saveSingleton(s: CampSettings) { return s; },
+      async patchSingleton() { throw new Error('not used'); },
     };
     const resolvingSvc = makeAuthService(repo, throwing);
     const actor = await resolvingSvc.resolveToken(token);

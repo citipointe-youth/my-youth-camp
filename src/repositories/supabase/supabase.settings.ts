@@ -104,6 +104,24 @@ const UPDATE_COLS = [
   'updated_at',
 ] as const;
 
+const toSnake = (k: string): string => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+
+/**
+ * The columns a patchSingleton writes: the settingsCols mapping of the keys present in
+ * `fields` (null is written, undefined is skipped), restricted to UPDATE_COLS (never id or
+ * created_at), plus updated_at.
+ */
+export function patchCols(fields: Partial<CampSettings>, updatedAt: string): Record<string, unknown> {
+  const all = settingsCols({ ...fields, updatedAt } as CampSettings);
+  const wanted = new Set(
+    Object.keys(fields).filter((k) => fields[k as keyof CampSettings] !== undefined).map(toSnake),
+  );
+  wanted.add('updated_at');
+  return Object.fromEntries(
+    UPDATE_COLS.filter((c) => wanted.has(c)).map((c) => [c, all[c]]),
+  );
+}
+
 export class SupabaseSettingsRepository implements ISettingsRepository {
   constructor(private sql: SqlClient) {}
 
@@ -121,5 +139,16 @@ export class SupabaseSettingsRepository implements ISettingsRepository {
       on conflict (id) do update set ${this.sql(cols, ...UPDATE_COLS)}
     `;
     return settings;
+  }
+
+  async patchSingleton(fields: Partial<CampSettings>): Promise<CampSettings> {
+    const cols = patchCols(fields, fields.updatedAt ?? new Date().toISOString());
+    const rows = await this.sql`
+      update settings set ${this.sql(cols, ...Object.keys(cols))}
+      where id = 'settings'
+      returning *
+    `;
+    if (!rows[0]) throw new Error('Settings row missing; nothing to patch');
+    return toSettings(rows[0]);
   }
 }

@@ -10646,7 +10646,7 @@ function onResetConfirmChange(){
 }
 function _exportFirstModal(what){
   modal(`<h3>Export required first</h3>
-    <p class="sub" style="margin:8px 0 14px">No audit export has been run. Download the records first in Records &amp; Export, then retry the ${esc(what)}.</p>
+    <p class="sub" style="margin:8px 0 14px">No audit export since the last wipe. Download the audit workbook first in Records &amp; Export, then retry the ${esc(what)}.</p>
     <button class="btn" onclick="closeModal();go('adminData')">Go to Records &amp; Export ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
