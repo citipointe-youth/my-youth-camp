@@ -84,7 +84,8 @@ checks, disabling growth fails 9). `node --check` OK on the SPA body (range **10
 - **`classroom_freeze`** singleton (`id='freeze'`; row absent = not frozen), `snapshot jsonb =
   {eligibleChurchIds, shapes, baselines}`, written with `sql.json()` and mapped defensively
   (`toClassroomFreeze` throws on a double-encoded string, the 2026-08-04 lesson). Its own table,
-  NOT a settings column: `GET /settings` is unauthenticated and settings rows are rewritten whole.
+  NOT a settings column: `GET /settings` was unauthenticated then (it is `auth: true` since 2026-11-07)
+  and settings rows are rewritten whole.
 - **`POST /accommodation/soft-freeze {frozen}`** — director + admin, blocked by the hard lock for
   directors (`assertNotLocked`), same as placements. The hard lock itself is untouched.
 - **Frozen = `EligibilityOptions.frozen`**: eligibility is the frozen set (75% and per-registration

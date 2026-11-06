@@ -7,6 +7,51 @@ without going through clarifying questions first.
 
 ---
 
+## 2026-11-07 — Deferred from the camp architecture round (Phase A, `camp-v151`) — OPEN
+
+Source: `src/camp-arch-2026-11-07` (`ITEMS.md`, `RULINGS.md`, `IMPACT-SUMMARY.md`, `impact/*.md`).
+None of these is a defect in what shipped. Phases B and C of the round are planned separately.
+
+### Left out by ruling Q2
+- **S5 — split `public/index.html`.** An asset/version seam: classic `<script src>` files loaded
+  with `?v=camp-vNNN`, the service worker cache-first, and the harness extractors updated.
+- **D5 — atomic wipe and restore.** `AdminService` touches 17 repositories with no transaction, so
+  a failure mid-wipe leaves a partial state.
+- **A5 — one audited-reveal module.** Medicare reveals live in the controller, contact reveals in
+  the service.
+- **P5 — delete the `departed` lifecycle state.** Nothing writes it; about 6 readers.
+- **A4 — route floors as data.** Does not fall out of A1 cheaply (`impact/A1.md`): all 104 route
+  entries in `router.ts` would need a `floor`, plus a check in `express-adapter.ts`, and about 20
+  routes need any-of or "no permission" semantics. `role-floor.test.ts` stays the guard.
+
+### Known residuals
+- **B-1 sign-vs-sign race.** B-1 stops PATCH, import and check-in from reverting a sign-out, but two
+  presence writers from stale reads still race: last commit wins on `atCamp`/`lifecycle` (both
+  history rows are kept). It needs two leaders acting on one child within about 50 ms. Fix if ever
+  seen: `select ... for update` and recompute in the Supabase sign path.
+- **I3 — name normalisation is not unified.** Form matches lowercase within the church and needs the
+  phone to agree; Ticket/Invoice match punctuation-stripped across churches, where a pool of one
+  wins ("O'Brien" and "OBrien" differ). Unifying changes live matching, so it needs a ruling.
+- **I1 — the `needsReview` latch.** No importer ever clears `needsReview`. Clearing it on import
+  would drop the 21 current review flags, so I1 stays a pure refactor.
+- **A3 — the accommodation lock does not cover PATCH.** `accommodationLocked` does not block
+  `accommodationKind`/`accommodationLabel`/`accommodationOverride` edited through
+  `PATCH /registrants`. Adding it would block a director's Data Import override while locked
+  (`assertNotLocked` lets only admin through). Unruled; recommend leave.
+- **`absent-kept-needs-review` warnings are not capped** (`absent-will-delete` caps at 50). A wrong
+  Form export against the full DB could list hundreds. Add a cap if it gets noisy.
+
+### Optional DDL
+- **Drop the `zones` and `groups` tables and `people.group_id`.** 0 rows each and 0 people with a
+  `group_id` (production read, 7 Nov). P3+D2 deletes the repositories but leaves the tables;
+  dropping them is a migration and was kept out (`IMPACT-SUMMARY.md` §5).
+
+### Follow-up outside this repo
+- **11.1 console `WARNING_CODES`** (`run-camp.js`, about lines 403-440): add
+  `absent-kept-needs-review` ("Absent from file — KEPT, needs review (ticket/invoice/payment on
+  record)") and `ticket-possible-match` ("Possible match — not applied, orphan created"), both
+  severity review. Until then the console shows a prettified fallback label.
+
 ## 2026-09-04 — Follow-ups from individual overrides / cancels / refunds (`0022`) — OPEN
 
 The feature shipped and is live (see CLAUDE.md's 2026-09-03 section; `0022` applied and

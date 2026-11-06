@@ -4,6 +4,16 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Phase A architecture round — `camp-v151` — 7 Nov 2026
+
+Round folder `src/camp-arch-2026-11-07` (`ITEMS.md`, `RULINGS.md`, `build/*.md`). Tests are in-memory only; the Supabase adapter was checked by reading the code. No migration.
+
+Session and preview teardown, the `/settings` floor and the firstAid/prayer money strip are in `auth-and-accounts.md`.
+
+- **Offline sheet import** (`POST /import/offline-signin`, `offline-signin.service.importSignIns`, A-3 + B-4) needs `import:run` (director/admin) instead of `attendance:write`, so church, zone and first-aid logins get 403. It is refused for every role in pre-camp ("Camp has not started yet, so nobody can be signed in."); with no settings row it is not refused. Rows outside `canAccessPerson` are dropped before matching and cancelled twins are ignored. Two or more live students with the same name: nobody is signed in and the row comes back in `unmatched` as "First Last (Church) — N students share this name, sign in on the app". One live student plus a cancelled twin: the live one is signed in. A row pasted twice signs the student in once (the repeat counts as `alreadySignedIn`).
+- **`leaderName` is required** on `POST /attendance/sign-in` and `/sign-out` (A-Q8): missing, non-string, blank or whitespace gives 400 "Leader name is required", over 60 characters after trim gives 400, and the value is stored trimmed. The old displayName/'Staff' fallback is gone. The SPA always sends a name; an older cached SPA that sends none sees a 400 toast until the `camp-v151` service worker refreshes it.
+- **`/checkin` initials are trimmed and cut to 60 characters** (`checkin.controller.ts`). Non-string or blank initials still fall back to the actor id silently; never a 4xx.
+
 ## First-time-user QA round — `camp-v146` to `camp-v148` — 3-4 Nov 2026
 
 Five-persona QA of build `07a78d2`, then fixes on operator rulings. Findings and rulings are in the OneDrive `qa-camp-2026-11-03` folder (`MERGED.md`, `RULINGS.md`, `STATUS.md`); item numbers below are MERGED.md's. Nothing ran on real Postgres or a real iPhone. Batches: `7fec4b5` (`camp-v146`), `4f8ef6b` `2020e53` `cdfb68f` (`camp-v147`), `6b6647c` `01176e3` `2e810f8` `b1039ee` `6d25a08` (`camp-v148`).
@@ -13,7 +23,7 @@ Five-persona QA of build `07a78d2`, then fixes on operator rulings. Findings and
 - **First-aid text is hidden from church logins** (item 20): `note:read:firstaid` removed from church and `note.service.forCamper` filters `category:'firstaid'` (amendments too). Nothing stored changes. This reverses the Phase 4 owner decision Q3 (`docs/archive/PHASE-4-FIRSTAID-UX.md`).
 - **Sensitive notes**: church logins still never read them, the prayer team still does (with zone, director, admin). The form, review step, testimony form and prayer form now say so. The author gets a receipt. **No alert is sent** and none is to be added (ruled).
 - **Search**: a hit outside the actor's scope leaves through the allow-listed `toCrossScopeHitDto`, not a blank-list (item 2).
-- **Offline sign-in** skips rows failing `canAccessPerson`; they report as unmatched (item 10).
+- **Offline sign-in** skips rows failing `canAccessPerson`; they report as unmatched (item 10). Since 2026-11-07 the route is director/admin only and at-camp only (see the top of this file).
 - **Parent number masked with the audited Reveal everywhere** (item 15, and decision 6): `maskParentPhone` wraps `/search`, `/registrants` (list, get, create, update) and `PATCH /campers`. This includes the pre-camp church card and replaces the earlier decline recorded under "`parentPhone` is masked on `/registrants` too" below. Prayer still gets plain parent numbers (unchanged).
 - **Cross-church leader reveal** (batch 3): `revealContact` lets a church or zone login open the leader number that search offers for any arrived camper (`isCamper`). Still audited. The parent number never crosses scope.
 

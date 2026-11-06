@@ -4,6 +4,17 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Phase A architecture round — `camp-v151` — 7 Nov 2026
+
+Round folder `src/camp-arch-2026-11-07` (`ITEMS.md`, `RULINGS.md`, `build/*.md`). Tests are in-memory only; the Supabase adapter was checked by reading the code. No migration.
+
+- **Consents are tri-state on a Form re-import** (A-1, `buildConsents` in `import.service.ts`). A blank cell keeps the earlier value and its timestamp; an explicit No revokes; for a new person a blank still means not granted. **A missing consent column is a hard stop**: 400 `Consent column missing from this file: "<names>". Import stopped — check the Elvanto export includes every consent question.`, on dry run and commit, before anything is read or written (`formImportedAt` untouched). The column names are `CONSENT_COLUMNS` in `elvanto-mapping.ts`. If an Elvanto export ever drops or renames a consent column, the 11.1 daily camp job fails loudly; that is intended (ruling Q3).
+- **Ticket, invoice and payment holders survive the Form absent-delete** (A-Q12). An absent person with any of `ticketNumber`, `invoiceNumber`, a non-empty `invoiceNumbers`, `amountPaid`, `discountAmount`, `feesAmount` or `taxAmount` (`!= null`, so a recorded 0 counts) is not deleted and keeps their overrides. Each gets an `absent-kept-needs-review` warning (severity review, not capped) and is counted in `retained`; nothing is written to the person. Form-owned `registrationCost`/`discountCode` do not protect. So a stale twin holding a ticket or invoice no longer collapses away: it shows as "kept, needs review" and is deleted by hand.
+- **A fuzzy Ticket match is never applied** (A-4). A fuzzy (edit distance ≤2) match takes the orphan branch; the orphan's `needsReviewReason` gets ` (possible match: First Last)`, and a `ticket-possible-match` warning (review) is added next to `unmatched-orphan-created`. A re-run exact-matches the orphan, so there is no second orphan. `findPersonMatch` is unchanged.
+- **A fuzzy billing-name match is unmatched** (IA OQ-4). The row goes down the critical `invoice-unmatched` path with ` — possible match: <name> (distance N)` and no money is applied. An exact billing-name match is unchanged.
+- **Multi-row invoices merge onto this run's result** (A-7): the single-match path reads `touched.get(id)` first, so a later row with a blank total or code keeps the earlier row's values.
+- **Two new warning codes**, `absent-kept-needs-review` and `ticket-possible-match`, in `import-warning.ts` and the SPA mirror (add, never rename). The 11.1 console `WARNING_CODES` table does not have them yet and shows a fallback label; that follow-up is in `docs/PLANNED-IMPROVEMENTS.md`.
+
 ## Import warnings are grouped and VISIBLE — `code` is an out-of-repo contract — `camp-v108` — 2026-09-04
 
 Backend + SPA. **No schema or migration change** — next migration is still `0023`.
@@ -250,12 +261,12 @@ additive changes — no matching/merge logic needed to change.
 - **Three backend services, one shared core.** `src/services/import.service.ts` (existing, Form —
   `POST /import/csv`, unchanged behaviour except the blank-clobber fix below) stays the
   authoritative full-roster import (church-scoped matching, **still deletes anyone absent from the
-  file**). Two new sibling services, mirroring the existing `church-import.service.ts` pattern:
+  file**, except ticket/invoice/payment holders since 2026-11-07). Two new sibling services, mirroring the existing `church-import.service.ts` pattern:
   `src/services/ticket-import.service.ts` (`POST /import/tickets`) and
   `src/services/invoice-import.service.ts` (`POST /import/invoices`) — **neither ever deletes**.
   All three share `src/services/person-matching.ts` (NEW): `findPersonMatch` (cross-church name
   index, exact-then-bounded-Levenshtein-≤2 fuzzy fallback, only auto-matches a single unambiguous
-  candidate) and `mergeOwnedFields` (a field only overwrites if the incoming value is non-blank —
+  candidate; since 2026-11-07 Ticket and Invoice never apply a fuzzy match) and `mergeOwnedFields` (a field only overwrites if the incoming value is non-blank —
   the same primitive that fixed the Form-import bug below).
 - **Field ownership, enforced structurally (not by convention):** Form owns grade/gender/medical/
   dietary. Ticket List owns `accommodationKind` (+ NEW `accommodationKindConfidence:

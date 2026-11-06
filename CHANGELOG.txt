@@ -3,6 +3,24 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase A (camp-v151)
+-----------------------------------------------------------------------------------
+Five lanes merged on arch/2026-11-07; no migration. Imports: Form re-import keeps a
+consent on a blank cell (explicit No revokes) and a missing consent column stops the
+import with a 400; the Form absent-delete keeps anyone with a ticket, invoice or payment
+(new warning absent-kept-needs-review); a fuzzy Ticket match makes an orphan with a
+ticket-possible-match warning; a fuzzy billing-name match is invoice-unmatched; a later
+invoice row no longer loses the earlier row's code/total. Access: GET /settings needs
+auth and ycp_settings is cleared at logout/expiry; dashboard cache keyed per account;
+firstAid/prayer get no money or blue-card fields; offline sheet import needs import:run,
+is refused in pre-camp and leaves same-name twins unsigned; leaderName required (1-60)
+on sign-in/out; /checkin initials cut to 60. Wipes: Reset, Reset logs and New Year need
+an audit export after the last wipe even with force, each nulls lastExportedAt, and
+Reset logs really deletes history on Supabase. SPA: session expiry and login clear
+preview state and the last "who" name. New harness scripts/session-teardown-harness.js.
+sw.js camp-v150 -> camp-v151. Verified: npx tsc --noEmit clean, npx vitest run 1394
+pass / 88 files, npm run harness all green.
+
 2026-10-03 - Prayer-record amendments (camp-v145)
 -----------------------------------------------------------------------------------
 A prayer record is still never edited. `prayer`/`director`/`admin` logins can now add

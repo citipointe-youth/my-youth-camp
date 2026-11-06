@@ -40,7 +40,7 @@ unbuilt designs + topics queued for future brainstorming), `docs/archive/` (hist
    deploys still work but the git auto-deploy fails with *"Cannot find module './data/seed'"*.
 
 ### Status of the bigger roadmap
-- **Verification gate:** `npm run typecheck` clean, `npm test` green (80 files / 1,219 tests on 2026-10-02), `npm run harness` exit 0.
+- **Verification gate:** `npm run typecheck` clean, `npm test` green (88 files / 1,394 tests on 2026-11-07), `npm run harness` exit 0.
 - **Supabase repo layer is complete and wired** (`PERSISTENCE==='supabase'` branch in `container.ts`); migrations applied; all repos verified round-tripping in prod (R11 closed).
 - **Phase 1 (Person unification) is COMPLETE.** The unified `Person` entity/repo/service is the live path. `/registrants` and `/campers` are lifecycle-filtered DTO views over `PersonService` — no separate Registrant/Camper services exist. The Supabase layer targets the `people` table. `docs/archive/STEP4-SWITCHOVER.md` is historical.
 - **Fixed defects** (now compiler-confirmed): app-won't-start, accommodation availability (B1), reset/new-year (A3/A4), timezone (B3), CSV import perf + BOM (C1), remind scoping (C2), stateless auth + security headers + login rate-limit.
@@ -67,6 +67,7 @@ A deep audit across three areas was completed and all bugs addressed. Key change
 - `adminNewYear()` (Admin → Data path) now redirects to the guided close-out flow instead of calling the backend without `force`/`confirmWipe`. The "Purge & start new year" button is replaced with a link to Records & Export.
 - `adminReset()` now requires typing the confirmation string AND sends `force:true` + `confirmWipe` to the backend. 409 responses show a modal pointing to Records & Export.
 - Admin → Data no longer has two competing new-year paths (BUG-19 resolved).
+- **2026-11-07 (A-2, `camp-v151`):** `force` + `confirmWipe` no longer skips the export check. Reset, Reset logs and New Year each need an audit workbook export after the last wipe, and each wipe nulls `lastExportedAt`. See `docs/reference/infrastructure-and-safety.md`.
 
 **Backend:**
 - **BUG-08**: Audit controller reads settings *after* the service call so `lastExportedAt` stamp never races with `lastTempPasswords` clearing.
@@ -86,7 +87,7 @@ npm run dev          # backend + frontend on http://localhost:4200 (tsx watch)
 npm run start        # same, no watch
 npm run typecheck    # tsc --noEmit (strict)
 npm run test         # vitest
-npm run harness      # the 9 SPA harnesses (scripts/*-harness.js; vpkick excluded) — run after SPA edits
+npm run harness      # the 12 SPA harnesses (scripts/*-harness.js; vpkick excluded) — run after SPA edits
 ```
 
 Default port: **4200**. Set `PORT=xxxx` to override.
@@ -193,8 +194,8 @@ api (Express) → controllers → services → repositories (interfaces) → cor
 | `zoneLeader` | Own zone | All of above (zone-scoped), read notes, send zone notices, read registrants in zone |
 | `director` | All | All of above (camp-wide), import, camp-wide notices |
 | `admin` | All + back office | Everything + admin:manage (settings, accounts, accommodation, FAQ, schedule, devotionals, mode switch) |
-| `firstAid` | All | `camper:read`, `camper:read:sensitive`, `attendance:write` (attendance only, NOT `checkin:write`), **`note:write:firstaid`** + **`note:read:firstaid`** (Phase 4 — first-aid records only, never general notes/testimonies). No admin, no pre-camp data. |
-| `prayer` | All | `camper:read`, **`note:write:prayer`** + **`note:read:prayer`** (category `'prayer'` records, server-forced `sensitive:true`), **`note:read:student`** (every note on ONE opened student via `GET /notes/camper/:id`; no `/notes/recent`, no export). No `camper:read:sensitive` (no Medicare/parent reveal), no attendance/check-in, no notifications. SPA = first-aid screens (Search · All Students · Records · Schedule) with role dispatch; Medicare/consents/parent contact hidden in the UI only (owner decision 2026-10-02). Director/admin also hold the two prayer-note permissions; zone leaders read prayer records through `note:read` (zone-scoped); church never sees them (sensitive). **Prayer reads sensitive notes on an opened student, and the note forms say so on screen** (QA ruling 2026-11-03; no alert is sent for a sensitive note). Prayer still gets plain parent numbers (unchanged). **Amendments (2026-10-03):** a prayer record is never edited — `prayer`/`director`/`admin` can add an own-note "Amends: `<id>`" amendment (no backend change) via `openPrayerAmend`/`savePrayerAmend`, nested under the original by `_faGroup` on the student card and the Records tab; on the Notes tab the Add-amendment button is director/admin only. |
+| `firstAid` | All | `camper:read`, `camper:read:sensitive`, `attendance:write` (attendance only, NOT `checkin:write`), **`note:write:firstaid`** + **`note:read:firstaid`** (Phase 4 — first-aid records only, never general notes/testimonies). No admin, no pre-camp data. Payment, refund, discount and blue-card fields come back null on `/campers` and `/search`, and the offline sheet import is director/admin only (2026-11-07). |
+| `prayer` | All | `camper:read`, **`note:write:prayer`** + **`note:read:prayer`** (category `'prayer'` records, server-forced `sensitive:true`), **`note:read:student`** (every note on ONE opened student via `GET /notes/camper/:id`; no `/notes/recent`, no export). No `camper:read:sensitive` (no Medicare/parent reveal), no attendance/check-in, no notifications. SPA = first-aid screens (Search · All Students · Records · Schedule) with role dispatch; Medicare/consents/parent contact hidden in the UI only (owner decision 2026-10-02). Director/admin also hold the two prayer-note permissions; zone leaders read prayer records through `note:read` (zone-scoped); church never sees them (sensitive). **Prayer reads sensitive notes on an opened student, and the note forms say so on screen** (QA ruling 2026-11-03; no alert is sent for a sensitive note). Prayer still gets plain parent numbers (unchanged); payment, refund, discount and blue-card fields come back null, as for firstAid (2026-11-07). **Amendments (2026-10-03):** a prayer record is never edited — `prayer`/`director`/`admin` can add an own-note "Amends: `<id>`" amendment (no backend change) via `openPrayerAmend`/`savePrayerAmend`, nested under the original by `_faGroup` on the student card and the Records tab; on the Notes tab the Add-amendment button is director/admin only. |
 
 Additional `admin` accounts can be created (2026-07-31). The **original** admin — the
 earliest-created one, see `findOriginalAdmin` — cannot be deleted, deactivated or demoted by
@@ -216,7 +217,7 @@ Users in pre-camp mode can tap **"👁 Preview at-camp view"** on the pre-camp h
 - **Entry:** `enterPreview()` — sets `PREVIEW_MODE=true`, flips `CAMP_MODE` to `'at-camp'` locally, shows amber `#previewBanner` strip, rebuilds tabs, navigates home.
 - **Exit:** `exitPreview()` — restores `CAMP_MODE` from `SETTINGS.campMode`, removes banner, rebuilds tabs.
 - **Write blocking:** the `api()` function short-circuits any non-GET request while `PREVIEW_MODE` **or `ACCOUNT_PREVIEW`** is true — shows a toast and throws. Covers every write in the app without per-screen changes.
-- **Logout safety:** `logout()` clears `PREVIEW_MODE`/`ACCOUNT_PREVIEW`/`_previewStash` before POSTing to `/auth/logout` so the write guard never blocks logout itself.
+- **Logout safety:** `logout()` clears `PREVIEW_MODE`/`ACCOUNT_PREVIEW`/`_previewStash` before POSTing to `/auth/logout` so the write guard never blocks logout itself. `sessionExpired()` and `doLogin()` clear the same preview state plus `ycp_preview_stash` and the banner (`sessionExpired` also clears `LAST_LEADER` and `ycp_settings`), and `_tryRestoreSession()` drops a stash for the signed-in user instead of re-entering preview (2026-11-07, `scripts/session-teardown-harness.js`).
 - All roles can enter preview. Preview uses real live data (campers, schedule, devotionals already imported).
 - **Banner is shared with account preview** (see "Account preview" above): `#previewBanner`'s label/toggle/exit are driven by `_updatePreviewBanner()` (called from `updateModeUI`); the Exit button dispatches via `_exitAnyPreview()` to `exitPreview()` (same-user) or `exitAccountPreview()` (account preview).
 
@@ -379,6 +380,8 @@ could otherwise grant a same-day login to a real account.
 
 Both destructive ops use bulk `deleteAll()` (Supabase: `TRUNCATE`), not row-by-row deletes.
 
+Since 2026-11-07 `reset`, `resetLogs` and `newYear` each need an audit workbook export after the last wipe, even with `force`, and each nulls `lastExportedAt` via `patchSingleton`. `resetLogs` deletes presence history through `clearPresenceHistory()`, not `saveMany`.
+
 
 ## Where things live
 
@@ -393,4 +396,5 @@ This file keeps only rules that stay true. Dated session write-ups were moved ou
 - **Migrations:** `supabase/migrations/` is the source of truth; any "next migration = 00NN" inside a dated note is as-of that date. Prod history is contiguous `0001`–`0030`. The post-camp plan (`docs/superpowers/plans/2026-10-02-post-camp-tidy-up.md`) adds `0031` (cron prune), `0032` (revoke anon/authenticated grants), `0033` (pg_net → `extensions`) — check the directory and `supabase_migrations.schema_migrations` for whether they have landed. Apply a migration to prod **before** pushing code that needs it, and reconcile its history label to `'00NN'`.
 - **Cron:** `camp-push-tick` (every 5 min, `0014`) reads its bearer from **Vault** (`cron_secret`), not a literal. Planned `0031` (not yet applied as of 2026-10-02) adds weekly `camp-cron-prune` (keeps 7 days of `cron.job_run_details`).
 - **QA round 2026-11-03/04** (`camp-v146` to `camp-v148`, master `6d25a08`, rollbacks `07a78d2` / `7fec4b5` / `cdfb68f`): access, masking and offline changes are in `docs/reference/at-camp-screens.md`. `payment_status` can hold `free`/`refunded` (plain text, no migration; existing rows change at the next Ticket import). **Accepted limits, do not build without asking:** deleted or demoted accounts keep access up to 48 h (QA item 1, ruled don't fix); no sensitive-note alerts; no single-church notices; director/admin delete and church cancel via the API unchanged.
-- **Service worker:** `public/sw.js` `CACHE` is the SPA version label (`camp-v150` adds Undo cancel on the Data Import card, on branch `sec/camp-closeout`, not yet shipped; `camp-v149` is the 4 Nov security batch (CSV formula guard in two browser exports); `camp-v148` after QA batch 3 of 2026-11-04; `camp-v147` QA batch 2; `camp-v146` the QA security fixes; `camp-v145` was prayer-record amendments; `camp-v144` the prayer team role). `camp-v132` did ship (commit `075f2dd`) but no commit message names it — search `git log -S"camp-vNNN" -- public/sw.js`, not message text.
+- **Architecture round Phase A 2026-11-07** (`camp-v151`, branch `arch/2026-11-07`, round folder `src/camp-arch-2026-11-07`): consents tri-state with a missing-column hard stop; the Form absent-delete keeps ticket/invoice/payment holders; fuzzy Ticket and billing-name matches are never applied; the offline sheet import is director/admin and at-camp only; `leaderName` required on sign-in/out; `GET /settings` needs auth; per-account dashboard cache; firstAid/prayer money strip; wipes need an export after the last wipe and Reset logs really deletes; preview/session teardown. Details in `docs/reference/` (imports, at-camp-screens, auth-and-accounts, infrastructure-and-safety); deferrals in `docs/PLANNED-IMPROVEMENTS.md`.
+- **Service worker:** `public/sw.js` `CACHE` is the SPA version label (`camp-v151` is architecture round Phase A; `camp-v150` adds Undo cancel on the Data Import card, on branch `sec/camp-closeout`, not yet shipped; `camp-v149` is the 4 Nov security batch (CSV formula guard in two browser exports); `camp-v148` after QA batch 3 of 2026-11-04; `camp-v147` QA batch 2; `camp-v146` the QA security fixes; `camp-v145` was prayer-record amendments; `camp-v144` the prayer team role). `camp-v132` did ship (commit `075f2dd`) but no commit message names it — search `git log -S"camp-vNNN" -- public/sw.js`, not message text.

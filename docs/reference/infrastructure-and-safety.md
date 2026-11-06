@@ -4,6 +4,15 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Wipes need an export after the last wipe; Reset logs really deletes — `camp-v151` — 7 Nov 2026 (A-2)
+
+Architecture round Phase A (`src/camp-arch-2026-11-07`). In-memory tests only; the Supabase SQL was checked by reading. No migration.
+
+- **Reset, Reset logs and New Year each need a full audit workbook export after the last wipe.** `assertExported` in `admin.service.ts` always runs: `force` + `confirmWipe` no longer skips it, so there is no API override (`force` with the wrong phrase is still a 400). A missing settings row now stops at the guard. The WipeGuardError text and the SPA `_exportFirstModal` say "No audit export since the last wipe. Download the audit workbook export first (Records & Export), then retry."
+- **Every wipe nulls `lastExportedAt`** (Data shows "Last exported: Never"), through the new `ISettingsRepository.patchSingleton(fields)`, which writes only the given columns plus `updated_at`, so a lock flipped after the guard read survives. `newYear` checks the snapshot first, so a refused New Year keeps the stamp. From now on settings writes go through `patchSingleton`; `saveSingleton` is for seed and first insert (Phase B item B-7 converts the remaining writers).
+- **`/export/signin-out` no longer counts as an export**; only the audit workbook stamps `lastExportedAt`. The route stays.
+- **Reset logs really deletes presence history on Supabase.** New `IPersonRepository.clearPresenceHistory()` runs `delete from check_in_history; delete from sign_out_history` in one transaction. Before, `saveMany` with empty arrays deleted nothing, because `appendHistories` only appends. ⚠️ **The first Reset logs after this ships deletes about 8,278 production rows (6,590 check-in, 1,688 sign) and resets 1,351 people to `registered`. Only the workbook can bring them back.**
+
 ## Past check-in sessions keep signed-out students + end-of-camp sign-outs restored — 2026-10-01
 
 Server only (`checkin.service.getSessionStatus`), no SPA/migration change. Owner: after camp ended

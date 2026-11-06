@@ -207,7 +207,7 @@ push**, both reconciled to clean version labels and verified present by query.
 
 ### 8 — `checkIn`/`signEvent` no longer flush the dashboard cache
 `invalidateDashboardCache()` wipes **every** entry globally, and the cache is keyed on
-`(role, churchId, zone, genderScope)` — **not per device** — so ~100 devices collapse to ~30 keys
+`(role, churchId, zone, genderScope)` (plus `actor.id` since 2026-11-07, A-8, so per account) — **not per device** — so ~100 devices collapse to ~30 keys
 (~4:1). These two are the only **bursty** writes in the app: at a check-in window every leader taps
 through a roster at once, and each tap was destroying the cache for all 30 keys precisely while
 every device was loading `/home`. Cost of not invalidating is bounded by the 30s TTL, and a leader

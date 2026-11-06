@@ -4,6 +4,16 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Phase A architecture round — `camp-v151` — 7 Nov 2026
+
+Round folder `src/camp-arch-2026-11-07` (`ITEMS.md`, `RULINGS.md`, `build/*.md`). Tests are in-memory only; the Supabase adapter was checked by reading the code. No migration.
+
+- **`GET /settings` is `auth: true`** (`router.ts:82`, A-Q11). The SPA never read settings before login (the login screen is static markup), so no allow-list was needed. No token or a dead token gets 401; a live token gets the full row minus `lastTempPasswords`, as before. `settings-route.test.ts` pins the 401s and `role-floor.test.ts` lists the route for every role. The 2026-07-27 note further down that calls it `auth: false` is history.
+- **`ycp_settings` is cleared** from localStorage in `sessionExpired()` and `logout()`, beside `_rosterClear()`. After logout or expiry an offline boot has no saved settings.
+- **The dashboard cache is per account** (A-8): `_actorKey` in `dashboard-cache.ts` starts with `actor.id`, so two admins never share a greeting or a targeted notice. Hit rate drops only for roles that used to share a key (about 66 active accounts against about 30 old keys).
+- **firstAid and prayer get no money or blue-card fields** (A-6): `toCamperDto`/`toCamperDetailDto(p, actor)` null `amountPaidOverride`, `refundAmount`, `refundedAt`, `registrationType`, `registrationCost`, `discountCode`, `discountAmount`, `blueCardNumber` and `blueCardExpiry` (keys kept) on `GET /campers` (incl. `?scope=all`), `GET`/`PATCH /campers/:id` and in-scope `/search` hits. Church, zone, director and admin are unchanged. No screen read these fields for those roles.
+- **Preview and session teardown** (A-5, B-11): `sessionExpired()` also clears `LAST_LEADER`, `PREVIEW_MODE`, `ACCOUNT_PREVIEW`, `_previewStash`, `_previewLocalFlips`, `localStorage['ycp_preview_stash']` and the banner. `_queueStop()` still runs before any of the session state is reset, and the queue key `ycp_ciq_<login>` is never cleared. `doLogin()` clears the preview flags and stash before the login POST (a stale `ACCOUNT_PREVIEW` made the `api()` write guard refuse the login). `_tryRestoreSession()` drops a stash whose actor is the signed-in user instead of re-entering preview; a live account preview still resumes. Harness: `scripts/session-teardown-harness.js`.
+
 ## Prayer team role (2026-10-02)
 
 New `prayer` ("Prayer team") account type — camp-wide, same shape as `firstAid`: `camper:read` +
@@ -518,15 +528,15 @@ Confirmed from the Vercel runtime logs (five 401s in one tick — `/home`, `/not
 with **`/settings` conspicuously absent**). Two independent defects, both in `public/index.html`,
 both fixed. `sw.js` → `camp-v50`.
 
-1. **`_tryRestoreSession()` validated nothing.** `GET /settings` is deliberately **`auth: false`**
+1. **`_tryRestoreSession()` validated nothing.** `GET /settings` was then deliberately **`auth: false`** (it is `auth: true` since 2026-11-07, see the top of this file)
    (`router.ts:82` — the login screen renders camp name/branding before anyone has a token), and it
    was the only call the restore path made before hiding the login screen. So an **expired token
    passed the gate**: the app rendered as if signed in and only collapsed a tick later when
    `_prefetch()`'s authenticated calls 401'd. Restore now does **`await api('/auth/me',{noCache:true})`**
    — an `auth: true` route — before touching `/settings`. On failure `_doFetch` already runs
    `sessionExpired()` and the existing `catch` clears `localStorage`, so the next load is a clean
-   login screen. **Never use an `auth:false` route as a session probe**; `/settings` and `/setup`
-   are the two that look tempting.
+   login screen. **Never use an `auth:false` route as a session probe**; `/setup` is the one that looks
+   tempting (`/settings` was the other until it became `auth: true` on 2026-11-07).
 2. **The 401 handler was guarded on `&& TOKEN`.** `_prefetch()` issues five requests in the same
    tick. The first 401 called `sessionExpired()`, which nulls `TOKEN` — so the remaining four fell
    *past* the guard and threw the server's raw message, `Missing bearer token`, into a toast. That
