@@ -93,8 +93,8 @@ const ALLOW: Record<string, string> = {
 const BODIES: Record<string, unknown> = {
   'POST /admin/mode': { campMode: 'at-camp' },
   'POST /admin/new-year': { year: 2099 },
-  'POST /attendance/sign-in': { camperId: 'floor-person-1' },
-  'POST /attendance/sign-out': { camperId: 'floor-person-1' },
+  'POST /attendance/sign-in': { camperId: 'floor-person-1', leaderName: 'FL' },
+  'POST /attendance/sign-out': { camperId: 'floor-person-1', leaderName: 'FL' },
   'POST /checkin': { camperId: 'floor-person-1', sessionId: '2026-09-28~pm', type: 'in' },
   'POST /notes': { camperId: 'floor-person-1', body: 'floor test' },
   'POST /notifications': { scope: 'camp', title: 'floor', body: 'floor test' },
