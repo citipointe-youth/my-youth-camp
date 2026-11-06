@@ -451,7 +451,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             continue;
           }
           // Single match.
-          const person = matchedPeople[0]!;
+          const person = touched.get(matchedPeople[0]!.id) ?? matchedPeople[0]!;
           const incoming: Partial<Person> = {};
 
           /* Item A (2026-07-28) — MULTIPLE INVOICES FOR ONE PERSON.

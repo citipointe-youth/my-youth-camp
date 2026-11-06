@@ -556,6 +556,26 @@ describe('invoice-import: multiple invoices for one person (item A)', () => {
     expect(p.amountPaid).toBe(190);
     expect(p.needsReview).toBe(false);
   });
+
+  // A-7 (camp arch 2026-11-07, report bug 7): row 2 must merge onto row 1's result, not the
+  // stale stored person, so fields row 2 leaves blank survive from row 1.
+  it('a later row that omits code/total keeps the earlier row\'s values (A-7)', async () => {
+    const { svc, personRepo } = await build([
+      person({ id: 'ivy', firstName: 'Robin', lastName: 'Thompson', invoiceNumber: 'INV-1' }),
+    ]);
+    await svc.importInvoicesCsv(actor('admin'), {
+      csvData: [
+        HDR,
+        'INV-1,Robin,Thompson,0400000001,150,0,0,0,0,EARLY',
+        'INV-2,Robin,Thompson,0400000001,,0,40,0,0,',
+      ].join('\n'),
+    });
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.discountCode).toBe('EARLY');
+    expect(p.registrationCost).toBe(150);
+    expect(p.amountPaid).toBe(40);
+    expect(p.needsReview).toBe(true);
+  });
 });
 
 /* Item 12 (2026-07-28): a trailing blank line is spreadsheet padding, not a defect — it used to
