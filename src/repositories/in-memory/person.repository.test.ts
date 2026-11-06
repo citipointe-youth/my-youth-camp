@@ -86,6 +86,25 @@ describe('InMemoryPersonRepository', () => {
     expect(await repo.deleteAll()).toBe(0);
   });
 
+  it('clearPresenceHistory empties both history lists on every person and keeps the rest', async () => {
+    const at = '2026-01-01T00:00:00.000Z';
+    await repo.save(person({
+      id: 'p2', firstName: 'Grace', lastName: 'Hopper', lifecycle: 'arrived', atCamp: true,
+      checkInHistory: [{ id: 'ci1', sessionId: 's', sessionLabel: 'S', type: 'in', leaderId: 'AB', timestamp: at }],
+      signOutHistory: [{ id: 'so1', type: 'in', leaderName: 'AB', authorId: 'u1', timestamp: at }],
+    }));
+    await repo.clearPresenceHistory();
+    const all = await repo.findAll();
+    expect(all).toHaveLength(4);
+    for (const p of all) {
+      expect(p.checkInHistory).toEqual([]);
+      expect(p.signOutHistory).toEqual([]);
+    }
+    const grace = await repo.findById('p2');
+    expect(grace!.atCamp).toBe(true);
+    expect(grace!.lifecycle).toBe('arrived');
+  });
+
   it('reads return clones (mutating a result does not affect the store)', async () => {
     const a = await repo.findById('p1');
     expect(a).not.toBeNull();

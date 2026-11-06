@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toSettings, settingsCols } from './supabase.settings';
+import { toSettings, settingsCols, patchCols } from './supabase.settings';
 
 const created = new Date('2026-09-01T00:00:00.000Z');
 const updated = new Date('2026-09-02T00:00:00.000Z');
@@ -65,5 +65,17 @@ describe('settings mapper', () => {
     expect(cols['camp_mode']).toBe('at-camp');
     expect(cols['tent_price']).toBe(150);
     expect(cols['classroom_price']).toBe(180);
+  });
+});
+
+describe('patchCols (patchSingleton column scope)', () => {
+  it('writes only the given keys plus updated_at; null is written, undefined is skipped', () => {
+    const cols = patchCols({ lastExportedAt: null, churchLoginLocked: undefined }, '2026-11-07T00:00:00.000Z');
+    expect(cols).toEqual({ last_exported_at: null, updated_at: '2026-11-07T00:00:00.000Z' });
+  });
+
+  it('never patches id or created_at', () => {
+    const cols = patchCols({ id: 'settings', createdAt: 'x', year: 2027 } as never, 'T');
+    expect(cols).toEqual({ year: 2027, updated_at: 'T' });
   });
 });

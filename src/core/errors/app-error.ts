@@ -45,7 +45,7 @@ export class UnprocessableEntityError extends AppError {
 }
 
 export class WipeGuardError extends AppError {
-  constructor(m = 'Camp data has not been exported this season. Download the audit export first, or pass force+confirmWipe to override.') {
+  constructor(m = 'No audit export since the last wipe. Download the audit workbook export first (Records & Export), then retry.') {
     super(409, 'WIPE_GUARD', m);
   }
 }

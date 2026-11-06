@@ -179,6 +179,14 @@ export class InMemoryPersonRepository
       .map((p) => this.clone(p));
   }
 
+  async clearPresenceHistory(): Promise<void> {
+    for (const p of this.store.values()) {
+      p.checkInHistory = [];
+      p.signOutHistory = [];
+    }
+    await this.writeToPersistence();
+  }
+
   // deleteAll() is inherited from InMemoryBaseRepository (bulk clear, defect A3).
 }
 
@@ -518,6 +526,13 @@ export class InMemorySettingsRepository implements ISettingsRepository {
     this.settings = JSON.parse(JSON.stringify(settings)) as CampSettings;
     await this.persistence.write(this.settings ? [this.settings] : []);
     return JSON.parse(JSON.stringify(this.settings)) as CampSettings;
+  }
+
+  async patchSingleton(fields: Partial<CampSettings>): Promise<CampSettings> {
+    if (!this.settings) throw new Error('Settings row missing; nothing to patch');
+    const defined = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+    const { id: _id, createdAt: _c, ...patch } = defined as Partial<CampSettings>;
+    return this.saveSingleton({ ...this.settings, ...patch, updatedAt: patch.updatedAt ?? new Date().toISOString() });
   }
 }
 

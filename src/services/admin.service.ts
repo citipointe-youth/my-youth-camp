@@ -107,8 +107,11 @@ export function makeAdminService(
 ): AdminService {
   const settingsService = makeSettingsService(settingsRepo);
 
-  async function assertExportedOrForce(opts?: WipeOpts): Promise<void> {
-    if (opts?.force && opts.confirmWipe === CONFIRM_WIPE_STRING) return;
+  // A-2 (ruling Q7): every wipe needs an export taken AFTER the last wipe, whether or not
+  // force is sent (the SPA always sends it). force still requires the typed phrase. Each wipe
+  // calls clearExportStamp() once its non-destructive checks pass and before its first
+  // delete, so even a wipe that fails part-way needs a fresh export next time.
+  async function assertExported(opts?: WipeOpts): Promise<void> {
     if (opts?.force && opts.confirmWipe !== CONFIRM_WIPE_STRING) {
       throw new BadRequestError(`force requires confirmWipe: "${CONFIRM_WIPE_STRING}"`);
     }
@@ -116,6 +119,10 @@ export function makeAdminService(
     if (!settings?.lastExportedAt) {
       throw new WipeGuardError();
     }
+  }
+
+  async function clearExportStamp(): Promise<void> {
+    await settingsRepo.patchSingleton({ lastExportedAt: null, updatedAt: nowISO() });
   }
 
   /** Replace a repository's whole contents with the given records (clear then save). */
@@ -136,7 +143,8 @@ export function makeAdminService(
     // accounts are deleted; the single admin is preserved.
     async reset(actor, opts) {
       if (actor.role !== 'admin') throw new ForbiddenError('Only admin can reset data');
-      await assertExportedOrForce(opts);
+      await assertExported(opts);
+      await clearExportStamp();
 
       await Promise.all([
         personRepo.deleteAll(),
@@ -179,17 +187,21 @@ export function makeAdminService(
      * first-aid records, and all incidents. Notifications are DELIBERATELY not touched — they
      * are their own button on the same screen.
      *
-     * Guarded by the same export-or-force gate as a full reset: destroying the audit trail
-     * without a saved export is exactly what that guard exists to prevent.
+     * Guarded by the same export-after-last-wipe gate as a full reset: destroying the audit
+     * trail without a saved export is exactly what that guard exists to prevent.
      */
     async resetLogs(actor, opts) {
       if (actor.role !== 'admin') throw new ForbiddenError('Only admin can reset logs');
-      await assertExportedOrForce(opts);
+      await assertExported(opts);
+      await clearExportStamp();
 
       const people = await personRepo.findAll();
       const touched = people.filter(
         (p) => p.checkInHistory.length > 0 || p.signOutHistory.length > 0 || p.atCamp,
       );
+      // A-2 (bug 2): saveMany only APPENDS history on Supabase, so saving empty arrays below
+      // deletes nothing. Delete the history rows explicitly; `touched` was read first.
+      await personRepo.clearPresenceHistory();
       if (touched.length) {
         const now = nowISO();
         await personRepo.saveMany(
@@ -265,12 +277,13 @@ export function makeAdminService(
     // camp settings (bumps year, forces pre-camp). Requires a saved snapshot.
     async newYear(actor, year, opts) {
       if (actor.role !== 'admin') throw new ForbiddenError('Only admin can advance the year');
-      await assertExportedOrForce(opts);
+      await assertExported(opts);
       const settings = await settingsService.get();
       const defaults = await snapshotRepo.getDefaults();
       if (!defaults) {
         throw new NotFoundError('No defaults snapshot saved — run Save Defaults before New Year');
       }
+      await clearExportStamp();
 
       // Purge this year's people + transient data. Allocations are people-dependent
       // and never restored from the scaffold snapshot — wipe them here too.
@@ -324,6 +337,8 @@ export function makeAdminService(
         year,
         campMode: 'pre-camp',
         lastTempPasswords: tempPasswords,
+        // `settings` was read before clearExportStamp(); keep the stamp cleared (A-2).
+        lastExportedAt: null,
         updatedAt: nowISO(),
       });
       invalidateDashboardCache();
