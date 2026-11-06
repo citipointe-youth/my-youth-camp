@@ -372,13 +372,19 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             }
           }
 
+          let possibleMatch = '';
           if (matchedPeople.length === 0 && billingFirst && billingLast) {
             const result = findPersonMatch(nameIndex, {
               firstName: billingFirst,
               lastName: billingLast,
               phone: billingPhone,
             });
-            if (result.status === 'matched') {
+            if (result.status === 'matched' && result.via === 'fuzzy') {
+              /* IA OQ-4 (with A-4 / ruling Q5): a fuzzy billing-name match applies no money — the
+                 payer is often a parent, so a near-miss name is weak evidence. It falls through
+                 to invoice-unmatched below, naming the possible match for review. */
+              possibleMatch = ` — possible match: ${result.person.firstName} ${result.person.lastName} (distance ${result.distance ?? '?'})`;
+            } else if (result.status === 'matched') {
               matchedPeople = [result.person];
               warnings.push({
                 code: 'billing-name-match-only',
@@ -405,7 +411,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             warnings.push({
               code: 'invoice-unmatched',
               row: rowNum,
-              message: `No matching person for invoice ${invoiceNumber ?? '(no invoice number)'} (amount paid: ${amountPaid ?? 'unknown'}) — not imported`,
+              message: `No matching person for invoice ${invoiceNumber ?? '(no invoice number)'} (amount paid: ${amountPaid ?? 'unknown'}) — not imported${possibleMatch}`,
             });
             skipped++;
             continue;

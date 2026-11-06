@@ -686,6 +686,39 @@ describe('ImportService.importCsv — protects overridden/cancelled people from 
     expect(res.warnings.some((w) => w.message.includes('will be DELETED'))).toBe(false);
     expect(res.retained).toBe(1);
   });
+
+  /* A-Q12 (ruling Q12, literal per Tom 7 Nov): anyone with a ticket number, invoice number or
+     Ticket/Invoice money is KEPT and reported "kept, needs review"; withdrawals go by hand. */
+  it('keeps an absent person with a ticket, an invoice or invoice money, as needs-review (A-Q12)', async () => {
+    for (const dryRun of [true, false]) {
+      const h = await build();
+      const ticketed = await seedPerson(h, { firstName: 'Ticket', lastName: 'Orphan', churchId: '', churchName: '', ticketNumber: 'TKT-1' });
+      const invoiced = await seedPerson(h, { firstName: 'Has', lastName: 'Invoice', invoiceNumbers: ['INV-7'] });
+      const paid = await seedPerson(h, { firstName: 'Paid', lastName: 'Zero', amountPaid: 0 });
+      const ordinary = await seedPerson(h, { firstName: 'Plain', lastName: 'Person' });
+
+      const res = await h.svc.importCsv(actor('admin'), { csvData: csvWithNobody(), dryRun });
+
+      for (const kept of [ticketed, invoiced, paid]) expect(await h.personRepo.findById(kept.id)).not.toBeNull();
+      if (dryRun) expect(await h.personRepo.findById(ordinary.id)).not.toBeNull();
+      else expect(await h.personRepo.findById(ordinary.id)).toBeNull();
+      expect(res.deleted).toBe(1);
+      expect(res.retained).toBe(3);
+      const kept = res.warnings.filter((w) => w.code === 'absent-kept-needs-review');
+      expect(kept.map((w) => w.message.split(' (')[0]).sort()).toEqual(['Has Invoice', 'Paid Zero', 'Ticket Orphan']);
+      expect(res.warnings.filter((w) => w.code === 'absent-will-delete').map((w) => w.message)).toEqual([
+        expect.stringContaining('Plain Person'),
+      ]);
+    }
+  });
+
+  it('Form-owned money fields (registrationCost, discountCode) do not protect (A-Q12)', async () => {
+    const h = await build();
+    const p = await seedPerson(h, { firstName: 'Form', lastName: 'Only', registrationCost: 150, discountCode: 'EARLY' });
+    const res = await h.svc.importCsv(actor('admin'), { csvData: csvWithNobody() });
+    expect(await h.personRepo.findById(p.id)).toBeNull();
+    expect(res.deleted).toBe(1);
+  });
 });
 
 /* Item 12 (2026-07-28): a trailing blank line is spreadsheet padding, not a defect. It used to

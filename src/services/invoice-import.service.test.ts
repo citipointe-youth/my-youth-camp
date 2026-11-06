@@ -735,3 +735,32 @@ describe('invoice-import: refund-likely (2026-09-08)', () => {
     expect(res.warnings.some((w) => w.code === 'refund-likely')).toBe(false);
   });
 });
+
+/* IA OQ-4 (with A-4 / ruling Q5): a FUZZY billing-name match applies no money. It goes down the
+   existing invoice-unmatched path with a "possible match" suffix; an exact billing-name match
+   still applies (billing-name-match-only). */
+describe('invoice-import: fuzzy billing-name match is unmatched (OQ-4)', () => {
+  it('applies no money and reports invoice-unmatched with "possible match: <name>"', async () => {
+    const { svc, personRepo } = await build([person({ id: 'p1', firstName: 'Robin', lastName: 'Thompson' })]);
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: [HDR, 'INV-9,Robyn,Thompson,,190,0,190,0,0,'].join('\n'),
+    });
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.amountPaid ?? null).toBeNull();
+    expect(p.registrationCost ?? null).toBeNull();
+    expect(res.updated).toBe(0);
+    const w = res.warnings.filter((x) => x.code === 'invoice-unmatched');
+    expect(w).toHaveLength(1);
+    expect(w[0]!.message).toContain('possible match: Robin Thompson (distance 1)');
+    expect(res.warnings.some((x) => x.code === 'billing-name-match-only')).toBe(false);
+  });
+
+  it('an exact billing-name match still applies the money', async () => {
+    const { svc, personRepo } = await build([person({ id: 'p1', firstName: 'Robin', lastName: 'Thompson' })]);
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: [HDR, 'INV-9,Robin,Thompson,,190,0,190,0,0,'].join('\n'),
+    });
+    expect((await personRepo.findAll())[0]!.amountPaid).toBe(190);
+    expect(res.warnings.some((x) => x.code === 'billing-name-match-only')).toBe(true);
+  });
+});

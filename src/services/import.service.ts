@@ -566,12 +566,30 @@ export function makeImportService(
         p.accommodationOverride != null ||
         p.amountPaidOverride != null ||
         p.refundAmount != null;
+      /* A-Q12 (ruling Q12, literal per Tom 2026-11-07): anyone holding a ticket number, an invoice
+         number or Ticket/Invoice money is also kept, and reported "kept, needs review" — a real
+         withdrawal is deleted by hand. Only Ticket/Invoice-owned fields count: the Form itself
+         writes registrationCost/discountCode/paymentStatus, so those would protect everyone.
+         `!= null` so a recorded 0 counts. In a season where Ticket + Invoice have run, this
+         keeps almost everyone absent (incl. the stale duplicate twins the sweep used to collapse). */
+      const hasTicketOrMoney = (p: Person) =>
+        !!p.ticketNumber ||
+        !!p.invoiceNumber ||
+        (p.invoiceNumbers?.length ?? 0) > 0 ||
+        p.amountPaid != null ||
+        p.discountAmount != null ||
+        p.feesAmount != null ||
+        p.taxAmount != null;
       const absentSetAll = new Set(absentIdsAll);
       const protectedPeople = allPersons.filter((p) => absentSetAll.has(p.id) && isProtected(p));
       const protectedIds = new Set(protectedPeople.map((p) => p.id));
+      const needsReviewPeople = allPersons.filter(
+        (p) => absentSetAll.has(p.id) && !protectedIds.has(p.id) && hasTicketOrMoney(p),
+      );
+      for (const p of needsReviewPeople) protectedIds.add(p.id);
       const absentIds = absentIdsAll.filter((id) => !protectedIds.has(id));
       const deleted = absentIds.length;
-      const retained = protectedPeople.length;
+      const retained = protectedIds.size;
 
       for (const p of protectedPeople) {
         warnings.push({
@@ -580,6 +598,15 @@ export function makeImportService(
           message:
             `${p.firstName} ${p.lastName} (${p.churchName || 'no church'}) is no longer in this file but ` +
             'was KEPT — they have a cancellation, refund, individual override or check-in recorded',
+        });
+      }
+      for (const p of needsReviewPeople) {
+        warnings.push({
+          code: 'absent-kept-needs-review',
+          row: 0,
+          message:
+            `${p.firstName} ${p.lastName} (${p.churchName || 'no church'}) is no longer in this file but ` +
+            'was KEPT — they have a ticket, invoice or payment on record. Review: delete them by hand if they withdrew',
         });
       }
 
