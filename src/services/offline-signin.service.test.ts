@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import ExcelJS from 'exceljs';
 import { makeOfflineSignInService, type OfflineSignInService } from './offline-signin.service';
-import { InMemoryPersonRepository } from '../repositories/in-memory';
+import { InMemoryPersonRepository, InMemorySettingsRepository } from '../repositories/in-memory';
+import type { CampSettings } from '../core/entities/settings';
+import { SETTINGS_ID } from '../core/entities/settings';
 import type { Actor } from '../core/entities/user';
 import type { Person } from '../core/entities/person';
 import { toCsvString } from '../utils/csv';
+import { ForbiddenError } from '../core/errors/app-error';
 
 // ---------------------------------------------------------------------------
 // OfflineSignInService — New Feature 1 fallback bulk sign-in from an offline
@@ -54,14 +57,26 @@ function sheet(rows: string[][]): string {
   return toCsvString(['First Name', 'Last Name', 'Church', 'Gender', 'Grade', 'Signed In?'], rows);
 }
 
+function settings(over: Partial<CampSettings> = {}): CampSettings {
+  return {
+    id: SETTINGS_ID, campName: 'Camp', year: 2026, startDate: '2026-06-30', endDate: '2026-07-05',
+    timezone: 'UTC', checkInDays: ['2026-06-30', '2026-07-01', '2026-07-02'],
+    accommodationLocked: false, churchLoginLocked: false, zoneLeaderLoginLocked: false, churchCheckinTimeRestricted: false, checkinSwitchoverTime: '14:00', checkinPhaseOverride: 'auto', campMode: 'at-camp', createdAt: NOW, updatedAt: NOW,
+    ...over,
+  };
+}
+
 describe('OfflineSignInService', () => {
   let people: InMemoryPersonRepository;
+  let settingsRepo: InMemorySettingsRepository;
   let svc: OfflineSignInService;
 
   beforeEach(async () => {
     people = new InMemoryPersonRepository();
     await people.init();
-    svc = makeOfflineSignInService(people);
+    settingsRepo = new InMemorySettingsRepository();
+    await settingsRepo.saveSingleton(settings());
+    svc = makeOfflineSignInService(people, settingsRepo);
   });
 
   describe('exportTemplate', () => {
@@ -103,40 +118,36 @@ describe('OfflineSignInService', () => {
   });
 
   describe('importSignIns', () => {
-    // Operator ruling 2026-11-03: a church or zone login cannot mark another church's child on site.
-    describe('scope', () => {
-      const other = () => person({ id: 'pOther', firstName: 'Zed', lastName: 'Other', gender: 'male', churchId: 'c2', churchName: 'Grace', zone: 'Blue' });
-      const csv = sheet([['Zed', 'Other', 'Grace', 'male', '9', 'Y']]);
+    // A-3 (ruling Q6): the sheet needs import:run, so only director/admin reach it. Replaces the
+    // old church/zone/firstAid scope cases (attendance:write), which are now refused outright.
+    describe('permission and pre-camp rule', () => {
+      const csv = sheet([['Ada', 'Lovelace', 'Victory Church', 'female', '9', 'Y']]);
 
-      it("church login: another church's child stays off site and the row reports as unmatched", async () => {
-        await people.save(other());
-        const result = await svc.importSignIns(church(), csv);
-        expect(result.signedIn).toBe(0);
-        expect(result.unmatched).toEqual(['Zed Other (Grace)']);
-        const after = await people.findById('pOther');
+      it('church, zone and firstAid are refused (import:run) and nobody is signed in', async () => {
+        await people.save(person({ id: 'p1' }));
+        const zone: Actor = { id: 'u3', role: 'zoneLeader', churchId: null, churchName: null, zone: 'Yellow', displayName: 'Yellow' };
+        const fa: Actor = { id: 'u4', role: 'firstAid', churchId: null, churchName: null, zone: null, displayName: 'First aid' };
+        for (const actor of [church(), zone, fa]) {
+          await expect(svc.importSignIns(actor, csv)).rejects.toThrow(ForbiddenError);
+        }
+        expect((await people.findById('p1'))?.atCamp).toBe(false);
+      });
+
+      it('is refused in pre-camp for admin and director, and nobody is signed in', async () => {
+        await settingsRepo.saveSingleton(settings({ campMode: 'pre-camp' }));
+        await people.save(person({ id: 'p1' }));
+        const director: Actor = { ...admin(), role: 'director' };
+        for (const actor of [admin(), director]) {
+          await expect(svc.importSignIns(actor, csv)).rejects.toThrow('Camp has not started yet, so nobody can be signed in.');
+        }
+        const after = await people.findById('p1');
         expect(after?.atCamp).toBe(false);
         expect(after?.signOutHistory).toEqual([]);
       });
 
-      it('zone login: a child outside the zone stays off site', async () => {
-        await people.save(other());
-        const zone: Actor = { id: 'u3', role: 'zoneLeader', churchId: null, churchName: null, zone: 'Yellow', displayName: 'Yellow' };
-        const result = await svc.importSignIns(zone, csv);
-        expect(result.signedIn).toBe(0);
-        expect((await people.findById('pOther'))?.atCamp).toBe(false);
-      });
-
-      it('church login: its own child still signs in', async () => {
+      it('signs in at camp', async () => {
         await people.save(person({ id: 'p1' }));
-        const result = await svc.importSignIns(church(), sheet([['Ada', 'Lovelace', 'Victory Church', 'female', '9', 'Y']]));
-        expect(result.signedIn).toBe(1);
-      });
-
-      it('first aid is camp-wide by design and still signs anyone in', async () => {
-        await people.save(other());
-        const fa: Actor = { id: 'u4', role: 'firstAid', churchId: null, churchName: null, zone: null, displayName: 'First aid' };
-        const result = await svc.importSignIns(fa, csv);
-        expect(result.signedIn).toBe(1);
+        expect((await svc.importSignIns(admin(), csv)).signedIn).toBe(1);
       });
     });
 
@@ -250,6 +261,42 @@ describe('OfflineSignInService', () => {
 
       expect(result.signedIn).toBe(1);
       expect(result.cancelledSkipped).toEqual(['Gone Away (Victory Church)']);
+    });
+
+    // B-4 (IA-OQ-5): the sheet has no id column, so same-name students can't be told apart.
+    describe('same-name students and repeated rows', () => {
+      const row = ['Ada', 'Lovelace', 'Victory Church', 'female', '9', 'Y'];
+
+      it('two live students with the same name: neither signs in, row reported as ambiguous', async () => {
+        await people.save(person({ id: 'twinA' }));
+        await people.save(person({ id: 'twinB' }));
+        const result = await svc.importSignIns(admin(), sheet([row]));
+        expect(result.signedIn).toBe(0);
+        expect(result.unmatched).toHaveLength(1);
+        expect(result.unmatched[0]).toContain('Ada Lovelace (Victory Church)');
+        expect(result.unmatched[0]).toContain('2 students share this name, sign in on the app');
+        expect((await people.findById('twinA'))?.atCamp).toBe(false);
+        expect((await people.findById('twinB'))?.atCamp).toBe(false);
+      });
+
+      it('one live + one cancelled twin: the live one signs in, cancelledSkipped stays empty', async () => {
+        await people.save(person({ id: 'live' }));
+        await people.save(person({ id: 'gone', lifecycle: 'cancelled' }));
+        const result = await svc.importSignIns(admin(), sheet([row]));
+        expect(result.signedIn).toBe(1);
+        expect(result.cancelledSkipped).toEqual([]);
+        expect(result.unmatched).toEqual([]);
+        expect((await people.findById('live'))?.atCamp).toBe(true);
+        expect((await people.findById('gone'))?.signOutHistory).toEqual([]);
+      });
+
+      it('the same row pasted twice signs the student in once', async () => {
+        await people.save(person({ id: 'p1' }));
+        const result = await svc.importSignIns(admin(), sheet([row, row]));
+        expect(result.signedIn).toBe(1);
+        expect(result.alreadySignedIn).toBe(1);
+        expect((await people.findById('p1'))?.signOutHistory).toHaveLength(1);
+      });
     });
   });
 });
