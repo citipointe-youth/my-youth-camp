@@ -19,9 +19,13 @@ const _cache = new ResponseCache<DashboardResult>(30_000);
  * `churchId` and `zone`, so they collided — whichever fetched first seeded the other's numbers for
  * the 30s TTL. Counts only (no names/PII crossed), but it's still one gender's roster reported to
  * the other custodian. Any future scoping dimension must be added here too.
+ *
+ * `actor.id` was added 2026-11-07 (A-8): the body also carries per-account data (`greetingName`,
+ * and `latestNotification` when it is targeted at one account), so accounts sharing role + church
+ * + zone + genderScope (directors, admins, firstAid) must not share a slot either.
  */
 function _actorKey(actor: Actor): string {
-  return `${actor.role}:${actor.churchId ?? '_'}:${actor.zone ?? '_'}:${actor.genderScope ?? '_'}`;
+  return `${actor.id}:${actor.role}:${actor.churchId ?? '_'}:${actor.zone ?? '_'}:${actor.genderScope ?? '_'}`;
 }
 
 export function getCachedDashboard(actor: Actor): DashboardResult | null {

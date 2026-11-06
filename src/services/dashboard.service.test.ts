@@ -305,6 +305,35 @@ describe('dashboard response cache', () => {
     expect(resBlue.totalExpected).toBe(2);
   });
 
+  // Regression (A-8, 2026-11-07): the key omitted actor.id, so two accounts with the same
+  // role/church/zone/genderScope (3 directors, 4 admins, 3 firstAid in production) shared one
+  // slot and got each other's greetingName / targeted notice for the 30s TTL.
+  it('scopes the cache key by actor id — two admins never share a greeting', async () => {
+    pinClock('2026-07-01T15:00:00Z');
+    const h = await build();
+    const alice = await h.svc.home(actor('admin', { id: 'a1', displayName: 'Alice Admin' }), settings());
+    const bob = await h.svc.home(actor('admin', { id: 'a2', displayName: 'Bob Admin' }), settings());
+    if (alice.mode !== 'at-camp' || bob.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(alice.greetingName).toBe('Alice');
+    expect(bob.greetingName).toBe('Bob');
+  });
+
+  it('scopes the cache key by actor id — a different admin targeted notice is not served from cache', async () => {
+    pinClock('2026-07-01T15:00:00Z');
+    const h = await build();
+    await h.notifRepo.save({
+      id: 'n1', scope: 'camp', zone: null, churchId: null, priority: 'normal',
+      title: 'Only for a1', body: 'B', senderId: 'a1', senderName: 'Admin', senderRole: 'admin',
+      leadersOnly: false, audienceEstimate: 0, expiresAt: null, scheduledFor: null,
+      createdAt: '2026-07-01T09:00:00.000Z', targetUserId: 'a1',
+    });
+    const first = await h.svc.home(actor('admin', { id: 'a1' }), settings());
+    const second = await h.svc.home(actor('admin', { id: 'a2' }), settings());
+    if (first.mode !== 'at-camp' || second.mode !== 'at-camp') throw new Error('expected at-camp');
+    expect(first.latestNotification?.title).toBe('Only for a1');
+    expect(second.latestNotification).toBeNull();
+  });
+
   // ── §3.2 — church logins read via findByChurch, not an unbounded findAll ──────────
   //
   // The point of these is that narrowing the QUERY changed no NUMBER. canAccessPerson is
