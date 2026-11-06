@@ -80,7 +80,6 @@ const ALLOW: Record<string, string> = {
   'firstAid GET /notifications/scheduled': 'REPORTED 4 Nov: no permission check',
   'firstAid POST /campers/:id/reveal-medicare': 'camper:read:sensitive (audited reveal)',
   'firstAid POST /attendance/sign-in': 'attendance:write',
-  'firstAid POST /import/offline-signin': 'attendance:write (bulk sign-in from the paper sheet)',
   'firstAid POST /attendance/sign-out': 'attendance:write',
   // note:*:firstaid / note:*:prayer / note:read:student
   'prayer GET /notes/prayer': 'note:read:prayer',

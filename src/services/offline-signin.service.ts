@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import type { IPersonRepository } from '../repositories/interfaces/entity-repositories';
+import type { IPersonRepository, ISettingsRepository } from '../repositories/interfaces/entity-repositories';
 import type { Person, SignOutEvent } from '../core/entities/person';
 import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
@@ -8,6 +8,7 @@ import { parseCsv } from '../utils/csv';
 import { withSignEvent } from './person-lifecycle';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
+import { BadRequestError } from '../core/errors/app-error';
 import { invalidateDashboardCache } from './dashboard-cache';
 
 export interface OfflineSignInResult {
@@ -51,7 +52,7 @@ function norm(s: string | null | undefined): string {
  * at camp. Matches by First+Last+Church text (no hidden id column — the export is the source of
  * these exact values, so a straight normalized match is expected to work).
  */
-export function makeOfflineSignInService(personRepo: IPersonRepository): OfflineSignInService {
+export function makeOfflineSignInService(personRepo: IPersonRepository, settings?: ISettingsRepository): OfflineSignInService {
   return {
     async exportTemplate(actor) {
       assertCan(actor, 'import:run');
@@ -79,18 +80,26 @@ export function makeOfflineSignInService(personRepo: IPersonRepository): Offline
     },
 
     async importSignIns(actor, csvData) {
-      assertCan(actor, 'attendance:write');
+      assertCan(actor, 'import:run');
+      // A-3 (Q6 + IA OQ-3): a bulk Y-sheet before camp is always a false record, so unlike the
+      // single-tap signEvent this refuses every role, director and admin included.
+      if ((await settings?.getSingleton())?.campMode === 'pre-camp') {
+        throw new BadRequestError('Camp has not started yet, so nobody can be signed in.');
+      }
       const rows = parseCsv(csvData);
       const people = await personRepo.findAll();
       const students = people.filter((p) => p.kind !== 'leader');
 
-      const index = new Map<string, Person>();
+      // B-4: a name key can hold several people (same-name twins), so keep them all.
+      const index = new Map<string, Person[]>();
       for (const p of students) {
-        index.set(`${norm(p.churchName)}|${norm(p.firstName)}|${norm(p.lastName)}`, p);
+        const key = `${norm(p.churchName)}|${norm(p.firstName)}|${norm(p.lastName)}`;
+        index.set(key, [...(index.get(key) ?? []), p]);
       }
 
       const now = nowISO();
       const toSignIn: Person[] = [];
+      const queued = new Set<string>(); // B-4: a repeated row must not log a second 'in' event
       let alreadySignedIn = 0;
       const unmatched: string[] = [];
       const cancelledSkipped: string[] = [];
@@ -104,13 +113,21 @@ export function makeOfflineSignInService(personRepo: IPersonRepository): Offline
         if (norm(signedRaw) !== 'y') continue; // blank / N / anything but Y is a no-op
         if (!firstName || !lastName || !church) continue;
 
-        const person = index.get(`${norm(church)}|${norm(firstName)}|${norm(lastName)}`);
         // Out of scope reads exactly like no match, so the sheet can't confirm who exists elsewhere.
         // canAccessPerson keeps first aid camp-wide, as designed (QA item 10, 2026-11-03).
-        if (!person || !canAccessPerson(actor, person)) {
+        const matches = (index.get(`${norm(church)}|${norm(firstName)}|${norm(lastName)}`) ?? []).filter((m) => canAccessPerson(actor, m));
+        if (matches.length === 0) {
           unmatched.push(`${firstName} ${lastName} (${church})`);
           continue;
         }
+        // B-4 (IA OQ-5): cancelled people never sign in, so they can't make a live match ambiguous.
+        // Two or more live matches can't be told apart (the sheet has no id), so sign in neither.
+        const live = matches.filter((m) => m.lifecycle !== 'cancelled');
+        if (live.length > 1) {
+          unmatched.push(`${firstName} ${lastName} (${church}) — ${live.length} students share this name, sign in on the app`);
+          continue;
+        }
+        const person = live[0] ?? matches[0]!;
         // Task 16 fix round 1 — a cancelled person can now appear on the template (marked
         // "Cancelled"). Never sign them in: no roster breach either way (`applyCheckIn` refuses
         // to change their lifecycle/atCamp), but `withSignEvent` would still append a phantom
@@ -119,10 +136,11 @@ export function makeOfflineSignInService(personRepo: IPersonRepository): Offline
           cancelledSkipped.push(`${firstName} ${lastName} (${church})`);
           continue;
         }
-        if (person.atCamp) {
+        if (person.atCamp || queued.has(person.id)) {
           alreadySignedIn++;
           continue;
         }
+        queued.add(person.id);
         toSignIn.push(person);
       }
 

@@ -242,7 +242,7 @@ export async function buildContainer(): Promise<Container> {
     const ticketImportSvc = makeTicketImportService(people, churches);
     const invoiceImportSvc = makeInvoiceImportService(people);
     const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
-    const offlineSignInSvc = makeOfflineSignInService(people);
+    const offlineSignInSvc = makeOfflineSignInService(people, settingsRepo);
     const account = makeAccountService(users, churches, people);
     const dashboard = makeDashboardService(people, notifications, churches);
     const admin = makeAdminService(
@@ -399,7 +399,7 @@ export async function buildContainer(): Promise<Container> {
   const ticketImportSvc = makeTicketImportService(people, churches);
   const invoiceImportSvc = makeInvoiceImportService(people);
   const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
-  const offlineSignInSvc = makeOfflineSignInService(people);
+  const offlineSignInSvc = makeOfflineSignInService(people, settingsRepo);
   const account = makeAccountService(users, churches, people);
   const dashboard = makeDashboardService(
     people,
