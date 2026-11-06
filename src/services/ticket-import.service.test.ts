@@ -408,3 +408,43 @@ describe('TicketImportService — blank padding rows (item 12)', () => {
     expect((await personRepo.findAll())[0]!.ticketNumber).toBe('TKT-009');
   });
 });
+
+/* A-4 (ruling Q5): a fuzzy name match is never applied automatically. The row becomes an orphan
+   (flagged needsReview) plus a 'ticket-possible-match' warning naming the near-miss person. */
+describe('TicketImportService.importTicketsCsv — fuzzy match is not applied (A-4)', () => {
+  const csv = 'First Name,Last Name,Ticket Number,Invoice Number\nJonathon,Smith,TKT-7,INV-7';
+  const seed = () => person({ id: 'p1', firstName: 'Jonathan', lastName: 'Smith', ticketNumber: 'TKT-1' });
+
+  it('creates an orphan and warns "possible match", leaving the real student untouched', async () => {
+    const { svc, personRepo } = await build([church({ id: 'c1', name: 'Victory' })], [seed()]);
+    const res = await svc.importTicketsCsv(actor('admin'), { csvData: csv });
+    expect(res.created).toBe(1);
+    expect(res.updated).toBe(0);
+    const all = await personRepo.findAll();
+    expect(all).toHaveLength(2);
+    expect(all.find((p) => p.id === 'p1')!.ticketNumber).toBe('TKT-1');
+    const orphan = all.find((p) => p.id !== 'p1')!;
+    expect(orphan).toMatchObject({ firstName: 'Jonathon', churchId: '', ticketNumber: 'TKT-7', needsReview: true });
+    expect(orphan.needsReviewReason).toContain('possible match: Jonathan Smith');
+    const w = res.warnings.filter((x) => x.code === 'ticket-possible-match');
+    expect(w).toHaveLength(1);
+    expect(w[0]!.message).toContain('possible match: Jonathan Smith');
+  });
+
+  it('dry run reports the same and persists nothing', async () => {
+    const { svc, personRepo } = await build([church({ id: 'c1', name: 'Victory' })], [seed()]);
+    const res = await svc.importTicketsCsv(actor('admin'), { csvData: csv, dryRun: true });
+    expect(res.created).toBe(1);
+    expect(res.warnings.some((x) => x.code === 'ticket-possible-match')).toBe(true);
+    expect(await personRepo.findAll()).toHaveLength(1);
+  });
+
+  it('a re-run exact-matches the orphan: no second orphan, no new possible-match warning', async () => {
+    const { svc, personRepo } = await build([church({ id: 'c1', name: 'Victory' })], [seed()]);
+    await svc.importTicketsCsv(actor('admin'), { csvData: csv });
+    const res = await svc.importTicketsCsv(actor('admin'), { csvData: csv });
+    expect(res.created).toBe(0);
+    expect(res.warnings.some((x) => x.code === 'ticket-possible-match')).toBe(false);
+    expect(await personRepo.findAll()).toHaveLength(2);
+  });
+});

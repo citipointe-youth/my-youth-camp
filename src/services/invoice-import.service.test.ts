@@ -556,6 +556,26 @@ describe('invoice-import: multiple invoices for one person (item A)', () => {
     expect(p.amountPaid).toBe(190);
     expect(p.needsReview).toBe(false);
   });
+
+  // A-7 (camp arch 2026-11-07, report bug 7): row 2 must merge onto row 1's result, not the
+  // stale stored person, so fields row 2 leaves blank survive from row 1.
+  it('a later row that omits code/total keeps the earlier row\'s values (A-7)', async () => {
+    const { svc, personRepo } = await build([
+      person({ id: 'ivy', firstName: 'Robin', lastName: 'Thompson', invoiceNumber: 'INV-1' }),
+    ]);
+    await svc.importInvoicesCsv(actor('admin'), {
+      csvData: [
+        HDR,
+        'INV-1,Robin,Thompson,0400000001,150,0,0,0,0,EARLY',
+        'INV-2,Robin,Thompson,0400000001,,0,40,0,0,',
+      ].join('\n'),
+    });
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.discountCode).toBe('EARLY');
+    expect(p.registrationCost).toBe(150);
+    expect(p.amountPaid).toBe(40);
+    expect(p.needsReview).toBe(true);
+  });
 });
 
 /* Item 12 (2026-07-28): a trailing blank line is spreadsheet padding, not a defect — it used to
@@ -713,5 +733,34 @@ describe('invoice-import: refund-likely (2026-09-08)', () => {
     const res = await svc.importInvoicesCsv(actor('admin'), { csvData });
 
     expect(res.warnings.some((w) => w.code === 'refund-likely')).toBe(false);
+  });
+});
+
+/* IA OQ-4 (with A-4 / ruling Q5): a FUZZY billing-name match applies no money. It goes down the
+   existing invoice-unmatched path with a "possible match" suffix; an exact billing-name match
+   still applies (billing-name-match-only). */
+describe('invoice-import: fuzzy billing-name match is unmatched (OQ-4)', () => {
+  it('applies no money and reports invoice-unmatched with "possible match: <name>"', async () => {
+    const { svc, personRepo } = await build([person({ id: 'p1', firstName: 'Robin', lastName: 'Thompson' })]);
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: [HDR, 'INV-9,Robyn,Thompson,,190,0,190,0,0,'].join('\n'),
+    });
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.amountPaid ?? null).toBeNull();
+    expect(p.registrationCost ?? null).toBeNull();
+    expect(res.updated).toBe(0);
+    const w = res.warnings.filter((x) => x.code === 'invoice-unmatched');
+    expect(w).toHaveLength(1);
+    expect(w[0]!.message).toContain('possible match: Robin Thompson (distance 1)');
+    expect(res.warnings.some((x) => x.code === 'billing-name-match-only')).toBe(false);
+  });
+
+  it('an exact billing-name match still applies the money', async () => {
+    const { svc, personRepo } = await build([person({ id: 'p1', firstName: 'Robin', lastName: 'Thompson' })]);
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: [HDR, 'INV-9,Robin,Thompson,,190,0,190,0,0,'].join('\n'),
+    });
+    expect((await personRepo.findAll())[0]!.amountPaid).toBe(190);
+    expect(res.warnings.some((x) => x.code === 'billing-name-match-only')).toBe(true);
   });
 });

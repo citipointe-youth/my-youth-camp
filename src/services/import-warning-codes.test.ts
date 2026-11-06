@@ -92,6 +92,12 @@ describe('import warning codes — the out-of-repo API contract', () => {
     }
   });
 
+  it('declares the camp-arch 2026-11-07 codes the 11.1 console must map (A-Q12, A-4)', () => {
+    for (const c of ['absent-kept-needs-review', 'ticket-possible-match'] as const) {
+      expect(IMPORT_WARNING_META[c].severity).toBe('review');
+    }
+  });
+
   it('the SPA label mirror covers every declared code', () => {
     // public/index.html has no build step, so IMPORT_WARN_LABELS is a hand-kept
     // mirror. An unknown code degrades gracefully rather than throwing, so this

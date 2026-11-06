@@ -5,6 +5,7 @@ import type { Church } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
 import { ForbiddenError, BadRequestError } from '../core/errors/app-error';
 import { UNALLOCATED_CHURCH_ID } from './church-allocation';
+import { CONSENT_COLUMNS } from './elvanto-mapping';
 
 // ---------------------------------------------------------------------------
 // ImportService tests — focus on the C1 fix: church/camper indexing, in-file
@@ -32,8 +33,26 @@ async function build(churches: Church[] = [church({ id: 'c1', name: 'Victory' })
   await churchRepo.init();
   await overrideRepo.init();
   for (const c of churches) await churchRepo.save(c);
-  const svc = makeImportService(personRepo, churchRepo, overrideRepo);
-  return { svc, personRepo, churchRepo, overrideRepo };
+  const rawSvc = makeImportService(personRepo, churchRepo, overrideRepo);
+  // A-1: a missing consent column now stops the import. Most fixtures here predate that, so
+  // `svc` appends the three consent headers (blank cells) when a fixture lacks them. Use
+  // `rawSvc` to exercise the hard stop itself.
+  const svc: typeof rawSvc = {
+    ...rawSvc,
+    importCsv: (a, input) => {
+      const i = input as { csvData: string };
+      return rawSvc.importCsv(a, { ...i, csvData: withConsentColumns(i.csvData) });
+    },
+  };
+  return { svc, rawSvc, personRepo, churchRepo, overrideRepo };
+}
+
+function withConsentColumns(csv: string): string {
+  const nl = csv.indexOf('\n');
+  const header = nl < 0 ? csv : csv.slice(0, nl);
+  const missing = CONSENT_COLUMNS.filter((c) => !header.includes(c));
+  if (missing.length === 0) return csv;
+  return `${header},${missing.join(',')}${nl < 0 ? '' : csv.slice(nl)}`;
 }
 
 describe('ImportService.importCsv — RBAC + validation', () => {
@@ -314,6 +333,46 @@ describe('ImportService.importCsv — Elvanto export shape', () => {
     expect(p.medicalConditions).toEqual([]);   // blank
     expect(p.otherMedications).toBe('Ritalin\nFluexotine');
     expect(p.mobile).toBe('0499 259 222');
+  });
+});
+
+/* A-1 (camp arch 2026-11-07, report bug 1, ruling Q3 + IA OQ-2): consents on a Form re-import.
+   Blank cell keeps the earlier value AND timestamp; an explicit non-blank answer applies (No
+   revokes); a missing/renamed consent column stops the import before anything is written. */
+describe('ImportService.importCsv — consents tri-state (A-1)', () => {
+  const H = `First Name,Last Name,Church,Grade,Date Submitted,${CONSENT_COLUMNS.join(',')}`;
+
+  it('a blank consent cell on re-import keeps the earlier grant and its timestamp', async () => {
+    const { svc, personRepo } = await build();
+    await svc.importCsv(actor('admin'), { csvData: `${H}\nAda,Lovelace,Victory,9,01/08/2026,Yes,Yes,Yes` });
+    await svc.importCsv(actor('admin'), { csvData: `${H}\nAda,Lovelace,Victory,9,01/09/2026,,,`, updateExisting: true });
+    const p = (await personRepo.findAll())[0]!;
+    for (const t of ['medical', 'media', 'supervision'] as const) {
+      expect(p.consents[t]).toEqual({ granted: true, timestamp: '2026-08-01T00:00:00.000Z' });
+    }
+  });
+
+  it('an explicit No on re-import revokes (an answer, not a silent revoke)', async () => {
+    const { svc, personRepo } = await build();
+    await svc.importCsv(actor('admin'), { csvData: `${H}\nAda,Lovelace,Victory,9,01/08/2026,Yes,Yes,Yes` });
+    await svc.importCsv(actor('admin'), { csvData: `${H}\nAda,Lovelace,Victory,9,01/09/2026,No,,Yes`, updateExisting: true });
+    const p = (await personRepo.findAll())[0]!;
+    expect(p.consents.medical).toEqual({ granted: false, timestamp: null });
+    expect(p.consents.media.granted).toBe(true);
+    expect(p.consents.supervision).toEqual({ granted: true, timestamp: '2026-09-01T00:00:00.000Z' });
+  });
+
+  it('a missing consent column stops the import (dry run and commit), nothing written', async () => {
+    const { rawSvc, personRepo } = await build();
+    const csv = 'First Name,Last Name,Church,Grade,' +
+      'I give photography and video consent for my child as listed above.,' +
+      'I understand and agree to the Supervision policy.\nAda,Lovelace,Victory,9,Yes,Yes';
+    for (const dryRun of [true, false]) {
+      await expect(rawSvc.importCsv(actor('admin'), { csvData: csv, dryRun })).rejects.toThrow(
+        /I give medical consent for my child as listed above\./,
+      );
+    }
+    expect(await personRepo.findAll()).toHaveLength(0);
   });
 });
 
@@ -626,6 +685,39 @@ describe('ImportService.importCsv — protects overridden/cancelled people from 
     const res = await h.svc.importCsv(actor('admin'), { csvData: csvWithNobody(), dryRun: true });
     expect(res.warnings.some((w) => w.message.includes('will be DELETED'))).toBe(false);
     expect(res.retained).toBe(1);
+  });
+
+  /* A-Q12 (ruling Q12, literal per Tom 7 Nov): anyone with a ticket number, invoice number or
+     Ticket/Invoice money is KEPT and reported "kept, needs review"; withdrawals go by hand. */
+  it('keeps an absent person with a ticket, an invoice or invoice money, as needs-review (A-Q12)', async () => {
+    for (const dryRun of [true, false]) {
+      const h = await build();
+      const ticketed = await seedPerson(h, { firstName: 'Ticket', lastName: 'Orphan', churchId: '', churchName: '', ticketNumber: 'TKT-1' });
+      const invoiced = await seedPerson(h, { firstName: 'Has', lastName: 'Invoice', invoiceNumbers: ['INV-7'] });
+      const paid = await seedPerson(h, { firstName: 'Paid', lastName: 'Zero', amountPaid: 0 });
+      const ordinary = await seedPerson(h, { firstName: 'Plain', lastName: 'Person' });
+
+      const res = await h.svc.importCsv(actor('admin'), { csvData: csvWithNobody(), dryRun });
+
+      for (const kept of [ticketed, invoiced, paid]) expect(await h.personRepo.findById(kept.id)).not.toBeNull();
+      if (dryRun) expect(await h.personRepo.findById(ordinary.id)).not.toBeNull();
+      else expect(await h.personRepo.findById(ordinary.id)).toBeNull();
+      expect(res.deleted).toBe(1);
+      expect(res.retained).toBe(3);
+      const kept = res.warnings.filter((w) => w.code === 'absent-kept-needs-review');
+      expect(kept.map((w) => w.message.split(' (')[0]).sort()).toEqual(['Has Invoice', 'Paid Zero', 'Ticket Orphan']);
+      expect(res.warnings.filter((w) => w.code === 'absent-will-delete').map((w) => w.message)).toEqual([
+        expect.stringContaining('Plain Person'),
+      ]);
+    }
+  });
+
+  it('Form-owned money fields (registrationCost, discountCode) do not protect (A-Q12)', async () => {
+    const h = await build();
+    const p = await seedPerson(h, { firstName: 'Form', lastName: 'Only', registrationCost: 150, discountCode: 'EARLY' });
+    const res = await h.svc.importCsv(actor('admin'), { csvData: csvWithNobody() });
+    expect(await h.personRepo.findById(p.id)).toBeNull();
+    expect(res.deleted).toBe(1);
   });
 });
 

@@ -27,6 +27,7 @@ export type ImportWarningCode =
   | 'duplicate-submission'
   | 'duplicate-submission-order-undetermined'
   | 'absent-but-retained'
+  | 'absent-kept-needs-review'
   | 'absent-will-delete'
   | 'absent-delete-truncated'
   // ---- Ticket List import (ticket-import.service.ts) ----
@@ -36,6 +37,7 @@ export type ImportWarningCode =
   | 'unknown-payment-status'
   | 'multiple-active-tickets'
   | 'unmatched-orphan-created'
+  | 'ticket-possible-match'
   | 'multiple-occurrences'
   // ---- Invoice import (invoice-import.service.ts) ----
   | 'no-financial-data'
@@ -100,6 +102,10 @@ export const IMPORT_WARNING_META: Record<
     label: 'Absent from file but KEPT (cancellation/refund/override)',
     severity: 'info',
   },
+  'absent-kept-needs-review': {
+    label: 'Absent from file — KEPT, needs review (ticket/invoice/payment on record)',
+    severity: 'review',
+  },
   'absent-will-delete': { label: 'Absent from file — will be DELETED', severity: 'critical' },
   'absent-delete-truncated': { label: 'More deletions not listed individually', severity: 'critical' },
   'occurrence-mismatch': { label: 'Row occurrence does not match filter — skipped', severity: 'info' },
@@ -112,6 +118,10 @@ export const IMPORT_WARNING_META: Record<
   'multiple-active-tickets': { label: 'Multiple active tickets — one kept', severity: 'review' },
   'unmatched-orphan-created': {
     label: "No matching student — created as an orphan ('Needs review')",
+    severity: 'review',
+  },
+  'ticket-possible-match': {
+    label: 'Possible match — not applied, orphan created',
     severity: 'review',
   },
   'multiple-occurrences': { label: 'Multiple event occurrences in one file', severity: 'review' },

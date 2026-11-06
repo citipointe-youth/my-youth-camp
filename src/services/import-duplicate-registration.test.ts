@@ -8,6 +8,9 @@ import {
 } from '../repositories/in-memory';
 import type { Actor } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
+import { CONSENT_COLUMNS } from './elvanto-mapping';
+
+const CONSENT_HEADERS = CONSENT_COLUMNS.join(',');
 
 /**
  * Item 7 (2026-07-31) — the same student registered TWICE, the second time to upgrade from a
@@ -43,7 +46,9 @@ function church(): Church {
 
 const HEADERS =
   'First Name,Last Name,Gender,School Grade,Mobile Number,' +
-  "Attendee's Church,Date Submitted,Type,Medical Conditions";
+  "Attendee's Church,Date Submitted,Type,Medical Conditions," +
+  // A-1: the consent columns must be present (a missing one stops the import); cells blank.
+  CONSENT_HEADERS;
 
 /** The upgrade submission is listed FIRST in the file but was submitted LATER. */
 const OUT_OF_ORDER =
@@ -98,7 +103,7 @@ describe('duplicate registrations — Form import', () => {
 
   it('a file with no Date Submitted column keeps its original row order', async () => {
     const noDate =
-      "First Name,Last Name,Gender,School Grade,Attendee's Church,Type\n" +
+      "First Name,Last Name,Gender,School Grade,Attendee's Church,Type," + CONSENT_HEADERS + '\n' +
       'Ivy,Thompson,Female,Year 9,Victory Church,Tent\n' +
       'Ivy,Thompson,Female,Year 9,Victory Church,Classroom\n';
     const res = await svc.importCsv(admin, { csvData: noDate });

@@ -191,7 +191,10 @@ export function makeTicketImportService(
 
           const match = findPersonMatch(index, { firstName, lastName, phone: phoneRaw });
 
-          if (match.status === 'matched') {
+          /* A-4 (ruling Q5): a FUZZY match is never applied — it would overwrite another
+             student's ticket#, invoice#, payment status and confirmed kind. The row takes the
+             orphan branch below with a 'ticket-possible-match' warning for review. */
+          if (match.status === 'matched' && match.via !== 'fuzzy') {
             const existing = touched.get(match.person.id) ?? match.person;
             /* Item A/B (2026-07-28) — SECOND ACTIVE TICKET FOR THE SAME PERSON.
                The "bought the wrong ticket, then bought the right one with a difference-only
@@ -285,6 +288,10 @@ export function makeTicketImportService(
             addToIndex(index, merged);
             if (firstTouch) updated++;
           } else {
+            const possible = match.status === 'matched' ? match : null;
+            const possibleText = possible
+              ? `possible match: ${possible.person.firstName} ${possible.person.lastName}`
+              : '';
             const person: Person = {
               id: newId('person'),
               firstName,
@@ -333,7 +340,7 @@ export function makeTicketImportService(
               needsReview: true,
               needsReviewReason:
                 `No matching person found for ticket row ${rowNum} (ticket #${ticketNumber || '—'}) — ` +
-                'created as an unmatched orphan',
+                'created as an unmatched orphan' + (possible ? ` (${possibleText})` : ''),
               lifecycle: 'registered',
               atCamp: false,
               checkInHistory: [],
@@ -350,6 +357,15 @@ export function makeTicketImportService(
               row: rowNum,
               message: `No matching person found for "${firstName} ${lastName}" — created as an unmatched orphan`,
             });
+            if (possible) {
+              warnings.push({
+                code: 'ticket-possible-match',
+                row: rowNum,
+                message:
+                  `"${firstName} ${lastName}" — ${possibleText} (${possible.person.churchName || 'no church'}), ` +
+                  `edit distance ${possible.distance ?? '?'}. Not applied; orphan created for review.`,
+              });
+            }
             created++;
           }
         } catch (err) {
