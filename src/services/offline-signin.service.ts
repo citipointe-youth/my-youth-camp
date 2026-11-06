@@ -52,7 +52,7 @@ function norm(s: string | null | undefined): string {
  * at camp. Matches by First+Last+Church text (no hidden id column — the export is the source of
  * these exact values, so a straight normalized match is expected to work).
  */
-export function makeOfflineSignInService(personRepo: IPersonRepository, settings?: ISettingsRepository): OfflineSignInService {
+export function makeOfflineSignInService(personRepo: IPersonRepository, settings: ISettingsRepository): OfflineSignInService {
   return {
     async exportTemplate(actor) {
       assertCan(actor, 'import:run');
@@ -83,7 +83,7 @@ export function makeOfflineSignInService(personRepo: IPersonRepository, settings
       assertCan(actor, 'import:run');
       // A-3 (Q6 + IA OQ-3): a bulk Y-sheet before camp is always a false record, so unlike the
       // single-tap signEvent this refuses every role, director and admin included.
-      if ((await settings?.getSingleton())?.campMode === 'pre-camp') {
+      if ((await settings.getSingleton())?.campMode === 'pre-camp') {
         throw new BadRequestError('Camp has not started yet, so nobody can be signed in.');
       }
       const rows = parseCsv(csvData);

@@ -6,6 +6,9 @@ import {
   toRegistrantDetailDto,
 } from './person.dto';
 import type { Person } from '../../core/entities/person';
+import type { Actor } from '../../core/entities/user';
+
+const ADMIN: Actor = { id: 'admin-1', role: 'admin', churchId: null, churchName: null, zone: null, displayName: 'Admin User' };
 
 // ---------------------------------------------------------------------------
 // PII regression guard (audit 2026-07-19): the LIST/BULK DTOs are mapped over
@@ -78,7 +81,7 @@ function personFixture(over: Partial<Person> = {}): Person {
 
 describe('list DTOs never leak medicareNumber or dateOfBirth', () => {
   it('toCamperDto omits both and sets hasMedicare', () => {
-    const dto = toCamperDto(personFixture());
+    const dto = toCamperDto(personFixture(), ADMIN);
     expect(dto).not.toHaveProperty('medicareNumber');
     expect(dto).not.toHaveProperty('dateOfBirth');
     expect(dto.hasMedicare).toBe(true);
@@ -92,22 +95,22 @@ describe('list DTOs never leak medicareNumber or dateOfBirth', () => {
   });
 
   it('hasMedicare is false when no medicare number is on file', () => {
-    expect(toCamperDto(personFixture({ medicareNumber: null })).hasMedicare).toBe(false);
+    expect(toCamperDto(personFixture({ medicareNumber: null }), ADMIN).hasMedicare).toBe(false);
     expect(toRegistrantDto(personFixture({ medicareNumber: undefined })).hasMedicare).toBe(false);
   });
 
   it('the raw value never appears anywhere in the serialized list DTOs', () => {
     const p = personFixture();
-    expect(JSON.stringify(toCamperDto(p))).not.toContain('1234 56789 0');
+    expect(JSON.stringify(toCamperDto(p, ADMIN))).not.toContain('1234 56789 0');
     expect(JSON.stringify(toRegistrantDto(p))).not.toContain('1234 56789 0');
-    expect(JSON.stringify(toCamperDto(p))).not.toContain('2010-05-01');
+    expect(JSON.stringify(toCamperDto(p, ADMIN))).not.toContain('2010-05-01');
     expect(JSON.stringify(toRegistrantDto(p))).not.toContain('2010-05-01');
   });
 });
 
 describe('detail DTOs add dateOfBirth back but still never medicareNumber', () => {
   it('toCamperDetailDto', () => {
-    const dto = toCamperDetailDto(personFixture());
+    const dto = toCamperDetailDto(personFixture(), ADMIN);
     expect(dto.dateOfBirth).toBe('2010-05-01');
     expect(dto.hasMedicare).toBe(true);
     expect(dto).not.toHaveProperty('medicareNumber');
@@ -121,7 +124,7 @@ describe('detail DTOs add dateOfBirth back but still never medicareNumber', () =
   });
 
   it('detail dateOfBirth is null when unset', () => {
-    expect(toCamperDetailDto(personFixture({ dateOfBirth: null })).dateOfBirth).toBeNull();
+    expect(toCamperDetailDto(personFixture({ dateOfBirth: null }), ADMIN).dateOfBirth).toBeNull();
   });
 });
 

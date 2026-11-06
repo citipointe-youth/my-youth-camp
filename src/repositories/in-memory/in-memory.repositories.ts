@@ -530,9 +530,7 @@ export class InMemorySettingsRepository implements ISettingsRepository {
 
   async patchSingleton(fields: Partial<CampSettings>): Promise<CampSettings> {
     if (!this.settings) throw new Error('Settings row missing; nothing to patch');
-    const defined = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
-    const { id: _id, createdAt: _c, ...patch } = defined as Partial<CampSettings>;
-    return this.saveSingleton({ ...this.settings, ...patch, updatedAt: patch.updatedAt ?? new Date().toISOString() });
+    return this.saveSingleton({ ...this.settings, ...fields, updatedAt: fields.updatedAt ?? new Date().toISOString() });
   }
 }
 

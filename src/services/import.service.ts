@@ -372,9 +372,10 @@ export function makeImportService(
             return v ? yesToConsent(v) : undefined;
           };
           const consentAnswers: ConsentAnswers = {
-            medical: answer('I give medical consent for my child as listed above.'),
-            media: answer('I give photography and video consent for my child as listed above.'),
-            supervision: answer('I understand and agree to the Supervision policy.'),
+            // Same header strings as the A-1 stop check, so a rename can't desync the two.
+            medical: answer(CONSENT_COLUMNS[0]),
+            media: answer(CONSENT_COLUMNS[1]),
+            supervision: answer(CONSENT_COLUMNS[2]),
           };
 
           const nck = nameChurchKey(resolvedChurchId, firstName, lastName);

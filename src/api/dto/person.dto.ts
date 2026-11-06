@@ -251,8 +251,8 @@ export function toRegistrantDetailDto(p: Person): RegistrantDetailDto {
  */
 const MONEY_HIDDEN_ROLES: ReadonlySet<Actor['role']> = new Set(['firstAid', 'prayer']);
 
-/** `actor` is optional only so the pure mapper tests can call it bare; every route passes it. */
-export function toCamperDto(p: Person, actor?: Actor): CamperDto {
+/** `actor` is required: a forgotten one would leak the money fields to firstAid/prayer. */
+export function toCamperDto(p: Person, actor: Actor): CamperDto {
   const dto: CamperDto = {
     id: p.id,
     firstName: p.firstName,
@@ -294,7 +294,7 @@ export function toCamperDto(p: Person, actor?: Actor): CamperDto {
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
-  if (!actor || !MONEY_HIDDEN_ROLES.has(actor.role)) return dto;
+  if (!MONEY_HIDDEN_ROLES.has(actor.role)) return dto;
   return {
     ...dto,
     amountPaidOverride: null,
@@ -310,7 +310,7 @@ export function toCamperDto(p: Person, actor?: Actor): CamperDto {
 }
 
 /** Detail (single-person, access-checked) view: the list dto plus dateOfBirth. */
-export function toCamperDetailDto(p: Person, actor?: Actor): CamperDetailDto {
+export function toCamperDetailDto(p: Person, actor: Actor): CamperDetailDto {
   return { ...toCamperDto(p, actor), dateOfBirth: p.dateOfBirth ?? null };
 }
 
