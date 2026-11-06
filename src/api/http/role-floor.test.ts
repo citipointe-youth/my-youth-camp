@@ -43,6 +43,8 @@ const ALLOW: Record<string, string> = {
   'firstAid POST /auth/logout': 'own session',
   'prayer POST /accounts/me/password': 'own password (checks the body, not a permission)',
   'firstAid POST /accounts/me/password': 'own password (checks the body, not a permission)',
+  'prayer GET /settings': 'camp settings row for every login (auth:true since A-Q11; the SPA reads it after login)',
+  'firstAid GET /settings': 'camp settings row for every login (auth:true since A-Q11; the SPA reads it after login)',
   'prayer GET /schedule': 'read-only schedule',
   'firstAid GET /schedule': 'read-only schedule',
   'prayer GET /notifications': 'own feed',
