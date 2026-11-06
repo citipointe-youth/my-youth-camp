@@ -11165,6 +11165,8 @@ async function _tryRestoreSession(){
     if(e&&e.code==='MUST_CHANGE_PASSWORD'){_showChangePasswordGate();return;}
     TOKEN=null;ACTOR=null;
     localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
+    // Gate A L2: a non-401 refusal skips sessionExpired, so drop the preview here too (queue untouched).
+    PREVIEW_MODE=ACCOUNT_PREVIEW=false;_previewStash=null;localStorage.removeItem('ycp_preview_stash');document.getElementById('previewBanner').classList.remove('show');
   }
 }
 /* QA item 5: reopened with no signal. The roster is deliberately NOT saved on the phone (names of

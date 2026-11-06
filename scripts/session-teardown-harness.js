@@ -94,10 +94,10 @@ function sandbox(store, extra) {
     const s = sandbox({ ycp_token: 't', ycp_actor: JSON.stringify({ id: 'u1' }), ycp_preview_stash: stash, [QUEUE_KEY]: QUEUE },
       { api, TOKEN: null, ACTOR: null, PREVIEW_MODE: false, ACCOUNT_PREVIEW: false, _previewStash: null });
     s.el('previewBanner').classList.remove('show');
-    let flagAtMe = null;
-    s.ctx.api = (p) => { if (p === '/auth/me') flagAtMe = s.ctx.ACCOUNT_PREVIEW; return api(); };
+    let flagAtMe = null, stashAtMe = null;
+    s.ctx.api = (p) => { if (p === '/auth/me') { flagAtMe = s.ctx.ACCOUNT_PREVIEW; stashAtMe = s.ls.has('ycp_preview_stash'); } return api(); };
     await s.ctx._tryRestoreSession();
-    return { ...s, flagAtMe };
+    return { ...s, flagAtMe, stashAtMe };
   };
   {
     const { ls, flagAtMe } = await restore('u1');
@@ -107,9 +107,20 @@ function sandbox(store, extra) {
   }
   {
     // A live account preview (stash is the admin, actor is the previewed login) still resumes.
-    const { ls, flagAtMe } = await restore('admin1');
+    const { flagAtMe, stashAtMe } = await restore('admin1');
     assert.strictEqual(flagAtMe, true, 'restore live preview: resumes as preview');
-    assert.strictEqual(ls.has('ycp_preview_stash'), true, 'restore live preview: stash kept');
+    assert.strictEqual(stashAtMe, true, 'restore live preview: stash kept');
+  }
+  {
+    // Gate A queue review L2: a non-401 refusal of /auth/me (no sessionExpired) must not leave
+    // a live preview over the login screen, where Exit would write the stashed admin token.
+    const { ctx, ls, el } = await restore('admin1');
+    assert.strictEqual(ctx.ACCOUNT_PREVIEW, false, 'restore refused: ACCOUNT_PREVIEW');
+    assert.strictEqual(ctx.PREVIEW_MODE, false, 'restore refused: PREVIEW_MODE');
+    assert.strictEqual(ctx._previewStash, null, 'restore refused: _previewStash');
+    assert.strictEqual(ls.has('ycp_preview_stash'), false, 'restore refused: stored stash');
+    assert.strictEqual(el('previewBanner').classList.contains('show'), false, 'restore refused: banner');
+    assert.strictEqual(ls.get(QUEUE_KEY), QUEUE, 'restore refused: saved check-in queue untouched');
   }
   console.log('All checks passed.');
 })().catch((e) => { console.error(e); process.exit(1); });
