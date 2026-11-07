@@ -91,6 +91,7 @@ import { makeContentService, type ContentService } from './services/content.serv
 import { makeImportService, type ImportService } from './services/import.service';
 import { makeExportService, type ExportService } from './services/export.service';
 import { makeAccountService, type AccountService } from './services/account.service';
+import { makeImportBatchService, type ImportBatchService } from './services/import-batch.service';
 import { makeDashboardService, type DashboardService } from './services/dashboard.service';
 import { makeDashboardCache, invalidateOnWrite } from './services/dashboard-cache';
 import { makeAdminService, type AdminService } from './services/admin.service';
@@ -141,6 +142,7 @@ export interface Services {
   exportService: ExportService;
   allocation: AllocationService;
   ticketImport: TicketImportService;
+  importBatch: ImportBatchService;
   invoiceImport: InvoiceImportService;
   auditExport: AuditExportService;
   offlineSignIn: OfflineSignInService;
@@ -260,6 +262,10 @@ export function buildServices(repos: Repositories): Services {
   const allocation = makeAllocationService(people, churches, allocationOverrides);
   const ticketImportSvc = makeTicketImportService(people, churches);
   const invoiceImportSvc = makeInvoiceImportService(people);
+  const importBatchSvc = makeImportBatchService(
+    { people, churches, overrides: allocationOverrides },
+    { form: importSvc, tickets: ticketImportSvc, invoices: invoiceImportSvc },
+  );
   const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
   const offlineSignInSvc = makeOfflineSignInService(people, settingsRepo);
   const account = makeAccountService(users, churches, people);
@@ -275,7 +281,7 @@ export function buildServices(repos: Repositories): Services {
     auth, settings, person: personSvc, accommodation: accommodationSvc,
     checkIn, notification, incident, revealAudit: revealAuditSvc, search, note, schedule, content,
     importService: importSvc, exportService: exportSvc, allocation,
-    ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
+    ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc, importBatch: importBatchSvc,
     auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
     account, dashboard, admin, cron, push,
     pushSubscriptions: makePushSubscriptionService(pushSubscriptions, users),

@@ -7,6 +7,7 @@
  * UX 1: a file the server refuses (e.g. a consent column missing) hides "Confirm & import" and says what to do.
  * UX 2: the "absent, KEPT, needs review" group opens by default so the names are seen.
  * UX 3: a Ticket preview whose orphans are all near-miss spellings does not say "import the Form first".
+ * I2: the batch previews in one POST /import/batch; per-file errors stay on their file.
  */
 const fs = require('fs');
 const path = require('path');
@@ -55,10 +56,31 @@ function sandbox(api, batch) {
   }
   // A clean preview still offers Confirm.
   {
-    const api = (p) => Promise.resolve(p === '/settings' ? {} : { created: 1, updated: 0, skipped: 0, errors: [], warnings: [] });
+    const ok = { created: 1, updated: 0, skipped: 0, errors: [], warnings: [] };
+    const api = (p) => Promise.resolve(p === '/settings' ? {} : { dryRun: true, results: [{ type: 'form', result: ok }] });
     const { ctx, box } = sandbox(api, [{ type: 'form', name: 'form.csv', csvData: 'x' }]);
     await ctx._renderImportPreview();
     assert.ok(box.innerHTML.includes('Confirm &amp; import'), 'clean: Confirm shown');
+  }
+  // I2: the whole batch previews in ONE POST /import/batch, files in order; a per-file error stays
+  // on that file; Ticket/Invoice cards show their real counts (no "Matches finalise" suppression).
+  {
+    const calls = [];
+    const t = { created: 0, updated: 2, skipped: 0, errors: [], warnings: [] };
+    const api = (p, o) => {
+      if (p === '/settings') return Promise.resolve({});
+      calls.push({ p, body: o && o.body });
+      return Promise.resolve({ dryRun: true, results: [{ type: 'form', error: 'Consent column missing' }, { type: 'tickets', result: t }] });
+    };
+    const { ctx, box } = sandbox(api, [{ type: 'form', name: 'form.csv', csvData: 'F' }, { type: 'tickets', name: 't.csv', csvData: 'T' }]);
+    await ctx._renderImportPreview();
+    assert.strictEqual(calls.length, 1, 'batch: one preview request');
+    assert.strictEqual(calls[0].p, '/import/batch', 'batch: endpoint');
+    assert.strictEqual(calls[0].body.files.map((f) => f.type + ':' + f.csvData).join(','), 'form:F,tickets:T', 'batch: files in order');
+    assert.ok(box.innerHTML.includes('Consent column missing'), 'batch: per-file error shown');
+    assert.ok(box.innerHTML.includes('2 to update'), 'batch: ticket counts shown');
+    assert.ok(!box.innerHTML.includes('Matches finalise'), 'batch: no suppression line');
+    assert.ok(!box.innerHTML.includes('Confirm &amp; import'), 'batch: a refused file still hides Confirm');
   }
   // UX 2: the needs-review "kept" group (and its block) render open, listing the names.
   {

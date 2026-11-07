@@ -22,6 +22,7 @@ import {
   CARE_COLUMNS, CONSENT_COLUMNS, cleanCareText, field, isBlankRow, missingColumns, normalizeDate,
   parseGradeOrLeader, parseMedicationConsent, submissionSortKey, titleCaseName, yesToConsent,
 } from './elvanto-mapping';
+import { stage, type ImportStore } from './import-store';
 import { z } from 'zod';
 
 const ImportOptionsSchema = z.object({
@@ -45,7 +46,9 @@ export interface ImportResult {
 }
 
 export interface ImportService {
-  importCsv(actor: Actor, input: unknown): Promise<ImportResult>;
+  /** Without `into`: runs on a fresh stage, flushed unless `dryRun`. With `into` (the batch
+   *  preview): writes go to that stage and the caller owns it — nothing is flushed here. */
+  importCsv(actor: Actor, input: unknown, into?: ImportStore): Promise<ImportResult>;
 }
 
 // Blank/whitespace-only input -> null (no data supplied — the caller decides how to treat
@@ -65,10 +68,13 @@ export function makeImportService(
   churchRepo: IChurchRepository,
   overrideRepo: IAllocationOverrideRepository,
 ): ImportService {
+  const real: ImportStore = { people: personRepo, churches: churchRepo, overrides: overrideRepo };
   return {
-    async importCsv(actor, input) {
+    async importCsv(actor, input, into) {
       assertCan(actor, 'import:run');
       const opts = ImportOptionsSchema.parse(input);
+      const staged = into ? null : stage(real);
+      const store = into ?? staged!;
       const rawRows = parseCsv(opts.csvData);
       if (rawRows.length === 0) throw new BadRequestError('CSV has no data rows');
 
@@ -145,7 +151,7 @@ export function makeImportService(
         );
       }
 
-      const churches = await churchRepo.findAll();
+      const churches = await store.churches.findAll();
       const churchIdByName = new Map<string, string>();
       const churchZoneById = new Map<string, string>();
       const churchOverrideById = new Map<string, Person['accommodationKind']>();
@@ -156,7 +162,7 @@ export function makeImportService(
       }
       const newlyCreated = new Map<string, string>(); // lowercased name -> id
 
-      const allPersons = await personRepo.findAll();
+      const allPersons = await store.people.findAll();
       const nameChurchKey = (churchId: string, first: string, last: string): string =>
         `${churchId}::${first.toLowerCase()}::${last.toLowerCase()}`;
       const poolByNameChurch = new Map<string, Person[]>();
@@ -169,7 +175,7 @@ export function makeImportService(
 
       // Manual church allocations re-applied at church-resolution time (keyed by name identity),
       // so they win over the CSV and survive the delete-absent sweep below.
-      const overrides = await overrideRepo.findAll();
+      const overrides = await store.overrides.findAll();
       const overridesByName = new Map<string, AllocationOverride[]>();
       for (const o of overrides) {
         const k = `${o.firstNameKey}::${o.lastNameKey}`;
@@ -189,19 +195,15 @@ export function makeImportService(
         return pool.length === 1 ? pool[0] : undefined;
       }
 
-      // Resolve a church name to an id. In live mode, auto-creates a minimal church on miss
-      // (phantom). In dry-run mode, records the unmatched name for operator review instead.
+      // Resolve a church name to an id, creating a minimal church on a miss (phantom). The church
+      // goes into the stage like any other write, so a preview resolves the same way a commit
+      // does; the preview just names it `church-would-be-created` (once per church, I2) instead
+      // of `church-created`.
       async function resolveChurch(name: string, rowNum: number, createdAt: string): Promise<string> {
         if (!name) return '';
         const key = name.toLowerCase();
         const existing = churchIdByName.get(key) ?? newlyCreated.get(key);
         if (existing) return existing;
-        if (opts.dryRun) {
-          // Dry-run: flag for operator confirmation, return a sentinel
-          if (!phantomChurches.includes(name)) phantomChurches.push(name);
-          warnings.push({ code: 'church-would-be-created', row: rowNum, message: `Church "${name}" not found — would be created (dry-run)` });
-          return `__phantom__${key}`;
-        }
         const id = newId('church');
         const church: Church = {
           id,
@@ -214,11 +216,16 @@ export function makeImportService(
           createdAt,
           updatedAt: createdAt,
         };
-        await churchRepo.save(church);
+        await store.churches.save(church);
         newlyCreated.set(key, id);
         churchZoneById.set(id, church.zone);
-        churchesCreated.push(name);
-        warnings.push({ code: 'church-created', row: rowNum, message: `Church "${name}" not found — created (zone defaulted to Yellow)` });
+        if (opts.dryRun) {
+          phantomChurches.push(name);
+          warnings.push({ code: 'church-would-be-created', row: rowNum, message: `Church "${name}" not found — would be created (dry-run)` });
+        } else {
+          churchesCreated.push(name);
+          warnings.push({ code: 'church-created', row: rowNum, message: `Church "${name}" not found — created (zone defaulted to Yellow)` });
+        }
         return id;
       }
 
@@ -645,15 +652,14 @@ export function makeImportService(
         });
       }
 
-      if (!opts.dryRun) {
-        if (touched.size > 0) await personRepo.saveMany([...touched.values()]);
-        for (const id of absentIds) await personRepo.delete(id);
-        // Prune overrides whose person was just deleted (withdrew) — they're now stale.
-        const absentSet = new Set(absentIds);
-        for (const o of overrides) {
-          if (absentSet.has(o.personId)) await overrideRepo.delete(o.id);
-        }
+      if (touched.size > 0) await store.people.saveMany([...touched.values()]);
+      for (const id of absentIds) await store.people.delete(id);
+      // Prune overrides whose person was just deleted (withdrew) — they're now stale.
+      const absentSet = new Set(absentIds);
+      for (const o of overrides) {
+        if (absentSet.has(o.personId)) await store.overrides.delete(o.id);
       }
+      if (!opts.dryRun) await staged?.flush();
 
       return { created, updated, skipped, deleted, retained, dryRun: opts.dryRun, errors, warnings, churchesCreated, phantomChurches };
     },

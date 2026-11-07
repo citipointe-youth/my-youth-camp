@@ -11,6 +11,7 @@ import { field, isBlankRow, titleCaseName } from './elvanto-mapping';
 import {
   buildNameIndex, findPersonMatch, mergeOwnedFields,
 } from './person-matching';
+import { stage, NO_OVERRIDES, type ImportStore } from './import-store';
 import { buildTicketPriceTable, priceForTicket, ticketPriceCatalogue } from './ticket-prices';
 import { resolveInvoiceSplit } from './invoice-split';
 import { z } from 'zod';
@@ -61,7 +62,8 @@ export interface InvoiceImportResult {
 }
 
 export interface InvoiceImportService {
-  importInvoicesCsv(actor: Actor, input: unknown): Promise<InvoiceImportResult>;
+  /** `into`: see ImportService.importCsv — the caller owns that stage, nothing is flushed here. */
+  importInvoicesCsv(actor: Actor, input: unknown, into?: ImportStore): Promise<InvoiceImportResult>;
 }
 
 /**
@@ -186,11 +188,20 @@ const OWNED_KEYS = [
   'needsReviewReason',
 ] as const satisfies readonly (keyof Person)[];
 
+// The Invoice import never reads or writes churches; the port still names them so one stage serves all three.
+const NO_CHURCHES: ImportStore['churches'] = {
+  findAll: async () => [],
+  save: async () => { throw new Error('the Invoice import does not write churches'); },
+};
+
 export function makeInvoiceImportService(personRepo: IPersonRepository): InvoiceImportService {
+  const real: ImportStore = { people: personRepo, churches: NO_CHURCHES, overrides: NO_OVERRIDES };
   return {
-    async importInvoicesCsv(actor, input) {
+    async importInvoicesCsv(actor, input, into) {
       assertCan(actor, 'import:run');
       const opts = InvoiceImportOptionsSchema.parse(input);
+      const staged = into ? null : stage(real);
+      const store = into ?? staged!;
       const rows = parseCsv(opts.csvData);
       if (rows.length === 0) throw new BadRequestError('CSV has no data rows');
 
@@ -202,7 +213,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
       const warnings: InvoiceImportResult['warnings'] = [];
       const unmatchedInvoices: InvoiceImportResult['unmatchedInvoices'] = [];
 
-      const allPeople = await personRepo.findAll();
+      const allPeople = await store.people.findAll();
 
       const priceLookup = buildAccommodationPriceLookup(
         allPeople,
@@ -693,9 +704,8 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
         });
       }
 
-      if (!opts.dryRun && touched.size > 0) {
-        await personRepo.saveMany([...touched.values()]);
-      }
+      if (touched.size > 0) await store.people.saveMany([...touched.values()]);
+      if (!opts.dryRun) await staged?.flush();
 
       return {
         created: 0,
