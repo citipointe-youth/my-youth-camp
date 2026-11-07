@@ -698,12 +698,17 @@ export function makeAccountService(
       // `churchId`. A rename must re-stamp it on every attached person, or rosters
       // and exports keep showing the old name. (Edge case — names are normally
       // settled before any people/allocations exist — but cheap to keep consistent.)
-      if (data.name !== undefined && data.name !== existing.name) {
+      // B-15 (IA OQ-19): a zone move re-stamps `zone` the same way (allocation.service.ts:145
+      // precedent) — zone leaders are scoped by person.zone. One plain saveMany for both, which
+      // since B-1 cannot revert a concurrent sign-in/out.
+      const renamed = data.name !== undefined && data.name !== existing.name;
+      const rezoned = data.zone !== undefined && data.zone !== existing.zone;
+      if (renamed || rezoned) {
         const attached = await personRepo.findByChurch(id);
         if (attached.length > 0) {
           const stamp = nowISO();
           await personRepo.saveMany(
-            attached.map((p) => ({ ...p, churchName: saved.name, updatedAt: stamp })),
+            attached.map((p) => ({ ...p, churchName: saved.name, zone: saved.zone, updatedAt: stamp })),
           );
         }
       }
