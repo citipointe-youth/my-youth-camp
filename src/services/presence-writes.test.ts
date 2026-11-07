@@ -89,3 +89,30 @@ describe('B-1 presence column split', () => {
     expect((await repo.findById('a'))!.lifecycle).toBe('registered');
   });
 });
+
+describe('B-2 signEvent on wrong-state people (IA OQ-8)', () => {
+  it('signing in a cancelled person is a 400 and writes nothing', async () => {
+    const repo = await repoWith(P({ id: 'c', lifecycle: 'cancelled', atCamp: false }));
+    const svc = makePersonService(repo);
+    await expect(svc.signEvent(admin, 'c', { type: 'in', ...ev }))
+      .rejects.toMatchObject({ statusCode: 400, message: 'Cannot sign in a cancelled person' });
+    expect((await repo.findById('c'))!.signOutHistory).toEqual([]);
+  });
+
+  it('signing out a never-arrived or cancelled person is a silent no-op (no event)', async () => {
+    const repo = await repoWith(P({ id: 'r' }), P({ id: 'c', lifecycle: 'cancelled' }));
+    const svc = makePersonService(repo);
+    await svc.signEvent(admin, 'r', { type: 'out', ...ev });
+    await svc.signEvent(admin, 'c', { type: 'out', ...ev });
+    expect((await repo.findById('r'))!).toMatchObject({ signOutHistory: [], lifecycle: 'registered', atCamp: false });
+    expect((await repo.findById('c'))!.signOutHistory).toEqual([]);
+  });
+
+  it('checkIn keeps its two refusals unchanged', async () => {
+    const repo = await repoWith(P({ id: 'c', lifecycle: 'cancelled' }), P({ id: 'r' }));
+    const svc = makePersonService(repo);
+    const e = { sessionId: 's1', sessionLabel: 'S1', type: 'in' as const, leaderId: 'u', timestamp: now };
+    await expect(svc.checkIn(admin, 'c', e)).rejects.toMatchObject({ statusCode: 400, message: 'Cannot check in a cancelled person' });
+    await expect(svc.checkIn(admin, 'r', e)).rejects.toMatchObject({ statusCode: 400, message: 'Cannot check in a person who is not currently at camp' });
+  });
+});

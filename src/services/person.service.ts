@@ -328,8 +328,15 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       ) {
         throw new BadRequestError('Camp has not started yet, so nobody can be signed in.');
       }
+      // B-2 (IA OQ-8): mirrors checkIn's refusal. A cancelled sign-OUT is a no-op in withSignEvent.
+      if (event.type === 'in' && person.lifecycle === 'cancelled') {
+        throw new BadRequestError('Cannot sign in a cancelled person');
+      }
       const full: SignOutEvent = { ...event, id: newId('so') };
-      const saved = await repo.save(withSignEvent(person, full, nowISO()), { presence: true });
+      const next = withSignEvent(person, full, nowISO());
+      // A no-op writes nothing: re-saving this read with presence could revert a concurrent sign.
+      if (next === person) return person;
+      const saved = await repo.save(next, { presence: true });
       // ⚠ `invalidateDashboardCache()` is DELIBERATELY NOT called here or in `checkIn`.
       //
       // These two are the ONLY writes that fire in a burst: at a check-in window every

@@ -251,5 +251,25 @@ describe('withSignEvent — immutable append + lifecycle/atCamp transition', () 
     const next = withSignEvent(p, ev, 'now');
     expect(next.lifecycle).toBe('checked_out');
     expect(next.atCamp).toBe(false);
+    expect(next.signOutHistory).toHaveLength(0); // B-2: a state no-op writes no event
+    expect(next).toBe(p);
+  });
+
+  // B-2 (IA OQ-8): an event is written exactly when atCamp/lifecycle actually move.
+  it.each([
+    ['registered', false, 'in', 1],
+    ['registered', false, 'out', 0],
+    ['arrived', true, 'in', 0],
+    ['arrived', true, 'out', 1],
+    ['checked_out', false, 'in', 1],
+    ['checked_out', false, 'out', 0],
+    ['checked_out', true, 'out', 1], // at-camp mode switch: atCamp set with no event
+    ['cancelled', false, 'in', 0],
+    ['cancelled', false, 'out', 0],
+  ] as const)('%s (atCamp %s) + sign-%s appends %i event(s)', (lifecycle, atCamp, type, n) => {
+    const p = basePerson({ lifecycle, atCamp });
+    const next = withSignEvent(p, { id: 'e', type, leaderName: 'L', authorId: 'u1', timestamp: 't' }, 'now');
+    expect(next.signOutHistory).toHaveLength(n);
+    if (n === 0) expect(next).toBe(p);
   });
 });
