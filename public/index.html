@@ -7755,7 +7755,7 @@ RENDER.incidents=async function(){
   // zoneLeader/director have no other console from which to review/delete one (see the home
   // card comment above for the fuller rationale; reverted the at-camp-only gate 2026-07-18).
   if(!canManageIncident()){go('home');return;}
-  const list=await api('/incidents').catch(()=>[]);
+  const list=await api('/incidents').catch(()=>null); // ZN-4: null means it could not load
   _incSeverity='low';
   const canDelete=['admin','director'].includes(ACTOR.role);
   const rows=(list||[]).length?list.map(i=>{
@@ -7764,7 +7764,7 @@ RENDER.incidents=async function(){
     return `<div class="card"><div class="rowsb" style="align-items:center"><div class="nm">${sev}${i.zone?' <span class="sub">'+esc(i.zone)+' Zone</span>':''}</div>${del}</div>
       <div style="font-size:var(--t-body);margin:6px 0;white-space:pre-wrap">${esc(i.summary)}</div>
       <div class="sub">${esc(i.createdByName||'—')} · ${dtFmt(i.createdAt)}${i.occurredAt?' · <b>occurred</b> '+dtFmt(i.occurredAt):''}</div></div>`;
-  }).join(''):emptyState('alert','No incidents logged yet.');
+  }).join(''):emptyState('alert',list?'No incidents logged yet.':"Couldn't load incidents. Open this screen again to retry.");
   paint('incidents',`<div class="infobox" style="font-size:.82rem">Log a safeguarding or operational incident. <b>Low</b> is just recorded. <b>High</b> also sends an urgent alert to zone leaders, directors and admins.</div>
     <div class="card">
       <label>What happened?</label>

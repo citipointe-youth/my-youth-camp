@@ -269,6 +269,14 @@ await T('[ZN-2] Log incident: a failed POST re-enables the button',async()=>{
   await vm.runInContext('submitIncident()',c);
   assert.strictEqual(el('incLogBtn').disabled,false);assert.deepStrictEqual(c.toasts,['Server error']);
 });
+await T('[ZN-4] incidents list: a failed fetch says it could not load, not "No incidents logged yet"',async()=>{
+  const {c}=incBox(async()=>{throw new Error('offline');});
+  await vm.runInContext('RENDER.incidents()',c);
+  assert.ok(c.painted.includes("Couldn't load incidents"),'error line shown');
+  assert.ok(!c.painted.includes('No incidents logged yet'),'no false empty state');
+  const ok=incBox(async()=>[]);await vm.runInContext('RENDER.incidents()',ok.c);
+  assert.ok(ok.c.painted.includes('No incidents logged yet'),'a real empty list still says so');
+});
 console.log(results.join('\n'));
 console.log(failures?failures+' FAILED':'all passed'+(KNOWN.length?' ('+KNOWN.length+' KNOWN-FAIL)':''));
 process.exitCode=failures?1:0;
