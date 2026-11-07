@@ -12,7 +12,8 @@ export function makeAllocationController(services: AllocationControllerServices)
     async listUnallocated(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       // Service returns Person[]; the controller owns the DTO mapping (layering).
-      return (await services.allocation.listUnallocated(req.ctx.actor)).map(toRegistrantDto);
+      const { actor } = req.ctx;
+      return (await services.allocation.listUnallocated(actor)).map((p) => toRegistrantDto(p, actor));
     },
     async listOverrides(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();

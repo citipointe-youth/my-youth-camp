@@ -88,7 +88,7 @@ describe('list DTOs never leak medicareNumber or dateOfBirth', () => {
   });
 
   it('toRegistrantDto omits both and sets hasMedicare', () => {
-    const dto = toRegistrantDto(personFixture());
+    const dto = toRegistrantDto(personFixture(), ADMIN);
     expect(dto).not.toHaveProperty('medicareNumber');
     expect(dto).not.toHaveProperty('dateOfBirth');
     expect(dto.hasMedicare).toBe(true);
@@ -96,15 +96,15 @@ describe('list DTOs never leak medicareNumber or dateOfBirth', () => {
 
   it('hasMedicare is false when no medicare number is on file', () => {
     expect(toCamperDto(personFixture({ medicareNumber: null }), ADMIN).hasMedicare).toBe(false);
-    expect(toRegistrantDto(personFixture({ medicareNumber: undefined })).hasMedicare).toBe(false);
+    expect(toRegistrantDto(personFixture({ medicareNumber: undefined }), ADMIN).hasMedicare).toBe(false);
   });
 
   it('the raw value never appears anywhere in the serialized list DTOs', () => {
     const p = personFixture();
     expect(JSON.stringify(toCamperDto(p, ADMIN))).not.toContain('1234 56789 0');
-    expect(JSON.stringify(toRegistrantDto(p))).not.toContain('1234 56789 0');
+    expect(JSON.stringify(toRegistrantDto(p, ADMIN))).not.toContain('1234 56789 0');
     expect(JSON.stringify(toCamperDto(p, ADMIN))).not.toContain('2010-05-01');
-    expect(JSON.stringify(toRegistrantDto(p))).not.toContain('2010-05-01');
+    expect(JSON.stringify(toRegistrantDto(p, ADMIN))).not.toContain('2010-05-01');
   });
 });
 
@@ -117,7 +117,7 @@ describe('detail DTOs add dateOfBirth back but still never medicareNumber', () =
   });
 
   it('toRegistrantDetailDto', () => {
-    const dto = toRegistrantDetailDto(personFixture());
+    const dto = toRegistrantDetailDto(personFixture(), ADMIN);
     expect(dto.dateOfBirth).toBe('2010-05-01');
     expect(dto.hasMedicare).toBe(true);
     expect(dto).not.toHaveProperty('medicareNumber');
@@ -145,12 +145,12 @@ describe('toRegistrantDto exposes the Elvanto submission date', () => {
         todaysDate: null,
       },
     });
-    expect(toRegistrantDto(p).dateSubmitted).toBe('2026-06-14T09:30:00.000Z');
-    expect(toRegistrantDetailDto(p).dateSubmitted).toBe('2026-06-14T09:30:00.000Z');
+    expect(toRegistrantDto(p, ADMIN).dateSubmitted).toBe('2026-06-14T09:30:00.000Z');
+    expect(toRegistrantDetailDto(p, ADMIN).dateSubmitted).toBe('2026-06-14T09:30:00.000Z');
   });
 
   it('is null when there is no Elvanto meta at all', () => {
-    expect(toRegistrantDto(personFixture({ elvantoMeta: null })).dateSubmitted).toBeNull();
+    expect(toRegistrantDto(personFixture({ elvantoMeta: null }), ADMIN).dateSubmitted).toBeNull();
   });
 
   it('is null when the meta exists but carries no submission date', () => {
@@ -163,7 +163,7 @@ describe('toRegistrantDto exposes the Elvanto submission date', () => {
         todaysDate: null,
       },
     });
-    expect(toRegistrantDto(p).dateSubmitted).toBeNull();
+    expect(toRegistrantDto(p, ADMIN).dateSubmitted).toBeNull();
   });
 });
 
@@ -171,12 +171,39 @@ describe('individual overrides and cancel/refund fields', () => {
   it('carries the individual overrides and cancel/refund fields to the SPA', () => {
     const dto = toRegistrantDto({ ...personFixture(), accommodationKind: 'classroom',
       accommodationOverride: 'classroom', amountPaidOverride: 250, refundAmount: 50,
-      refundedAt: '2026-09-01T00:00:00.000Z', cancelledAt: null, lifecycle: 'cancelled' });
+      refundedAt: '2026-09-01T00:00:00.000Z', cancelledAt: null, lifecycle: 'cancelled' }, ADMIN);
     expect(dto.accommodationKind).toBe('classroom'); // already resolved by the mapper
     expect(dto.accommodationOverride).toBe('classroom');
     expect(dto.amountPaidOverride).toBe(250);
     expect(dto.refundAmount).toBe(50);
     expect(dto.refundedAt).toBe('2026-09-01T00:00:00.000Z');
     expect(dto.status).toBe('cancelled');
+  });
+});
+
+describe('A2: the person DTOs are viewer-aware (mask + money strip inside the serialiser)', () => {
+  const as = (role: Actor['role']): Actor => ({ ...ADMIN, id: role, role });
+  const ROLES: Actor['role'][] = ['admin', 'director', 'zoneLeader', 'church', 'firstAid', 'prayer'];
+  const MASKED = new Set(['church', 'firstAid']);
+  const MONEYLESS = new Set(['firstAid', 'prayer']);
+
+  it.each(ROLES)('%s: parent phone masked only for church/firstAid, on every person DTO', (role) => {
+    const p = personFixture();
+    const phones = [toCamperDto(p, as(role)), toCamperDetailDto(p, as(role)), toRegistrantDto(p, as(role)), toRegistrantDetailDto(p, as(role))]
+      .map((d) => d.parentPhone);
+    for (const ph of phones) {
+      if (MASKED.has(role)) { expect(ph).not.toBe('0400 000 000'); expect(ph).toBeTruthy(); }
+      else expect(ph).toBe('0400 000 000');
+    }
+  });
+
+  it.each(ROLES)('%s: camper money/blue-card fields null only for firstAid/prayer', (role) => {
+    const dto = toCamperDto(personFixture({ registrationCost: 300, blueCardNumber: 'BC1' }), as(role));
+    if (MONEYLESS.has(role)) expect([dto.registrationCost, dto.blueCardNumber]).toEqual([null, null]);
+    else expect([dto.registrationCost, dto.blueCardNumber]).toEqual([300, 'BC1']);
+  });
+
+  it('a missing parent phone stays null when masked', () => {
+    expect(toCamperDto(personFixture({ parentPhone: null }), as('church')).parentPhone).toBeNull();
   });
 });

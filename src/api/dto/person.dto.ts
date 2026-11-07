@@ -176,13 +176,14 @@ export interface RosterEntry {
  */
 const PARENT_PHONE_MASKED_ROLES: ReadonlySet<Actor['role']> = new Set(['firstAid', 'church']);
 
-export function maskParentPhone<T extends { parentPhone: string | null }>(dto: T, actor: Actor): T {
+function maskParentPhone<T extends { parentPhone: string | null }>(dto: T, actor: Actor): T {
   if (!PARENT_PHONE_MASKED_ROLES.has(actor.role) || !dto.parentPhone) return dto;
   return { ...dto, parentPhone: maskPhone(dto.parentPhone) };
 }
 
-export function toRegistrantDto(p: Person): RegistrantDto {
-  return {
+/** `actor` is required (A2): the parent-phone mask is applied here, so no route can forget it. */
+export function toRegistrantDto(p: Person, actor: Actor): RegistrantDto {
+  return maskParentPhone({
     id: p.id,
     firstName: p.firstName,
     lastName: p.lastName,
@@ -236,12 +237,12 @@ export function toRegistrantDto(p: Person): RegistrantDto {
     dateSubmitted: p.elvantoMeta?.dateSubmitted ?? null,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
-  };
+  }, actor);
 }
 
 /** Detail (single-person, access-checked) view: the list dto plus dateOfBirth. */
-export function toRegistrantDetailDto(p: Person): RegistrantDetailDto {
-  return { ...toRegistrantDto(p), dateOfBirth: p.dateOfBirth ?? null };
+export function toRegistrantDetailDto(p: Person, actor: Actor): RegistrantDetailDto {
+  return { ...toRegistrantDto(p, actor), dateOfBirth: p.dateOfBirth ?? null };
 }
 
 /**
@@ -251,9 +252,12 @@ export function toRegistrantDetailDto(p: Person): RegistrantDetailDto {
  */
 const MONEY_HIDDEN_ROLES: ReadonlySet<Actor['role']> = new Set(['firstAid', 'prayer']);
 
-/** `actor` is required: a forgotten one would leak the money fields to firstAid/prayer. */
+/**
+ * `actor` is required: a forgotten one would leak the money fields to firstAid/prayer, or an
+ * unmasked parent phone to firstAid/church (A2: both rules live here, not in the controllers).
+ */
 export function toCamperDto(p: Person, actor: Actor): CamperDto {
-  const dto: CamperDto = {
+  const dto: CamperDto = maskParentPhone({
     id: p.id,
     firstName: p.firstName,
     lastName: p.lastName,
@@ -293,7 +297,7 @@ export function toCamperDto(p: Person, actor: Actor): CamperDto {
     signOutHistory: p.signOutHistory,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
-  };
+  }, actor);
   if (!MONEY_HIDDEN_ROLES.has(actor.role)) return dto;
   return {
     ...dto,
