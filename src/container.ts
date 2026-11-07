@@ -10,8 +10,6 @@ import {
   InMemoryClassroomRepository,
   InMemoryAllocationRepository,
   InMemoryClassroomFreezeRepository,
-  InMemoryZoneRepository,
-  InMemoryGroupRepository,
   InMemoryNoteRepository,
   InMemoryNotificationRepository,
   InMemoryIncidentRepository,
@@ -32,8 +30,6 @@ import {
   SupabaseClassroomRepository,
   SupabaseAllocationRepository,
   SupabaseClassroomFreezeRepository,
-  SupabaseZoneRepository,
-  SupabaseGroupRepository,
   SupabaseNoteRepository,
   SupabaseNotificationRepository,
   SupabaseIncidentRepository,
@@ -54,8 +50,6 @@ import type {
   IClassroomRepository,
   IAllocationRepository,
   IClassroomFreezeRepository,
-  IZoneRepository,
-  IGroupRepository,
   INoteRepository,
   INotificationRepository,
   IIncidentRepository,
@@ -72,8 +66,6 @@ import type { Church } from './core/entities/church';
 import type { Person } from './core/entities/person';
 import type { AllocationOverride } from './core/entities/allocation-override';
 import type { Classroom, RoomAllocation, ClassroomFreeze } from './core/entities/accommodation';
-import type { Zone } from './core/entities/zone';
-import type { Group } from './core/entities/group';
 import type { StudentNote } from './core/entities/note';
 import type { Notification } from './core/entities/notification';
 import type { Incident } from './core/entities/incident';
@@ -119,8 +111,6 @@ export interface Repositories {
   classrooms: IClassroomRepository;
   allocations: IAllocationRepository;
   classroomFreeze: IClassroomFreezeRepository;
-  zones: IZoneRepository;
-  groups: IGroupRepository;
   notes: INoteRepository;
   notifications: INotificationRepository;
   incidents: IIncidentRepository;
@@ -176,8 +166,6 @@ export function supabaseRepos(sql: SqlClient): Repositories {
     classrooms: new SupabaseClassroomRepository(sql),
     allocations: new SupabaseAllocationRepository(sql),
     classroomFreeze: new SupabaseClassroomFreezeRepository(sql),
-    zones: new SupabaseZoneRepository(sql),
-    groups: new SupabaseGroupRepository(sql),
     notes: new SupabaseNoteRepository(sql),
     notifications: new SupabaseNotificationRepository(sql),
     incidents: new SupabaseIncidentRepository(sql),
@@ -206,8 +194,6 @@ export function memoryRepos(opts: { dataDir?: string } = {}): Repositories {
     classrooms: new InMemoryClassroomRepository(file<Classroom>('classrooms.json')),
     allocations: new InMemoryAllocationRepository(file<RoomAllocation>('allocations.json')),
     classroomFreeze: new InMemoryClassroomFreezeRepository(file<ClassroomFreeze>('classroom-freeze.json')),
-    zones: new InMemoryZoneRepository(file<Zone>('zones.json')),
-    groups: new InMemoryGroupRepository(file<Group>('groups.json')),
     notes: new InMemoryNoteRepository(file<StudentNote>('notes.json')),
     notifications: new InMemoryNotificationRepository(file<Notification>('notifications.json')),
     incidents: new InMemoryIncidentRepository(file<Incident>('incidents.json')),

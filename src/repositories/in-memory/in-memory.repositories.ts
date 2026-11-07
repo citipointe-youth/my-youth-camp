@@ -8,8 +8,6 @@ import type { Person } from '../../core/entities/person';
 import { isCamper } from '../../core/entities/person';
 import type { AllocationOverride } from '../../core/entities/allocation-override';
 import type { Classroom, RoomAllocation, ClassroomFreeze } from '../../core/entities/accommodation';
-import type { Zone } from '../../core/entities/zone';
-import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
 import type { Notification } from '../../core/entities/notification';
 import type { Incident } from '../../core/entities/incident';
@@ -29,8 +27,6 @@ import type {
   IClassroomRepository,
   IAllocationRepository,
   IClassroomFreezeRepository,
-  IZoneRepository,
-  IGroupRepository,
   INoteRepository,
   INotificationRepository,
   IIncidentRepository,
@@ -42,6 +38,8 @@ import type {
   ISettingsRepository,
   ISnapshotRepository,
 } from '../interfaces/entity-repositories';
+import { withPresenceWrite, type PresenceDecide } from '../interfaces/entity-repositories';
+import { NotFoundError } from '../../core/errors/app-error';
 
 // ---------------------------------------------------------------------------
 // Users
@@ -72,6 +70,14 @@ export class InMemoryUserRepository
     return Array.from(this.store.values())
       .filter((u) => u.role === role)
       .map((u) => this.clone(u));
+  }
+
+  /** Keeps every admin account, as the Supabase adapter does (P3 contract, OQ-44). */
+  override async deleteAll(): Promise<number> {
+    const doomed = [...this.store.values()].filter((u) => u.role !== 'admin');
+    for (const u of doomed) this.store.delete(u.id);
+    if (doomed.length > 0) await this.writeToPersistence();
+    return doomed.length;
   }
 }
 
@@ -123,51 +129,81 @@ export class InMemoryPersonRepository
     super(persistence);
   }
 
-  /** Mirrors the Supabase write of an existing row:
-   *  - B-1: a plain save keeps the stored atCamp/lifecycle; only savePresence* writes them.
-   *  - B-5: check-in history is append-only (kept rows + new ids), and a new row is skipped when
-   *    the last row for its session already has the same type (Supabase's conditional insert). */
-  private merge(p: Person, presence: boolean): Person {
+  /** P3: an UPDATE keeps the stored presence (atCamp, lifecycle, cancelledAt, both histories);
+   *  only transition/transitionMany/clearPresence write it. An INSERT stores the person as given. */
+  private keepPresence(p: Person): Person {
     const stored = this.store.get(p.id);
     if (!stored) return p;
-    const checkInHistory = [...stored.checkInHistory];
-    const known = new Set(checkInHistory.map((e) => e.id));
-    for (const e of p.checkInHistory) {
-      if (known.has(e.id)) continue;
-      const last = checkInHistory.filter((h) => h.sessionId === e.sessionId).at(-1);
-      if (last?.type !== e.type) checkInHistory.push(e);
-    }
-    return presence
-      ? { ...p, checkInHistory }
-      : { ...p, checkInHistory, atCamp: stored.atCamp, lifecycle: stored.lifecycle };
+    return {
+      ...p,
+      atCamp: stored.atCamp,
+      lifecycle: stored.lifecycle,
+      cancelledAt: stored.cancelledAt,
+      checkInHistory: stored.checkInHistory,
+      signOutHistory: stored.signOutHistory,
+    };
   }
 
   override async save(person: Person): Promise<Person> {
-    return super.save(this.merge(person, false));
+    return super.save(this.keepPresence(person));
   }
 
   override async saveMany(people: Person[]): Promise<Person[]> {
-    return super.saveMany(people.map((p) => this.merge(p, false)));
+    return super.saveMany(people.map((p) => this.keepPresence(p)));
   }
 
-  async savePresence(person: Person): Promise<Person> {
-    return super.save(this.merge(person, true));
+  /** Decide on the stored row and write in one synchronous step (atomic in one Node process). */
+  async transition(id: string, decide: PresenceDecide): Promise<Person> {
+    const stored = this.store.get(id);
+    if (!stored) throw new NotFoundError('Person not found');
+    const w = decide(this.clone(stored));
+    if (!w) return this.clone(stored);
+    const next = withPresenceWrite(stored, w);
+    this.store.set(id, this.clone(next));
+    await this.writeToPersistence();
+    return this.clone(next);
   }
 
-  async savePresenceMany(people: Person[]): Promise<Person[]> {
-    return super.saveMany(people.map((p) => this.merge(p, true)));
+  /** All-or-nothing: every decision runs before anything is stored, so a throw writes nothing. */
+  async transitionMany(ids: string[], decide: PresenceDecide): Promise<Person[]> {
+    const out: Person[] = [];
+    let changed = false;
+    for (const id of [...new Set(ids)].sort()) {
+      const stored = this.store.get(id);
+      if (!stored) continue;
+      const w = decide(this.clone(stored));
+      if (w) changed = true;
+      out.push(w ? withPresenceWrite(stored, w) : stored);
+    }
+    if (changed) {
+      for (const p of out) this.store.set(p.id, this.clone(p));
+      await this.writeToPersistence();
+    }
+    return out.map((p) => this.clone(p));
+  }
+
+  async clearPresence(now: string): Promise<number> {
+    let n = 0;
+    for (const p of this.store.values()) {
+      if (!p.atCamp && p.checkInHistory.length === 0 && p.signOutHistory.length === 0) continue;
+      n++;
+      p.atCamp = false;
+      if (p.lifecycle !== 'cancelled' && p.lifecycle !== 'registered') p.lifecycle = 'registered';
+      p.checkInHistory = [];
+      p.signOutHistory = [];
+      p.updatedAt = now;
+    }
+    if (n > 0) await this.writeToPersistence();
+    return n;
   }
 
   async search(q: string): Promise<Person[]> {
-    const lower = q.toLowerCase();
+    const terms = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return [];
     return Array.from(this.store.values())
       .filter((p) => {
-        const fullName = `${p.firstName} ${p.lastName}`.toLowerCase();
-        return (
-          fullName.includes(lower) ||
-          p.firstName.toLowerCase().includes(lower) ||
-          p.lastName.toLowerCase().includes(lower)
-        );
+        const full = `${p.firstName} ${p.lastName}`.toLowerCase();
+        return terms.every((t) => full.includes(t));
       })
       .map((p) => this.clone(p));
   }
@@ -182,44 +218,6 @@ export class InMemoryPersonRepository
     return Array.from(this.store.values())
       .filter((p) => p.zone === zone)
       .map((p) => this.clone(p));
-  }
-
-  async findByGroup(groupId: string): Promise<Person[]> {
-    return Array.from(this.store.values())
-      .filter((p) => p.groupId === groupId)
-      .map((p) => this.clone(p));
-  }
-
-  async findByKind(kind: string): Promise<Person[]> {
-    return Array.from(this.store.values())
-      .filter((p) => p.kind === kind)
-      .map((p) => this.clone(p));
-  }
-
-  async findByLifecycle(lifecycle: string): Promise<Person[]> {
-    return Array.from(this.store.values())
-      .filter((p) => p.lifecycle === lifecycle)
-      .map((p) => this.clone(p));
-  }
-
-  async findCampers(): Promise<Person[]> {
-    return Array.from(this.store.values())
-      .filter((p) => isCamper(p))
-      .map((p) => this.clone(p));
-  }
-
-  async findAtCamp(): Promise<Person[]> {
-    return Array.from(this.store.values())
-      .filter((p) => p.atCamp)
-      .map((p) => this.clone(p));
-  }
-
-  async clearPresenceHistory(): Promise<void> {
-    for (const p of this.store.values()) {
-      p.checkInHistory = [];
-      p.signOutHistory = [];
-    }
-    await this.writeToPersistence();
   }
 
   // deleteAll() is inherited from InMemoryBaseRepository (bulk clear, defect A3).
@@ -265,55 +263,6 @@ export class InMemoryClassroomFreezeRepository
 }
 
 // ---------------------------------------------------------------------------
-// Zones
-// ---------------------------------------------------------------------------
-export class InMemoryZoneRepository
-  extends InMemoryBaseRepository<Zone>
-  implements IZoneRepository
-{
-  constructor(persistence?: IPersistenceAdapter<Zone>) {
-    super(persistence);
-  }
-
-  async findByName(name: string): Promise<Zone | null> {
-    for (const zone of this.store.values()) {
-      if (zone.name === name) return this.clone(zone);
-    }
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Groups
-// ---------------------------------------------------------------------------
-export class InMemoryGroupRepository
-  extends InMemoryBaseRepository<Group>
-  implements IGroupRepository
-{
-  constructor(persistence?: IPersistenceAdapter<Group>) {
-    super(persistence);
-  }
-
-  async findByChurch(churchId: string): Promise<Group[]> {
-    return Array.from(this.store.values())
-      .filter((g) => g.churchId === churchId)
-      .map((g) => this.clone(g));
-  }
-
-  async findByZone(zone: string): Promise<Group[]> {
-    return Array.from(this.store.values())
-      .filter((g) => g.zone === zone)
-      .map((g) => this.clone(g));
-  }
-
-  async findByLeader(leaderId: string): Promise<Group[]> {
-    return Array.from(this.store.values())
-      .filter((g) => g.leaderId === leaderId)
-      .map((g) => this.clone(g));
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Notes
 // ---------------------------------------------------------------------------
 export class InMemoryNoteRepository
@@ -328,12 +277,6 @@ export class InMemoryNoteRepository
     return Array.from(this.store.values())
       .filter((n) => n.camperId === camperId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((n) => this.clone(n));
-  }
-
-  async findByAuthor(authorId: string): Promise<StudentNote[]> {
-    return Array.from(this.store.values())
-      .filter((n) => n.authorId === authorId)
       .map((n) => this.clone(n));
   }
 
@@ -363,13 +306,6 @@ export class InMemoryNotificationRepository
 {
   constructor(persistence?: IPersistenceAdapter<Notification>) {
     super(persistence);
-  }
-
-  async findByScope(scope: string): Promise<Notification[]> {
-    return Array.from(this.store.values())
-      .filter((n) => n.scope === scope)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((n) => this.clone(n));
   }
 
   async findByZone(zone: string): Promise<Notification[]> {

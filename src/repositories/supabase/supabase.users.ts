@@ -1,4 +1,4 @@
-import type { SqlClient } from './client';
+import type { SqlClient, TxClient } from './client';
 import type { IUserRepository } from '../interfaces/entity-repositories';
 import type { User } from '../../core/entities/user';
 
@@ -82,17 +82,20 @@ export class SupabaseUserRepository implements IUserRepository {
     return rows.map(toUser);
   }
 
-  async save(user: User): Promise<User> {
-    await this.sql`
-      insert into users ${this.sql(userColumns(user))}
-      on conflict (id) do update set ${this.sql(userColumns(user), ...UPDATE_COLS)}
+  async save(user: User, db: SqlClient | TxClient = this.sql): Promise<User> {
+    await db`
+      insert into users ${db(userColumns(user))}
+      on conflict (id) do update set ${db(userColumns(user), ...UPDATE_COLS)}
     `;
     return user;
   }
 
+  /** All-or-nothing: one transaction (P3 / OQ-45). */
   async saveMany(users: User[]): Promise<User[]> {
     if (users.length === 0) return [];
-    for (const u of users) await this.save(u);
+    await this.sql.begin(async (tx: TxClient) => {
+      for (const u of users) await this.save(u, tx);
+    });
     return users;
   }
 

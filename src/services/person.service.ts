@@ -8,7 +8,7 @@ import { NotFoundError, BadRequestError } from '../core/errors/app-error';
 import { RegistrantPatchSchema } from '../core/validation';
 import { ageFromDob, nowISO } from '../utils/date';
 import { newId } from '../utils/id';
-import { transition } from './presence';
+import { decideOrRefuse } from './presence';
 import { invalidateDashboardCache } from './dashboard-cache';
 
 /**
@@ -257,26 +257,27 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
         safeRest.refundAmount !== undefined && safeRest.refundAmount !== existing.refundAmount
           ? { refundedAt: safeRest.refundAmount == null ? null : nowISO() }
           : {};
-      /* Cancel/uncancel go through the presence module (presence.ts): cancelling sets atCamp false
-         + cancelledAt, and someone at camp is signed out first with one 'out' event (B-3). The moved
-         presence fields are re-applied after the patch so a patched `cancelledAt` can't override them. */
       const now = nowISO();
-      const moved = cancelling || unCancelling
-        ? transition(existing, { kind: cancelling ? 'cancel' : 'uncancel' }, { actor, campMode: null, now })
-        : null;
-      const base = moved?.result === 'applied' ? moved.next : existing;
-      const presencePatch: Partial<Person> = moved ? { atCamp: base.atCamp, cancelledAt: base.cancelledAt } : {};
-      const updated: Person = { ...base, ...safeRest, ...rawPatch, ...presencePatch, ...refundPatch,
+      const updated: Person = { ...existing, ...safeRest, ...rawPatch, ...refundPatch,
         id: existing.id, lifecycle: nextLifecycle, updatedAt: now };
       // Fail-closed: the patched result must still be inside the actor's scope (a zoneLeader/
       // admin/director changing church/zone can't push a person out of what they may access).
       if (!canAccessPerson(actor, updated)) {
         throw new BadRequestError('Cannot move a person outside your scope');
       }
-      // B-1: only a cancel/uncancel moves presence; any other PATCH is a plain field write.
-      const saved = await (cancelling || unCancelling ? repo.savePresence(updated) : repo.save(updated));
+      /* Cancel/uncancel go through the presence seam (presence.ts + repo.transition): cancelling
+         sets atCamp false + cancelledAt, and someone at camp is signed out first with one 'out'
+         event (B-3). Decided on the LOCKED stored row, not on `existing`, so a sign-in/out that
+         lands between this read and the write can't leave a dangling 'in' or a second 'out'
+         (gate B M3). The plain save below then writes the other fields; it never writes presence. */
+      const moved = cancelling || unCancelling
+        ? await repo.transition(id, decideOrRefuse({ kind: cancelling ? 'cancel' : 'uncancel' }, { actor, campMode: null, now }))
+        : null;
+      const saved = await repo.save(updated);
       invalidateDashboardCache();
-      return saved;
+      if (!moved) return saved;
+      const { atCamp, lifecycle: lc, cancelledAt, checkInHistory, signOutHistory } = moved;
+      return { ...saved, atCamp, lifecycle: lc, cancelledAt, checkInHistory, signOutHistory };
     },
 
     async patch(actor, id, body) {
@@ -367,13 +368,12 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
     async checkIn(actor, personId, entry) {
       assertCan(actor, 'checkin:write');
       const person = await getOwned(actor, personId);
-      // ⚠ Queue path: the two refusals and their messages are frozen in presence.ts.
-      const o = transition(person, { kind: 'checkIn', entry: { ...entry, id: newId('ci') } }, { actor, campMode: null, now: nowISO() });
-      if (o.result === 'refused') throw new BadRequestError(o.reason);
-      // An N5 replay is a no-op: nothing is written and the endpoint still answers 200.
-      if (o.result === 'noop') return person;
+      // ⚠ Queue path: the two refusals and their messages are frozen in presence.ts. Decided on
+      // the locked row (P3), so two simultaneous taps serialise and the second is an N5 no-op
+      // (200, nothing written). A lock/transaction error is a 5xx, which the queue keeps.
       // NOT invalidated deliberately — see signEvent below.
-      return repo.save(o.next);
+      return repo.transition(person.id,
+        decideOrRefuse({ kind: 'checkIn', entry: { ...entry, id: newId('ci') } }, { actor, campMode: null, now: nowISO() }));
     },
 
     async signEvent(actor, personId, event) {
@@ -383,12 +383,10 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       // only for those. The rule itself and B-2's cancelled refusal live in presence.ts.
       const campMode = event.type === 'in' && !isOversight(actor)
         ? (await settings?.getSingleton())?.campMode ?? null : null; // null: rule can't apply (sign-out / oversight)
-      const o = transition(person, { kind: event.type === 'in' ? 'signIn' : 'signOut', event: { ...event, id: newId('so') } },
-        { actor, campMode, now: nowISO() });
-      if (o.result === 'refused') throw new BadRequestError(o.reason);
-      // A no-op writes nothing: re-saving this read with presence could revert a concurrent sign.
-      if (o.result === 'noop') return person;
-      const saved = await repo.savePresence(o.next);
+      // Decided on the locked row (P3): a no-op writes nothing; a concurrent sign can't be reverted.
+      const saved = await repo.transition(person.id, decideOrRefuse(
+        { kind: event.type === 'in' ? 'signIn' : 'signOut', event: { ...event, id: newId('so') } },
+        { actor, campMode, now: nowISO() }));
       // ⚠ `invalidateDashboardCache()` is DELIBERATELY NOT called here or in `checkIn`.
       //
       // These two are the ONLY writes that fire in a burst: at a check-in window every

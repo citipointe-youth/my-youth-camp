@@ -682,7 +682,9 @@ describe('ImportService.importCsv — protects overridden/cancelled people from 
     const all = await h.personRepo.findAll();
     const created = all.find((p) => p.firstName === over.firstName && p.lastName === over.lastName)!;
     const updated = { ...created, ...over };
-    await h.personRepo.savePresence(updated); // fixture sets lifecycle/atCamp directly (B-1)
+    // P3: a save on an existing id never writes presence, so the fixture re-inserts the row.
+    await h.personRepo.delete(created.id);
+    await h.personRepo.save(updated);
     return updated;
   }
 

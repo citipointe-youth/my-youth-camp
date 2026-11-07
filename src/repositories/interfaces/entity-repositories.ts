@@ -1,11 +1,9 @@
 import type { IRepository } from './base.repository';
 import type { User } from '../../core/entities/user';
 import type { Church } from '../../core/entities/church';
-import type { Person } from '../../core/entities/person';
+import type { Person, CheckInEntry, SignOutEvent } from '../../core/entities/person';
 import type { AllocationOverride } from '../../core/entities/allocation-override';
 import type { Classroom, RoomAllocation, ClassroomFreeze } from '../../core/entities/accommodation';
-import type { Zone } from '../../core/entities/zone';
-import type { Group } from '../../core/entities/group';
 import type { StudentNote } from '../../core/entities/note';
 import type { Notification } from '../../core/entities/notification';
 import type { Incident } from '../../core/entities/incident';
@@ -15,7 +13,7 @@ import type { ScheduleItem } from '../../core/entities/schedule';
 import type { Devotional } from '../../core/entities/devotional';
 import type { FaqItem } from '../../core/entities/content';
 import type { CampSettings, CampDefaults } from '../../core/entities/settings';
-import type { UserRole } from '../../core/types/enums';
+import type { UserRole, PersonLifecycle } from '../../core/types/enums';
 
 export interface IUserRepository extends IRepository<User> {
   findByUsername(username: string): Promise<User | null>;
@@ -32,36 +30,64 @@ export interface IAllocationOverrideRepository extends IRepository<AllocationOve
 }
 
 /**
- * Unified person repository (design D2) — the union of the legacy registrant + camper
- * query surfaces over one store. `findCampers`/`findRegistrants` query by lifecycle so
- * the pre-camp and at-camp views read from the same table.
- */
-/**
- * B-1 (first slice of the P3 presence seam): `atCamp` and `lifecycle` are written on an UPDATE
- * only by `savePresence`/`savePresenceMany` (the presence writers). A plain `save`/`saveMany` of
- * an existing person keeps the stored values, so a stale read (PATCH, import, check-in tap) can't
- * revert a sign-in/out. An INSERT (new person) always writes every column.
+ * Unified person repository (design D2): registrants and campers in one store.
  *
- * ⚠ The value a plain save returns is not a read-back: on Supabase it is the caller's own copy,
- * so its `atCamp`/`lifecycle` may differ from what is stored (the in-memory repo returns the
- * stored pair). Don't build a response or decision on the returned presence; re-read instead.
+ * P3 presence seam (2026-11-07). Presence = `atCamp`, `lifecycle`, `cancelledAt` and the two
+ * history lists. It is written ONLY by `transition`, `transitionMany` and `clearPresence`:
+ * - `save`/`saveMany` on an UPDATE never write presence (the stored values win), so a stale
+ *   full-row save (PATCH, import) can't revert or resurrect a tap. An INSERT writes every field,
+ *   histories included.
+ * - `transition` is read-lock-decide-write for one person, atomic per person: `decide` sees the
+ *   current stored row (Supabase: `select … for update`) and returns the write, or null for a
+ *   no-op. If `decide` throws, nothing is written and the error propagates (the caller's 400).
+ * - `transitionMany` is the same over many ids in ONE transaction, locking rows in id order
+ *   (IA OQ-9: no deadlock between two bulk sweeps). Missing ids are skipped.
+ *
+ * ⚠ A plain save's return value is not a read-back (Supabase returns the caller's copy), so
+ * don't trust its presence; `transition*` return the row as written.
+ * Contract: src/repositories/contract/person.contract.ts.
  */
+export interface PresenceWrite {
+  atCamp: boolean;
+  lifecycle: PersonLifecycle;
+  /** Written only when present (cancel/uncancel). */
+  cancelledAt?: string | null;
+  appendCheckIn?: CheckInEntry;
+  appendSignEvent?: SignOutEvent;
+  updatedAt: string;
+}
+export type PresenceDecide = (current: Person) => PresenceWrite | null;
+
+/** Apply a decided write to a person (pure; both adapters use it for the returned row). */
+export function withPresenceWrite(p: Person, w: PresenceWrite): Person {
+  return {
+    ...p,
+    atCamp: w.atCamp,
+    lifecycle: w.lifecycle,
+    ...(w.cancelledAt !== undefined ? { cancelledAt: w.cancelledAt } : {}),
+    checkInHistory: w.appendCheckIn ? [...p.checkInHistory, w.appendCheckIn] : p.checkInHistory,
+    signOutHistory: w.appendSignEvent ? [...p.signOutHistory, w.appendSignEvent] : p.signOutHistory,
+    updatedAt: w.updatedAt,
+  };
+}
+
 export interface IPersonRepository extends IRepository<Person> {
   save(person: Person): Promise<Person>;
   saveMany(people: Person[]): Promise<Person[]>;
-  savePresence(person: Person): Promise<Person>;
-  savePresenceMany(people: Person[]): Promise<Person[]>;
+  /** Throws NotFoundError when there is no such person. */
+  transition(id: string, decide: PresenceDecide): Promise<Person>;
+  transitionMany(ids: string[], decide: PresenceDecide): Promise<Person[]>;
+  /**
+   * Reset logs: delete every check-in and sign event; everyone at camp or with any history gets
+   * atCamp=false and arrived/checked_out/departed -> registered (cancelled and registered keep
+   * their lifecycle) and updatedAt=now. One transaction. Returns the number of people touched.
+   */
+  clearPresence(now: string): Promise<number>;
+  /** Every whitespace-separated term must appear in "first last" (case-insensitive). */
   search(q: string): Promise<Person[]>;
   findByChurch(churchId: string): Promise<Person[]>;
   findByZone(zone: string): Promise<Person[]>;
-  findByGroup(groupId: string): Promise<Person[]>;
-  findByKind(kind: string): Promise<Person[]>;
-  findByLifecycle(lifecycle: string): Promise<Person[]>;
-  findCampers(): Promise<Person[]>; // lifecycle ∈ {arrived, checked_out, departed}
-  findAtCamp(): Promise<Person[]>; // atCamp === true (currently signed in)
-  /** Delete every check-in and sign-in/out history entry, for everyone (Reset logs, A-2). P3 absorbs it as clearPresence. */
-  clearPresenceHistory(): Promise<void>;
-  // deleteAll() inherited from IRepository (bulk clear; Supabase: TRUNCATE).
+  // deleteAll() inherited from IRepository.
 }
 
 export interface IClassroomRepository extends IRepository<Classroom> {}
@@ -73,25 +99,13 @@ export interface IAllocationRepository extends IRepository<RoomAllocation> {
 /** Soft-freeze snapshot — a singleton row (`CLASSROOM_FREEZE_ID`); absent = not frozen. */
 export interface IClassroomFreezeRepository extends IRepository<ClassroomFreeze> {}
 
-export interface IZoneRepository extends IRepository<Zone> {
-  findByName(name: string): Promise<Zone | null>;
-}
-
-export interface IGroupRepository extends IRepository<Group> {
-  findByChurch(churchId: string): Promise<Group[]>;
-  findByZone(zone: string): Promise<Group[]>;
-  findByLeader(leaderId: string): Promise<Group[]>;
-}
-
 export interface INoteRepository extends IRepository<StudentNote> {
   findByCamper(camperId: string): Promise<StudentNote[]>;
-  findByAuthor(authorId: string): Promise<StudentNote[]>;
   findByZone(zone: string, limit?: number): Promise<StudentNote[]>;
   findRecent(limit: number): Promise<StudentNote[]>;
 }
 
 export interface INotificationRepository extends IRepository<Notification> {
-  findByScope(scope: string): Promise<Notification[]>;
   findByZone(zone: string): Promise<Notification[]>;
   findByChurch(churchId: string): Promise<Notification[]>;
   findActive(): Promise<Notification[]>;

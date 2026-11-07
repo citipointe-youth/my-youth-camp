@@ -35,7 +35,7 @@ import { makeSettingsService } from './settings.service';
 import { generateTempPassword } from '../utils/temp-password';
 import { hashPassword } from '../utils/crypto';
 import { invalidateDashboardCache } from './dashboard-cache';
-import { transition } from './presence';
+import { transition, writeOf } from './presence';
 
 export interface TempPasswordEntry {
   username: string;
@@ -194,28 +194,10 @@ export function makeAdminService(
       await assertExported(opts);
       await clearExportStamp();
 
-      const people = await personRepo.findAll();
-      const touched = people.filter(
-        (p) => p.checkInHistory.length > 0 || p.signOutHistory.length > 0 || p.atCamp,
-      );
-      // A-2 (bug 2): saveMany only APPENDS history on Supabase, so saving empty arrays below
-      // deletes nothing. Delete the history rows explicitly; `touched` was read first.
-      await personRepo.clearPresenceHistory();
-      if (touched.length) {
-        const now = nowISO();
-        await personRepo.savePresenceMany(
-          touched.map((p) => ({
-            ...p,
-            checkInHistory: [],
-            signOutHistory: [],
-            atCamp: false,
-            // Anyone who had arrived/departed goes back to 'registered'; a cancelled or
-            // already-registered person keeps their lifecycle untouched.
-            lifecycle: p.lifecycle === 'cancelled' || p.lifecycle === 'registered' ? p.lifecycle : 'registered',
-            updatedAt: now,
-          })),
-        );
-      }
+      // P3 (absorbs A-2(a)): one repo op, one transaction — deletes every check-in and sign row and
+      // puts everyone at camp or with history back to not signed in (arrived/checked_out ->
+      // registered; cancelled and registered keep their lifecycle).
+      const touched = await personRepo.clearPresence(nowISO());
 
       const [notes, incidents] = await Promise.all([noteRepo.findAll(), incidentRepo.findAll()]);
       // The reveal audit is exactly the class of thing resetLogs() exists to clear — it is a
@@ -223,7 +205,7 @@ export function makeAdminService(
       await Promise.all([noteRepo.deleteAll(), incidentRepo.deleteAll(), revealAuditRepo.deleteAll()]);
 
       invalidateDashboardCache();
-      return { people: touched.length, notes: notes.length, incidents: incidents.length };
+      return { people: touched, notes: notes.length, incidents: incidents.length };
     },
 
     async saveDefaults(actor) {
@@ -394,17 +376,13 @@ export function makeAdminService(
         // each other). The presence module's `modeRevert` intent is that transition: atCamp
         // people (not checked_out, not cancelled — B-X3) go back to registered with one audit
         // sign-out event so the history reflects what happened.
-        const people = await personRepo.findAll();
+        // P3: candidates from a read, then one transaction that re-decides each on the locked row.
+        const ids = (await personRepo.findAll()).filter((p) => p.atCamp && p.lifecycle !== 'cancelled').map((p) => p.id);
         const now = nowISO();
-        const updated: Person[] = [];
-        for (const p of people) {
-          const o = transition(p, { kind: 'modeRevert', event: { id: newId('so'), type: 'out',
-            leaderName: actor.displayName, reason: 'Camp mode reverted to pre-camp', authorId: actor.id, timestamp: now } },
-          { actor, campMode: null, now }); // modeRevert never reads campMode
-          if (o.result === 'applied') updated.push(o.next);
-        }
-        if (updated.length > 0) {
-          await personRepo.savePresenceMany(updated);
+        if (ids.length > 0) {
+          await personRepo.transitionMany(ids, (current) => writeOf(current, transition(current, { kind: 'modeRevert',
+            event: { id: newId('so'), type: 'out', leaderName: actor.displayName, reason: 'Camp mode reverted to pre-camp',
+              authorId: actor.id, timestamp: now } }, { actor, campMode: null, now }))); // modeRevert never reads campMode
           invalidateDashboardCache();
         }
       }

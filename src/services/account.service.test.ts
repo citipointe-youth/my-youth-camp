@@ -160,12 +160,13 @@ describe('AccountService.updateChurch — rename propagation', () => {
 
   it('a name + zone change re-stamps both in one write and never reverts presence', async () => {
     // The re-stamp works from a read; a sign-out committed after that read must survive it (B-1).
-    await people.savePresence(person({ id: 'p1', churchId: 'c1', churchName: 'Victory Church', lifecycle: 'checked_out', atCamp: false }));
+    await people.delete('p1'); // P3: re-insert so the fixture's presence is written
+    await people.save(person({ id: 'p1', churchId: 'c1', churchName: 'Victory Church', lifecycle: 'checked_out', atCamp: false }));
     const stale = (await people.findById('p1'))!;
     const realFind = people.findByChurch.bind(people);
     people.findByChurch = async (id) => {
       const rows = await realFind(id);
-      await people.savePresence({ ...stale, lifecycle: 'arrived', atCamp: true }); // a sign-in lands
+      await people.transition(stale.id, () => ({ lifecycle: 'arrived', atCamp: true, updatedAt: stale.updatedAt })); // a sign-in lands
       return rows.map((r) => (r.id === 'p1' ? { ...r, lifecycle: 'checked_out', atCamp: false } : r));
     };
     let writes = 0;

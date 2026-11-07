@@ -974,11 +974,11 @@ describe('AdminService wipes — A-2: export after the last wipe', () => {
     expect(s.lastExportedAt).toBeNull();
   });
 
-  it('resetLogs empties history even when saveMany only appends history (Supabase semantics)', async () => {
+  it('resetLogs empties history even when saveMany only appends history (pre-P3 Supabase semantics)', async () => {
     // Supabase saveMany upserts the person row and INSERTs history ON CONFLICT DO NOTHING, so
     // saving a person with empty arrays deletes nothing. Model that in memory.
     class AppendOnlyHistoryRepo extends InMemoryPersonRepository {
-      override async savePresenceMany(people: Person[]): Promise<Person[]> {
+      override async saveMany(people: Person[]): Promise<Person[]> {
         const merged: Person[] = [];
         for (const p of people) {
           const old = await this.findById(p.id);
@@ -990,7 +990,7 @@ describe('AdminService wipes — A-2: export after the last wipe', () => {
             signOutHistory: [...old.signOutHistory.filter((e) => !so.has(e.id)), ...p.signOutHistory],
           } : p);
         }
-        return super.savePresenceMany(merged);
+        return super.saveMany(merged);
       }
     }
     const personRepo = new AppendOnlyHistoryRepo();

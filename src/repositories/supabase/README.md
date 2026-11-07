@@ -1,56 +1,26 @@
-# ⚠️ Supabase repository layer — UNVERIFIED SCAFFOLDING
+# Supabase repository layer (production)
 
-**Do not assume this code works.** Everything in this folder was authored in an
-environment with **no Node toolchain and no live Postgres** — it could not be
-compiled (`tsc`), tested (`vitest`), or run against a database. It is a faithful
-port of the proven `connection-made-simple` Supabase layer, adapted to the camp
-platform's unified `Person` model, but it is a **starting point, not a finished
-implementation**.
+This folder is the live production adapter (`PERSISTENCE=supabase`, built by `supabaseRepos(sql)` in
+`src/container.ts`). Every repo shares one pooled `postgres` client (`client.ts`; read its pool-size
+note before changing `max`).
 
-## Before this layer can be used
+## How it is checked
 
-1. **Install the driver:** `npm i postgres` (add `postgres` to dependencies; it is
-   not yet in package.json). The client also expects `DATABASE_URL` + `PERSISTENCE`
-   in `src/config/env.ts` (added).
-2. **Land Phase 1 Step 4 first.** This layer targets the unified `people` table. The
-   live app still uses the separate `registrant`/`camper` repos until the Step-4
-   switchover. Wiring Supabase before Step 4 will not match the running services.
-3. **Run the real gate:** `npm run typecheck` — expect to fix a handful of issues the
-   harness cannot catch (see below).
-4. **Apply the migrations** (`supabase/migrations/`) to a real instance and smoke-test
-   each repo method against it.
+Ruling Q13 c (camp arch round, 2026-11-07): there is no Supabase branch or Docker Postgres in the test
+run. So:
 
-## Known places that need compiler/DB validation
+- **Behaviour** is pinned by the repository contract in `src/repositories/contract/`, which runs
+  against the in-memory adapter. Every case there is something this adapter owes too.
+- **This adapter** is checked by reading its SQL against those cases, plus the recording-fake
+  statement tests (`*.save.test.ts`, `*.mapper.test.ts`). New SQL should be validated on prod with
+  read-only SELECTs before ship.
 
-- **`sql.begin` / transaction typing.** `save`/`saveMany` use `this.sql.begin(tx => …)`.
-  The `postgres` library's `tx` callback type and the `tx(obj)` / `tx(rows)` helper
-  overloads must be checked against the installed version — these are the least
-  certain lines.
-- **`on conflict do update set ${tx(cols, ...keys)}` helper form.** CMS spelled the
-  update set out explicitly; the helper form here (`PERSON_UPDATE_COLS`) is a
-  convenience that MUST be confirmed against the `postgres` API — if it doesn't
-  type/behave, fall back to the explicit `col = excluded.col` form CMS uses.
-- **`where x in ${sql(ids)}`** with an empty array throws in some driver versions —
-  guarded with an early return in `loadHistories`, but verify other call sites.
-- **Date/JSONB round-tripping.** `date` columns come back as `Date`; JSONB
-  (`consents`, church `contacts`, defaults `snapshot`) round-trips as objects — the
-  mappers assume this; confirm.
-- **`deleteAll` returning a count.** `delete … returning id` gives a count but is
-  slower than `truncate … cascade`; for the admin full-reset path prefer truncate
-  (which returns no count — adjust the interface usage accordingly).
+## Rules that are easy to break
 
-## What exists here
-
-- `client.ts` — pooled `postgres` client (max:5, timeouts) — ported.
-- `bulk.ts` — `chunk()` for the 65,535 bind-param ceiling — ported.
-- `supabase.people.ts` — **reference implementation**: the unified `people` repo with
-  JSONB `consents` and child-table hydration (`check_in_history`, `sign_out_history`).
-  Follow this pattern for the rest.
-
-## Still TO WRITE (one repo per interface, following supabase.people.ts)
-
-`users`, `churches` (+ JSONB contacts + child `reservations`), `accommodation_blocks`,
-`zones`, `groups`, `notes`, `notifications`, `schedule_items` (+ `getCheckInPoints`),
-`devotionals`, `faqs`, `settings` (singleton), `defaults` (singleton, JSONB snapshot).
-Then a `src/repositories/supabase/index.ts` barrel and a `PERSISTENCE==='supabase'`
-branch in `src/container.ts` selecting these implementations.
+- **People presence** (`at_camp`, `lifecycle`, `cancelled_at`, both history tables) is written only by
+  `transition` / `transitionMany` / `clearPresence`. `save`/`saveMany` never put presence in the
+  UPDATE set and write history rows only on a real INSERT (`returning (xmax = 0) as inserted`).
+- **Inside `sql.begin`, use the `tx` you were given** for every statement, reads included. Calling
+  `this.sql` there takes a second pool connection while the first holds a lock.
+- `where x in ${sql(ids)}` throws on an empty array; guard first.
+- `users.deleteAll` keeps admin accounts.

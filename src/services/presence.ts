@@ -3,13 +3,15 @@ import type { Actor } from '../core/entities/user';
 import type { CampMode, PersonLifecycle } from '../core/types/enums';
 import { newId } from '../utils/id';
 import { isOversight } from './access-control';
+import type { PresenceWrite, PresenceDecide } from '../repositories/interfaces/entity-repositories';
+import { BadRequestError } from '../core/errors/app-error';
 import { lastEntryFor } from './session-roster';
 
 /**
  * Presence transitions (P1+I4). The ONE place that decides how a person's presence
  * (`atCamp`, `lifecycle`, `cancelledAt`) and presence history (check-in rows, sign events)
- * move. Pure: no I/O. Callers read the person, call `transition`, and persist `next` on
- * `applied` (presence moves via `savePresence*`; a check-in row via plain `save`).
+ * move. Pure: no I/O. Since P3 callers hand it to the repository seam: `repo.transition(id,
+ * decideOrRefuse(intent, ctx))` decides on the LOCKED stored row (`writeOf` for bulk sweeps).
  *
  * Invariants owned here:
  * - `atCamp`/`lifecycle` are orthogonal; only sign events, cancel/uncancel and the mode revert
@@ -123,4 +125,31 @@ export function transition(p: Person, intent: PresenceIntent, ctx: PresenceCtx):
       );
     }
   }
+}
+
+/**
+ * P3 adapter: the repository write an outcome implies (null = noop). `refused` is not a write;
+ * use `decideOrRefuse` when a refusal must surface as the caller's 400.
+ */
+export function writeOf(p: Person, o: Outcome): PresenceWrite | null {
+  if (o.result !== 'applied') return null;
+  const { next, appended } = o;
+  return {
+    atCamp: next.atCamp,
+    lifecycle: next.lifecycle,
+    ...(next.cancelledAt !== p.cancelledAt ? { cancelledAt: next.cancelledAt ?? null } : {}),
+    ...(appended.checkIn ? { appendCheckIn: appended.checkIn } : {}),
+    ...(appended.signEvent ? { appendSignEvent: appended.signEvent } : {}),
+    updatedAt: next.updatedAt,
+  };
+}
+
+/** A `PresenceDecide` for `repo.transition`: decides on the locked row, throws the refusal as a
+ *  BadRequestError (rolls the transaction back), and returns the write or null. */
+export function decideOrRefuse(intent: PresenceIntent, ctx: PresenceCtx): PresenceDecide {
+  return (current) => {
+    const o = transition(current, intent, ctx);
+    if (o.result === 'refused') throw new BadRequestError(o.reason);
+    return writeOf(current, o);
+  };
 }

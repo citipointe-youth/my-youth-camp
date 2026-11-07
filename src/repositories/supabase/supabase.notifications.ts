@@ -1,4 +1,4 @@
-import type { SqlClient } from './client';
+import type { SqlClient, TxClient } from './client';
 import type { INotificationRepository } from '../interfaces/entity-repositories';
 import type { Notification } from '../../core/entities/notification';
 import { encryptField, maybeDecrypt } from '../../utils/field-crypto';
@@ -68,10 +68,6 @@ export class SupabaseNotificationRepository implements INotificationRepository {
     return rows[0] ? toNotif(rows[0]) : null;
   }
 
-  async findByScope(scope: string): Promise<Notification[]> {
-    return (await this.sql`select * from notifications where scope = ${scope} order by created_at desc`).map(toNotif);
-  }
-
   async findByZone(zone: string): Promise<Notification[]> {
     return (await this.sql`select * from notifications where zone = ${zone} order by created_at desc`).map(toNotif);
   }
@@ -88,9 +84,9 @@ export class SupabaseNotificationRepository implements INotificationRepository {
     `).map(toNotif);
   }
 
-  async save(n: Notification): Promise<Notification> {
-    await this.sql`
-      insert into notifications ${this.sql(notifColumns(n))}
+  async save(n: Notification, db: SqlClient | TxClient = this.sql): Promise<Notification> {
+    await db`
+      insert into notifications ${db(notifColumns(n))}
       on conflict (id) do update set
         title = excluded.title,
         body = excluded.body,
@@ -109,8 +105,12 @@ export class SupabaseNotificationRepository implements INotificationRepository {
     return n;
   }
 
+  /** All-or-nothing: one transaction (P3 / OQ-45). */
   async saveMany(ns: Notification[]): Promise<Notification[]> {
-    for (const n of ns) await this.save(n);
+    if (ns.length === 0) return [];
+    await this.sql.begin(async (tx: TxClient) => {
+      for (const n of ns) await this.save(n, tx);
+    });
     return ns;
   }
 

@@ -24,7 +24,7 @@ const ev = { leaderName: 'L', authorId: 'u', timestamp: now };
 async function repoWith(...people: Person[]) {
   const repo = new InMemoryPersonRepository();
   await repo.init();
-  for (const p of people) await repo.savePresence(p);
+  for (const p of people) await repo.save(p); // insert writes every field, presence included
   return repo;
 }
 
@@ -38,9 +38,19 @@ describe('B-1 presence column split', () => {
     expect((await repo.findById('x'))!).toMatchObject({ atCamp: false, lifecycle: 'checked_out' });
   });
 
-  it('a presence save moves atCamp/lifecycle; a plain insert writes them too', async () => {
+  it('P3: a plain save of an existing person keeps the stored cancelledAt and both histories', async () => {
+    const repo = await repoWith(P({ id: 'x', lifecycle: 'cancelled', cancelledAt: now,
+      checkInHistory: [{ id: 'c0', sessionId: 's', sessionLabel: 'S', type: 'in', leaderId: 'u', timestamp: now }],
+      signOutHistory: [{ id: 'so0', type: 'in', ...ev }] }));
+    await repo.save(P({ id: 'x', cancelledAt: null, checkInHistory: [], signOutHistory: [], school: 'New' }));
+    expect((await repo.findById('x'))!).toMatchObject({ cancelledAt: now, school: 'New', lifecycle: 'cancelled' });
+    expect((await repo.findById('x'))!.checkInHistory).toHaveLength(1);
+    expect((await repo.findById('x'))!.signOutHistory).toHaveLength(1);
+  });
+
+  it('a presence transition moves atCamp/lifecycle; a plain insert writes them too', async () => {
     const repo = await repoWith(P({ id: 'x', lifecycle: 'arrived', atCamp: true }));
-    await repo.savePresenceMany([P({ id: 'x', lifecycle: 'checked_out', atCamp: false })]);
+    await repo.transitionMany(['x'], () => ({ atCamp: false, lifecycle: 'checked_out', updatedAt: now }));
     expect((await repo.findById('x'))!).toMatchObject({ atCamp: false, lifecycle: 'checked_out' });
     await repo.save(P({ id: 'new', lifecycle: 'cancelled', atCamp: false }));
     expect((await repo.findById('new'))!.lifecycle).toBe('cancelled');
@@ -74,8 +84,10 @@ describe('B-1 presence column split', () => {
     await new Promise((r) => setTimeout(r, 0));
     await svc.signEvent(admin, 'x', { type: 'out', ...ev });
     gate();
-    await tap;
-    expect((await repo.findById('x'))!).toMatchObject({ atCamp: false, lifecycle: 'checked_out' });
+    // P3: the tap is decided on the stored row, so it gets the existing 'not at camp' 400 (same as a
+    // tap sent a moment later) and writes no check-in row; presence stays signed out either way.
+    await expect(tap).rejects.toMatchObject({ statusCode: 400, message: 'Cannot check in a person who is not currently at camp' });
+    expect((await repo.findById('x'))!).toMatchObject({ atCamp: false, lifecycle: 'checked_out', checkInHistory: [] });
   });
 
   it('every presence writer in person.service actually moves atCamp', async () => {
@@ -121,11 +133,10 @@ describe('B-2 signEvent on wrong-state people (IA OQ-8)', () => {
     const svc = makePersonService(repo);
     const e = { sessionId: 's1', sessionLabel: 'S1', type: 'in' as const, leaderId: 'u', timestamp: now };
     await svc.checkIn(admin, 'h', e);
-    let saves = 0;
-    const realSave = repo.save.bind(repo);
-    repo.save = async (p) => { saves++; return realSave(p); };
+    const before = (await repo.findById('h'))!.updatedAt;
+    await new Promise((r) => setTimeout(r, 5));
     await expect(svc.checkIn(admin, 'h', e)).resolves.toMatchObject({ id: 'h' });
-    expect(saves).toBe(0);
+    expect((await repo.findById('h'))!.updatedAt).toBe(before);
     expect((await repo.findById('h'))!.checkInHistory).toHaveLength(1);
   });
 });
@@ -188,5 +199,64 @@ describe('B-5 check-in history guard (in-memory mirror of the Supabase condition
     const svc = makePersonService(repo);
     for (const type of ['in', 'out', 'in'] as const) await svc.checkIn(admin, 'x', { ...tap, type });
     expect((await repo.findById('x'))!.checkInHistory.map((e) => e.type)).toEqual(['in', 'out', 'in']);
+  });
+});
+
+describe('P3 presence seam: decisions are made on the stored row', () => {
+  const tap = { sessionId: 's1', sessionLabel: 'S1', leaderId: 'u', timestamp: now };
+
+  it('two simultaneous same-type taps (Promise.all) write one check-in row (B-5 atomic half)', async () => {
+    const repo = await repoWith(P({ id: 'x', lifecycle: 'arrived', atCamp: true }));
+    const svc = makePersonService(repo);
+    await Promise.all([svc.checkIn(admin, 'x', { ...tap, type: 'in' }), svc.checkIn(admin, 'x', { ...tap, type: 'in' })]);
+    expect((await repo.findById('x'))!.checkInHistory.map((e) => e.type)).toEqual(['in']);
+  });
+
+  it('gate B M3: a sign-in landing after the cancel PATCH read still gets its out event', async () => {
+    const repo = await repoWith(P({ id: 'x', lifecycle: 'checked_out', atCamp: false }));
+    const svc = makePersonService(repo);
+    const realFind = repo.findById.bind(repo);
+    let gate!: () => void;
+    const paused = new Promise<void>((r) => (gate = r));
+    repo.findById = async (id) => { repo.findById = realFind; const p = await realFind(id); await paused; return p; };
+    const cancel = svc.update(admin, 'x', { lifecycle: 'cancelled' } as Partial<Person>);
+    await new Promise((r) => setTimeout(r, 0));
+    await svc.signEvent(admin, 'x', { type: 'in', ...ev }); // lands between the PATCH's read and write
+    gate();
+    const returned = await cancel;
+    const after = (await repo.findById('x'))!;
+    expect(after).toMatchObject({ lifecycle: 'cancelled', atCamp: false });
+    expect(after.signOutHistory.map((e) => e.type)).toEqual(['in', 'out']);
+    expect(returned).toMatchObject({ lifecycle: 'cancelled', atCamp: false });
+  });
+
+  it('gate B M3 reverse: a sign-out landing after the cancel read does not get a second out', async () => {
+    const repo = await repoWith(P({ id: 'x', lifecycle: 'arrived', atCamp: true }));
+    const svc = makePersonService(repo);
+    const realFind = repo.findById.bind(repo);
+    let gate!: () => void;
+    const paused = new Promise<void>((r) => (gate = r));
+    repo.findById = async (id) => { repo.findById = realFind; const p = await realFind(id); await paused; return p; };
+    const cancel = svc.update(admin, 'x', { lifecycle: 'cancelled' } as Partial<Person>);
+    await new Promise((r) => setTimeout(r, 0));
+    await svc.signEvent(admin, 'x', { type: 'out', ...ev });
+    gate();
+    await cancel;
+    expect((await repo.findById('x'))!.signOutHistory.map((e) => e.type)).toEqual(['out']);
+  });
+
+  it('a refused decision writes nothing and surfaces the 400 (cancelled after the read)', async () => {
+    const repo = await repoWith(P({ id: 'x', lifecycle: 'arrived', atCamp: true }));
+    const svc = makePersonService(repo);
+    const realFind = repo.findById.bind(repo);
+    let gate!: () => void;
+    const paused = new Promise<void>((r) => (gate = r));
+    repo.findById = async (id) => { repo.findById = realFind; const p = await realFind(id); await paused; return p; };
+    const tapP = svc.checkIn(admin, 'x', { ...tap, type: 'in' });
+    await new Promise((r) => setTimeout(r, 0));
+    await svc.update(admin, 'x', { lifecycle: 'cancelled' } as Partial<Person>);
+    gate();
+    await expect(tapP).rejects.toMatchObject({ statusCode: 400, message: 'Cannot check in a cancelled person' });
+    expect((await repo.findById('x'))!.checkInHistory).toEqual([]);
   });
 });
