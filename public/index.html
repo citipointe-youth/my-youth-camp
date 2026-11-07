@@ -9981,14 +9981,16 @@ RENDER.import=async function(){
    anyone marked Y who isn't already at camp. Matches by First+Last+Church text — no id column
    (the export is the source of these exact values, so a straight match is expected to work). */
 function _offlineSignInCardHtml(){
+  const pre=CAMP_MODE==='pre-camp'; // DIR-N1: the server refuses the import until camp starts (Q6)
   return `<div class="card">
     <div class="h3" style="margin-top:0">Offline Sign-In</div>
     <p class="note-hint" style="text-align:left">A fallback for churches who prefer a bulk/paper sign-in instead of the app. Export the sheet, have the church mark "Y" as students arrive, then import the filled sheet to sign in everyone marked Y who isn't already at camp.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn ghost" onclick="downloadOfflineSignInTemplate()">${icSm('download')} Export sign-in sheet</button>
-      <button class="btn ghost" onclick="document.getElementById('osiFileIn').click()">${icSm('upload')} Import filled sheet</button>
+      <button class="btn ghost" ${pre?'disabled ':''}onclick="document.getElementById('osiFileIn').click()">${icSm('upload')} Import filled sheet</button>
       <input type="file" id="osiFileIn" accept=".csv,.xlsx,.xls" style="display:none" onchange="offlineSignInUpload()">
     </div>
+    ${pre?'<p class="note-hint" style="text-align:left;margin-top:6px">Import is available once camp starts (At-Camp mode).</p>':''}
     <div id="osiResult" style="display:none;margin-top:10px"></div>
   </div>`;
 }

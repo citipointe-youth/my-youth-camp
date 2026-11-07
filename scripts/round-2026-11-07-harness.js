@@ -231,6 +231,16 @@ await T('[ZN-3] stuck banner lead: "server had a problem" only when online and n
   b.r('_queueWaiting=true');assert.strictEqual(b.r('_stuckLead()'),'No signal.');
   b.c.navigator.onLine=false;b.r('_queueWaiting=false');assert.strictEqual(b.r('_stuckLead()'),'No signal.');
 });
+// DIR-N1: the server refuses the offline sheet import pre-camp (A-3/Q6), so the card says so up front.
+await T('[DIR-N1] offline sheet card: Import disabled with a note in pre-camp, enabled at camp; Export always',async()=>{
+  const c={};vm.createContext(c);vm.runInContext("let CAMP_MODE='pre-camp';const icSm=()=>'';"+extract('function _offlineSignInCardHtml('),c);
+  const pre=vm.runInContext('_offlineSignInCardHtml()',c);
+  assert.ok(/<button[^>]*disabled[^>]*>[^<]*Import filled sheet/.test(pre),'pre-camp: Import disabled');
+  assert.ok(pre.includes('available once camp starts'),'pre-camp: says why');
+  assert.ok(/<button(?![^>]*disabled)[^>]*>[^<]*Export sign-in sheet/.test(pre),'pre-camp: Export still works');
+  vm.runInContext("CAMP_MODE='at-camp'",c);const at=vm.runInContext('_offlineSignInCardHtml()',c);
+  assert.ok(!at.includes('disabled')&&!at.includes('available once camp starts'),'at camp: unchanged');
+});
 console.log(results.join('\n'));
 console.log(failures?failures+' FAILED':'all passed'+(KNOWN.length?' ('+KNOWN.length+' KNOWN-FAIL)':''));
 process.exitCode=failures?1:0;
