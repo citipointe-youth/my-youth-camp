@@ -10798,20 +10798,20 @@ async function _renderImportPreview(){
   box.innerHTML='<div class="loading"><div class="spin"></div><div class="lt">Checking files…</div></div>';
   const formInBatch=_importBatch.some(b=>b.type==='form');
   let formImported=false;try{const s=await api('/settings');formImported=!!(s&&s.formImportedAt);}catch(e){}
-  const results=[];
-  for(const b of _importBatch){
-    try{const r=await api(IMPORT_TYPES[b.type].endpoint,{method:'POST',body:{csvData:b.csvData,updateExisting:true,dryRun:true}});results.push({b,r});}
-    catch(e){results.push({b,err:e.message||'error'});}
-  }
+  // I2 (IA OQ-22): ONE preview call over one server-side overlay, so Ticket/Invoice preview
+  // against the people the Form file in this batch would create. Confirm stays per file.
+  let results;
+  try{
+    const out=await api('/import/batch',{method:'POST',body:{updateExisting:true,files:_importBatch.map(b=>({type:b.type,csvData:b.csvData}))}});
+    results=_importBatch.map((b,i)=>{const x=(out.results||[])[i]||{};return x.error!=null?{b,err:x.error}:x.result?{b,r:x.result}:{b,err:'No preview returned'};});
+  }catch(e){results=_importBatch.map(b=>({b,err:e.message||'error'}));}
   const formRes=results.find(x=>x.b.type==='form'&&x.r);
   const phantoms=(formRes&&formRes.r.phantomChurches)||[];
   // Per-file summary cards.
   const cards=results.map(({b,r,err})=>{
     if(err)return `<div class="warnbox">${esc(b.name)} (${IMPORT_TYPES[b.type].label}): ${esc(err)}</div>`;
     const del=r.deleted?` \xb7 <b style="color:var(--danger)">${r.deleted} to delete</b>`:'';
-    // A Ticket/Invoice orphan/unmatched warning is misleading while an unrun Form sits in the same
-    // batch (matches only happen once the Form is committed first), so suppress it in that case.
-    const extra=(b.type!=='form'&&formInBatch)?`<span style="color:var(--muted)">Matches finalise after the Form import runs first.</span>`:_importExtraLine(b.type,r);
+    const extra=_importExtraLine(b.type,r);
     const errs=(r.errors||[]);
     const errList=errs.length?`<div style="margin-top:4px">${errs.slice(0,8).map(e=>`<div style="color:var(--danger);font-size:.76rem">Row ${e.row}: ${esc(e.message)}</div>`).join('')}${errs.length>8?`<div class="sub">+${errs.length-8} more error${errs.length-8===1?'':'s'}</div>`:''}</div>`:'';
     return `<div style="border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px">

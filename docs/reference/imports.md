@@ -4,6 +4,13 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Phase C architecture round — 7 Nov 2026
+
+Round folder `src/camp-arch-2026-11-07` (`build/c-*.md`). In-memory tests only; no SQL changed, no migration.
+
+- **Preview = commit through a staging overlay** (I2, `src/services/import-store.ts`). The three importers have no `dryRun` branches: they read and write an `ImportStore` (people `findAll`/`saveMany`/`delete`, churches `findAll`/`save`, overrides `findAll`/`delete`). Each call runs on `stage(real)`, a buffered overlay; a dry run discards it, a commit calls `flush()` (new churches, then one people `saveMany`, then person deletes, then override deletes, then `invalidateDashboardCache()`; not atomic). A new church is staged in the preview too, so `church-would-be-created` now comes once per church (was once per row); the commit still says `church-created`. `phantomChurches`/`churchesCreated` and every warning code are unchanged (`import-preview-parity.test.ts`).
+- **`POST /import/batch` is preview only** (IA OQ-22). Body `{files:[{type:'form'|'tickets'|'invoices', csvData}], updateExisting?}`, 1-3 files run in the order given over one overlay; returns `{dryRun:true, results:[{type, result} | {type, error}]}`. A file the per-file endpoint would refuse (4xx) is reported as that file's `error` and the next files still preview. Needs `import:run`; never stamps `*ImportedAt`. The SPA preview makes this one call (the old "Matches finalise after the Form import runs first" line is gone: Ticket/Invoice counts are now real); Confirm still makes the three per-file POSTs, Form first. The three per-file endpoints and the 11.1 console are unchanged. Time a full-size (1,425-row) batch preview against `maxDuration: 30` before relying on it.
+
 ## Phase B architecture round — `camp-v152` — 7 Nov 2026
 
 Round folder `src/camp-arch-2026-11-07` (`build/b-*.md`, `build/phase-b-merge.md`). Tests are in-memory plus vm harnesses; the new Supabase SQL was checked with read-only SELECTs on production (`build/phase-b-merge.md`). No migration.

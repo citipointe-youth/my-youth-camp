@@ -42,7 +42,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const note = makeNoteController({ note: services.note });
   const attendance = makeAttendanceController({ person: services.person });
   const content = makeContentController({ content: services.content });
-  const importCtrl = makeImportController({ importService: services.importService, settingsRepo: services.settingsRepo });
+  const importCtrl = makeImportController({ importService: services.importService, importBatch: services.importBatch, settingsRepo: services.settingsRepo });
   const allocationCtrl = makeAllocationController({ allocation: services.allocation });
   const ticketImportCtrl = makeTicketImportController({ ticketImport: services.ticketImport, settingsRepo: services.settingsRepo });
   const invoiceImportCtrl = makeInvoiceImportController({ invoiceImport: services.invoiceImport, settingsRepo: services.settingsRepo });
@@ -178,6 +178,7 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'POST', path: '/import/csv', auth: true, handler: (r) => importCtrl.run(r) },
     { method: 'POST', path: '/import/tickets', auth: true, handler: (r) => ticketImportCtrl.run(r) },
     { method: 'POST', path: '/import/invoices', auth: true, handler: (r) => invoiceImportCtrl.run(r) },
+    { method: 'POST', path: '/import/batch', auth: true, handler: (r) => importCtrl.previewBatch(r) },
     { method: 'GET', path: '/import/unallocated', auth: true, handler: (r) => allocationCtrl.listUnallocated(r) },
     { method: 'GET', path: '/import/allocations', auth: true, handler: (r) => allocationCtrl.listOverrides(r) },
     { method: 'POST', path: '/import/allocate', auth: true, handler: (r) => allocationCtrl.allocate(r) },

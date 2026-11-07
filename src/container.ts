@@ -105,6 +105,7 @@ import { makePersonService, type PersonService } from './services/person.service
 import { makeAllocationService, type AllocationService } from './services/allocation.service';
 import { makeTicketImportService, type TicketImportService } from './services/ticket-import.service';
 import { makeInvoiceImportService, type InvoiceImportService } from './services/invoice-import.service';
+import { makeImportBatchService, type ImportBatchService } from './services/import-batch.service';
 import { makeAuditExportService, type AuditExportService } from './services/audit-export.service';
 import { makeOfflineSignInService, type OfflineSignInService } from './services/offline-signin.service';
 import { makeCronService, type CronService } from './services/cron.service';
@@ -150,6 +151,7 @@ export interface Services {
   allocation: AllocationService;
   ticketImport: TicketImportService;
   invoiceImport: InvoiceImportService;
+  importBatch: ImportBatchService;
   auditExport: AuditExportService;
   offlineSignIn: OfflineSignInService;
   account: AccountService;
@@ -241,6 +243,10 @@ export async function buildContainer(): Promise<Container> {
     const allocation = makeAllocationService(people, churches, allocationOverrides);
     const ticketImportSvc = makeTicketImportService(people, churches);
     const invoiceImportSvc = makeInvoiceImportService(people);
+    const importBatchSvc = makeImportBatchService(
+      { people, churches, overrides: allocationOverrides },
+      { form: importSvc, tickets: ticketImportSvc, invoices: invoiceImportSvc },
+    );
     const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
     const offlineSignInSvc = makeOfflineSignInService(people, settingsRepo);
     const account = makeAccountService(users, churches, people);
@@ -256,7 +262,7 @@ export async function buildContainer(): Promise<Container> {
       auth, settings, person: personSvc, accommodation: accommodationSvc,
       checkIn, notification, incident, revealAudit: revealAuditSvc, search, note, schedule, content,
       importService: importSvc, exportService: exportSvc, allocation,
-      ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
+      ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc, importBatch: importBatchSvc,
       auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
       account, dashboard, admin, users, settingsRepo, cron, push,
       pushSubscriptionRepo: pushSubscriptions,
@@ -398,6 +404,10 @@ export async function buildContainer(): Promise<Container> {
   const allocation = makeAllocationService(people, churches, allocationOverrides);
   const ticketImportSvc = makeTicketImportService(people, churches);
   const invoiceImportSvc = makeInvoiceImportService(people);
+  const importBatchSvc = makeImportBatchService(
+    { people, churches, overrides: allocationOverrides },
+    { form: importSvc, tickets: ticketImportSvc, invoices: invoiceImportSvc },
+  );
   const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
   const offlineSignInSvc = makeOfflineSignInService(people, settingsRepo);
   const account = makeAccountService(users, churches, people);
@@ -445,6 +455,7 @@ export async function buildContainer(): Promise<Container> {
     allocation,
     ticketImport: ticketImportSvc,
     invoiceImport: invoiceImportSvc,
+    importBatch: importBatchSvc,
     auditExport: auditExportSvc,
     offlineSignIn: offlineSignInSvc,
     account,

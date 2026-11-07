@@ -12,7 +12,7 @@ import { nowISO } from '../utils/date';
 import {
   buildNameIndex, addToIndex, findPersonMatch, mergeOwnedFields,
 } from './person-matching';
-import { invalidateDashboardCache } from './dashboard-cache';
+import { stage, NO_OVERRIDES, type ImportStore } from './import-store';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,8 @@ export interface TicketImportResult {
 }
 
 export interface TicketImportService {
-  importTicketsCsv(actor: Actor, input: unknown): Promise<TicketImportResult>;
+  /** `into`: see ImportService.importCsv — the caller owns that stage, nothing is flushed here. */
+  importTicketsCsv(actor: Actor, input: unknown, into?: ImportStore): Promise<TicketImportResult>;
 }
 
 /** 'Classroom'/'Tent' (any case, substring) → AccommodationKind; anything else → null (unrecognized). */
@@ -78,10 +79,13 @@ export function makeTicketImportService(
   personRepo: IPersonRepository,
   churchRepo: IChurchRepository,
 ): TicketImportService {
+  const real: ImportStore = { people: personRepo, churches: churchRepo, overrides: NO_OVERRIDES };
   return {
-    async importTicketsCsv(actor, input) {
+    async importTicketsCsv(actor, input, into) {
       assertCan(actor, 'import:run');
       const opts = TicketImportOptionsSchema.parse(input);
+      const staged = into ? null : stage(real);
+      const store = into ?? staged!;
       const rows = parseCsv(opts.csvData);
       if (rows.length === 0) throw new BadRequestError('CSV has no data rows');
 
@@ -92,13 +96,13 @@ export function makeTicketImportService(
       const warnings: TicketImportResult['warnings'] = [];
       const orphansCreated: string[] = [];
 
-      const churches = await churchRepo.findAll();
+      const churches = await store.churches.findAll();
       const churchOverrideById = new Map<string, Person['accommodationKind']>();
       for (const c of churches) {
         if (c.accommodationOverride) churchOverrideById.set(c.id, c.accommodationOverride);
       }
 
-      const allPersons = await personRepo.findAll();
+      const allPersons = await store.people.findAll();
       const index = buildNameIndex(allPersons);
       const touched = new Map<string, Person>();
       const occurrencesSeen = new Set<string>();
@@ -384,10 +388,8 @@ export function makeTicketImportService(
         });
       }
 
-      if (!opts.dryRun && touched.size > 0) {
-        await personRepo.saveMany([...touched.values()]);
-        invalidateDashboardCache();
-      }
+      if (touched.size > 0) await store.people.saveMany([...touched.values()]);
+      if (!opts.dryRun) await staged?.flush();
 
       return { created, updated, skipped, dryRun: opts.dryRun, errors, warnings, orphansCreated };
     },
