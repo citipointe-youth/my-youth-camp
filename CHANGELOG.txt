@@ -3,6 +3,18 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C9: P3+D2 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no public/ change. Supabase SQL CHANGED (people adapter). P3: person-repo presence
+seam. IPersonRepository.transition/transitionMany (lock rows FOR UPDATE in id order, decide on the
+stored row, write presence + one history row in the same tx) and clearPresence(now) (Reset logs in
+one tx) replace savePresence/savePresenceMany/clearPresenceHistory; plain save/saveMany never write
+at_camp/lifecycle/cancelled_at or history on UPDATE. Concurrent taps/cancels no longer undo each
+other (gate B M3, N1). A check-in whose person was signed out/cancelled meanwhile now gets the
+existing 400. users/notifications saveMany run in one tx. Contract suite for the in-memory repo.
+D2: dead zone/group repos and unused finders deleted (no DDL).
+
+
 2026-11-07 - Architecture round, Phase C8: P2 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change, no public/ change. P2: one session-roster rule.
