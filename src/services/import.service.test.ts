@@ -635,7 +635,7 @@ describe('ImportService.importCsv — protects overridden/cancelled people from 
     const all = await h.personRepo.findAll();
     const created = all.find((p) => p.firstName === over.firstName && p.lastName === over.lastName)!;
     const updated = { ...created, ...over };
-    await h.personRepo.save(updated);
+    await h.personRepo.save(updated, { presence: true }); // fixture sets lifecycle/atCamp directly (B-1)
     return updated;
   }
 

@@ -7,7 +7,7 @@
 // `people`, encrypted `*_enc` columns, and the check-in / sign-out histories hydrated
 // from CHILD TABLES (check_in_history, sign_out_history).
 import type { SqlClient, TxClient } from './client';
-import type { IPersonRepository } from '../interfaces/entity-repositories';
+import type { IPersonRepository, PersonSaveOpts } from '../interfaces/entity-repositories';
 import type { Person } from '../../core/entities/person';
 import type { CheckInEntry, SignOutEvent, ElvantoMeta } from '../../core/entities/person';
 import { isCamper } from '../../core/entities/person';
@@ -281,27 +281,33 @@ export class SupabasePersonRepository implements IPersonRepository {
 
   // --- writes ----------------------------------------------------------------
 
-  /** Upsert the `people` row + append any new history child rows in one transaction. */
-  async save(person: Person): Promise<Person> {
+  /** Upsert the `people` row + append any new history child rows in one transaction.
+   *  B-1: `at_camp`/`lifecycle` are only in the UPDATE set with `{ presence: true }`. */
+  async save(person: Person, opts?: PersonSaveOpts): Promise<Person> {
+    const cols = updateCols(opts);
     await this.sql.begin(async (tx: TxClient) => {
+      // ⚠ The upsert MUST stay before appendHistories: it row-locks this person's `people` row,
+      // which is what makes B-5's conditional check-in insert atomic. Do not reorder.
       await tx`
         insert into people ${tx(personColumns(person))}
-        on conflict (id) do update set ${tx(personColumns(person), ...PERSON_UPDATE_COLS)}
+        on conflict (id) do update set ${tx(personColumns(person), ...cols)}
       `;
       await appendHistories(tx, person);
     });
     return person;
   }
 
-  async saveMany(people: Person[]): Promise<Person[]> {
+  async saveMany(people: Person[], opts?: PersonSaveOpts): Promise<Person[]> {
     if (people.length === 0) return [];
+    const cols = updateCols(opts);
     await this.sql.begin(async (tx: TxClient) => {
       // Each person must be upserted individually — the batch ON CONFLICT DO UPDATE
       // would incorrectly overwrite every conflicting row with batch[0]'s values.
       for (const p of people) {
+        // ⚠ Upsert before appendHistories (row lock for B-5), as in save.
         await tx`
           insert into people ${tx(personColumns(p))}
-          on conflict (id) do update set ${tx(personColumns(p), ...PERSON_UPDATE_COLS)}
+          on conflict (id) do update set ${tx(personColumns(p), ...cols)}
         `;
         await appendHistories(tx, p);
       }
@@ -406,8 +412,8 @@ export function personColumns(p: Person): Record<string, unknown> {
   };
 }
 
-// Columns updated on conflict (everything except id + created_at).
-const PERSON_UPDATE_COLS = [
+// Columns updated on conflict (everything except id + created_at, and the two presence columns).
+export const PERSON_UPDATE_COLS = [
   'first_name', 'last_name', 'gender', 'date_of_birth', 'grade', 'school', 'kind',
   'church_id', 'church_name', 'zone', 'group_id', 'mobile', 'email', 'suburb',
   'postcode', 'state', 'medical_conditions_enc', 'dietary_requirements_enc', 'other_medications',
@@ -415,7 +421,7 @@ const PERSON_UPDATE_COLS = [
   'parent_guardian_name', 'parent_phone', 'parent_relation', 'blue_card_number',
   'blue_card_expiry_enc', 'consents_enc', 'payment_status', 'accommodation_kind',
   'accommodation_label', 'registration_type', 'registration_cost', 'discount_code',
-  'lifecycle', 'at_camp', 'updated_at',
+  'updated_at',
   // Pre-existing bug fix (unrelated to this change): these three columns were being
   // written on insert but never updated on conflict, so edits to them silently never
   // persisted on save/saveMany.
@@ -428,6 +434,13 @@ const PERSON_UPDATE_COLS = [
   // Every invoice number seen for this person (0023).
   'invoice_numbers',
 ] as const;
+
+/** B-1: presence is written on UPDATE only by the presence writers (`{ presence: true }`). */
+export const PRESENCE_COLS = ['lifecycle', 'at_camp'] as const;
+
+function updateCols(opts?: PersonSaveOpts): readonly string[] {
+  return opts?.presence ? [...PERSON_UPDATE_COLS, ...PRESENCE_COLS] : PERSON_UPDATE_COLS;
+}
 
 /**
  * Append a person's history child rows additively (INSERT … ON CONFLICT DO NOTHING).
@@ -445,17 +458,35 @@ const PERSON_UPDATE_COLS = [
  */
 async function appendHistories(tx: TxClient, p: Person): Promise<void> {
   if (p.checkInHistory.length > 0) {
-    await tx`insert into check_in_history ${tx(
-      p.checkInHistory.map((e) => ({
-        id: e.id,
-        person_id: p.id,
-        session_id: e.sessionId,
-        session_label: e.sessionLabel,
-        type: e.type,
-        leader_id: e.leaderId,
-        timestamp: e.timestamp,
-      })),
-    )} on conflict (id) do nothing`;
+    /* B-5: two taps on one person+session at once (a queue re-drain while a request is in
+       flight) each carry a fresh `newId('ci')`, so `on conflict (id)` can't dedupe them. A row
+       is inserted only if the LAST stored row for its (person, session) is not the same type —
+       withCheckIn's N5 rule, enforced in SQL. Atomic because the caller's `people` upsert has
+       already row-locked this person: the second tap's transaction waits there until the first
+       commits, and under READ COMMITTED this later statement then sees the first tap's row.
+       No refusal (the tap still answers 200) and the timestamp stays server time (Q9).
+       Sign-out history stays unconditional (OQ-33). */
+    const rows = p.checkInHistory.map((e) => ({
+      id: e.id,
+      person_id: p.id,
+      session_id: e.sessionId,
+      session_label: e.sessionLabel,
+      type: e.type,
+      leader_id: e.leaderId,
+      timestamp: e.timestamp,
+    }));
+    await tx`
+      insert into check_in_history (id, person_id, session_id, session_label, type, leader_id, "timestamp")
+      select v.id, v.person_id, v.session_id, v.session_label, v.type, v.leader_id, v."timestamp"
+      from jsonb_to_recordset(${tx.json(rows)}) as v(
+        id text, person_id text, session_id text, session_label text, type text, leader_id text, "timestamp" timestamptz
+      )
+      where (
+        select h.type from check_in_history h
+        where h.person_id = v.person_id and h.session_id = v.session_id
+        order by h."timestamp" desc limit 1
+      ) is distinct from v.type
+      on conflict (id) do nothing`;
   }
   if (p.signOutHistory.length > 0) {
     await tx`insert into sign_out_history ${tx(

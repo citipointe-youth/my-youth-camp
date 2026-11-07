@@ -10,6 +10,7 @@ import type { Church } from '../core/entities/church';
 import type { Person } from '../core/entities/person';
 import { hashPassword, verifyPassword } from '../utils/crypto';
 import { UnauthorizedError } from '../core/errors/app-error';
+import { canAccessPerson } from './person.service';
 
 // ---------------------------------------------------------------------------
 // AccountService.updateChurch — church rename propagation.
@@ -144,6 +145,36 @@ describe('AccountService.updateChurch — rename propagation', () => {
     const p1 = await people.findById('p1');
     expect(p1?.churchName).toBe('Victory Church');
     expect(p1?.updatedAt).toBe(NOW); // untouched
+  });
+
+  // B-15 (IA OQ-19): canAccessPerson scopes zone leaders by person.zone, so a zone move must
+  // re-stamp it, or the new zone's leader sees the church but not its people.
+  it('re-stamps zone on every attached person when the church zone changes', async () => {
+    await svc.updateChurch(admin(), 'c1', { zone: 'Blue' });
+    expect((await people.findById('p1'))?.zone).toBe('Blue');
+    expect((await people.findById('p2'))?.zone).toBe('Blue');
+    expect((await people.findById('p3'))?.zone).toBe('Yellow');
+    const zl: Actor = { id: 'z', role: 'zoneLeader', churchId: null, churchName: null, zone: 'Blue', displayName: 'ZL' };
+    expect(canAccessPerson(zl, (await people.findById('p1'))!)).toBe(true);
+  });
+
+  it('a name + zone change re-stamps both in one write and never reverts presence', async () => {
+    // The re-stamp works from a read; a sign-out committed after that read must survive it (B-1).
+    await people.save(person({ id: 'p1', churchId: 'c1', churchName: 'Victory Church', lifecycle: 'checked_out', atCamp: false }), { presence: true });
+    const stale = (await people.findById('p1'))!;
+    const realFind = people.findByChurch.bind(people);
+    people.findByChurch = async (id) => {
+      const rows = await realFind(id);
+      await people.save({ ...stale, lifecycle: 'arrived', atCamp: true }, { presence: true }); // a sign-in lands
+      return rows.map((r) => (r.id === 'p1' ? { ...r, lifecycle: 'checked_out', atCamp: false } : r));
+    };
+    let writes = 0;
+    const realMany = people.saveMany.bind(people);
+    people.saveMany = async (ps, o) => { writes++; return realMany(ps, o); };
+    await svc.updateChurch(admin(), 'c1', { name: 'Victory Community Church', zone: 'Blue' });
+    const p1 = (await people.findById('p1'))!;
+    expect(p1).toMatchObject({ churchName: 'Victory Community Church', zone: 'Blue', atCamp: true, lifecycle: 'arrived' });
+    expect(writes).toBe(1);
   });
 });
 

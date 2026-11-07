@@ -283,14 +283,21 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
         safeRest.refundAmount !== undefined && safeRest.refundAmount !== existing.refundAmount
           ? { refundedAt: safeRest.refundAmount == null ? null : nowISO() }
           : {};
-      const updated: Person = { ...existing, ...safeRest, ...rawPatch, ...cancelPatch, ...refundPatch,
+      /* B-3: cancelling someone at camp signs them out FIRST (arrived -> checked_out + one 'out'
+         event), then cancels. After the cancel, withSignEvent's no-op rule (B-2) would skip it. */
+      const base: Person = cancelling && existing.atCamp
+        ? withSignEvent(existing, { id: newId('so'), type: 'out', leaderName: actor.displayName || 'Staff',
+            reason: 'Registration cancelled', authorId: actor.id, timestamp: nowISO() }, nowISO())
+        : existing;
+      const updated: Person = { ...base, ...safeRest, ...rawPatch, ...cancelPatch, ...refundPatch,
         id: existing.id, lifecycle: nextLifecycle, updatedAt: nowISO() };
       // Fail-closed: the patched result must still be inside the actor's scope (a zoneLeader/
       // admin/director changing church/zone can't push a person out of what they may access).
       if (!canAccessPerson(actor, updated)) {
         throw new BadRequestError('Cannot move a person outside your scope');
       }
-      const saved = await repo.save(updated);
+      // B-1: only a cancel/uncancel moves presence; any other PATCH is a plain field write.
+      const saved = await repo.save(updated, cancelling || unCancelling ? { presence: true } : undefined);
       invalidateDashboardCache();
       return saved;
     },
@@ -327,8 +334,15 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       ) {
         throw new BadRequestError('Camp has not started yet, so nobody can be signed in.');
       }
+      // B-2 (IA OQ-8): mirrors checkIn's refusal. A cancelled sign-OUT is a no-op in withSignEvent.
+      if (event.type === 'in' && person.lifecycle === 'cancelled') {
+        throw new BadRequestError('Cannot sign in a cancelled person');
+      }
       const full: SignOutEvent = { ...event, id: newId('so') };
-      const saved = await repo.save(withSignEvent(person, full, nowISO()));
+      const next = withSignEvent(person, full, nowISO());
+      // A no-op writes nothing: re-saving this read with presence could revert a concurrent sign.
+      if (next === person) return person;
+      const saved = await repo.save(next, { presence: true });
       // ⚠ `invalidateDashboardCache()` is DELIBERATELY NOT called here or in `checkIn`.
       //
       // These two are the ONLY writes that fire in a burst: at a check-in window every
