@@ -906,6 +906,11 @@ correct. (⚠️ The rule still binds every *CSV* in this file.)
 - **`computeBudget`/`budgetToCsv` in `src/services/budget.ts` remain DEAD CODE** — nothing routes
   to them, the live budget is entirely the SPA mirror. Left alone (they are the canonical, tested
   algorithm), but do not assume the server CSV is what anyone downloads: **it never was**.
+- **Parity test (2026-11-07, S2):** `src/services/budget.parity.test.ts` pulls the SPA mirror out of
+  `public/index.html` into a vm and deep-equals `computeBudgetClient` / `computeSponsorSummaryClient` /
+  `computeDiscountSummaryClient` and the per-person functions against `budget.ts`. If it fails,
+  `budget.ts` is right and the SPA gets fixed. Only `categories`, `_people` and `cancelledCount`
+  (SPA-only fields) are stripped before comparing.
 
 ### 2b — Owner's layout corrections, same day (the workbook shipped twice)
 Four changes after seeing the first build. `scripts/budget-xlsx-harness.js` is now **98 checks**,
