@@ -192,7 +192,7 @@ describe('A2: the person DTOs are viewer-aware (mask + money strip inside the se
     const phones = [toCamperDto(p, as(role)), toCamperDetailDto(p, as(role)), toRegistrantDto(p, as(role)), toRegistrantDetailDto(p, as(role))]
       .map((d) => d.parentPhone);
     for (const ph of phones) {
-      if (MASKED.has(role)) { expect(ph).not.toBe('0400 000 000'); expect(ph).toBeTruthy(); }
+      if (MASKED.has(role)) { expect(ph).not.toBe('0400 000 000'); expect(ph === null || ph.includes('*')).toBe(true); } // T-1: prayer camper DTOs carry none
       else expect(ph).toBe('0400 000 000');
     }
   });

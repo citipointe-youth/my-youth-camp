@@ -306,8 +306,12 @@ export function toCamperDto(p: Person, actor: Actor): CamperDto {
     updatedAt: p.updatedAt,
   }, actor);
   if (!MONEY_HIDDEN_ROLES.has(actor.role)) return dto;
+  // T-1 (Tom, 7 Nov): prayer gets no parent or guardian contact and no camper mobile at all
+  // (firstAid/church keep the masked phone + reveal). The prayer screens never showed them.
+  const contact = actor.role === 'prayer' ? { parentPhone: null, parentGuardianName: null, mobile: null } : {};
   return {
     ...dto,
+    ...contact,
     amountPaidOverride: null,
     refundAmount: null,
     refundedAt: null,

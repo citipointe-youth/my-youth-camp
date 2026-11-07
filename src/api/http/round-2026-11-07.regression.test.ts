@@ -26,6 +26,7 @@ const ivy = {
   zone: 'Yellow', gender: 'female', grade: 10, lifecycle: 'arrived', atCamp: true,
   medicalConditions: [], dietaryRequirements: [], consents: { medical: { granted: true, timestamp: NOW } },
   paymentStatus: 'paid', needsReview: false, parentPhone: '0499111222',
+  parentGuardianName: 'Gina Guardian', mobile: '0477333444', email: 'ivy@example.com',
   registrationType: 'SECRETTIER', registrationCost: 111, discountCode: 'SECRETCODE', discountAmount: 222,
   amountPaidOverride: 333, refundAmount: 444, refundedAt: NOW, blueCardNumber: 'BLUE999', blueCardExpiry: '2030-01-01',
   checkInHistory: [], signOutHistory: [], createdAt: NOW, updatedAt: NOW,
@@ -91,10 +92,16 @@ describe('access regression: money strip on /campers and /search (route level)',
 
 describe('[T-1] prayer gets the parent number masked on the server (Tom, Step 3 ruling T-1)', () => {
   for (const [name, read] of READS) {
-    it(`[T-1] ${name}: prayer sees the masked parent number, like firstAid and church`, async () => {
-      expect((await read(actor('prayer')))['parentPhone']).toBe('0499****22');
-      expect((await read(actor('firstAid')))['parentPhone']).toBe('0499****22');
-      expect((await read(actor('director')))['parentPhone']).toBe('0499111222');
+    it(`[T-1] ${name}: prayer gets no parent phone, guardian name, mobile or email; consents stay`, async () => {
+      const out = await read(actor('prayer'));
+      for (const k of ['parentPhone', 'parentGuardianName', 'mobile', 'email']) expect(out[k] ?? null, k).toBeNull();
+      expect(JSON.stringify(out)).not.toMatch(/0499|Gina|0477|ivy@example/);
+      expect(out['consentMedical']).toBe(true);
+    });
+    it(`[T-1] ${name}: firstAid, church and director are unchanged`, async () => {
+      expect(await read(actor('firstAid'))).toMatchObject({ parentPhone: '0499****22', parentGuardianName: 'Gina Guardian', mobile: '0477333444' });
+      expect(await read(CHURCH)).toMatchObject({ parentPhone: '0499****22', parentGuardianName: 'Gina Guardian', mobile: '0477333444' });
+      expect(await read(actor('director'))).toMatchObject({ parentPhone: '0499111222', parentGuardianName: 'Gina Guardian' });
     });
   }
 });
