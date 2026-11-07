@@ -89,6 +89,16 @@ describe('access regression: money strip on /campers and /search (route level)',
   }
 });
 
+describe('[T-1] prayer gets the parent number masked on the server (Tom, Step 3 ruling T-1)', () => {
+  for (const [name, read] of READS) {
+    it(`[T-1] ${name}: prayer sees the masked parent number, like firstAid and church`, async () => {
+      expect((await read(actor('prayer')))['parentPhone']).toBe('0499****22');
+      expect((await read(actor('firstAid')))['parentPhone']).toBe('0499****22');
+      expect((await read(actor('director')))['parentPhone']).toBe('0499111222');
+    });
+  }
+});
+
 describe('access regression: GET /settings needs a login', () => {
   it('[A-Q11][B-8][Q11] GET /settings is auth:true in the route table (IA-OQ-14, empty pre-login allow-list)', () => {
     expect(find('GET', '/settings')?.auth).toBe(true);

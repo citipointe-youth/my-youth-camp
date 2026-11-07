@@ -184,10 +184,10 @@ describe('individual overrides and cancel/refund fields', () => {
 describe('A2: the person DTOs are viewer-aware (mask + money strip inside the serialiser)', () => {
   const as = (role: Actor['role']): Actor => ({ ...ADMIN, id: role, role });
   const ROLES: Actor['role'][] = ['admin', 'director', 'zoneLeader', 'church', 'firstAid', 'prayer'];
-  const MASKED = new Set(['church', 'firstAid']);
+  const MASKED = new Set(['church', 'firstAid', 'prayer']); // T-1: prayer masked too
   const MONEYLESS = new Set(['firstAid', 'prayer']);
 
-  it.each(ROLES)('%s: parent phone masked only for church/firstAid, on every person DTO', (role) => {
+  it.each(ROLES)('%s: parent phone masked only for church/firstAid/prayer, on every person DTO', (role) => {
     const p = personFixture();
     const phones = [toCamperDto(p, as(role)), toCamperDetailDto(p, as(role)), toRegistrantDto(p, as(role)), toRegistrantDetailDto(p, as(role))]
       .map((d) => d.parentPhone);

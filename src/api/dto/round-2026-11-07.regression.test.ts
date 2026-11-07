@@ -18,15 +18,15 @@ const p = {
 } as unknown as Person;
 
 describe('access regression: C3 (A2) view(actor, person) masks inside the DTO', () => {
-  it('[C3] church and firstAid get the parent number masked on camper + registrant DTOs', () => {
-    for (const role of ['church', 'firstAid'] as const) {
+  it('[C3][T-1] church, firstAid and prayer get the parent number masked on camper + registrant DTOs', () => {
+    for (const role of ['church', 'firstAid', 'prayer'] as const) {
       for (const dto of [toCamperDto(p, actor(role)), toCamperDetailDto(p, actor(role)), toRegistrantDto(p, actor(role))]) {
         expect(dto.parentPhone, role).toBe('0499****22');
       }
     }
   });
-  it('[C3] zoneLeader, director, admin and prayer keep the plain parent number', () => {
-    for (const role of ['zoneLeader', 'director', 'admin', 'prayer'] as const) {
+  it('[C3][T-1] zoneLeader, director and admin keep the plain parent number', () => {
+    for (const role of ['zoneLeader', 'director', 'admin'] as const) {
       expect(toCamperDto(p, actor(role)).parentPhone, role).toBe(PARENT);
     }
   });
