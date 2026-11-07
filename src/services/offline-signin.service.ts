@@ -9,7 +9,6 @@ import { transition, writeOf } from './presence';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { BadRequestError } from '../core/errors/app-error';
-import { invalidateDashboardCache } from './dashboard-cache';
 
 export interface OfflineSignInResult {
   signedIn: number;
@@ -158,7 +157,6 @@ export function makeOfflineSignInService(personRepo: IPersonRepository, settings
           if (w) signedIn++; else alreadySignedIn++;
           return w;
         });
-        invalidateDashboardCache();
       }
 
       return { signedIn, alreadySignedIn, unmatched, cancelledSkipped };

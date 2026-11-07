@@ -11,11 +11,9 @@ import { buildSessions, currentSession as pickCurrentSession, sessionClock } fro
 import type { Person } from '../core/entities/person';
 import { isRegistrant, isCamper } from '../core/entities/person';
 import { canAccessPerson } from './person.service';
-import { getCachedDashboard, setCachedDashboard } from './dashboard-cache';
+import { makeDashboardCache, type DashboardCache } from './dashboard-cache';
 import { isOversight } from './access-control';
 import { onSessionRoster, isCheckedInFor } from './session-roster';
-
-export { invalidateDashboardCache } from './dashboard-cache';
 
 export interface PreCampDashboard {
   mode: 'pre-camp';
@@ -73,6 +71,8 @@ export function makeDashboardService(
   personRepo: IPersonRepository,
   notifRepo: INotificationRepository,
   churchRepo: IChurchRepository,
+  /** One per container (D3); tests get a fresh one each. */
+  cache: DashboardCache = makeDashboardCache(),
 ): DashboardService {
   /**
    * The narrowest repo query the actor's scope allows.
@@ -103,7 +103,7 @@ export function makeDashboardService(
 
   return {
     async home(actor, settings) {
-      const cached = getCachedDashboard(actor);
+      const cached = cache.get(actor);
       if (cached) return cached;
 
       if (settings.campMode === 'pre-camp') {
@@ -152,7 +152,7 @@ export function makeDashboardService(
           dashboard.perChurchBreakdown = breakdown;
         }
 
-        setCachedDashboard(actor, dashboard);
+        cache.set(actor, dashboard);
         return dashboard;
       } else {
         // At-camp dashboard.
@@ -241,7 +241,7 @@ export function makeDashboardService(
             : null,
         };
 
-        setCachedDashboard(actor, dashboard);
+        cache.set(actor, dashboard);
         return dashboard;
       }
     },

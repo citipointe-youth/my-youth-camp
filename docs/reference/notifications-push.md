@@ -210,6 +210,8 @@ push**, both reconciled to clean version labels and verified present by query.
 > `<script>…</script>` regex still fails because the file contains the literal `</script>`.
 
 ### 8 — `checkIn`/`signEvent` no longer flush the dashboard cache
+> **D3 (2026-11-07):** the 31 explicit `invalidateDashboardCache()` calls are gone. The cache is built once per container (`makeDashboardCache` in `buildServices`) and flushed at the repo seam: `invalidateOnWrite` wraps `people` (`save`, `saveMany`, `delete`, `deleteAll`, `transitionMany`, `clearPresence`), `churches` and `notifications` (`save`, `saveMany`, `delete`, `deleteAll`) and `settings` (`saveSingleton`, `patchSingleton`). **`people.transition` (every check-in and sign-in/out tap) is deliberately not wrapped**, so the rule below still holds. Pinned by `dashboard-cache.test.ts`. The text below is the original reasoning.
+
 `invalidateDashboardCache()` wipes **every** entry globally, and the cache is keyed on
 `(role, churchId, zone, genderScope)` (plus `actor.id` since 2026-11-07, A-8, so per account) — **not per device** — so ~100 devices collapse to ~30 keys
 (~4:1). These two are the only **bursty** writes in the app: at a check-in window every leader taps

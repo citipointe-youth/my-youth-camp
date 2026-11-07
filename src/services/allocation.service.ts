@@ -6,7 +6,6 @@ import { assertCan } from './access-control';
 import { BadRequestError, NotFoundError } from '../core/errors/app-error';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
-import { invalidateDashboardCache } from './dashboard-cache';
 import type { Person } from '../core/entities/person';
 import {
   UNALLOCATED_CHURCH_ID, UNALLOCATED_CHURCH_NAME, OTHER_CHURCH_LITERAL,
@@ -127,7 +126,6 @@ export function makeAllocationService(
         updatedAt: now,
       };
       await overrideRepo.save(saved);
-      invalidateDashboardCache();
       return toDto(saved, `${person.firstName} ${person.lastName}`);
     },
 
@@ -151,7 +149,6 @@ export function makeAllocationService(
         }
       }
       await overrideRepo.delete(id);
-      invalidateDashboardCache();
       return { ok: true };
     },
   };

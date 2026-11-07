@@ -34,7 +34,6 @@ import { newId } from '../utils/id';
 import { makeSettingsService } from './settings.service';
 import { generateTempPassword } from '../utils/temp-password';
 import { hashPassword } from '../utils/crypto';
-import { invalidateDashboardCache } from './dashboard-cache';
 import { transition, writeOf } from './presence';
 
 export interface TempPasswordEntry {
@@ -171,7 +170,6 @@ export function makeAdminService(
       const users = await userRepo.findAll();
       await Promise.all(users.filter((u) => u.role !== 'admin').map((u) => userRepo.delete(u.id)));
 
-      invalidateDashboardCache();
       return { ok: true };
     },
 
@@ -204,7 +202,6 @@ export function makeAdminService(
       // sheet in the same compliance workbook as the notes and incidents beside it.
       await Promise.all([noteRepo.deleteAll(), incidentRepo.deleteAll(), revealAuditRepo.deleteAll()]);
 
-      invalidateDashboardCache();
       return { people: touched, notes: notes.length, incidents: incidents.length };
     },
 
@@ -321,14 +318,12 @@ export function makeAdminService(
         lastExportedAt: null,
         updatedAt: nowISO(),
       });
-      invalidateDashboardCache();
       return { ...updated, tempPasswords };
     },
 
     async clearNotifications(actor) {
       assertCan(actor, 'admin:manage');
       const deleted = await notifRepo.deleteAll();
-      invalidateDashboardCache();
       return { deleted };
     },
 
@@ -383,7 +378,6 @@ export function makeAdminService(
           await personRepo.transitionMany(ids, (current) => writeOf(current, transition(current, { kind: 'modeRevert',
             event: { id: newId('so'), type: 'out', leaderName: actor.displayName, reason: 'Camp mode reverted to pre-camp',
               authorId: actor.id, timestamp: now } }, { actor, campMode: null, now }))); // modeRevert never reads campMode
-          invalidateDashboardCache();
         }
       }
       return saved;

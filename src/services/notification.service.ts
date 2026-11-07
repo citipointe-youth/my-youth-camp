@@ -6,7 +6,6 @@ import { CreateNotificationSchema, UpdateNotificationSchema } from '../core/vali
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
-import { invalidateDashboardCache } from './dashboard-cache';
 import { canSeeNotification, byPublishedDesc } from './notification-visibility';
 import { resolvePushAudience, type PushService } from './push.service';
 
@@ -133,7 +132,6 @@ export function makeNotificationService(
         createdAt,
       };
       const saved = await notifRepo.save(notif);
-      invalidateDashboardCache(); // affects AtCampDashboard.latestNotification
       /* Push urgent notices NOW instead of waiting up to 5 minutes for the cron tick
          (2026-08-03, owner request). `sendNow` claims atomically so the tick cannot then
          double-send, re-checks `isPushable` (so a NORMAL-priority notice still never buzzes
@@ -204,7 +202,6 @@ export function makeNotificationService(
         audienceEstimate: existing.audienceEstimate,
       };
       const saved = await notifRepo.save(updated);
-      invalidateDashboardCache();
       return saved;
     },
 
@@ -224,7 +221,6 @@ export function makeNotificationService(
         }
       }
       await notifRepo.delete(id);
-      invalidateDashboardCache();
       return { ok: true };
     },
 
@@ -238,7 +234,6 @@ export function makeNotificationService(
       for (const n of all) {
         await notifRepo.delete(n.id);
       }
-      invalidateDashboardCache();
       return { deleted: all.length };
     },
   };

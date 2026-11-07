@@ -9,7 +9,6 @@ import { RegistrantPatchSchema } from '../core/validation';
 import { ageFromDob, nowISO } from '../utils/date';
 import { newId } from '../utils/id';
 import { decideOrRefuse } from './presence';
-import { invalidateDashboardCache } from './dashboard-cache';
 
 /**
  * PersonService — the unified registrant + camper service (design D2), operating
@@ -202,7 +201,6 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
         updatedAt: now,
       };
       const saved = await repo.save(person);
-      invalidateDashboardCache();
       return saved;
     },
 
@@ -274,7 +272,6 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
         ? await repo.transition(id, decideOrRefuse({ kind: cancelling ? 'cancel' : 'uncancel' }, { actor, campMode: null, now }))
         : null;
       const saved = await repo.save(updated);
-      invalidateDashboardCache();
       if (!moved) return saved;
       const { atCamp, lifecycle: lc, cancelledAt, checkInHistory, signOutHistory } = moved;
       return { ...saved, atCamp, lifecycle: lc, cancelledAt, checkInHistory, signOutHistory };
@@ -362,7 +359,6 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       assertCan(actor, 'person:delete');
       await getOwned(actor, id);
       await repo.delete(id);
-      invalidateDashboardCache();
     },
 
     async checkIn(actor, personId, entry) {
@@ -371,7 +367,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       // ⚠ Queue path: the two refusals and their messages are frozen in presence.ts. Decided on
       // the locked row (P3), so two simultaneous taps serialise and the second is an N5 no-op
       // (200, nothing written). A lock/transaction error is a 5xx, which the queue keeps.
-      // NOT invalidated deliberately — see signEvent below.
+      // The dashboard cache is NOT flushed by a tap — see signEvent below.
       return repo.transition(person.id,
         decideOrRefuse({ kind: 'checkIn', entry: { ...entry, id: newId('ci') } }, { actor, campMode: null, now: nowISO() }));
     },
@@ -387,21 +383,19 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       const saved = await repo.transition(person.id, decideOrRefuse(
         { kind: event.type === 'in' ? 'signIn' : 'signOut', event: { ...event, id: newId('so') } },
         { actor, campMode, now: nowISO() }));
-      // ⚠ `invalidateDashboardCache()` is DELIBERATELY NOT called here or in `checkIn`.
+      // ⚠ The dashboard cache is DELIBERATELY NOT flushed by this or by `checkIn` (D3: the
+      // container's invalidating wrapper leaves `IPersonRepository.transition` out).
       //
       // These two are the ONLY writes that fire in a burst: at a check-in window every
-      // leader on every device taps through a roster at once. The cache is keyed on
-      // (role, churchId, zone, genderScope) — NOT per device — so ~100 devices collapse to
-      // ~30 distinct keys, roughly 4:1, which absorbs most of that burst. But
-      // `invalidateDashboardCache()` wipes EVERY entry globally, so a single tap flushed
-      // the cache for all 30 keys precisely while every device was loading `/home`,
-      // driving the hit rate to ~0 at the worst possible moment.
+      // leader on every device taps through a roster at once. Most devices are church logins
+      // whose cache slots absorb that burst; a flush wipes EVERY slot, so a flush per tap
+      // drove the hit rate to ~0 precisely while every device was loading `/home`.
       //
       // The cost of not invalidating is bounded by the 30s TTL: a "still to check in"
       // count can lag by up to 30 seconds. That is harmless — a leader mid-rush is on the
       // roster screen (which reads people directly and is always live), not the dashboard.
-      // Every other writer still invalidates, so lifecycle/registration/settings edits —
-      // which are not bursty — stay immediate.
+      // Every other person write goes through a flushing repo method, so lifecycle/
+      // registration/settings edits — which are not bursty — stay immediate.
       return saved;
     },
   };

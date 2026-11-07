@@ -92,6 +92,7 @@ import { makeImportService, type ImportService } from './services/import.service
 import { makeExportService, type ExportService } from './services/export.service';
 import { makeAccountService, type AccountService } from './services/account.service';
 import { makeDashboardService, type DashboardService } from './services/dashboard.service';
+import { makeDashboardCache, invalidateOnWrite } from './services/dashboard-cache';
 import { makeAdminService, type AdminService } from './services/admin.service';
 import { makePersonService, type PersonService } from './services/person.service';
 import { makeAllocationService, type AllocationService } from './services/allocation.service';
@@ -214,10 +215,20 @@ export async function initRepos(repos: Repositories): Promise<void> {
 
 /** The service graph. Pure and synchronous; the only place it is wired. */
 export function buildServices(repos: Repositories): Services {
+  /* D3: one dashboard cache per container, flushed at the repo seam. The four repos the
+     dashboard DTO reads are wrapped so their writes flush it; services never call it.
+     ⚠ `people.transition` (check-in and sign-in/out taps) is deliberately NOT listed: a flush
+     per tap would collapse the hit rate during a check-in burst (IMPACT-SUMMARY conflict (c)). */
+  const dashboardCache = makeDashboardCache();
+  const flush = dashboardCache.invalidate;
+  const people = invalidateOnWrite(repos.people, ['save', 'saveMany', 'delete', 'deleteAll', 'transitionMany', 'clearPresence'], flush);
+  const churches = invalidateOnWrite(repos.churches, ['save', 'saveMany', 'delete', 'deleteAll'], flush);
+  const notifications = invalidateOnWrite(repos.notifications, ['save', 'saveMany', 'delete', 'deleteAll'], flush);
+  const settingsRepo = invalidateOnWrite(repos.settings, ['saveSingleton', 'patchSingleton'], flush);
   const {
-    users, churches, allocationOverrides, people, classrooms, allocations, classroomFreeze,
-    notes, notifications, incidents, revealAudit, schedule: scheduleRepo, devotionals, faqs,
-    settings: settingsRepo, snapshots, pushSubscriptions,
+    users, allocationOverrides, classrooms, allocations, classroomFreeze,
+    notes, incidents, revealAudit, schedule: scheduleRepo, devotionals, faqs,
+    snapshots, pushSubscriptions,
   } = repos;
 
   const auth = makeAuthService(users, settingsRepo);
@@ -252,7 +263,7 @@ export function buildServices(repos: Repositories): Services {
   const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
   const offlineSignInSvc = makeOfflineSignInService(people, settingsRepo);
   const account = makeAccountService(users, churches, people);
-  const dashboard = makeDashboardService(people, notifications, churches);
+  const dashboard = makeDashboardService(people, notifications, churches, dashboardCache);
   const admin = makeAdminService(
     users, churches, people, classrooms, allocations, faqs, scheduleRepo,
     notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,

@@ -12,7 +12,6 @@ import { nowISO } from '../utils/date';
 import {
   buildNameIndex, addToIndex, findPersonMatch, mergeOwnedFields,
 } from './person-matching';
-import { invalidateDashboardCache } from './dashboard-cache';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
@@ -386,7 +385,6 @@ export function makeTicketImportService(
 
       if (!opts.dryRun && touched.size > 0) {
         await personRepo.saveMany([...touched.values()]);
-        invalidateDashboardCache();
       }
 
       return { created, updated, skipped, dryRun: opts.dryRun, errors, warnings, orphansCreated };

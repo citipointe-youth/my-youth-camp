@@ -184,7 +184,7 @@ api (Express) → controllers → services → repositories (interfaces) → cor
 - **`src/repositories/`** — interfaces (DB-swap surface) + in-memory implementations + JSON file persistence.
 - **`src/services/`** — all business logic + RBAC. Depend on repo *interfaces* only.
 - **`src/api/`** — thin controllers → declarative route table (`http/router.ts`) → Express adapter. Express lives only under `src/api/http/` and `src/api/middleware/`.
-- **`src/container.ts`** — composition root. The only file that names concrete repositories. Two adapters (`supabaseRepos(sql)`, `memoryRepos({dataDir?})`) build a `Repositories` set; `buildServices(repos)` is the one service graph; `buildContainer()` picks the adapter by `PERSISTENCE`, `buildMemoryContainer()` gives tests fresh state (D1, 2026-11-07).
+- **`src/container.ts`** — composition root. The only file that names concrete repositories. Two adapters (`supabaseRepos(sql)`, `memoryRepos({dataDir?})`) build a `Repositories` set; `buildServices(repos)` is the one service graph; `buildContainer()` picks the adapter by `PERSISTENCE`, `buildMemoryContainer()` gives tests fresh state (D1, 2026-11-07). `buildServices` also builds the one dashboard cache and wraps the people/churches/notifications/settings repos so their writes flush it; services never flush it, and `people.transition` (check-in and sign taps) is deliberately not wrapped (D3).
 
 ## Roles
 

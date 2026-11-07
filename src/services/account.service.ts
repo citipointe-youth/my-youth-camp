@@ -22,7 +22,6 @@ import { hashPassword, verifyPassword } from '../utils/crypto';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { toSafeUser } from './auth.service';
-import { invalidateDashboardCache } from './dashboard-cache';
 import { memorablePassword } from '../utils/memorable-password';
 import type { UserRole } from '../core/types/enums';
 import { parseCsv } from '../utils/csv';
@@ -463,7 +462,6 @@ export function makeAccountService(
       const boys = await createGenderAccount(church, 'male', slugBase, allUsers);
       const girls = await createGenderAccount(church, 'female', slugBase, allUsers);
 
-      invalidateDashboardCache(); // new church affects PreCampDashboard.perChurchBreakdown
       return {
         church,
         users: [toSafeUser(boys.user), toSafeUser(girls.user)],
@@ -492,7 +490,6 @@ export function makeAccountService(
         retired += await retireLegacyChurchLogins(church.id, allUsers);
       }
 
-      invalidateDashboardCache();
       return { created, retired, churches: churches.length };
     },
 
@@ -585,7 +582,6 @@ export function makeAccountService(
         });
       }
 
-      invalidateDashboardCache();
       rows.sort(
         (a, b) => a.church.localeCompare(b.church) || (a.gender ?? '').localeCompare(b.gender ?? ''),
       );
@@ -605,7 +601,6 @@ export function makeAccountService(
     async randomizeChurchOnlyPasswords(actor) {
       assertCan(actor, 'admin:manage');
       const rows = await rotateChurchLogins();
-      invalidateDashboardCache();
       rows.sort(
         (a, b) => a.church.localeCompare(b.church) || (a.gender ?? '').localeCompare(b.gender ?? ''),
       );
@@ -657,7 +652,6 @@ export function makeAccountService(
           });
           applied++;
         }
-        if (applied > 0) invalidateDashboardCache();
       }
 
       return {
@@ -712,7 +706,6 @@ export function makeAccountService(
           );
         }
       }
-      invalidateDashboardCache();
       return saved;
     },
 
@@ -735,7 +728,6 @@ export function makeAccountService(
         contacts: data.contacts,
         updatedAt: nowISO(),
       });
-      invalidateDashboardCache();
       return saved;
     },
 
@@ -771,7 +763,6 @@ export function makeAccountService(
         await userRepo.delete(u.id);
       }
       await churchRepo.delete(id);
-      invalidateDashboardCache();
       return { deleted: id };
     },
   };

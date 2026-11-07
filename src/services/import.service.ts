@@ -22,7 +22,6 @@ import {
   CARE_COLUMNS, CONSENT_COLUMNS, cleanCareText, field, isBlankRow, missingColumns, normalizeDate,
   parseGradeOrLeader, parseMedicationConsent, submissionSortKey, titleCaseName, yesToConsent,
 } from './elvanto-mapping';
-import { invalidateDashboardCache } from './dashboard-cache';
 import { z } from 'zod';
 
 const ImportOptionsSchema = z.object({
@@ -654,7 +653,6 @@ export function makeImportService(
         for (const o of overrides) {
           if (absentSet.has(o.personId)) await overrideRepo.delete(o.id);
         }
-        invalidateDashboardCache();
       }
 
       return { created, updated, skipped, deleted, retained, dryRun: opts.dryRun, errors, warnings, churchesCreated, phantomChurches };

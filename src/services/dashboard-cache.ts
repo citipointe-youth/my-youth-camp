@@ -2,12 +2,16 @@ import { ResponseCache } from '../utils/response-cache';
 import type { Actor } from '../core/entities/user';
 import type { DashboardResult } from './dashboard.service';
 
-// Kept in its own module (not inside dashboard.service.ts) so writer services
-// (person.service, import services, admin.service, etc.) can invalidate it
-// without creating a circular import with dashboard.service.ts, which itself
-// imports from person.service.ts (canAccessPerson). `DashboardResult` is a
-// type-only import, so it's erased and doesn't introduce a runtime cycle.
-const _cache = new ResponseCache<DashboardResult>(30_000);
+/**
+ * The dashboard response cache (D3). One per container, built in `buildServices` and injected
+ * into `makeDashboardService` only. Writer services don't know it exists: the container wraps the
+ * repos the DTO reads (`invalidateOnWrite`), so a write through them flushes it.
+ */
+export interface DashboardCache {
+  get(actor: Actor): DashboardResult | null;
+  set(actor: Actor, value: DashboardResult): void;
+  invalidate(): void;
+}
 
 /**
  * The key MUST carry every dimension the dashboard DTO is scoped by, or two actors with
@@ -24,21 +28,44 @@ const _cache = new ResponseCache<DashboardResult>(30_000);
  * and `latestNotification` when it is targeted at one account), so accounts sharing role + church
  * + zone + genderScope (directors, admins, firstAid) must not share a slot either.
  */
-function _actorKey(actor: Actor): string {
+function actorKey(actor: Actor): string {
   return `${actor.id}:${actor.role}:${actor.churchId ?? '_'}:${actor.zone ?? '_'}:${actor.genderScope ?? '_'}`;
 }
 
-export function getCachedDashboard(actor: Actor): DashboardResult | null {
-  return _cache.get(_actorKey(actor));
+export function makeDashboardCache(opts: { ttlMs?: number } = {}): DashboardCache {
+  const cache = new ResponseCache<DashboardResult>(opts.ttlMs ?? 30_000);
+  return {
+    get: (actor) => cache.get(actorKey(actor)),
+    set: (actor, value) => cache.set(actorKey(actor), value),
+    invalidate: () => cache.invalidateAll(),
+  };
 }
 
-export function setCachedDashboard(actor: Actor, value: DashboardResult): void {
-  _cache.set(_actorKey(actor), value);
-}
-
-/** Invalidate on every write that can change a dashboard DTO field (people,
- * churches, notifications, settings/mode). When in doubt, call this —
- * correctness over hit rate; the TTL is short (30s) so hit rate is a minor win. */
-export function invalidateDashboardCache(): void {
-  _cache.invalidateAll();
+/**
+ * Wrap a repository so the named write methods call `invalidate()` after they run (also on
+ * failure: a flush is always safe). Reads and every other method pass straight through.
+ *
+ * ⚠ Never list `IPersonRepository.transition` (IMPACT-SUMMARY conflict (c)): it carries the only
+ * BURSTY writes — check-in and sign-in/out taps, ~100 devices at once in a check-in window — and
+ * a flush per tap drops the hit rate to ~0 exactly while every device loads `/home`. The cost of
+ * not flushing is bounded by the 30 s TTL. Cancel/uncancel also use `transition`, but their PATCH
+ * ends in a plain `save`, which flushes.
+ */
+export function invalidateOnWrite<T extends object>(repo: T, methods: readonly (keyof T & string)[], invalidate: () => void): T {
+  const writes = new Set<string>(methods);
+  return new Proxy(repo, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target) as unknown;
+      if (typeof value !== 'function') return value;
+      const fn = value as (...args: unknown[]) => unknown;
+      if (typeof prop !== 'string' || !writes.has(prop)) return fn.bind(target);
+      return async (...args: unknown[]) => {
+        try {
+          return await fn.apply(target, args);
+        } finally {
+          invalidate();
+        }
+      };
+    },
+  });
 }
