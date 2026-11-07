@@ -3,6 +3,16 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C10: D3 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change, no public/ change. D3: the dashboard cache is one per
+container (makeDashboardCache in buildServices) and is flushed at the repo seam (invalidateOnWrite
+on people save/saveMany/delete/deleteAll/transitionMany/clearPresence, churches, notifications,
+settings saveSingleton/patchSingleton). people.transition (check-in and sign-in/out taps) never
+flushes, as before. The explicit invalidateDashboardCache() calls are gone. Fresher only: notice
+sends and export/import stamps now flush too.
+
+
 2026-11-07 - Architecture round, Phase C9: P3+D2 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no public/ change. Supabase SQL CHANGED (people adapter). P3: person-repo presence
