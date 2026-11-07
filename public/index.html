@@ -8584,6 +8584,9 @@ async function doNewYear(){
         <p class="sub" style="margin:8px 0 14px">This rollover restores your churches, accounts, accommodation, FAQ, schedule &amp; devotionals from a saved baseline — but you haven't saved one yet. Nothing was changed. Go to <b>Data Export/Reset → Save Defaults</b>, then come back and roll over.</p>
         <button class="btn" onclick="closeModal();go('adminData')">Go to Data &amp; Save Defaults ${icSm('arrowr')}</button>
         <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
+    }else if(e.message&&e.message.toLowerCase().includes('export')){
+      // Gate A UX 4: the user is already on the close-out page; point at Step 1's Download button.
+      toast('Download the audit workbook first (Step 1, the Download button), then roll over again.');
     }else{toast(e.message);}
   }
 }
@@ -9891,11 +9894,12 @@ async function offlineSignInUpload(){
     const r=await api('/import/offline-signin',{method:'POST',body:{csvData:rd.text}});
     const bits=[`${r.signedIn} signed in`];
     if(r.alreadySignedIn)bits.push(`${r.alreadySignedIn} already at camp`);
-    if(r.unmatched&&r.unmatched.length)bits.push(`${r.unmatched.length} not matched`);
+    if(r.unmatched&&r.unmatched.length)bits.push(`${r.unmatched.length} not signed in (listed below)`);
     // Task 16 fix round 1 — a "Y" against a cancelled person is never signed in; named here so
     // a leader isn't left wondering why the count came up short.
     if(r.cancelledSkipped&&r.cancelledSkipped.length)bits.push(`${r.cancelledSkipped.length} cancelled — not signed in`);
-    const unmatchedList=r.unmatched&&r.unmatched.length?`<p class="note-hint" style="text-align:left;margin-top:6px">Not matched: ${r.unmatched.map(esc).join(', ')}</p>`:'';
+    // Gate A UX 5: one name per line (entries can be long, e.g. same-name twins to sign in on the app).
+    const unmatchedList=r.unmatched&&r.unmatched.length?`<p class="note-hint" style="text-align:left;margin-top:6px">Not signed in from the sheet:<br>${r.unmatched.map(esc).join('<br>')}</p>`:'';
     const cancelledList=r.cancelledSkipped&&r.cancelledSkipped.length?`<p class="note-hint" style="text-align:left;margin-top:6px">Cancelled, not signed in: ${r.cancelledSkipped.map(esc).join(', ')}</p>`:'';
     if(box){box.innerHTML=`<div class="callbox">${icSm('check')} ${bits.join(' · ')}</div>${unmatchedList}${cancelledList}`;}
     toast('Offline sign-in applied');
@@ -10659,9 +10663,11 @@ function onResetConfirmChange(){
   if(btn)btn.disabled=!_confirmPhraseOk(document.getElementById('resetConfirmText')?.value);
 }
 function _exportFirstModal(what){
+  // Gate A UX 4: name the screen the way this role's tile does (admin sees "Data Export/Reset").
+  const where=ACTOR&&ACTOR.role==='admin'?'Data Export/Reset':'Records &amp; Export';
   modal(`<h3>Export required first</h3>
-    <p class="sub" style="margin:8px 0 14px">No audit export since the last wipe. Download the audit workbook first in Records &amp; Export, then retry the ${esc(what)}.</p>
-    <button class="btn" onclick="closeModal();go('adminData')">Go to Records &amp; Export ${icSm('arrowr')}</button>
+    <p class="sub" style="margin:8px 0 14px">No audit export since the last wipe. Download the audit workbook first in ${where}, then retry the ${esc(what)}.</p>
+    <button class="btn" onclick="closeModal();go('adminData')">Go to ${where} ${icSm('arrowr')}</button>
     <button class="btn ghost" style="margin-top:6px" onclick="closeModal()">Cancel</button>`);
 }
 async function _adminResetConfirmed(){

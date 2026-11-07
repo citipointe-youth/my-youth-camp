@@ -134,7 +134,7 @@ export interface IFaqRepository extends IRepository<FaqItem> {
 
 export interface ISettingsRepository {
   getSingleton(): Promise<CampSettings | null>;
-  /** Seed and first insert only. Every other settings write goes through patchSingleton. */
+  /** Full-row write. New writes should use patchSingleton; the remaining full-row writers move in Phase B (B-7). */
   saveSingleton(settings: CampSettings): Promise<CampSettings>;
   /**
    * Column-scoped update of the existing row: writes only the keys present in `fields` (a key

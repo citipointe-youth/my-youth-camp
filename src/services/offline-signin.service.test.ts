@@ -138,7 +138,7 @@ describe('OfflineSignInService', () => {
         await people.save(person({ id: 'p1' }));
         const director: Actor = { ...admin(), role: 'director' };
         for (const actor of [admin(), director]) {
-          await expect(svc.importSignIns(actor, csv)).rejects.toThrow('Camp has not started yet, so nobody can be signed in.');
+          await expect(svc.importSignIns(actor, csv)).rejects.toThrow('Camp has not started yet, so nobody can be signed in. Switch the app to At-Camp mode first, then import again.');
         }
         const after = await people.findById('p1');
         expect(after?.atCamp).toBe(false);
