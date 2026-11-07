@@ -23,6 +23,7 @@ import {
   parseGradeOrLeader, parseMedicationConsent, submissionSortKey, titleCaseName, yesToConsent,
 } from './elvanto-mapping';
 import { stage, type ImportStore } from './import-store';
+import { applyRow } from './field-ownership';
 import { z } from 'zod';
 
 const ImportOptionsSchema = z.object({
@@ -423,63 +424,44 @@ export function makeImportService(
             seenIds.add(match.id);
             skipped++;
           } else if (match) {
-            const storedKind = match.accommodationKindRaw !== undefined ? match.accommodationKindRaw : match.accommodationKind;
-            const seedOnly = <T>(stored: T | null | undefined, incoming: T): T | null | undefined =>
-              isExisting ? stored ?? incoming : incoming ?? stored;
-            const merged: Person = {
-              ...match,
+            /* I1: what this row says; `applyRow` and the field-ownership table decide what lands
+               (blank cells keep, B-16 seed-only for Ticket/Invoice-owned fields, zone always).
+               A School Grade cell that is blank says nothing about grade OR kind (both derive
+               from it); an unrecognised one still clears the grade (the "grade left blank"
+               warning above). A person CREATED earlier in this same file is the Form's own, so a
+               later duplicate submission still wins field by field (item 7). */
+            const merged = applyRow('form', match, {
               firstName,
               lastName,
-              // Blank-cell guard: a blank/absent CSV value for these fields must never clobber
-              // a previously-known good value on a matched-existing update. `gradeRaw` blank
-              // covers both `kind` and `grade` since both are derived from the same School
-              // Grade cell (an unrecognized-but-present value still applies, matching the
-              // existing "grade left blank" warning behavior below — only a genuinely blank
-              // cell is guarded).
-              gender: gender ?? match.gender,
-              grade: gradeRaw ? grade : match.grade,
-              dateOfBirth: dob ?? match.dateOfBirth,
-              mobile: mobile ?? match.mobile,
-              email: email ?? match.email,
-              suburb: suburb ?? match.suburb,
-              postcode: postcode ?? match.postcode,
-              state: state ?? match.state,
-              medicareNumber: medicareNumber ?? match.medicareNumber,
-              // zone is NOT CSV-sourced — it's always resolved live from the person's church
-              // record (see comment above), so it is never "blank" and is intentionally kept
-              // unconditional: re-importing is how a person's zone stays in sync with their
-              // church's current zone.
+              gender,
+              ...(gradeRaw ? { grade, kind } : {}),
+              dateOfBirth: dob,
+              mobile,
+              email,
+              suburb,
+              postcode,
+              state,
+              medicareNumber,
               zone,
-              kind: gradeRaw ? kind : match.kind,
-              medicalConditions: medical ? [medical] : match.medicalConditions,
-              dietaryRequirements: dietary ? [dietary] : match.dietaryRequirements,
-              otherMedications: otherMedications ?? match.otherMedications,
-              medicationConsent: medicationConsent ?? match.medicationConsent,
-              blueCardNumber: blueCardNumber ?? match.blueCardNumber,
-              blueCardExpiry: blueCardExpiry ?? match.blueCardExpiry,
-              churchUnlistedNote: churchUnlistedNote ?? match.churchUnlistedNote,
-              elvantoMeta: elvantoMeta.dateSubmitted ? elvantoMeta : match.elvantoMeta,
-              // B-16: seed-only. The Ticket import owns registrationType + accommodationKind(+Raw),
-              // the Invoice import owns registrationCost + discountCode (imports.md). For a person
-              // that existed before this file, a Form value is written only when the stored value
-              // is blank, so a Form-only re-import can never overwrite them; the Form never touches
-              // accommodationKindConfidence. A person CREATED earlier in this same file is the
-              // Form's own, so a later duplicate submission still wins field by field (item 7).
-              // Warning: storedKind is the importers' own column. Test it with `!== undefined`,
-              // never `??` on the effective value: a genuine `null` raw (accommodation_kind blank,
-              // accommodation_override set) must NOT be walked past to match.accommodationKind
-              // (the resolved value), or the override gets baked back into the importers' column.
-              accommodationKind: seedOnly(storedKind, accommodationKind),
-              accommodationKindRaw: seedOnly(storedKind, accommodationKind),
-              registrationType: seedOnly(match.registrationType, registrationType),
-              registrationCost: seedOnly(match.registrationCost, registrationCost),
-              discountCode: seedOnly(match.discountCode, discountCode),
+              medicalConditions: medical ? [medical] : [],
+              dietaryRequirements: dietary ? [dietary] : [],
+              otherMedications,
+              medicationConsent,
+              blueCardNumber,
+              blueCardExpiry,
+              churchUnlistedNote,
+              ...(elvantoMeta.dateSubmitted ? { elvantoMeta } : {}),
+              accommodationKind,
+              accommodationKindRaw: accommodationKind,
+              registrationType,
+              registrationCost,
+              discountCode,
               consents: buildConsents(consentAnswers, consentTs, match.consents),
-              parentGuardianName: parentName ?? match.parentGuardianName,
-              parentRelation: parentRelation ?? match.parentRelation,
-              parentPhone: parentPhone ?? match.parentPhone,
+              parentGuardianName: parentName,
+              parentRelation,
+              parentPhone,
               updatedAt: now,
-            };
+            }, { createdThisRun: !isExisting });
             if (pool) {
               const idx = pool.indexOf(match);
               if (idx >= 0) pool[idx] = merged;

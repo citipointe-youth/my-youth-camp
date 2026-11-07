@@ -8,7 +8,6 @@ import {
   findPersonMatch,
   levenshteinWithin,
   isBlank,
-  mergeOwnedFields,
   phoneDigits,
 } from './person-matching';
 
@@ -195,66 +194,6 @@ describe('isBlank', () => {
   it('false is NOT blank', () => expect(isBlank(false)).toBe(false));
   it('non-empty string is NOT blank', () => expect(isBlank('hi')).toBe(false));
   it('non-empty array is NOT blank', () => expect(isBlank([1])).toBe(false));
-});
-
-// ---------------------------------------------------------------------------
-// mergeOwnedFields
-// ---------------------------------------------------------------------------
-
-describe('mergeOwnedFields', () => {
-  interface Sample {
-    a: string;
-    b: string | null;
-    c: string[];
-    untouched: string;
-  }
-
-  function sample(over: Partial<Sample> = {}): Sample {
-    return { a: 'existing-a', b: 'existing-b', c: ['x', 'y'], untouched: 'keep-me', ...over };
-  }
-
-  it('overwrites an owned key when incoming value is non-blank', () => {
-    const result = mergeOwnedFields(sample(), { a: 'new-a' }, ['a', 'b']);
-    expect(result.a).toBe('new-a');
-  });
-
-  it('keeps existing value when incoming owned key is blank (empty string)', () => {
-    const result = mergeOwnedFields(sample(), { a: '' }, ['a']);
-    expect(result.a).toBe('existing-a');
-  });
-
-  it('keeps existing value when incoming owned key is null', () => {
-    const result = mergeOwnedFields(sample(), { b: null }, ['b']);
-    expect(result.b).toBe('existing-b');
-  });
-
-  it('keeps existing value when owned key is absent from incoming entirely', () => {
-    const result = mergeOwnedFields(sample(), {}, ['a', 'b']);
-    expect(result.a).toBe('existing-a');
-    expect(result.b).toBe('existing-b');
-  });
-
-  it('never touches a non-owned key even if present in incoming', () => {
-    const result = mergeOwnedFields(sample(), { untouched: 'hacked' } as Partial<Sample>, ['a']);
-    expect(result.untouched).toBe('keep-me');
-  });
-
-  it('array fields are atomic: non-blank incoming array wholesale-replaces', () => {
-    const result = mergeOwnedFields(sample(), { c: ['z'] }, ['c']);
-    expect(result.c).toEqual(['z']);
-  });
-
-  it('array fields are atomic: blank (empty) incoming array keeps existing', () => {
-    const result = mergeOwnedFields(sample(), { c: [] }, ['c']);
-    expect(result.c).toEqual(['x', 'y']);
-  });
-
-  it('returns a new object (does not mutate existing)', () => {
-    const existing = sample();
-    const result = mergeOwnedFields(existing, { a: 'new-a' }, ['a']);
-    expect(result).not.toBe(existing);
-    expect(existing.a).toBe('existing-a');
-  });
 });
 
 // ---------------------------------------------------------------------------
