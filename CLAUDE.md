@@ -75,7 +75,7 @@ A deep audit across three areas was completed and all bugs addressed. Key change
 
 **New tests:**
 - `access-control.test.ts`: 6 firstAid permission + `canAccessPerson`/`canAccessChurch` cases (BUG-11).
-- `import.service.test.ts`: 3 dry-run cases — no-persist, phantom-church, `dryRun:true` in result (BUG-10).
+- `import.service.test.ts`: 3 dry-run cases — no-persist, phantom-church, `dryRun:true` in result (BUG-10). `import-preview-parity.test.ts` (preview == commit through the I2 staging overlay), `import-store.test.ts`, `import-batch-timing.test.ts` (`POST /import/batch` at 1,425 rows).
 - `person.service.test.ts`: 4 `listMedicalWatch` cases (BUG-12) — removed 2026-10-02 along with `listMedicalWatch` and `GET /campers/medical`.
 - `admin.characterisation.test.ts`: `BadRequestError` import added; `force:true` alone throws `BadRequestError` for `newYear` (BUG-13).
 

@@ -3,6 +3,19 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C11: I2 (camp-v154)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change. I2: the three CSV importers no longer branch on dryRun; they
+read and write an ImportStore, always a staged overlay (src/services/import-store.ts) that a
+preview discards and a commit flushes (new churches, one people saveMany, person deletes, override
+deletes; the dashboard cache is flushed by the container's wrapped repos). A new church is staged
+in the preview too, so church-would-be-created comes once per church, not per row. New
+POST /import/batch (preview only, import:run): 1-3 files run in order over one overlay, so the
+Ticket and Invoice preview counts see the Form people. SPA import preview makes that one call
+(public/index.html, camp-v154). The three per-file endpoints and the 11.1 console are unchanged.
+1,425-row batch preview timed in-memory: under 1 s (import-batch-timing.test.ts).
+
+
 2026-11-07 - Architecture round, Phase C10: D3 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change, no public/ change. D3: the dashboard cache is one per
