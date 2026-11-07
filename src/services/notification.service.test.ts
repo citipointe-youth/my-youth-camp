@@ -158,3 +158,29 @@ describe('notification.service — targeted notices', () => {
     expect(admin).toHaveLength(0);
   });
 });
+
+describe('B-6: an edit racing the push claim never un-claims it', () => {
+  it('repo: a whole-row save with pushSentAt null keeps an existing claim', async () => {
+    const n = leadersOnlyCampNotice();
+    await notifs.save(n);
+    expect(await notifs.claimForPush([n.id])).toEqual([n.id]);
+    await notifs.save({ ...n, pushSentAt: null });
+    expect((await notifs.findById(n.id))?.pushSentAt).toBeTruthy();
+  });
+
+  it('service: update() that read the row before the claim does not re-arm the push', async () => {
+    const n = leadersOnlyCampNotice();
+    await notifs.save(n);
+    const realFind = notifs.findById.bind(notifs);
+    notifs.findById = async (id: string) => {
+      const snap = await realFind(id); // read happens first (pushSentAt unset) …
+      await notifs.claimForPush([id]); // … then the tick claims it mid-request
+      return snap;
+    };
+    await svc.update(actor('admin'), n.id, { title: 'Edited' });
+    notifs.findById = realFind;
+    const after = await notifs.findById(n.id);
+    expect(after?.title).toBe('Edited');
+    expect(after?.pushSentAt).toBeTruthy();
+  });
+});

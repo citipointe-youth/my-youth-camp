@@ -87,6 +87,7 @@ export interface INotificationRepository extends IRepository<Notification> {
    * get disjoint sets, so nothing is ever pushed twice. Claim BEFORE sending: a crash
    * between claim and send loses a push, which is the correct trade here (the in-app feed
    * is the guaranteed channel; a duplicate safeguarding alert is worse than a missed one).
+   * Only this sets `pushSentAt`; `save` never clears a stored claim (B-6).
    */
   claimForPush(ids: string[]): Promise<string[]>;
 }

@@ -101,7 +101,8 @@ export class SupabaseNotificationRepository implements INotificationRepository {
         expires_at = excluded.expires_at,
         scheduled_for = excluded.scheduled_for,
         audience_estimate = excluded.audience_estimate,
-        push_sent_at = excluded.push_sent_at,
+        -- B-6: a whole-row save never clears a push claim (only claimForPush sets it).
+        push_sent_at = coalesce(notifications.push_sent_at, excluded.push_sent_at),
         dedupe_key = excluded.dedupe_key,
         target_user_id = excluded.target_user_id
     `;

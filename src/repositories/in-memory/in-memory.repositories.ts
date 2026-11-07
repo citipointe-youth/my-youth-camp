@@ -380,6 +380,11 @@ export class InMemoryNotificationRepository
         }
       }
     }
+    // B-6: only claimForPush sets pushSentAt and nothing un-sets it, so a whole-row save
+    // (an edit that read the row before a claim) keeps the stored claim. Mirrors the coalesce
+    // in the Supabase upsert.
+    const stored = this.store.get(n.id);
+    if (stored?.pushSentAt != null) n = { ...n, pushSentAt: stored.pushSentAt };
     return super.save(n);
   }
 
