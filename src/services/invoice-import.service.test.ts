@@ -576,6 +576,26 @@ describe('invoice-import: multiple invoices for one person (item A)', () => {
     expect(p.amountPaid).toBe(40);
     expect(p.needsReview).toBe(true);
   });
+
+  // A-7 guessed-kind variant (pinned before I5's apply-step refactor): row 1's price guess
+  // survives row 2, which has no ticket total.
+  it('a later row with no ticket total keeps the earlier row\'s guessed kind (A-7)', async () => {
+    const sample = (id: string) => person({ id, accommodationKind: 'classroom', accommodationKindConfidence: 'confirmed', registrationCost: 600 });
+    const { svc, personRepo } = await build([
+      sample('s1'), sample('s2'), sample('s3'),
+      person({ id: 'ivy', firstName: 'Robin', lastName: 'Thompson', invoiceNumber: 'INV-1' }),
+    ]);
+    const res = await svc.importInvoicesCsv(actor('admin'), {
+      csvData: [
+        HDR,
+        'INV-1,Robin,Thompson,0400000001,600,0,600,0,0,',
+        'INV-2,Robin,Thompson,0400000001,,0,10,0,0,',
+      ].join('\n'),
+    });
+    const p = (await personRepo.findAll()).find((x) => x.id === 'ivy')!;
+    expect(p).toMatchObject({ accommodationKind: 'classroom', accommodationKindConfidence: 'guessed', registrationCost: 600, amountPaid: 610 });
+    expect(res.guessedAccommodationCount).toBe(1);
+  });
 });
 
 /* Item 12 (2026-07-28): a trailing blank line is spreadsheet padding, not a defect — it used to
