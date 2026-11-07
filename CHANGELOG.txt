@@ -11,7 +11,8 @@ stampImport, clearTempPasswords; same patchSingleton column scope as B-7), repla
 controllers/_import-stamp.ts. Push subscribe/label/devices/unsubscribe moved verbatim to
 src/services/push-subscription.service.ts; /setup and /auth/me logic moved to AuthService
 (setupFirstAdmin, me). Services drops users, settingsRepo, pushSubscriptionRepo and gains
-pushSubscriptions. No behaviour change (stamp warning logger is now "settings").
+pushSubscriptions. No behaviour change (stamp warning logger is now "settings"), except
+/setup with no body now returns 400 instead of 500.
 
 2026-11-07 - Architecture round, Phase C1: S2 + P4 (camp-v153)
 -----------------------------------------------------------------------------------
