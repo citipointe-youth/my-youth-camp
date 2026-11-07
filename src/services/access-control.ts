@@ -1,4 +1,6 @@
 import type { Actor } from '../core/entities/user';
+import type { Person } from '../core/entities/person';
+import { isCamper, isRegistrant } from '../core/entities/person';
 import type { NotificationScope, UserRole } from '../core/types/enums';
 import { ForbiddenError } from '../core/errors/app-error';
 
@@ -162,27 +164,76 @@ export function assertCan(actor: Actor, action: Action): void {
   }
 }
 
+/** admin or director: the camp-wide oversight roles. */
+export function isOversight(actor: Pick<Actor, 'role'>): boolean {
+  return actor.role === 'admin' || actor.role === 'director';
+}
+
 /**
- * Returns true if the actor can access data for the given church.
- * - church: own church only
- * - zoneLeader: own zone's churches (caller must check zone)
- * - director/admin/firstAid/prayer: all
+ * THE scope switch (A1): may this actor see data belonging to this church / zone / gender?
+ * - admin, director, firstAid, prayer: everything.
+ * - zoneLeader: only its own zone (an actor or target with no zone is out of scope).
+ * - church: only its own church.
+ * - Then, for a gender-scoped church login (b-/g-, Feature 2): denied only for a person of the
+ *   CONCRETE opposite gender. Someone recorded as 'other' (or with an unset gender, e.g. a blank
+ *   Elvanto import) stays visible to BOTH of a church's logins so no minor is left without a
+ *   church-level custodian. A target with no `gender` key (a church, a pre-create check) skips it.
  */
-export function canAccessChurch(actor: Actor, churchId: string, churchZone?: string): boolean {
+export function inScope(
+  actor: Actor,
+  target: { churchId: string; zone?: string | null; gender?: Person['gender'] },
+): boolean {
+  let ok: boolean;
   switch (actor.role) {
     case 'admin':
     case 'director':
     case 'firstAid':
     case 'prayer':
-      return true;
+      ok = true; break;
     case 'zoneLeader':
-      if (!actor.zone || !churchZone) return false;
-      return actor.zone === churchZone;
+      ok = !!actor.zone && actor.zone === target.zone; break;
     case 'church':
-      return actor.churchId === churchId;
+      ok = actor.churchId === target.churchId; break;
     default:
-      return false;
+      ok = false;
   }
+  if (!ok) return false;
+  const g = target.gender;
+  return !(actor.genderScope && (g === 'male' || g === 'female') && g !== actor.genderScope);
+}
+
+/**
+ * True if the actor may access a person, by role + church/zone + gender (see `inScope`).
+ * The single chokepoint for person scoping: list/get/roster (checkin.service), the queued
+ * check-in and sign events, search, notes and the dashboards all filter through here.
+ */
+export function canAccessPerson(
+  actor: Actor,
+  person: Pick<Person, 'churchId' | 'zone'> & Partial<Pick<Person, 'gender'>>,
+): boolean {
+  return inScope(actor, person);
+}
+
+/** True if the actor can access data for the given church (zoneLeader needs the church's zone). */
+export function canAccessChurch(actor: Actor, churchId: string, churchZone?: string): boolean {
+  return inScope(actor, { churchId, zone: churchZone });
+}
+
+/**
+ * How far an actor reaches a person on the at-camp lookup surfaces (search, notes, contacts):
+ * - 'full': in scope, AND the person has arrived — or is a registrant and the actor is firstAid
+ *   or prayer (they log and read records during pre-camp testing too; nobody is a camper until
+ *   the Day-1 sign-in).
+ * - 'locate': out of scope, but a church or zone leader may find any arrived camper to reach that
+ *   camper's church leaders (items 6/7/10). Sensitive fields are redacted; no parent number.
+ * - 'none': otherwise.
+ */
+export function reach(actor: Actor, person: Person): 'full' | 'locate' | 'none' {
+  if (inScope(actor, person)) {
+    const eligible = isCamper(person) || ((actor.role === 'firstAid' || actor.role === 'prayer') && isRegistrant(person));
+    return eligible ? 'full' : 'none';
+  }
+  return (actor.role === 'church' || actor.role === 'zoneLeader') && isCamper(person) ? 'locate' : 'none';
 }
 
 export function assertCanAccessChurch(actor: Actor, churchId: string, churchZone?: string): void {
@@ -207,7 +258,7 @@ export function canSendNotification(actor: Actor, scope: NotificationScope, zone
   }
   if (scope === 'church') {
     // Church-scoped notifications: church to own church, director/admin to any
-    if (actor.role === 'admin' || actor.role === 'director') return true;
+    if (isOversight(actor)) return true;
     return false;
   }
   return false;

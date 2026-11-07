@@ -1,10 +1,9 @@
 import type { INoteRepository, IPersonRepository } from '../repositories/interfaces/entity-repositories';
 import type { StudentNote } from '../core/entities/note';
 import type { Actor } from '../core/entities/user';
-import { assertCan, can } from './access-control';
-import { isCamper, isRegistrant } from '../core/entities/person';
+import { assertCan, can, canAccessPerson, reach } from './access-control';
+import { isCamper } from '../core/entities/person';
 import type { Person } from '../core/entities/person';
-import { canAccessPerson } from './person.service';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../core/errors/app-error';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
@@ -52,13 +51,6 @@ export interface NoteService {
 }
 
 
-// First aid and the prayer team must be able to log/read records against real registrants during
-// pre-camp testing too — nobody is a "camper" until the Day-1 sign-in. Every other role keeps the
-// arrived-only scope (mirrors search.service.ts).
-function preCampEligible(actor: Actor, person: Person): boolean {
-  return isCamper(person) || ((actor.role === 'firstAid' || actor.role === 'prayer') && isRegistrant(person));
-}
-
 export function makeNoteService(
   noteRepo: INoteRepository,
   personRepo: IPersonRepository,
@@ -72,8 +64,8 @@ export function makeNoteService(
       if ((note.category ?? 'note') !== category) continue;
       if (!note.camperId) continue;
       const camper = await personRepo.findById(note.camperId);
-      if (!camper || !preCampEligible(actor, camper)) continue;
-      if (!canAccessPerson(actor, camper)) continue;
+      // In scope AND arrived (or a registrant, for firstAid/prayer): see `reach`.
+      if (!camper || reach(actor, camper) !== 'full') continue;
       result.push(note);
       if (result.length >= limit) break;
     }
@@ -98,8 +90,7 @@ export function makeNoteService(
       if (isPrayer && !camperId) throw new BadRequestError('A prayer record requires a student');
       if (camperId) {
         const camper = await personRepo.findById(camperId);
-        if (!camper || !preCampEligible(actor, camper)) throw new NotFoundError('Student not found');
-        if (!canAccessPerson(actor, camper)) throw new NotFoundError('Student not found');
+        if (!camper || reach(actor, camper) !== 'full') throw new NotFoundError('Student not found');
       }
 
       const note: StudentNote = {
@@ -125,8 +116,7 @@ export function makeNoteService(
         throw new ForbiddenError(`Role '${actor.role}' cannot read student notes`);
       }
       const camper = await personRepo.findById(camperId);
-      if (!camper || !preCampEligible(actor, camper)) throw new NotFoundError('Student not found');
-      if (!canAccessPerson(actor, camper)) throw new NotFoundError('Student not found');
+      if (!camper || reach(actor, camper) !== 'full') throw new NotFoundError('Student not found');
       const notes = await noteRepo.findByCamper(camperId);
       // Sensitive notes and first-aid records (amendments included, they share the category) are
       // hidden from the individual student-profile view for church logins only — zoneLeader/

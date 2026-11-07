@@ -3,7 +3,7 @@ import type { Person } from '../core/entities/person';
 import { isCamper, isRegistrant } from '../core/entities/person';
 import type { CheckInEntry, SignOutEvent } from '../core/entities/person';
 import type { Actor } from '../core/entities/user';
-import { assertCan, canAccessChurch } from './access-control';
+import { assertCan, canAccessChurch, canAccessPerson, isOversight } from './access-control';
 import { NotFoundError, BadRequestError } from '../core/errors/app-error';
 import { ageFromDob, nowISO } from '../utils/date';
 import { newId } from '../utils/id';
@@ -47,50 +47,8 @@ export interface PersonService {
   signEvent(actor: Actor, personId: string, event: Omit<SignOutEvent, 'id'>): Promise<Person>;
 }
 
-/**
- * True if the actor may access a person, by role + church/zone (mirrors canAccessCamper),
- * AND — for a gender-scoped church login (Feature 2) — by gender.
- *
- * This is the single chokepoint for gender scoping: `list`/`get`/roster (checkin.service),
- * search (search.service) and the dashboards (dashboard.service) all filter through here, so a
- * `b-<church>` account sees only male people of its church and `g-<church>` only female — for
- * students AND leaders alike. When the caller doesn't carry a gender (e.g. the pre-create scope
- * check passes only churchId/zone) the gender narrowing is skipped for that field.
- */
-export function canAccessPerson(
-  actor: Actor,
-  person: Pick<Person, 'churchId' | 'zone'> & Partial<Pick<Person, 'gender'>>,
-): boolean {
-  if (!canAccessByChurchZone(actor, person)) return false;
-  // Gender-scoped church logins (b-/g-) see only same-gender people. Denial is limited to a
-  // person of the CONCRETE opposite gender — someone recorded as 'other' (or, defensively, with
-  // an unset gender, e.g. a blank Elvanto import) stays visible to BOTH of a church's logins so
-  // no minor is left without a church-level custodian. Admin/director can correct the gender.
-  if (
-    actor.genderScope &&
-    (person.gender === 'male' || person.gender === 'female') &&
-    person.gender !== actor.genderScope
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function canAccessByChurchZone(actor: Actor, person: Pick<Person, 'churchId' | 'zone'>): boolean {
-  switch (actor.role) {
-    case 'admin':
-    case 'director':
-    case 'firstAid':
-    case 'prayer':
-      return true;
-    case 'zoneLeader':
-      return actor.zone != null && person.zone === actor.zone;
-    case 'church':
-      return actor.churchId === person.churchId;
-    default:
-      return false;
-  }
-}
+/** Moved to access-control.ts (A1); re-exported so existing importers keep working. */
+export { canAccessPerson };
 
 export function makePersonService(repo: IPersonRepository, settings?: ISettingsRepository): PersonService {
   function buildProfile(person: Person): PersonProfile {
@@ -147,7 +105,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
          Refund is recorded. Gated to director/admin, which is exactly who can open the budget and
          the Data Import screen, so a church login can never widen its own scope with a query param. */
       const includeCancelled = opts.includeCancelled === true
-        && (actor.role === 'director' || actor.role === 'admin');
+        && isOversight(actor);
       const keep = (p: Person) => isRegistrant(p) || (includeCancelled && p.lifecycle === 'cancelled');
       // Preserve the legacy churchId fast-path access check (registrant.service.list).
       if (churchId) {
@@ -332,7 +290,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       const person = await getOwned(actor, personId);
       // QA item 21: nobody has arrived before camp, so a leader's sign-in would be a false record.
       if (
-        event.type === 'in' && !['director', 'admin'].includes(actor.role) &&
+        event.type === 'in' && !isOversight(actor) &&
         (await settings?.getSingleton())?.campMode === 'pre-camp'
       ) {
         throw new BadRequestError('Camp has not started yet, so nobody can be signed in.');
