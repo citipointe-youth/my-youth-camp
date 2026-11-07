@@ -2007,6 +2007,7 @@ function updateModeUI(){
 /* ===== AT-CAMP PREVIEW ===== */
 function enterPreview(){
   if(SETTINGS&&SETTINGS.campMode!=='pre-camp'){toast('Already in at-camp mode');return;}
+  _queueStop(); // B-14: park this login's saved taps; a drain in preview would hit the read-only guard and drop them
   PREVIEW_MODE=true;
   CAMP_MODE='at-camp';
   _previewLocalFlips={}; // fix 4: a fresh preview session starts with no local-only flips
@@ -2016,6 +2017,7 @@ function enterPreview(){
 }
 function exitPreview(){
   PREVIEW_MODE=false;
+  _queueLoad(true);if(CHECKIN_QUEUE.length&&!_draining)drainQueue(); // B-14: as doLogin, nothing judged (Q9)
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
   _previewLocalFlips={};
   SESSIONS=[];SEL_SESSION=null;
@@ -2038,6 +2040,8 @@ async function enterAccountPreview(id){
   // is already inside the same-user at-camp preview when they click.
   try{d=await _doFetch('/accounts/users/'+id+'/preview',{method:'POST'});}
   catch(e){toast((e&&e.message)||'Could not start preview');return;}
+  // B-14: park the queue while ACTOR is still the admin, so _persistQueue writes the admin's own key.
+  _queueStop();
   _previewStash={token:TOKEN,actor:ACTOR};
   localStorage.setItem('ycp_preview_stash',JSON.stringify(_previewStash));
   TOKEN=d.token;
@@ -2059,6 +2063,7 @@ function exitAccountPreview(){
   localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
   _previewStash=null;localStorage.removeItem('ycp_preview_stash');
   ACCOUNT_PREVIEW=false;PREVIEW_MODE=false;
+  _queueLoad(true);if(CHECKIN_QUEUE.length&&!_draining)drainQueue(); // B-14: the admin's parked taps, nothing judged (Q9)
   Cache.clear();SESSIONS=[];SEL_SESSION=null;
   _restoreFilters();   // back to the admin's own saved filters
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
@@ -11648,7 +11653,11 @@ function _consumePushNav(){
    users get the latest UI without a manual refresh. */
 if('serviceWorker'in navigator){
   let _reloading=false;
+  // B-12c: on a first visit the install's clients.claim() also fires controllerchange; reloading
+  // then would wipe a half-typed login. Skip that one, and still reload for any later deploy.
+  let hadCtrl=!!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(!hadCtrl){hadCtrl=true;return;}
     if(_reloading)return;_reloading=true;location.reload();
   });
   window.addEventListener('load',()=>{
