@@ -290,7 +290,7 @@ export function makeTicketImportService(
           } else {
             const possible = match.status === 'matched' ? match : null;
             const possibleText = possible
-              ? `possible match: ${possible.person.firstName} ${possible.person.lastName}`
+              ? `possible match: ${possible.person.firstName} ${possible.person.lastName} (${possible.person.churchName || 'no church'})`
               : '';
             const person: Person = {
               id: newId('person'),
@@ -352,20 +352,20 @@ export function makeTicketImportService(
             touched.set(person.id, person);
             addToIndex(index, person);
             orphansCreated.push(`${firstName} ${lastName}`);
-            warnings.push({
-              code: 'unmatched-orphan-created',
-              row: rowNum,
-              message: `No matching person found for "${firstName} ${lastName}" — created as an unmatched orphan`,
-            });
-            if (possible) {
-              warnings.push({
-                code: 'ticket-possible-match',
-                row: rowNum,
-                message:
-                  `"${firstName} ${lastName}" — ${possibleText} (${possible.person.churchName || 'no church'}), ` +
-                  `edit distance ${possible.distance ?? '?'}. Not applied; orphan created for review.`,
-              });
-            }
+            // One warning per row: the near-miss one replaces the generic orphan one (Gate A UX 3).
+            warnings.push(possible
+              ? {
+                  code: 'ticket-possible-match',
+                  row: rowNum,
+                  message:
+                    `"${firstName} ${lastName}" — ${possibleText}. The spelling is not exact, so the ticket was not ` +
+                    'attached to them; a "Needs review" entry was made instead. Fix the name in the Ticket List and import again.',
+                }
+              : {
+                  code: 'unmatched-orphan-created',
+                  row: rowNum,
+                  message: `No matching person found for "${firstName} ${lastName}" — created as an unmatched orphan`,
+                });
             created++;
           }
         } catch (err) {

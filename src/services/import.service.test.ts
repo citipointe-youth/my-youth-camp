@@ -706,6 +706,7 @@ describe('ImportService.importCsv — protects overridden/cancelled people from 
       expect(res.retained).toBe(3);
       const kept = res.warnings.filter((w) => w.code === 'absent-kept-needs-review');
       expect(kept.map((w) => w.message.split(' (')[0]).sort()).toEqual(['Has Invoice', 'Paid Zero', 'Ticket Orphan']);
+      expect(kept[0]!.message).toContain('find them in the Student data table'); // Gate A UX 2: says where to act
       expect(res.warnings.filter((w) => w.code === 'absent-will-delete').map((w) => w.message)).toEqual([
         expect.stringContaining('Plain Person'),
       ]);

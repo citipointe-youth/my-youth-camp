@@ -429,6 +429,10 @@ describe('TicketImportService.importTicketsCsv — fuzzy match is not applied (A
     const w = res.warnings.filter((x) => x.code === 'ticket-possible-match');
     expect(w).toHaveLength(1);
     expect(w[0]!.message).toContain('possible match: Jonathan Smith');
+    // Gate A UX 3: one plain-language warning per row, with what to do next.
+    expect(w[0]!.message).not.toContain('edit distance');
+    expect(w[0]!.message).toContain('Fix the name in the Ticket List and import again');
+    expect(res.warnings.some((x) => x.code === 'unmatched-orphan-created')).toBe(false);
   });
 
   it('dry run reports the same and persists nothing', async () => {

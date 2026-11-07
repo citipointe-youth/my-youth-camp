@@ -9068,6 +9068,8 @@ const IMPORT_WARN_LABELS={
 const _WARN_SEV_ORDER={critical:0,review:1,info:2,note:3};
 const _WARN_SEV_COLOR={critical:'var(--danger)',review:'var(--warn,#b45309)',info:'var(--muted)',note:'var(--muted)'};
 const WARN_ROW_CAP=25;
+// Gate A UX 2: these groups render expanded, since the names exist nowhere else after the import.
+const _WARN_OPEN_CODES=new Set(['absent-kept-needs-review']);
 function _warnMeta(code){
   const m=IMPORT_WARN_LABELS[code];
   if(m)return{label:m[0],sev:m[1]};
@@ -9093,18 +9095,24 @@ function _warnGroupHtml(r,key){
     const rows=list.slice(0,WARN_ROW_CAP).map(w=>
       `<div style="font-size:.74rem;color:var(--muted);padding:1px 0">${w.row?'Row '+w.row+': ':''}${esc(w.message||'')}</div>`).join('');
     const more=list.length>WARN_ROW_CAP?`<div class="sub" style="font-size:.72rem">+${list.length-WARN_ROW_CAP} more</div>`:'';
-    return `<details style="margin:3px 0 3px 8px">
+    return `<details style="margin:3px 0 3px 8px" ${_WARN_OPEN_CODES.has(code)?'open':''}>
       <summary style="cursor:pointer;font-size:.78rem;color:${_WARN_SEV_COLOR[sev]||'var(--muted)'}"><b>${list.length}</b> · ${esc(label)}</summary>
       <div style="margin:2px 0 4px 10px">${rows}${more}</div></details>`;
   }).join('');
   const worst=_warnMeta(ordered[0][0]).sev;
-  return `<details style="margin-top:5px" ${worst==='critical'?'open':''}>
+  return `<details style="margin-top:5px" ${worst==='critical'||groups.has('absent-kept-needs-review')?'open':''}>
     <summary style="cursor:pointer;font-size:.78rem;color:${_WARN_SEV_COLOR[worst]||'var(--muted)'}">${icSm('alert')} <b>${ws.length}</b> warning${ws.length===1?'':'s'} in ${ordered.length} categor${ordered.length===1?'y':'ies'}</summary>
     ${inner}</details>`;
 }
 // Per-type "extra" warning line for the preview/result (orphans, guessed accommodation, unmatched).
 function _importExtraLine(type,r){
-  if(type==='tickets')return r.created?`${icSm('alert')} <b>${r.created}</b> ticket${r.created===1?'':'s'} didn't match an existing student — created as "Needs review". Import the <b>Form</b> file first so tickets attach to real students.`:null;
+  if(type==='tickets'){
+    if(!r.created)return null;
+    // Gate A UX 3: when every orphan is a near-miss spelling the Form is already in, so don't send them there.
+    const near=(r.warnings||[]).filter(w=>w.code==='ticket-possible-match').length;
+    const advice=near>=r.created?'Check the spelling in the "Possible match" warnings below.':'Import the <b>Form</b> file first so tickets attach to real students.';
+    return `${icSm('alert')} <b>${r.created}</b> ticket${r.created===1?'':'s'} didn't match an existing student — created as "Needs review". ${advice}`;
+  }
   if(type==='invoices'){
     const parts=[];
     if(r.guessedAccommodationCount)parts.push(`${r.guessedAccommodationCount} accommodation type${r.guessedAccommodationCount===1?'':'s'} guessed from price`);
@@ -10790,7 +10798,10 @@ async function _renderImportPreview(){
       ${rows}
       <button class="btn" onclick="_createPhantomChurches(${esc(JSON.stringify(phantoms))})">Create ${phantoms.length} church${phantoms.length===1?'':'es'} ${icSm('arrowr')}</button>`;
   }
-  const confirmHtml=phantoms.length?'':`<button class="btn" style="margin-top:8px" onclick="_confirmImport()">Confirm &amp; import ${_importBatch.length>1?'all '+_importBatch.length+' files':''}</button>`;
+  // Gate A UX 1: a refused file (e.g. a consent column missing) would only be refused again, so no Confirm.
+  const stopped=results.some(x=>x.err);
+  const confirmHtml=stopped?`<div class="warnbox" style="border-color:var(--danger)">${icSm('alert')} <b>Nothing was imported.</b> Fix the file in Elvanto, export it again, then choose it again.</div>`
+    :phantoms.length?'':`<button class="btn" style="margin-top:8px" onclick="_confirmImport()">Confirm &amp; import ${_importBatch.length>1?'all '+_importBatch.length+' files':''}</button>`;
   box.innerHTML=`<div class="infobox"><b>Preview (nothing saved yet)</b> — ${_importBatch.length} file${_importBatch.length===1?'':'s'}, imported Form → Ticket → Invoice.</div>
     ${cards}${guardHtml}${phantomHtml}${confirmHtml}
     <button class="btn ghost" style="margin-top:8px${confirmHtml||phantomHtml?';margin-left:6px':''}" onclick="_clearImport()">Cancel</button>`;

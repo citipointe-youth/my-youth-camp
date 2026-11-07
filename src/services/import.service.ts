@@ -607,7 +607,8 @@ export function makeImportService(
           row: 0,
           message:
             `${p.firstName} ${p.lastName} (${p.churchName || 'no church'}) is no longer in this file but ` +
-            'was KEPT — they have a ticket, invoice or payment on record. Review: delete them by hand if they withdrew',
+            'was KEPT — they have a ticket, invoice or payment on record. If they have withdrawn, ' +
+            'find them in the Student data table and cancel or remove them there.',
         });
       }
 
