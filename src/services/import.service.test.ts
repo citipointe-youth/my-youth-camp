@@ -529,6 +529,53 @@ describe('ImportService.importCsv — null raw with an individual override (fix 
   });
 });
 
+describe('ImportService.importCsv — Form is seed-only for Ticket/Invoice-owned fields (B-16)', () => {
+  const HDR = 'First Name,Last Name,Church,Type,Cost,Code';
+
+  it('a Form-only re-import does not overwrite ticket type, cost, discount code, raw kind, or the confirmed flag', async () => {
+    const h = await build();
+    await h.svc.importCsv(actor('admin'), { csvData: `${HDR}
+Ada,Lovelace,Victory,Tent,100,FORM1` });
+    // Ticket + Invoice imports have since set their own values (kind confirmed).
+    const before = (await h.personRepo.findAll())[0]!;
+    await h.personRepo.save({
+      ...before,
+      registrationType: 'Classroom Student',
+      registrationCost: 150,
+      discountCode: 'INV9',
+      accommodationKind: 'classroom',
+      accommodationKindRaw: 'classroom',
+      accommodationKindConfidence: 'confirmed',
+    });
+    // Form-only re-import with different non-blank cells.
+    await h.svc.importCsv(actor('admin'), { csvData: `${HDR}
+Ada,Lovelace,Victory,Tent,200,FORM2`, updateExisting: true });
+    const after = (await h.personRepo.findAll())[0]!;
+    expect(after.registrationType).toBe('Classroom Student');
+    expect(after.registrationCost).toBe(150);
+    expect(after.discountCode).toBe('INV9');
+    expect(after.accommodationKindRaw).toBe('classroom'); // raw stored column, not the derived kind
+    expect(after.accommodationKind).toBe('classroom');
+    expect(after.accommodationKindConfidence).toBe('confirmed');
+  });
+
+  it('seeds the four fields on create and when the stored value is blank', async () => {
+    const h = await build();
+    await h.svc.importCsv(actor('admin'), { csvData: 'First Name,Last Name,Church\nAda,Lovelace,Victory' });
+    const blank = (await h.personRepo.findAll())[0]!;
+    expect(blank.registrationType ?? null).toBeNull();
+    expect(blank.accommodationKindRaw ?? null).toBeNull();
+    await h.svc.importCsv(actor('admin'), { csvData: `${HDR}
+Ada,Lovelace,Victory,Tent,100,FORM1`, updateExisting: true });
+    const after = (await h.personRepo.findAll())[0]!;
+    expect(after.registrationType).toBe('Tent');
+    expect(after.registrationCost).toBe(100);
+    expect(after.discountCode).toBe('FORM1');
+    expect(after.accommodationKind).toBe('tent');
+    expect(after.accommodationKindRaw).toBe('tent');
+  });
+});
+
 describe('import: unallocated + overrides', () => {
   // The multi-word note column is quoted, exactly as a real Elvanto export has it.
   const HEADER = 'First Name,Last Name,Gender,School Grade,Mobile Number,Attendee\'s Church,"If from a church not listed, please specify church name & Youth Pastor"';

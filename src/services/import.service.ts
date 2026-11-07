@@ -417,6 +417,9 @@ export function makeImportService(
             seenIds.add(match.id);
             skipped++;
           } else if (match) {
+            const storedKind = match.accommodationKindRaw !== undefined ? match.accommodationKindRaw : match.accommodationKind;
+            const seedOnly = <T>(stored: T | null | undefined, incoming: T): T | null | undefined =>
+              isExisting ? stored ?? incoming : incoming ?? stored;
             const merged: Person = {
               ...match,
               firstName,
@@ -450,17 +453,21 @@ export function makeImportService(
               blueCardExpiry: blueCardExpiry ?? match.blueCardExpiry,
               churchUnlistedNote: churchUnlistedNote ?? match.churchUnlistedNote,
               elvantoMeta: elvantoMeta.dateSubmitted ? elvantoMeta : match.elvantoMeta,
-              // ⚠️ `!== undefined`, never `??` — a genuine `null` raw (accommodation_kind blank,
+              // B-16: seed-only. The Ticket import owns registrationType + accommodationKind(+Raw),
+              // the Invoice import owns registrationCost + discountCode (imports.md). For a person
+              // that existed before this file, a Form value is written only when the stored value
+              // is blank, so a Form-only re-import can never overwrite them; the Form never touches
+              // accommodationKindConfidence. A person CREATED earlier in this same file is the
+              // Form's own, so a later duplicate submission still wins field by field (item 7).
+              // Warning: storedKind is the importers' own column. Test it with `!== undefined`,
+              // never `??` on the effective value: a genuine `null` raw (accommodation_kind blank,
               // accommodation_override set) must NOT be walked past to match.accommodationKind
-              // (the resolved/effective value), or a Form re-import with no CSV value bakes the
-              // override back into the importers' own column.
-              accommodationKind: accommodationKind ??
-                (match.accommodationKindRaw !== undefined ? match.accommodationKindRaw : match.accommodationKind),
-              accommodationKindRaw: accommodationKind ??
-                (match.accommodationKindRaw !== undefined ? match.accommodationKindRaw : match.accommodationKind),
-              registrationType: registrationType ?? match.registrationType,
-              registrationCost: registrationCost ?? match.registrationCost,
-              discountCode: discountCode ?? match.discountCode,
+              // (the resolved value), or the override gets baked back into the importers' column.
+              accommodationKind: seedOnly(storedKind, accommodationKind),
+              accommodationKindRaw: seedOnly(storedKind, accommodationKind),
+              registrationType: seedOnly(match.registrationType, registrationType),
+              registrationCost: seedOnly(match.registrationCost, registrationCost),
+              discountCode: seedOnly(match.discountCode, discountCode),
               consents: buildConsents(consentAnswers, consentTs, match.consents),
               parentGuardianName: parentName ?? match.parentGuardianName,
               parentRelation: parentRelation ?? match.parentRelation,
