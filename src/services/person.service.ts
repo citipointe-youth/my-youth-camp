@@ -262,7 +262,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
          presence fields are re-applied after the patch so a patched `cancelledAt` can't override them. */
       const now = nowISO();
       const moved = cancelling || unCancelling
-        ? transition(existing, { kind: cancelling ? 'cancel' : 'uncancel' }, { actor, now })
+        ? transition(existing, { kind: cancelling ? 'cancel' : 'uncancel' }, { actor, campMode: null, now })
         : null;
       const base = moved?.result === 'applied' ? moved.next : existing;
       const presencePatch: Partial<Person> = moved ? { atCamp: base.atCamp, cancelledAt: base.cancelledAt } : {};
@@ -368,7 +368,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       assertCan(actor, 'checkin:write');
       const person = await getOwned(actor, personId);
       // ⚠ Queue path: the two refusals and their messages are frozen in presence.ts.
-      const o = transition(person, { kind: 'checkIn', entry: { ...entry, id: newId('ci') } }, { actor, now: nowISO() });
+      const o = transition(person, { kind: 'checkIn', entry: { ...entry, id: newId('ci') } }, { actor, campMode: null, now: nowISO() });
       if (o.result === 'refused') throw new BadRequestError(o.reason);
       // An N5 replay is a no-op: nothing is written and the endpoint still answers 200.
       if (o.result === 'noop') return person;
@@ -382,7 +382,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       // QA item 21's pre-camp rule only concerns sign-ins (non-director/admin), so settings is read
       // only for those. The rule itself and B-2's cancelled refusal live in presence.ts.
       const campMode = event.type === 'in' && !isOversight(actor)
-        ? (await settings?.getSingleton())?.campMode : undefined;
+        ? (await settings?.getSingleton())?.campMode ?? null : null; // null: rule can't apply (sign-out / oversight)
       const o = transition(person, { kind: event.type === 'in' ? 'signIn' : 'signOut', event: { ...event, id: newId('so') } },
         { actor, campMode, now: nowISO() });
       if (o.result === 'refused') throw new BadRequestError(o.reason);

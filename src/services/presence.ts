@@ -33,8 +33,11 @@ export type PresenceIntent =
 
 export interface PresenceCtx {
   actor: Actor;
-  /** Needed only for `signIn` (pre-camp rule); `undefined` = no settings row = not pre-camp. */
-  campMode?: CampMode | null;
+  /**
+   * REQUIRED so a caller can't silently skip the pre-camp rule. Read only by `signIn`; `null` = no
+   * settings row. Callers that never run the rule (signOut, oversight actors) may pass `null`.
+   */
+  campMode: CampMode | null;
   now: string;
 }
 

@@ -82,7 +82,7 @@ export function makeOfflineSignInService(personRepo: IPersonRepository, settings
       assertCan(actor, 'import:run');
       // A-3 (Q6 + IA OQ-3): a bulk Y-sheet before camp is always a false record, so unlike the
       // single-tap signEvent this refuses every role, director and admin included.
-      const campMode = (await settings.getSingleton())?.campMode;
+      const campMode = (await settings.getSingleton())?.campMode ?? null;
       if (campMode === 'pre-camp') {
         throw new BadRequestError('Camp has not started yet, so nobody can be signed in. Switch the app to At-Camp mode first, then import again.');
       }

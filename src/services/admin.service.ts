@@ -400,7 +400,7 @@ export function makeAdminService(
         for (const p of people) {
           const o = transition(p, { kind: 'modeRevert', event: { id: newId('so'), type: 'out',
             leaderName: actor.displayName, reason: 'Camp mode reverted to pre-camp', authorId: actor.id, timestamp: now } },
-          { actor, now });
+          { actor, campMode: null, now }); // modeRevert never reads campMode
           if (o.result === 'applied') updated.push(o.next);
         }
         if (updated.length > 0) {

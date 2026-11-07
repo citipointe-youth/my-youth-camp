@@ -148,7 +148,7 @@ describe('item 13: a signed-out child leaves the current session', () => {
 
 // P1+I4: the old withSignEvent helper is now the presence module's signIn/signOut intents.
 function withSignEvent(p: Person, event: { id: string; type: 'in' | 'out'; leaderName: string; authorId: string; timestamp: string }, at: string): Person {
-  const o = transition(p, { kind: event.type === 'in' ? 'signIn' : 'signOut', event }, { actor: actor('director', { id: 'a' }), now: at });
+  const o = transition(p, { kind: event.type === 'in' ? 'signIn' : 'signOut', event }, { actor: actor('director', { id: 'a' }), campMode: null, now: at });
   return o.result === 'applied' ? o.next : p;
 }
 

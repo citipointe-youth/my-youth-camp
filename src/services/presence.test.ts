@@ -5,7 +5,7 @@ import type { Person } from '../core/entities/person';
 import type { CheckInEntry, SignOutEvent } from '../core/entities/person';
 
 const ACTOR: Actor = { id: 'u1', role: 'church', churchId: 'c1', churchName: 'Victory', zone: 'Yellow', displayName: 'Vic' };
-const ctx = (over: Partial<PresenceCtx> = {}): PresenceCtx => ({ actor: ACTOR, now: 'now', ...over });
+const ctx = (over: Partial<PresenceCtx> = {}): PresenceCtx => ({ actor: ACTOR, campMode: null, now: 'now', ...over });
 
 // P1+I4: the pre-P1 helpers are now intents of `transition`. These shims keep every earlier
 // assertion verbatim (characterisation of the old person-lifecycle.ts behaviour).
