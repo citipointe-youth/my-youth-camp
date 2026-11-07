@@ -242,6 +242,19 @@ describe('B-4 offline sheet twins and repeated rows (IA-OQ-5)', () => {
     expect(r).toMatchObject({ signedIn: 1, alreadySignedIn: 1 });
     expect((await get(c, 'r')).signOutHistory).toHaveLength(1);
   });
+
+  it('[CR-M1] a person cancelled between the sheet read and the write is reported as cancelled, not already signed in', async () => {
+    const c = await setup([person('r')]);
+    const repo = c.repos.people;
+    const real = repo.transitionMany.bind(repo);
+    vi.spyOn(repo, 'transitionMany').mockImplementation(async (ids, decide) => {
+      await repo.transition('r', () => ({ atCamp: false, lifecycle: 'cancelled', cancelledAt: NOW, updatedAt: NOW })); // the race
+      return real(ids, decide);
+    });
+    const r = await c.services.offlineSignIn.importSignIns(admin, `${head}Ada,r,Victory,female,9,Y`);
+    expect(r).toMatchObject({ signedIn: 0, alreadySignedIn: 0, cancelledSkipped: ['Ada r (Victory)'] });
+    expect((await get(c, 'r')).atCamp).toBe(false);
+  });
 });
 
 describe('B-5 concurrent check-ins', () => {

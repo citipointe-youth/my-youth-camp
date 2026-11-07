@@ -153,7 +153,13 @@ export function makeOfflineSignInService(personRepo: IPersonRepository, settings
         await personRepo.transitionMany(toSignIn, (current) => {
           const event: SignOutEvent = { id: newId('so'), type: 'in', leaderName: actor.displayName,
             reason: 'Offline sign-in sheet', authorId: actor.id, timestamp: now };
-          const w = writeOf(current, transition(current, { kind: 'signIn', event }, { actor, campMode, now }));
+          const o = transition(current, { kind: 'signIn', event }, { actor, campMode, now });
+          // CR-M1: cancelled since the read above, so report it as cancelled, not already signed in.
+          if (o.result === 'refused') {
+            cancelledSkipped.push(`${current.firstName} ${current.lastName} (${current.churchName})`);
+            return null;
+          }
+          const w = writeOf(current, o);
           if (w) signedIn++; else alreadySignedIn++;
           return w;
         });
