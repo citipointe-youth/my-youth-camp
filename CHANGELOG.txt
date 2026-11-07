@@ -3,6 +3,16 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C7: P1+I4 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change, no public/ change. P1+I4: one presence-transition module.
+src/services/presence.ts transition(person, intent, {actor, campMode?, now}) decides every presence
+write (checkIn, signIn, signOut, cancel, uncancel, modeRevert) and returns applied/noop/refused;
+PersonService.checkIn/signEvent/update, the offline sign-in sheet and admin.setMode revert only do
+I/O. person-lifecycle.ts is deleted. Behaviour unchanged except an N5 check-in replay no longer
+re-saves the unchanged row. Pre-camp director/admin exemption uses A1 isOversight.
+
+
 2026-11-07 - Architecture round, Phase C6: D1 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change, no public/ change. D1: the service graph is built once.
