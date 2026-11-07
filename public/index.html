@@ -1694,8 +1694,9 @@ function dayFmt(d){try{return new Date(d+'T12:00:00Z').toLocaleDateString('en-AU
    leave(reason):
      'expired' - the server ended the session (a 401, raised by _doFetch as ycp:session-ended). Login
                  screen; nothing of the group or a preview is left behind; saved taps stay for this login.
-     'refused' - a stored session was refused some other way (reopen or offline recovery). Clears the
-                 token and any preview; the caller has already shown the login screen if it needed to.
+     'refused' - a stored session was refused some other way (reopen or offline recovery). Parks the queue
+                 (saved taps stay for this login), clears the token and any preview; the caller has
+                 already shown the login screen if it needed to.
      'logout'  - the leader signed out: tell the server, drop this login's saved data, reload. */
 function leave(reason){
   if(reason==='logout'){
@@ -1713,9 +1714,12 @@ function leave(reason){
     TOKEN=null;ACTOR=null;location.reload();return;
   }
   if(reason==='refused'){
+    // C15 gate: first, while ACTOR is still this login. A throw in enterShell after the restore loaded the
+    // taps lands here; memory must not keep them for the next login (the saved copy stays for this one).
+    _queueStep('leave');
     TOKEN=null;ACTOR=null;
     localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
-    // Gate A L2: a non-401 refusal never ran leave('expired'), so drop the preview here too (queue untouched).
+    // Gate A L2: a non-401 refusal never ran leave('expired'), so drop the preview here too.
     PREVIEW_MODE=ACCOUNT_PREVIEW=false;_previewStash=null;localStorage.removeItem('ycp_preview_stash');document.getElementById('previewBanner').classList.remove('show');
     return;
   }

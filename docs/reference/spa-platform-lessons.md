@@ -10,7 +10,7 @@
 - **The shell is stored and read only under `'/'`** (B-12b, gate fix-up L1): tapping a notification offline with the app closed (`/?nav=…`) opens the app instead of the browser's offline page, and `/index.html` gets the same copy. Storing `/?nav=…` as its own entry and matching with `ignoreSearch` could serve an older copy after a deploy (the browser returns the oldest match), so the SW now does `put('/')` / `match('/')`.
 - **No reload on first install** (B-12c): `controllerchange` skips the first claim (`hadCtrl`), so a first visit no longer reloads mid-login; later deploys still reload once. Manual check still owed: in a fresh private window, type the username while the SW installs; the text must survive.
 - **`_doFetch(path,{as:'blob'})`** (B-13) is the download path for the audit workbook and the offline sign-in sheet: 90 s timeout (`API_IMPORT_TIMEOUT_MS`), the same `_isAppAnswer`/401/`!res.ok` handling as JSON calls, and a Blob never enters `Cache`/`_inflight`. Ceiling: the timer covers the time to response headers, not a stalled body.
-- Harnesses: `scripts/sw-harness.js` (real `sw.js` + the `controllerchange` block) and `scripts/preview-queue-harness.js`; `npm run harness` now runs 15.
+- Harnesses: `scripts/sw-harness.js` (real `sw.js` + the `controllerchange` block) and `scripts/preview-queue-harness.js`; `npm run harness` now runs 16 (C15 added `scripts/session-queue-harness.js`: the real session + queue code against a fake server that attributes every POST to a login).
 
 ## 16-item owner batch — push latency, parent masking, Android review — 2026-08-03
 

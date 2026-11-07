@@ -87,7 +87,7 @@ npm run dev          # backend + frontend on http://localhost:4200 (tsx watch)
 npm run start        # same, no watch
 npm run typecheck    # tsc --noEmit (strict)
 npm run test         # vitest
-npm run harness      # the 15 SPA harnesses (scripts/*-harness.js; vpkick excluded) — run after SPA edits
+npm run harness      # the 16 SPA harnesses (scripts/*-harness.js; vpkick excluded) — run after SPA edits
 ```
 
 Default port: **4200**. Set `PORT=xxxx` to override.

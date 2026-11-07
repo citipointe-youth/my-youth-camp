@@ -42,7 +42,7 @@ function sandbox(store, extra) {
     JSON, Error, Promise, setTimeout, clearTimeout,
     localStorage: { getItem: (k) => (ls.has(k) ? ls.get(k) : null), setItem: (k, v) => ls.set(k, String(v)), removeItem: (k) => ls.delete(k) },
     document: { getElementById: el },
-    Cache: { clear: noop }, _rosterClear: noop, _queueStop: noop, _queueStep: noop, _hideUndoToast: noop, _netStrip: noop, closeModal: noop, toast: noop,
+    Cache: { clear: noop }, _rosterClear: noop, _queueStop: noop, _queueStep: (k) => { ctx.__stepActor = ctx.ACTOR; ctx.__step = k; }, /* C15 review nit: parks while ACTOR is set */ _hideUndoToast: noop, _netStrip: noop, closeModal: noop, toast: noop,
     _undoTimer: null, _undoCamperId: 'c9', _bootOffline: false, MUST_CHANGE_PASSWORD_ENFORCED: false,
     TOKEN: 'preview-token', ACTOR: { id: 'u1' }, SESSIONS: [1], SEL_SESSION: 's1', SETTINGS: {}, STACK: ['x'],
     PREVIEW_MODE: true, ACCOUNT_PREVIEW: true, _previewStash: JSON.parse(ADMIN_STASH), _previewLocalFlips: { c1: true },
@@ -59,6 +59,7 @@ function sandbox(store, extra) {
   {
     const { ctx, ls, el } = sandbox({ ycp_preview_stash: ADMIN_STASH, [QUEUE_KEY]: QUEUE });
     ctx.leave('expired');
+    assert.ok(ctx.__step === 'leave' && ctx.__stepActor, 'leave(expired): _queueStep(leave) runs before ACTOR is nulled');
     assert.strictEqual(ctx.PREVIEW_MODE, false, 'sessionExpired: PREVIEW_MODE');
     assert.strictEqual(ctx.ACCOUNT_PREVIEW, false, 'sessionExpired: ACCOUNT_PREVIEW');
     assert.strictEqual(ctx._previewStash, null, 'sessionExpired: _previewStash');
@@ -121,6 +122,7 @@ function sandbox(store, extra) {
     assert.strictEqual(ls.has('ycp_preview_stash'), false, 'restore refused: stored stash');
     assert.strictEqual(el('previewBanner').classList.contains('show'), false, 'restore refused: banner');
     assert.strictEqual(ls.get(QUEUE_KEY), QUEUE, 'restore refused: saved check-in queue untouched');
+    assert.ok(ctx.__step === 'leave' && ctx.__stepActor, 'leave(refused): _queueStep(leave) runs before ACTOR is nulled');
   }
   {
     // Gate A code review M3: a staff account with no first/last name signs as its username, never

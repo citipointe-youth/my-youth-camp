@@ -9,7 +9,8 @@ No migration, no Supabase SQL change. SPA only. S1: one session module in public
 enterShell(kind) (login / changePassword / restore) owns the shell start-up order; leave(reason)
 (expired / refused / logout) replaces sessionExpired(), logout() and two hand-copied restore
 teardowns; _queueStep(kind) is the one map from session event to queue action (queue functions
-themselves untouched); the five preview switches share _previewShell(). S3: _doFetch no longer
+themselves untouched); leave('refused') parks the queue first (C15 gate: a throw inside
+enterShell can no longer send one login's taps under the next; scripts/session-queue-harness.js); the five preview switches share _previewShell(). S3: _doFetch no longer
 calls the UI; a 401 with a token raises ycp:session-ended and MUST_CHANGE_PASSWORD raises
 ycp:must-change-password, both synchronous window events. Ruled changes: after a change of
 password the saved taps are loaded and sent and the note draft offered, like login (IA-OQ-11;

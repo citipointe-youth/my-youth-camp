@@ -103,7 +103,7 @@ async function recover(err) {
     localStorage: { removeItem: (k) => { if (k === 'ycp_token' || k === 'ycp_actor') calls.removed++; } },
     document: { getElementById: () => ({ classList: { remove() {} } }) },
     api: async (p) => { if (err) throw err; return {}; }, _netStrip() {}, updateModeUI() {}, buildTabs() {}, _prefetch() {},
-    gotoTab: async () => {}, _navTo: async () => {}, _savedQueueCount: () => 0, CHECKIN_QUEUE: [], _draining: false,
+    gotoTab: async () => {}, _navTo: async () => {}, _savedQueueCount: () => 0, _queueStep() {}, CHECKIN_QUEUE: [], _draining: false,
   };
   vm.createContext(c);
   vm.runInContext('var _bootOffline=true,ACTOR={},TOKEN="t",SETTINGS={},CAMP_MODE="at-camp",STACK=["home"];' + extract('async function _offlineBootRecover(') + extract('function leave(')
