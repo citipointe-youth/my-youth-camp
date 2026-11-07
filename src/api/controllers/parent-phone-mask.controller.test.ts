@@ -114,7 +114,7 @@ describe('parent phone masking on the sibling person routes', () => {
       listRegistrants: async () => [p],
       get: async () => p,
       create: async () => p,
-      update: async () => p,
+      patch: async () => p,
     } as unknown as PersonService;
     return {
       registrant: makeRegistrantController({ person: personSvc }),
@@ -126,7 +126,6 @@ describe('parent phone masking on the sibling person routes', () => {
     'GET /registrants/:id': (r: ReturnType<typeof routes>, q: HttpRequest) => r.registrant.get(q),
     'POST /registrants': (r: ReturnType<typeof routes>, q: HttpRequest) => r.registrant.create(q),
     'PATCH /registrants/:id': (r: ReturnType<typeof routes>, q: HttpRequest) => r.registrant.update(q),
-    'PATCH /campers/:id': (r: ReturnType<typeof routes>, q: HttpRequest) => r.camper.update(q),
   };
 
   for (const [name, call] of Object.entries(calls)) {

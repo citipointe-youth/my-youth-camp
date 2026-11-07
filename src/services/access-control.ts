@@ -13,7 +13,6 @@ export type Action =
   | 'reminder:send'
   | 'camper:read'
   | 'camper:read:sensitive'
-  | 'camper:write'
   | 'checkin:write'
   | 'attendance:write'
   | 'note:write'
@@ -85,7 +84,6 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'reminder:send',
     'camper:read',
     'camper:read:sensitive',
-    'camper:write',
     'checkin:write',
     'attendance:write',
     'note:write',
@@ -110,7 +108,6 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Action>> = {
     'reminder:send',
     'camper:read',
     'camper:read:sensitive',
-    'camper:write',
     'checkin:write',
     'attendance:write',
     'note:write',

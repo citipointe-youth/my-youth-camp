@@ -47,22 +47,6 @@ export function makeCamperController(services: CamperControllerServices) {
       return { ...dto, age: profile.age, lastSignOut: profile.lastSignOut };
     },
 
-    async update(req: HttpRequest) {
-      if (!req.ctx) throw new UnauthorizedError();
-      const id = req.params['id'];
-      if (!id) throw new BadRequestError('Missing id');
-      const b = req.body as Record<string, unknown>;
-      const patch: Partial<Person> = {
-        ...(b['mobile'] !== undefined && { mobile: b['mobile'] as string }),
-        ...(b['groupId'] !== undefined && { groupId: b['groupId'] as string }),
-        ...(b['medicalConditions'] !== undefined && { medicalConditions: b['medicalConditions'] as string[] }),
-        ...(b['dietaryRequirements'] !== undefined && { dietaryRequirements: b['dietaryRequirements'] as string[] }),
-        ...(b['blueCardNumber'] !== undefined && { blueCardNumber: b['blueCardNumber'] as string }),
-        ...(b['blueCardExpiry'] !== undefined && { blueCardExpiry: b['blueCardExpiry'] as string }),
-      };
-      return toCamperDto(await person.update(req.ctx.actor, id, patch), req.ctx.actor);
-    },
-
     async revealMedicare(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       assertCan(req.ctx.actor, 'camper:read:sensitive');
