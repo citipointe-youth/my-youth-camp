@@ -106,6 +106,20 @@ describe('[T-1] prayer gets the parent number masked on the server (Tom, Step 3 
   }
 });
 
+describe('[T-1] GET /search/contacts/:camperId', () => {
+  const contacts = async (a: Actor) => (await call('GET', '/search/contacts/:camperId', a, { params: { camperId: 'p1' } })) as Row[];
+  it('[T-1] prayer gets no parent contact (no guardian name, no phone)', async () => {
+    const out = await contacts(actor('prayer'));
+    expect(out.find((x) => x['role'] === 'parent')).toBeUndefined();
+    expect(JSON.stringify(out)).not.toMatch(/Gina|0499/);
+  });
+  it('[T-1] firstAid and church keep the masked parent contact', async () => {
+    for (const a of [actor('firstAid'), CHURCH]) {
+      expect((await contacts(a)).find((x) => x['role'] === 'parent'), a.role).toMatchObject({ name: 'Gina Guardian', phone: '0499****22' });
+    }
+  });
+});
+
 describe('access regression: GET /settings needs a login', () => {
   it('[A-Q11][B-8][Q11] GET /settings is auth:true in the route table (IA-OQ-14, empty pre-login allow-list)', () => {
     expect(find('GET', '/settings')?.auth).toBe(true);
