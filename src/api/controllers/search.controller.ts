@@ -1,6 +1,6 @@
 import type { HttpRequest } from '../http/types';
 import type { SearchService } from '../../services/search.service';
-import { toCamperDto, toCrossScopeHitDto, maskParentPhone } from '../dto/person.dto';
+import { toCamperDto, toCrossScopeHitDto } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 import { createLogger } from '../../utils/logger';
 
@@ -23,7 +23,7 @@ export function makeSearchController(services: SearchControllerServices) {
       const actor = req.ctx.actor;
       const results = await services.search.search(actor, q);
       return results.map((r) => ({
-        camper: r.limited ? toCrossScopeHitDto(r.camper) : maskParentPhone(toCamperDto(r.camper, actor), actor),
+        camper: r.limited ? toCrossScopeHitDto(r.camper) : toCamperDto(r.camper, actor),
         contacts: r.contacts,
       }));
     },
