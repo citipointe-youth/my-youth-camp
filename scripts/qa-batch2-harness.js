@@ -270,7 +270,78 @@ function queueOwners() {
   assert.strictEqual(vm.runInContext('_checkinOldCount', e), 2, 'and counted, for the one with no name');
   assert.ok(/Ann/.test(e.toasts[0]), 'told straight away');
 }
+// B-10 (camp arch 2026-11-07): a note carries the check-in session only when it was opened from a
+// check-in row, not whatever session the check-in screen last showed.
+async function noteSession() {
+  const posts = [];
+  const c = {
+    modal() {}, closeModal() {}, toast() {}, _sheetSending() {}, _ciTapLocked: () => false, _ndAll: () => ({}), _ndPut() {},
+    _actingName: () => '', esc: (s) => s, jsq: (s) => s, icSm: () => '', dtFmt: () => '', window: {},
+    document: { getElementById: (id) => (id === 'noteBody' ? { value: 'Left dinner early' } : { checked: false }) },
+    api: async (p, o) => { posts.push(o.body); },
+  };
+  vm.createContext(c);
+  vm.runInContext('var ACTOR={displayName:"Sam"},SEL_SESSION="mon-am",LAST_LEADER="",_sheetBusy=false;'
+    + extract('function notePrompt(') + extract('function reviewNote(') + extract('async function confirmNote('), c);
+  // Students, profile and search open the note with no session.
+  c.notePrompt('a', 'Ann'); c.reviewNote('a', 'Ann'); await c.confirmNote('a');
+  assert.ok(!('sessionId' in posts[0]), 'a note from Students/profile/search is not tagged with the last check-in session');
+  // A check-in row passes its session, and "‹ Edit" hands the same note's session back.
+  const edit = () => vm.runInContext('window._draft&&window._draft.sessionId', c);
+  c.notePrompt('a', 'Ann', 'mon-am'); c.reviewNote('a', 'Ann'); c.notePrompt('a', 'Ann', edit()); c.reviewNote('a', 'Ann'); await c.confirmNote('a');
+  assert.strictEqual(posts[1].sessionId, 'mon-am', 'a check-in row note keeps its session through Edit');
+  assert.ok(extract('function reviewNote(').includes("onclick=\"notePrompt('${camperId}','${esc(jsq(name))}',window._draft&&window._draft.sessionId)\">‹ Edit"), 'Edit passes the note session');
+  // Opened from a check-in row and cancelled, then opened for the same student from Students.
+  c.notePrompt('b', 'Bo', 'mon-am'); c.notePrompt('b', 'Bo'); c.reviewNote('b', 'Bo'); await c.confirmNote('b');
+  assert.ok(!('sessionId' in posts[2]), 'a cancelled check-in-row note leaves nothing behind');
+  assert.ok(/notePrompt\('\$\{c\.id\}','\$\{esc\(jsq\(c\.name\)\)\}',SEL_SESSION\)/.test(extract('function rowHtml(')), 'the check-in row passes its session');
+}
+
+// B-13: downloads go through _doFetch's blob mode: a wifi sign-in page is not saved as the file, a
+// 401 ends the session, and they get the 90 s timeout. The default JSON path is unchanged.
+async function downloads() {
+  function run(answer, call) {
+    const out = { saved: [], toasts: [], expired: 0, timeouts: [] };
+    const c = {
+      AbortController, String, JSON, Error, Response,
+      setTimeout: (f, ms) => { out.timeouts.push(ms); return 0; }, clearTimeout() {},
+      fetch: async () => answer(), _npStart() {}, _npDone() {}, _showChangePasswordGate() {},
+      _rlSaveBlob: (b, n) => out.saved.push([b, n]), toast: (m) => out.toasts.push(m),
+      sessionExpired: () => { out.expired++; }, localStorage: { setItem() {} },
+    };
+    vm.createContext(c);
+    vm.runInContext('var TOKEN="t",ACTOR={},SETTINGS={year:2026};' + stmt('const API_TIMEOUT_MS=')
+      + ['function _isAppAnswer(', 'async function _doFetch(', 'function _exportName(', 'async function downloadAuditExport(',
+        'async function downloadCsvExport(', 'async function downloadOfflineSignInTemplate('].map(extract).join('\n'), c);
+    return Promise.resolve(call(c)).then((r) => ({ ...out, r }));
+  }
+  const res = (body, status, type) => () => new Response(body, { status, headers: { 'content-type': type } });
+  const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  for (const dl of [(c) => c.downloadAuditExport(), (c) => c.downloadOfflineSignInTemplate()]) {
+    const portal = await run(res('<html>Sign in to wifi</html>', 200, 'text/html; charset=utf-8'), dl);
+    assert.strictEqual(portal.saved.length, 0, 'a wifi sign-in page is not saved as the file');
+    assert.ok(/sign-in page/.test(portal.toasts[0]), portal.toasts[0]);
+    const gone = await run(res(JSON.stringify({ code: 'UNAUTHORIZED', message: 'Session expired' }), 401, 'application/json'), dl);
+    assert.strictEqual(gone.expired, 1, 'a 401 ends the session');
+    assert.strictEqual(gone.saved.length, 0);
+    const ok = await run(res('PK-xlsx', 200, XLSX), dl);
+    assert.strictEqual(ok.saved.length, 1, 'the real file is saved');
+    assert.strictEqual(await ok.saved[0][0].text(), 'PK-xlsx');
+    assert.deepStrictEqual(ok.timeouts, [90000], 'downloads get the 90 s timeout');
+  }
+  const named = await run(res('PK', 200, XLSX), (c) => c.downloadOfflineSignInTemplate());
+  assert.ok(/^youth-camp-2026-offline-sign-in-\d{4}-\d\d-\d\d\.xlsx$/.test(named.saved[0][1]), named.saved[0][1]);
+  const refused = await run(res(JSON.stringify({ code: 'FORBIDDEN', message: 'Not allowed' }), 403, 'application/json'), (c) => c.downloadAuditExport());
+  assert.deepStrictEqual(refused.toasts, ['Not allowed'], 'the app refusal message is shown');
+  // Control: a JSON call is untouched (20 s timeout, parsed body).
+  const json = await run(res('{"a":1}', 200, 'application/json'), (c) => c._doFetch('/home', {}));
+  assert.deepStrictEqual(json.r, { a: 1 });
+  assert.deepStrictEqual(json.timeouts, [20000]);
+}
+
 (async () => {
+  await noteSession();
+  await downloads();
   const nonApp = Object.assign(new Error('x'), { transient: true, nonApp: true });
   const net = Object.assign(new Error('x'), { transient: true });
   const appNo = Object.assign(new Error('x'), { code: 'FORBIDDEN' });

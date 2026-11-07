@@ -1119,12 +1119,15 @@ function _isAppAnswer(j,res){
   if(res.ok)return !String(res.headers.get('content-type')||'').includes('text/html'); // a portal can answer 200 with its page
   return !!j&&typeof j.code==='string'&&typeof j.message==='string';
 }
+// opt.as==='blob' (B-13, downloads): an ok answer is returned as a Blob instead of parsed JSON, with
+// the import timeout. Every check below (sign-in page, 401, refusals) is the same as for JSON.
 async function _doFetch(path,opt){
   _npStart();
   try{
   const isImport=path.indexOf('/import')===0||path.indexOf('/import')===path.length-7;
+  const asBlob=opt.as==='blob';
   const ctrl=new AbortController();
-  const timer=setTimeout(()=>ctrl.abort(),isImport?API_IMPORT_TIMEOUT_MS:API_TIMEOUT_MS);
+  const timer=setTimeout(()=>ctrl.abort(),isImport||asBlob?API_IMPORT_TIMEOUT_MS:API_TIMEOUT_MS);
   let res;
   let j=null;
   try{
@@ -1136,7 +1139,10 @@ async function _doFetch(path,opt){
     const ne=new Error(e&&e.name==='AbortError'?'That took too long. Check your signal and try again.':'No signal. Check your connection and try again.');
     ne.transient=true;throw ne;
   }finally{clearTimeout(timer);}
-  try{j=await res.json();}catch(e){j=null;}
+  let blob=null;
+  if(asBlob&&res.ok){
+    try{blob=await res.blob();}catch(e){const ne=new Error('No signal. Check your connection and try again.');ne.transient=true;throw ne;}
+  }else try{j=await res.json();}catch(e){j=null;}
   // A 401 on any path except the login POST means the session is gone. This used to be guarded
   // on `TOKEN`, which broke on a CASCADE: _prefetch() fires 5 requests at once, the first 401
   // runs sessionExpired() (which nulls TOKEN), and the remaining four then fell through this
@@ -1168,7 +1174,7 @@ async function _doFetch(path,opt){
     }
     throw err;
   }
-  return j;
+  return asBlob?blob:j;
   }finally{_npDone();}
 }
 async function api(path,opt={}){
@@ -2001,6 +2007,7 @@ function updateModeUI(){
 /* ===== AT-CAMP PREVIEW ===== */
 function enterPreview(){
   if(SETTINGS&&SETTINGS.campMode!=='pre-camp'){toast('Already in at-camp mode');return;}
+  _queueStop(); // B-14: park this login's saved taps; a drain in preview would hit the read-only guard and drop them
   PREVIEW_MODE=true;
   CAMP_MODE='at-camp';
   _previewLocalFlips={}; // fix 4: a fresh preview session starts with no local-only flips
@@ -2010,6 +2017,7 @@ function enterPreview(){
 }
 function exitPreview(){
   PREVIEW_MODE=false;
+  _queueLoad(true);if(CHECKIN_QUEUE.length&&!_draining)drainQueue(); // B-14: as doLogin, nothing judged (Q9)
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
   _previewLocalFlips={};
   SESSIONS=[];SEL_SESSION=null;
@@ -2032,6 +2040,8 @@ async function enterAccountPreview(id){
   // is already inside the same-user at-camp preview when they click.
   try{d=await _doFetch('/accounts/users/'+id+'/preview',{method:'POST'});}
   catch(e){toast((e&&e.message)||'Could not start preview');return;}
+  // B-14: park the queue while ACTOR is still the admin, so _persistQueue writes the admin's own key.
+  _queueStop();
   _previewStash={token:TOKEN,actor:ACTOR};
   localStorage.setItem('ycp_preview_stash',JSON.stringify(_previewStash));
   TOKEN=d.token;
@@ -2053,6 +2063,7 @@ function exitAccountPreview(){
   localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
   _previewStash=null;localStorage.removeItem('ycp_preview_stash');
   ACCOUNT_PREVIEW=false;PREVIEW_MODE=false;
+  _queueLoad(true);if(CHECKIN_QUEUE.length&&!_draining)drainQueue(); // B-14: the admin's parked taps, nothing judged (Q9)
   Cache.clear();SESSIONS=[];SEL_SESSION=null;
   _restoreFilters();   // back to the admin's own saved filters
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
@@ -4018,7 +4029,7 @@ async function _renderDailyCheckin(){
         <div class="nm">${esc(c.name)}${c.medicalFlag?_medPill():''}</div>
         ${subTxt?`<div class="sub">${subTxt}</div>`:''}
       </div>
-      <button class="btn ghost sm" style="z-index:1;flex:none;min-height:44px;padding:8px 12px" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(jsq(c.name))}')">Add note</button>
+      <button class="btn ghost sm" style="z-index:1;flex:none;min-height:44px;padding:8px 12px" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(jsq(c.name))}',SEL_SESSION)">Add note</button>
       ${actionBtn}
     </div>`;
   }
@@ -4153,9 +4164,10 @@ function _offerNoteDraft(){
     <button class="btn" onclick="closeModal();notePrompt('${d.camperId}','${esc(jsq(d.name))}')">Open the note</button>
     <button class="btn ghost" style="margin-top:6px" onclick="_ndPut('${d.camperId}',null);closeModal()">Discard it</button>`);
 }
-function notePrompt(camperId,name){
+// B-10: only a check-in row (and "‹ Edit" handing back the same note's) passes sessionId.
+function notePrompt(camperId,name,sessionId){
   if(_ciTapLocked()){_ciTapIgnored(camperId,name);return;} // QA item 4: same stray second tap, landing on the next row's Add note
-  window._noteCtx={camperId,name};
+  window._noteCtx={camperId,name,sessionId};
   const d=_ndAll()[camperId]||{body:'',sensitive:false};
   modal(`<h3>Note · ${esc(name)}</h3>
     <label>Note</label><textarea id="noteBody" maxlength="1900" oninput="_noteDraftSave()" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
@@ -4171,22 +4183,23 @@ function reviewNote(camperId,name){
   // Item 7e: the leader name is optional — the backend already attributes the note to the
   // logged-in actor (see confirmNote below); this field is only a "logged by" annotation.
   if(!body){toast('Type a note first');return;}
-  if(leader)LAST_LEADER=leader;window._draft={camperId,name,leader,body,sensitive};_ndPut(camperId,{name,body,sensitive});
+  if(leader)LAST_LEADER=leader;window._draft={camperId,name,leader,body,sensitive,sessionId:window._noteCtx&&window._noteCtx.camperId===camperId?window._noteCtx.sessionId:undefined};_ndPut(camperId,{name,body,sensitive});
   modal(`<h3>Review note</h3><div class="card" style="margin:6px 0 10px">
     <div class="sub">Student</div><div class="nm">${esc(name)}</div>
     ${leader?`<div class="sub" style="margin-top:7px">Logged by</div><div class="nm">${esc(leader)}</div>`:''}
     <div class="sub" style="margin-top:7px">Note</div><div style="font-size:var(--t-body)">${esc(body)}</div>
     ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:var(--t-body)">${icSm('alert')} Sensitive — hidden from church logins. Zone leaders, directors, admins and the prayer team can read it. Saving it does not alert anyone.</div>`:''}</div>
     <button class="btn" onclick="confirmNote('${camperId}')">Confirm &amp; submit</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(jsq(name))}')">‹ Edit</button>`);
+    <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(jsq(name))}',window._draft&&window._draft.sessionId)">‹ Edit</button>`);
 }
 async function confirmNote(camperId){const d=window._draft;if(!d||_sheetBusy)return;
   // Backend attributes the note to the logged-in actor; the typed leader name is folded into the body.
   const body=d.leader&&d.leader!==ACTOR.displayName?`${d.body}\n— logged by ${d.leader}`:d.body;
-  // Bug 19: SEL_SESSION is null outside the check-in screen — omit the key entirely rather than
-  // posting `sessionId: null` (see AddNoteSchema in src/services/note.service.ts).
+  // B-10: the session comes from the check-in row the note was opened from, never the SEL_SESSION
+  // global, which keeps the last check-in session after leaving that screen. No session: omit the
+  // key rather than posting `sessionId: null` (Bug 19, AddNoteSchema in src/services/note.service.ts).
   const payload={camperId,body,category:'note',sensitive:!!d.sensitive};
-  if(SEL_SESSION)payload.sessionId=SEL_SESSION;
+  if(d.sessionId)payload.sessionId=d.sessionId;
   _sheetSending(true);
   try{
     await api('/notes',{method:'POST',body:payload});window._draft=null;_ndPut(camperId,null);_sheetSending(false);
@@ -8502,20 +8515,18 @@ function _exportName(base,ext){
   const d=new Date().toISOString().slice(0,10);
   return `youth-camp-${y}-${base}-${d}.${ext}`;
 }
+// B-13: through _doFetch's blob mode, so a wifi sign-in page is never saved as the file, a 401 ends
+// the session and a stalled network times out. _doFetch, not api(): a Blob must not enter Cache.
 async function downloadAuditExport(){
   try{
-    const resp=await fetch('/export/audit',{headers:{Authorization:'Bearer '+TOKEN}});
-    if(!resp.ok){const e=await resp.json().catch(()=>({}));toast(e.message||'Export failed');return;}
-    const blob=await resp.blob();
+    const blob=await _doFetch('/export/audit',{as:'blob'});
     _rlSaveBlob(blob,_exportName('audit-workbook','xlsx'));
     toast('Audit workbook downloaded');
   }catch(e){toast(e.message||'Export failed');}
 }
 async function downloadCsvExport(path,filename){
   try{
-    const resp=await fetch(path,{headers:{Authorization:'Bearer '+TOKEN}});
-    if(!resp.ok){toast('Export failed');return;}
-    const blob=await resp.blob();
+    const blob=await _doFetch(path,{as:'blob'});
     _rlSaveBlob(blob,filename);
     toast('Downloaded');
   }catch(e){toast(e.message||'Export failed');}
@@ -11642,7 +11653,11 @@ function _consumePushNav(){
    users get the latest UI without a manual refresh. */
 if('serviceWorker'in navigator){
   let _reloading=false;
+  // B-12c: on a first visit the install's clients.claim() also fires controllerchange; reloading
+  // then would wipe a half-typed login. Skip that one, and still reload for any later deploy.
+  let hadCtrl=!!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(!hadCtrl){hadCtrl=true;return;}
     if(_reloading)return;_reloading=true;location.reload();
   });
   window.addEventListener('load',()=>{

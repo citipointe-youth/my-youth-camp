@@ -38,15 +38,20 @@ self.addEventListener('fetch', (e) => {
 
   // Network-first for the HTML shell — always pick up the latest deploy when online,
   // fall back to cache when offline.
+  // B-12: the shell is cached under '/', so ignoreSearch lets '/?nav=<screen>' (a tapped
+  // notification) find it. A 5xx (function outage) also gets the cached shell, which boots in
+  // offline mode; with nothing cached the 5xx passes through. A non-ok answer is never cached.
   if (url.pathname === '/' || url.pathname === '/index.html') {
+    const cached = () => caches.match(request, { ignoreSearch: true });
     e.respondWith(
       fetch(request).then((res) => {
         if (res.ok) {
           const clone = res.clone();
           caches.open(CACHE).then((c) => c.put(request, clone));
         }
+        if (res.status >= 500) return cached().then((hit) => hit || res);
         return res;
-      }).catch(() => caches.match(request))
+      }).catch(cached)
     );
     return;
   }
