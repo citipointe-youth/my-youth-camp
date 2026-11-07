@@ -3,6 +3,16 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C12: I1 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change, no public/ change. I1: which importer may write which Person
+field is one table, OWNERSHIP in src/services/field-ownership.ts (write / write-blank / seed-only,
+B-16 seed-only fields and the same-file duplicate exception kept). applyRow replaces the Form update
+literal and mergeOwnedFields (deleted, with both OWNED_KEYS lists); an importer writing a field it
+does not own throws. No behaviour change (import-field-rules.characterisation.test.ts,
+field-ownership.test.ts).
+
+
 2026-11-07 - Architecture round, Phase C11: I2 (camp-v154)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change. I2: the three CSV importers no longer branch on dryRun; they
