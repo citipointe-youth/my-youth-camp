@@ -1,7 +1,6 @@
 import type { HttpRequest } from '../http/types';
 import type { PersonService } from '../../services/person.service';
 import type { RevealAuditService } from '../../services/reveal-audit.service';
-import type { Person } from '../../core/entities/person';
 import { toCamperDto, toCamperDetailDto } from '../dto/person.dto';
 import { UnauthorizedError, BadRequestError } from '../../core/errors/app-error';
 import { assertCan } from '../../services/access-control';
