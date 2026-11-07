@@ -3,6 +3,16 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C2: D4 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change, no public/ change. D4: controllers stop holding raw
+repos. Settings writes go through SettingsService intents (stampExport, clearExportStamp,
+stampImport, clearTempPasswords; same patchSingleton column scope as B-7), replacing
+controllers/_import-stamp.ts. Push subscribe/label/devices/unsubscribe moved verbatim to
+src/services/push-subscription.service.ts; /setup and /auth/me logic moved to AuthService
+(setupFirstAdmin, me). Services drops users, settingsRepo, pushSubscriptionRepo and gains
+pushSubscriptions. No behaviour change (stamp warning logger is now "settings").
+
 2026-11-07 - Architecture round, Phase C1: S2 + P4 (camp-v153)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change. S2: new src/services/budget.parity.test.ts pins the
