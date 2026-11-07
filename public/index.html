@@ -1005,7 +1005,7 @@ textarea{min-height:84px;resize:vertical;}
       <label>New Password (min 6 chars)</label><input class="fld" id="mcp-new" name="new-password" type="password" autocomplete="new-password">
       <label>Confirm New Password</label><input class="fld" id="mcp-new2" type="password" autocomplete="new-password">
       <button class="btn" type="submit">Set Password &amp; Continue</button>
-      <button class="btn ghost" type="button" style="margin-top:8px" onclick="logout()">Sign Out</button>
+      <button class="btn ghost" type="button" style="margin-top:8px" onclick="leave('logout')">Sign Out</button>
       <div class="err" id="mcpErr"></div>
     </form>
   </div>
@@ -1149,9 +1149,9 @@ async function _doFetch(path,opt){
   }else try{j=await res.json();}catch(e){j=null;}
   // A 401 on any path except the login POST means the session is gone. This used to be guarded
   // on `TOKEN`, which broke on a CASCADE: _prefetch() fires 5 requests at once, the first 401
-  // runs sessionExpired() (which nulls TOKEN), and the remaining four then fell through this
+  // ends the session (which nulls TOKEN), and the remaining four then fell through this
   // branch and surfaced the server's raw string — "Missing bearer token" — as an alarming toast
-  // that a refresh appeared to "fix". sessionExpired() is idempotent, so the cascade now
+  // that a refresh appeared to "fix". Ending is idempotent, so the cascade now
   // collapses into one banner. /auth/login is excluded because ITS 401 is "wrong password",
   // which must keep its own message on the login form.
   // QA batch 3: a wifi sign-in page or an edge proxy can answer 401/403/429 too. Only the app's own
@@ -1163,8 +1163,11 @@ async function _doFetch(path,opt){
       :'Can’t reach the camp server. If this wifi has a sign-in page, finish that first, then try again.');
     na.transient=true;na.nonApp=true;throw na;
   }
+  // S3: the transport raises events and never calls the UI. dispatchEvent is SYNCHRONOUS on purpose:
+  // the listener (leave('expired') -> _queueStop bumps _queueGen) must have run before this throw,
+  // because drainQueue's gen!==_queueGen check relies on it. Never move it to a timer or microtask.
   if(res.status===401&&path.indexOf('/auth/login')!==0){
-    if(TOKEN)sessionExpired();
+    if(TOKEN)window.dispatchEvent(new CustomEvent('ycp:session-ended'));
     const se=new Error('Session expired — please sign in again.');se.sessionEnded=true;throw se;
   }
   if(res.status===204)return null;
@@ -1173,12 +1176,7 @@ async function _doFetch(path,opt){
     err.code=j&&j.code;
     err.status=res.status;
     if(res.status>=500||res.status===429)err.transient=true;
-    // A stale cached ACTOR (e.g. an admin reset this account's password in another tab) can
-    // drift out of sync with the server; if the server says the gate is up, trust it.
-    if(err.code==='MUST_CHANGE_PASSWORD'){
-      if(ACTOR&&!ACTOR.mustChangePassword){ACTOR.mustChangePassword=true;localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));}
-      _showChangePasswordGate();
-    }
+    if(err.code==='MUST_CHANGE_PASSWORD')window.dispatchEvent(new CustomEvent('ycp:must-change-password'));
     throw err;
   }
   return asBlob?blob:j;
@@ -1198,7 +1196,7 @@ async function api(path,opt={}){
     .then(d=>{if(!opt.noCache&&d!==null)Cache.set(path,d);
       // /settings needs a login (A-Q11), so this only ever holds an authenticated copy. It stays on
       // disk to let a reopen with no signal still open the shell (QA item 5), and is removed on
-      // logout and sessionExpired.
+      // leave('logout') and leave('expired').
       if(path==='/settings'&&d)try{localStorage.setItem('ycp_settings',JSON.stringify(d));}catch(_){}
       return d;})
     .finally(()=>_inflight.delete(path));
@@ -1415,6 +1413,8 @@ function _confirmInitials(){
 // badge on "Set initials"; the write-path guard `_ensureInitials()` re-shows it before the first
 // attributed action, so attribution is guaranteed without ever asking again once set.
 function enforceInitials(){
+  // Gate B2 L-1: a preview never asks (a reload mid account-preview of a church runs this on restore).
+  if(PREVIEW_MODE||ACCOUNT_PREVIEW)return;
   if(!_isChurchAccount()||LEADER_INITIALS)return;
   modal(`<h3>Set your initials to continue</h3>
     <p class="sub" style="margin:4px 0 10px">Your church login is shared, so your initials tag every sign-in, sign-out, check-in and note you record. Enter them once — they're saved on this device and applied automatically. If someone else takes over, tap the ✎ badge in the header to switch.</p>
@@ -1688,10 +1688,40 @@ function timeFmt(iso){try{return new Date(iso).toLocaleTimeString([],{hour:'nume
 function dtFmt(iso){try{return new Date(iso).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});}catch{return iso;}}
 function dayFmt(d){try{return new Date(d+'T12:00:00Z').toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'});}catch{return d;}}
 
-function sessionExpired(){
+/* ===== SESSION (S1, 2026-11-07) =====
+   One way into the app shell (enterShell) and one way out (leave). Callers say WHAT happened; this
+   owns the order. Which queue action each event takes lives only in _queueStep (next to the queue).
+   leave(reason):
+     'expired' - the server ended the session (a 401, raised by _doFetch as ycp:session-ended). Login
+                 screen; nothing of the group or a preview is left behind; saved taps stay for this login.
+     'refused' - a stored session was refused some other way (reopen or offline recovery). Clears the
+                 token and any preview; the caller has already shown the login screen if it needed to.
+     'logout'  - the leader signed out: tell the server, drop this login's saved data, reload. */
+function leave(reason){
+  if(reason==='logout'){
+    // Clear preview state before the POST so the write guard doesn't block the logout call.
+    PREVIEW_MODE=false;ACCOUNT_PREVIEW=false;_previewStash=null;
+    localStorage.removeItem('ycp_preview_stash');
+    api('/auth/logout',{method:'POST'}).catch(()=>{});
+    localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
+    sessionStorage.removeItem('ycp_wizardReturn');
+    clearTimeout(_drainRetry);_drainRetry=null;
+    try{sessionStorage.removeItem(_ndKey());}catch(_){}
+    _rosterClear();
+    try{localStorage.removeItem('ycp_settings');}catch(_){} // camp-wide row: prices, discount tags, site map
+    try{localStorage.removeItem(_ciqKey());}catch(_){}
+    TOKEN=null;ACTOR=null;location.reload();return;
+  }
+  if(reason==='refused'){
+    TOKEN=null;ACTOR=null;
+    localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
+    // Gate A L2: a non-401 refusal never ran leave('expired'), so drop the preview here too (queue untouched).
+    PREVIEW_MODE=ACCOUNT_PREVIEW=false;_previewStash=null;localStorage.removeItem('ycp_preview_stash');document.getElementById('previewBanner').classList.remove('show');
+    return;
+  }
   _rosterClear(); // the session is over, so nothing of the group stays on the phone
   try{localStorage.removeItem('ycp_settings');}catch(_){} // the camp-wide row (prices, discount tags, site map) too
-  _queueStop();
+  _queueStep('leave'); // before ACTOR is nulled: _persistQueue keys on it
   clearTimeout(_undoTimer);_undoCamperId=null;_hideUndoToast();
   _bootOffline=false;_netStrip();
   Cache.clear();
@@ -1704,6 +1734,40 @@ function sessionExpired(){
   closeModal();
   const lg=document.getElementById('login');lg.style.display='flex';
   const err=document.getElementById('loginErr');if(err){err.textContent='Session expired — please sign in again.';err.style.display='block';}
+}
+// S3: the transport's two events, wired at load before any request can be made.
+window.addEventListener('ycp:session-ended',()=>leave('expired'));
+window.addEventListener('ycp:must-change-password',()=>{
+  // A stale cached ACTOR (e.g. an admin reset this account's password in another tab) can
+  // drift out of sync with the server; if the server says the gate is up, trust it.
+  if(ACTOR&&!ACTOR.mustChangePassword){ACTOR.mustChangePassword=true;localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));}
+  _showChangePasswordGate();
+});
+/* The shell start-up for a signed-in login. kind: 'login' | 'changePassword' | 'restore'. The fixed
+   order: shell visible, saved filters (before the first paint), tabs, queue step (before the first
+   await: the tabs are live from here), Home, initials gate, note draft, alerts offer, and for a
+   restore the push-notification nav. The caller has already set SETTINGS/CAMP_MODE. */
+async function enterShell(kind){
+  document.getElementById('login').style.display='none';
+  document.getElementById('bar').style.display='flex';
+  document.getElementById('stage').style.display='block';
+  document.getElementById('tabs').style.display='';  // let CSS media query control visibility
+  // Restore this account's saved roster filters BEFORE the first paint, so the
+  // check-in / My-students screens never render once unfiltered and then jump.
+  _restoreFilters();
+  updateModeUI();buildTabs();_prefetch();STACK=['home'];
+  _queueStep(kind);
+  await gotoTab('home');
+  // Item 7: church accounts must set initials once per login (enforced, no skip).
+  _loadLeaderInitials();
+  enforceInitials();
+  _offerNoteDraft();
+  if(kind==='restore'&&_bootOffline){_renderWideNav(STACK[STACK.length-1]||'home');_netStrip();return;} // gate B UX 4: home's paint failed, so draw the sidebar here
+  _offerAlertsAfterLogin();   // non-church roles only (church gets it after initials); a reopen counts as a sign-in
+  // Cold start from a tapped notification (sw.js openWindow('/?nav=...')). Done AFTER
+  // gotoTab('home') so 'home' stays on the stack and Back behaves normally. Routed through
+  // _pushNavTo because an unknown screen name is NOT ignored by go(): it blanks the app.
+  if(kind==='restore'){const nav=_consumePushNav();if(nav){try{_pushNavTo(nav);}catch(_){}}}
 }
 
 /* ===== AUTH ===== */
@@ -1826,23 +1890,7 @@ async function doLogin(){
        synchronously in the same tick can make it drop the prompt entirely. 150ms is imperceptible
        and is what YS Connection settled on. Don't remove it to "speed up" login. */
     await new Promise(r=>setTimeout(r,150));
-    document.getElementById('login').style.display='none';
-    document.getElementById('bar').style.display='flex';
-    document.getElementById('stage').style.display='block';
-    document.getElementById('tabs').style.display='';  // let CSS media query control visibility
-    // Restore this account's saved roster filters BEFORE the first paint, so the
-    // check-in / My-students screens never render once unfiltered and then jump.
-    _restoreFilters();
-    updateModeUI();buildTabs();_prefetch();STACK=['home'];
-    // Before the first await: the tabs are live from here, and this login's saved taps must already
-    // be loaded when one is tapped. They carry on from where they stopped, none of them judged.
-    _queueLoad(true);if(CHECKIN_QUEUE.length&&!_draining)drainQueue();
-    await gotoTab('home');
-    // Item 7: church accounts must set initials once per login (enforced, no skip).
-    _loadLeaderInitials();
-    enforceInitials();
-    _offerNoteDraft();
-    _offerAlertsAfterLogin();   // non-church roles only — church gets it after initials
+    await enterShell('login');
   }catch(e){
     const msg=e.message==='Invalid credentials'?'That username or password is not right. Check for capital letters, or ask your camp admin.':e.message;
     if(err){err.textContent=msg;err.style.display='block';}else toast(msg);}
@@ -1850,21 +1898,7 @@ async function doLogin(){
 // QA item 24: the header chip is a small target beside the day badges, and getting back in needs signal.
 async function confirmLogout(){
   const n=_savedQueueCount();
-  if(await confirmSheet({title:'Sign out of this app?',body:(n?n+' check-in'+(n===1?'':'s')+' waiting to send will be lost. ':'')+'You will need your password and signal to get back in. This does not sign anyone out of camp.',confirmLabel:'Sign out',danger:n>0}))logout();
-}
-function logout(){
-  // Clear preview state before the POST so the write guard doesn't block the logout call.
-  PREVIEW_MODE=false;ACCOUNT_PREVIEW=false;_previewStash=null;
-  localStorage.removeItem('ycp_preview_stash');
-  api('/auth/logout',{method:'POST'}).catch(()=>{});
-  localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
-  sessionStorage.removeItem('ycp_wizardReturn');
-  clearTimeout(_drainRetry);_drainRetry=null;
-  try{sessionStorage.removeItem(_ndKey());}catch(_){}
-  _rosterClear();
-  try{localStorage.removeItem('ycp_settings');}catch(_){} // camp-wide row: prices, discount tags, site map
-  try{localStorage.removeItem(_ciqKey());}catch(_){}
-  TOKEN=null;ACTOR=null;location.reload();
+  if(await confirmSheet({title:'Sign out of this app?',body:(n?n+' check-in'+(n===1?'':'s')+' waiting to send will be lost. ':'')+'You will need your password and signal to get back in. This does not sign anyone out of camp.',confirmLabel:'Sign out',danger:n>0}))leave('logout');
 }
 // Full-page gate for accounts flagged mustChangePassword (admin-set or new-year temp
 // password) — blocks everything else app-side too, mirroring the server's
@@ -1895,16 +1929,7 @@ async function submitChangePassword(){
     document.getElementById('mcpGate').style.display='none';
     SETTINGS=await api('/settings');
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
-    document.getElementById('bar').style.display='flex';
-    document.getElementById('stage').style.display='block';
-    document.getElementById('tabs').style.display='';
-    // Restore this account's saved roster filters BEFORE the first paint, so the
-    // check-in / My-students screens never render once unfiltered and then jump.
-    _restoreFilters();
-    updateModeUI();buildTabs();_prefetch();STACK=['home'];await gotoTab('home');
-    _loadLeaderInitials();
-    enforceInitials();
-    _offerAlertsAfterLogin();
+    await enterShell('changePassword'); // IA-OQ-11: loads + sends the saved taps and offers the note draft, like login
   }catch(e){_mcpErr(e.message);}
 }
 // The camp tz for the clock helpers below: `tz` when Intl accepts it, else Brisbane. Only the saved
@@ -2023,22 +2048,25 @@ function updateModeUI(){
 /* ===== AT-CAMP PREVIEW ===== */
 function enterPreview(){
   if(SETTINGS&&SETTINGS.campMode!=='pre-camp'){toast('Already in at-camp mode');return;}
-  _queueStop(); // B-14: park this login's saved taps; a drain in preview would hit the read-only guard and drop them
+  _queueStep('enterPreview'); // B-14: park this login's saved taps; a drain in preview would hit the read-only guard and drop them
   PREVIEW_MODE=true;
   CAMP_MODE='at-camp';
   _previewLocalFlips={}; // fix 4: a fresh preview session starts with no local-only flips
-  SESSIONS=[];SEL_SESSION=null; // reset so check-in fetches fresh sessions
   document.getElementById('previewBanner').classList.add('show');
+  _previewShell();
+}
+// The common tail of every preview switch: check-in refetches sessions for the new view, then Home.
+function _previewShell(){
+  SESSIONS=[];SEL_SESSION=null;
   updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
 }
 function exitPreview(){
   PREVIEW_MODE=false;
-  _queueLoad(true);if(CHECKIN_QUEUE.length&&!_draining)drainQueue(); // B-14: as doLogin, nothing judged (Q9)
+  _queueStep('exitPreview'); // B-14: as login, nothing judged (Q9)
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
   _previewLocalFlips={};
-  SESSIONS=[];SEL_SESSION=null;
   document.getElementById('previewBanner').classList.remove('show');
-  updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
+  _previewShell();
 }
 /* ===== ACCOUNT PREVIEW (previewing a different login, read-only) ===== */
 const _previewRoleLabel=r=>r==='zoneLeader'?'Zone leader':r==='director'?'Director':r==='firstAid'?'First aid':r==='prayer'?'Prayer team':r==='church'?'Church':r;
@@ -2057,21 +2085,20 @@ async function enterAccountPreview(id){
   try{d=await _doFetch('/accounts/users/'+id+'/preview',{method:'POST'});}
   catch(e){toast((e&&e.message)||'Could not start preview');return;}
   // B-14: park the queue while ACTOR is still the admin, so _persistQueue writes the admin's own key.
-  _queueStop();
+  _queueStep('enterPreview');
   _previewStash={token:TOKEN,actor:ACTOR};
   localStorage.setItem('ycp_preview_stash',JSON.stringify(_previewStash));
   TOKEN=d.token;
   ACTOR={...d.user,displayName:((d.user.firstName||'')+' '+(d.user.lastName||'')).trim()};
   localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
   Cache.clear(); // never let admin-scoped cached reads leak into the scoped preview
-  SESSIONS=[];SEL_SESSION=null;
   // Filters are keyed per account, so swap to the previewed account's saved set — otherwise
   // the admin's own year-level filter silently narrows the roster they are inspecting.
   _restoreFilters();
   ACCOUNT_PREVIEW=true;PREVIEW_MODE=false;
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
   document.getElementById('previewBanner').classList.add('show');
-  updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
+  _previewShell();
 }
 function exitAccountPreview(){
   if(!_previewStash){document.getElementById('previewBanner').classList.remove('show');ACCOUNT_PREVIEW=false;return;}
@@ -2079,12 +2106,12 @@ function exitAccountPreview(){
   localStorage.setItem('ycp_token',TOKEN);localStorage.setItem('ycp_actor',JSON.stringify(ACTOR));
   _previewStash=null;localStorage.removeItem('ycp_preview_stash');
   ACCOUNT_PREVIEW=false;PREVIEW_MODE=false;
-  _queueLoad(true);if(CHECKIN_QUEUE.length&&!_draining)drainQueue(); // B-14: the admin's parked taps, nothing judged (Q9)
-  Cache.clear();SESSIONS=[];SEL_SESSION=null;
+  _queueStep('exitPreview'); // B-14: the admin's parked taps, nothing judged (Q9)
+  Cache.clear();
   _restoreFilters();   // back to the admin's own saved filters
   CAMP_MODE=(SETTINGS&&SETTINGS.campMode)||'pre-camp';
   document.getElementById('previewBanner').classList.remove('show');
-  updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
+  _previewShell();
 }
 // The banner Exit button serves both preview kinds.
 function _exitAnyPreview(){if(ACCOUNT_PREVIEW)exitAccountPreview();else exitPreview();}
@@ -2094,8 +2121,7 @@ function _togglePreviewMode(){
   if(PREVIEW_MODE){PREVIEW_MODE=false;CAMP_MODE='pre-camp';}
   else{PREVIEW_MODE=true;CAMP_MODE='at-camp';}
   _previewLocalFlips={}; // fix 4: don't leak local-only flips across a preview on/off toggle
-  SESSIONS=[];SEL_SESSION=null;
-  updateModeUI();buildTabs();STACK=['home'];gotoTab('home');
+  _previewShell();
 }
 function _updatePreviewBanner(){
   const lbl=document.getElementById('pbLabel'),tog=document.getElementById('pbToggle');
@@ -3639,6 +3665,18 @@ window.addEventListener('online',()=>{if(ACTOR&&TOKEN&&CHECKIN_QUEUE.length)drai
 // under LEADER_INITIALS would misattribute a rehydrated entry to whoever is logged in now.
 /* The saved queue belongs to one login: its key is the login, so another user can't read or send
    it. When a session ends, memory is emptied and the saved copy stays for that login's return. */
+/* S1: the one map from a session event to what the check-in queue does. Don't inline it back into the
+   callers: which taps are kept or judged depends on exactly this mapping.
+   - login / changePassword / exitPreview: load this login's saved taps and send them, none judged (Q9).
+     Called before the first await, so they are loaded before any tap on the live tabs.
+   - restore: _resumeQueue, judged against the current session when online, all kept when offline.
+   - enterPreview / leave: park (persist, then empty memory). Must run while ACTOR is still this
+     login, because _persistQueue keys on it (enterAccountPreview calls it before the token swap). */
+function _queueStep(kind){
+  if(kind==='login'||kind==='changePassword'||kind==='exitPreview'){_queueLoad(true);if(CHECKIN_QUEUE.length&&!_draining)drainQueue();}
+  else if(kind==='restore')_resumeQueue(_bootOffline);
+  else if(kind==='enterPreview'||kind==='leave')_queueStop();
+}
 function _queueStop(){
   _persistQueue();
   CHECKIN_QUEUE.length=0;window._ciqRestored=false;
@@ -10731,7 +10769,7 @@ async function _adminResetConfirmed(){
   closeModal();
   try{
     await api('/admin/reset',{method:'POST',body:{force:true,confirmWipe:_CONFIRM_PHRASE}});
-    alert('Full reset complete. Signing out.');logout();
+    alert('Full reset complete. Signing out.');leave('logout');
   }catch(e){
     if(e.message&&e.message.toLowerCase().includes('export'))_exportFirstModal('reset');
     else toast(e.message);
@@ -11222,7 +11260,7 @@ async function _tryRestoreSession(){
     // hid the login screen, and the app blew up one tick later when _prefetch()'s authed calls all
     // 401'd. It needs a login now (A-Q11), but /auth/me stays the check. Session tokens
     // are stateless HMAC with a 48h TTL (auth.service.ts), so this fires for anyone returning
-    // the next day. On failure _doFetch() already runs sessionExpired(); the catch below clears
+    // the next day. On a 401 _doFetch() has already ended the session (leave('expired')); the catch below clears
     // localStorage so the next load goes straight to a clean login screen.
     // QA item 5: only a real refusal ends the session. No signal, a timeout or a 5xx keeps the
     // token and opens the shell from the saved settings; _offlineBootRecover finishes the job.
@@ -11230,31 +11268,10 @@ async function _tryRestoreSession(){
     await api('/auth/me',{noCache:true}).catch(e=>{if(!e.transient)throw e;_bootOffline=true;});
     SETTINGS=_bootOffline?_savedSettings():await api('/settings').catch(e=>{if(!e.transient)throw e;_bootOffline=true;return _savedSettings();});
     CAMP_MODE=SETTINGS.campMode||'pre-camp';
-    document.getElementById('login').style.display='none';
-    document.getElementById('bar').style.display='flex';
-    document.getElementById('stage').style.display='block';
-    document.getElementById('tabs').style.display='';  // let CSS media query control visibility
-    // Restore this account's saved roster filters BEFORE the first paint, so the
-    // check-in / My-students screens never render once unfiltered and then jump.
-    _restoreFilters();
-    updateModeUI();buildTabs();_prefetch();STACK=['home'];
-    _resumeQueue(_bootOffline);
-    await gotoTab('home');
-    _loadLeaderInitials(); // restore the badge/prefill
-    enforceInitials();     // item 7: a restored church session with no initials is still gated
-    _offerNoteDraft();
-    if(_bootOffline){_renderWideNav(STACK[STACK.length-1]||'home');_netStrip();return;} // gate B UX 4: home's paint failed, so draw the sidebar here
-    _offerAlertsAfterLogin();  // reopening the installed app counts as a sign-in for this offer
-    // Cold start from a tapped notification (sw.js openWindow('/?nav=…')). Done AFTER
-    // gotoTab('home') so 'home' stays on the stack and Back behaves normally. Routed through
-    // _pushNavTo because an unknown screen name is NOT ignored by go() — it blanks the app.
-    {const nav=_consumePushNav();if(nav){try{_pushNavTo(nav);}catch(_){}}}
+    await enterShell('restore');
   }catch(e){
     if(e&&e.code==='MUST_CHANGE_PASSWORD'){_showChangePasswordGate();return;}
-    TOKEN=null;ACTOR=null;
-    localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
-    // Gate A L2: a non-401 refusal skips sessionExpired, so drop the preview here too (queue untouched).
-    PREVIEW_MODE=ACCOUNT_PREVIEW=false;_previewStash=null;localStorage.removeItem('ycp_preview_stash');document.getElementById('previewBanner').classList.remove('show');
+    leave('refused');
   }
 }
 /* QA item 5: reopened with no signal. The roster is deliberately NOT saved on the phone (names of
@@ -11277,8 +11294,7 @@ async function _offlineBootRecover(){
     if(e.transient||e.code==='MUST_CHANGE_PASSWORD')return; // still no signal, or its gate is already up
     // The server refused this session. A 401 has already shown the login screen; any other refusal
     // needs it too, or clearing the token here would leave a shell that can't do anything.
-    _bootOffline=false;_netStrip();if(TOKEN)sessionExpired();TOKEN=null;ACTOR=null;
-    localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');return;
+    _bootOffline=false;_netStrip();if(TOKEN)leave('expired');leave('refused');return;
   }
   _bootOffline=false;_netStrip();
   SETTINGS=await api('/settings',{noCache:true}).catch(()=>SETTINGS);

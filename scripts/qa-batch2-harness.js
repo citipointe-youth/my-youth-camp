@@ -99,13 +99,15 @@ assert.ok(person.indexOf("STACK.push('student')") < person.indexOf("paint('stude
 async function recover(err) {
   const calls = { expired: 0, removed: 0 };
   const c = {
-    localStorage: { removeItem: () => { calls.removed++; } },
-    api: async (p) => { if (err) throw err; return {}; },
-    sessionExpired: () => { calls.expired++; }, _netStrip() {}, updateModeUI() {}, buildTabs() {}, _prefetch() {},
+    calls,
+    localStorage: { removeItem: (k) => { if (k === 'ycp_token' || k === 'ycp_actor') calls.removed++; } },
+    document: { getElementById: () => ({ classList: { remove() {} } }) },
+    api: async (p) => { if (err) throw err; return {}; }, _netStrip() {}, updateModeUI() {}, buildTabs() {}, _prefetch() {},
     gotoTab: async () => {}, _navTo: async () => {}, _savedQueueCount: () => 0, CHECKIN_QUEUE: [], _draining: false,
   };
   vm.createContext(c);
-  vm.runInContext('var _bootOffline=true,ACTOR={},TOKEN="t",SETTINGS={},CAMP_MODE="at-camp",STACK=["home"];' + extract('async function _offlineBootRecover('), c);
+  vm.runInContext('var _bootOffline=true,ACTOR={},TOKEN="t",SETTINGS={},CAMP_MODE="at-camp",STACK=["home"];' + extract('async function _offlineBootRecover(') + extract('function leave(')
+    + ";const _realLeave=leave;leave=(r)=>{if(r==='expired')calls.expired++;else _realLeave(r);};", c);
   await c._offlineBootRecover();
   return { ...calls, token: vm.runInContext('TOKEN', c), actor: vm.runInContext('ACTOR', c) };
 }
@@ -372,9 +374,12 @@ async function noteSession() {
 // 401 ends the session, and they get the 90 s timeout. The default JSON path is unchanged.
 async function downloads() {
   function run(answer, call) {
-    const out = { saved: [], toasts: [], expired: 0, timeouts: [] };
+    const out = { saved: [], toasts: [], expired: 0, events: [], timeouts: [] };
+    // S3: _doFetch raises ycp:session-ended / ycp:must-change-password instead of calling the UI.
+    const win = new EventTarget();
+    for (const t of ['ycp:session-ended', 'ycp:must-change-password']) win.addEventListener(t, () => out.events.push(t));
     const c = {
-      AbortController, String, JSON, Error, Response,
+      AbortController, String, JSON, Error, Response, CustomEvent, window: win,
       setTimeout: (f, ms) => { out.timeouts.push(ms); return 0; }, clearTimeout() {},
       fetch: async () => { out.fetches = (out.fetches || 0) + 1; return answer(); }, _npStart() {}, _npDone() {}, _showChangePasswordGate() {},
       _rlSaveBlob: (b, n) => out.saved.push([b, n]), toast: (m) => out.toasts.push(m),
@@ -397,7 +402,8 @@ async function downloads() {
     assert.ok(/server is having a problem/.test(down.toasts.at(-1)) && !/sign-in page/.test(down.toasts.at(-1)), down.toasts.at(-1));
     assert.ok(/^Preparing the file/.test(portal.toasts[0]), 'working toast first: ' + portal.toasts[0]);
     const gone = await run(res(JSON.stringify({ code: 'UNAUTHORIZED', message: 'Session expired' }), 401, 'application/json'), dl);
-    assert.strictEqual(gone.expired, 1, 'a 401 ends the session');
+    assert.deepStrictEqual(gone.events, ['ycp:session-ended'], 'a 401 ends the session (one event)');
+    assert.strictEqual(gone.expired, 0, '_doFetch no longer calls the UI itself');
     assert.strictEqual(gone.saved.length, 0);
     const ok = await run(res('PK-xlsx', 200, XLSX), dl);
     assert.strictEqual(ok.saved.length, 1, 'the real file is saved');
@@ -420,6 +426,29 @@ async function downloads() {
   assert.ok(/^youth-camp-2026-offline-sign-in-\d{4}-\d\d-\d\d\.xlsx$/.test(named.saved[0][1]), named.saved[0][1]);
   const refused = await run(res(JSON.stringify({ code: 'FORBIDDEN', message: 'Not allowed' }), 403, 'application/json'), (c) => c.downloadAuditExport());
   assert.strictEqual(refused.toasts.at(-1), 'Not allowed', 'the app refusal message is shown');
+  // S3: the session-ended event runs SYNCHRONOUSLY inside _doFetch, before the error is thrown, so
+  // drainQueue's gen!==_queueGen check sees the bump _queueStop made (IMPACT-SUMMARY invariant 4).
+  {
+    let seen = null;
+    const r = await run(res(JSON.stringify({ code: 'UNAUTHORIZED', message: 'x' }), 401, 'application/json'), async (c) => {
+      c.window.addEventListener('ycp:session-ended', () => { c.gen = (c.gen || 0) + 1; });
+      const p = c._doFetch('/checkin', { method: 'POST', body: {} });
+      try { await p; } catch (e) { seen = { ended: !!e.sessionEnded, gen: c.gen }; }
+    });
+    assert.deepStrictEqual(seen, { ended: true, gen: 1 }, '401: event ran, then sessionEnded thrown');
+    assert.deepStrictEqual(r.events, ['ycp:session-ended']);
+    assert.ok(/if\(TOKEN\)window\.dispatchEvent\(new CustomEvent\('ycp:session-ended'\)\);/.test(extract('async function _doFetch(')), 'dispatched synchronously, no timer or microtask');
+    const noTok = await run(res(JSON.stringify({ code: 'UNAUTHORIZED', message: 'x' }), 401, 'application/json'), (c) => {
+      vm.runInContext('TOKEN=null', c); return c._doFetch('/home', {}).catch((e) => e.sessionEnded); });
+    assert.deepStrictEqual([noTok.r, noTok.events.length], [true, 0], 'no token: no second event (prefetch cascade collapses)');
+    const login = await run(res(JSON.stringify({ code: 'UNAUTHORIZED', message: 'Invalid credentials' }), 401, 'application/json'),
+      (c) => c._doFetch('/auth/login', { method: 'POST' }).catch((e) => e.message));
+    assert.deepStrictEqual([login.r, login.events.length], ['Invalid credentials', 0], 'login 401 keeps its message, no event');
+    const mcp = await run(res(JSON.stringify({ code: 'MUST_CHANGE_PASSWORD', message: 'Change it' }), 403, 'application/json'),
+      (c) => c._doFetch('/home', {}).catch((e) => [e.code, e.status, !!e.transient]));
+    assert.deepStrictEqual(mcp.r, ['MUST_CHANGE_PASSWORD', 403, false], 'same error flags');
+    assert.deepStrictEqual(mcp.events, ['ycp:must-change-password']);
+  }
   // Control: a JSON call is untouched (20 s timeout, parsed body).
   const json = await run(res('{"a":1}', 200, 'application/json'), (c) => c._doFetch('/home', {}));
   assert.deepStrictEqual(json.r, { a: 1 });
