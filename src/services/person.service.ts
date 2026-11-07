@@ -256,8 +256,11 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
         delete (safeRest as Partial<Person>).churchName;
         delete (safeRest as Partial<Person>).zone;
       }
+      // 'registered' is only accepted as an uncancel: on anyone else it would be returned but not
+      // written (a plain save keeps the stored lifecycle — gate B M1).
       const nextLifecycle =
-        lifecycle === 'cancelled' || lifecycle === 'registered' ? lifecycle : existing.lifecycle;
+        lifecycle === 'cancelled' || (lifecycle === 'registered' && existing.lifecycle === 'cancelled')
+          ? lifecycle : existing.lifecycle;
       /* A patch that sets accommodationKind is setting the IMPORTERS' value (the manual
          hand-correction path), so it must move the raw carrier too — personColumns persists
          accommodationKindRaw, and leaving it holding `existing`'s stale value would silently
@@ -297,7 +300,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
         throw new BadRequestError('Cannot move a person outside your scope');
       }
       // B-1: only a cancel/uncancel moves presence; any other PATCH is a plain field write.
-      const saved = await repo.save(updated, cancelling || unCancelling ? { presence: true } : undefined);
+      const saved = await (cancelling || unCancelling ? repo.savePresence(updated) : repo.save(updated));
       invalidateDashboardCache();
       return saved;
     },
@@ -342,7 +345,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       const next = withSignEvent(person, full, nowISO());
       // A no-op writes nothing: re-saving this read with presence could revert a concurrent sign.
       if (next === person) return person;
-      const saved = await repo.save(next, { presence: true });
+      const saved = await repo.savePresence(next);
       // ⚠ `invalidateDashboardCache()` is DELIBERATELY NOT called here or in `checkIn`.
       //
       // These two are the ONLY writes that fire in a burst: at a check-in window every

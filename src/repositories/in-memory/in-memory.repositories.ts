@@ -26,7 +26,6 @@ import type {
   IChurchRepository,
   IAllocationOverrideRepository,
   IPersonRepository,
-  PersonSaveOpts,
   IClassroomRepository,
   IAllocationRepository,
   IClassroomFreezeRepository,
@@ -125,10 +124,10 @@ export class InMemoryPersonRepository
   }
 
   /** Mirrors the Supabase write of an existing row:
-   *  - B-1: without `presence`, the stored atCamp/lifecycle are kept.
+   *  - B-1: a plain save keeps the stored atCamp/lifecycle; only savePresence* writes them.
    *  - B-5: check-in history is append-only (kept rows + new ids), and a new row is skipped when
    *    the last row for its session already has the same type (Supabase's conditional insert). */
-  private merge(p: Person, opts?: PersonSaveOpts): Person {
+  private merge(p: Person, presence: boolean): Person {
     const stored = this.store.get(p.id);
     if (!stored) return p;
     const checkInHistory = [...stored.checkInHistory];
@@ -138,17 +137,25 @@ export class InMemoryPersonRepository
       const last = checkInHistory.filter((h) => h.sessionId === e.sessionId).at(-1);
       if (last?.type !== e.type) checkInHistory.push(e);
     }
-    return opts?.presence
+    return presence
       ? { ...p, checkInHistory }
       : { ...p, checkInHistory, atCamp: stored.atCamp, lifecycle: stored.lifecycle };
   }
 
-  override async save(person: Person, opts?: PersonSaveOpts): Promise<Person> {
-    return super.save(this.merge(person, opts));
+  override async save(person: Person): Promise<Person> {
+    return super.save(this.merge(person, false));
   }
 
-  override async saveMany(people: Person[], opts?: PersonSaveOpts): Promise<Person[]> {
-    return super.saveMany(people.map((p) => this.merge(p, opts)));
+  override async saveMany(people: Person[]): Promise<Person[]> {
+    return super.saveMany(people.map((p) => this.merge(p, false)));
+  }
+
+  async savePresence(person: Person): Promise<Person> {
+    return super.save(this.merge(person, true));
+  }
+
+  async savePresenceMany(people: Person[]): Promise<Person[]> {
+    return super.saveMany(people.map((p) => this.merge(p, true)));
   }
 
   async search(q: string): Promise<Person[]> {

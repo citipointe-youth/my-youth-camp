@@ -288,11 +288,21 @@ describe('cancel / refund / overrides (0022)', () => {
 
   it('clearing atCamp is what makes a cancel reach check-in, warnings and the dashboard', async () => {
     const p = await svc.create(admin, baseInput());
-    await repo.save({ ...(await repo.findById(p.id))!, atCamp: true }, { presence: true }); // B-1: fixture sets presence
+    await repo.savePresence({ ...(await repo.findById(p.id))!, atCamp: true }); // B-1: fixture sets presence
     const out = await svc.update(admin, p.id, { lifecycle: 'cancelled' } as Partial<Person>);
     expect(out.lifecycle).toBe('cancelled');
     expect(out.atCamp).toBe(false);
     expect(out.cancelledAt).not.toBeNull();
+  });
+
+  it("a status:'registered' PATCH on someone at camp writes and returns their real lifecycle (B gate M1)", async () => {
+    const realSave = repo.save.bind(repo);
+    const written: Person[] = [];
+    repo.save = async (p) => { written.push(p); return p; }; // Supabase: save returns the caller's copy
+    const out = await svc.update(admin, 'c1p', { lifecycle: 'registered' } as Partial<Person>);
+    repo.save = realSave;
+    expect(written[0]?.lifecycle).toBe('arrived');
+    expect(out.lifecycle).toBe('arrived');
   });
 
   it('un-cancelling clears the cancelledAt stamp', async () => {

@@ -22,7 +22,7 @@ import {
 import type { User, Actor } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
 import type { Person } from '../core/entities/person';
-import type { PersonSaveOpts } from '../repositories/interfaces';
+
 import type { Classroom } from '../core/entities/accommodation';
 import type { FaqItem } from '../core/entities/content';
 import type { ScheduleItem } from '../core/entities/schedule';
@@ -978,7 +978,7 @@ describe('AdminService wipes — A-2: export after the last wipe', () => {
     // Supabase saveMany upserts the person row and INSERTs history ON CONFLICT DO NOTHING, so
     // saving a person with empty arrays deletes nothing. Model that in memory.
     class AppendOnlyHistoryRepo extends InMemoryPersonRepository {
-      override async saveMany(people: Person[], opts?: PersonSaveOpts): Promise<Person[]> {
+      override async savePresenceMany(people: Person[]): Promise<Person[]> {
         const merged: Person[] = [];
         for (const p of people) {
           const old = await this.findById(p.id);
@@ -990,7 +990,7 @@ describe('AdminService wipes — A-2: export after the last wipe', () => {
             signOutHistory: [...old.signOutHistory.filter((e) => !so.has(e.id)), ...p.signOutHistory],
           } : p);
         }
-        return super.saveMany(merged, opts);
+        return super.savePresenceMany(merged);
       }
     }
     const personRepo = new AppendOnlyHistoryRepo();

@@ -7,7 +7,7 @@
 // `people`, encrypted `*_enc` columns, and the check-in / sign-out histories hydrated
 // from CHILD TABLES (check_in_history, sign_out_history).
 import type { SqlClient, TxClient } from './client';
-import type { IPersonRepository, PersonSaveOpts } from '../interfaces/entity-repositories';
+import type { IPersonRepository } from '../interfaces/entity-repositories';
 import type { Person } from '../../core/entities/person';
 import type { CheckInEntry, SignOutEvent, ElvantoMeta } from '../../core/entities/person';
 import { isCamper } from '../../core/entities/person';
@@ -282,9 +282,27 @@ export class SupabasePersonRepository implements IPersonRepository {
   // --- writes ----------------------------------------------------------------
 
   /** Upsert the `people` row + append any new history child rows in one transaction.
-   *  B-1: `at_camp`/`lifecycle` are only in the UPDATE set with `{ presence: true }`. */
-  async save(person: Person, opts?: PersonSaveOpts): Promise<Person> {
-    const cols = updateCols(opts);
+   *  B-1: `at_camp`/`lifecycle` are not in the UPDATE set (see savePresence).
+   *  Returns the caller's `person` as given — NOT a read-back, so its atCamp/lifecycle may be
+   *  stale against the row (the in-memory repo returns the stored pair instead). */
+  async save(person: Person): Promise<Person> {
+    return this.upsertOne(person, PERSON_UPDATE_COLS);
+  }
+
+  /** B-1 presence writer: as save, plus `at_camp`/`lifecycle` in the UPDATE set. */
+  async savePresence(person: Person): Promise<Person> {
+    return this.upsertOne(person, PERSON_UPDATE_COLS_WITH_PRESENCE);
+  }
+
+  async saveMany(people: Person[]): Promise<Person[]> {
+    return this.upsertMany(people, PERSON_UPDATE_COLS);
+  }
+
+  async savePresenceMany(people: Person[]): Promise<Person[]> {
+    return this.upsertMany(people, PERSON_UPDATE_COLS_WITH_PRESENCE);
+  }
+
+  private async upsertOne(person: Person, cols: readonly string[]): Promise<Person> {
     await this.sql.begin(async (tx: TxClient) => {
       // ⚠ The upsert MUST stay before appendHistories: it row-locks this person's `people` row,
       // which is what makes B-5's conditional check-in insert atomic. Do not reorder.
@@ -297,9 +315,8 @@ export class SupabasePersonRepository implements IPersonRepository {
     return person;
   }
 
-  async saveMany(people: Person[], opts?: PersonSaveOpts): Promise<Person[]> {
+  private async upsertMany(people: Person[], cols: readonly string[]): Promise<Person[]> {
     if (people.length === 0) return [];
-    const cols = updateCols(opts);
     await this.sql.begin(async (tx: TxClient) => {
       // Each person must be upserted individually — the batch ON CONFLICT DO UPDATE
       // would incorrectly overwrite every conflicting row with batch[0]'s values.
@@ -413,7 +430,7 @@ export function personColumns(p: Person): Record<string, unknown> {
 }
 
 // Columns updated on conflict (everything except id + created_at, and the two presence columns).
-export const PERSON_UPDATE_COLS = [
+const PERSON_UPDATE_COLS = [
   'first_name', 'last_name', 'gender', 'date_of_birth', 'grade', 'school', 'kind',
   'church_id', 'church_name', 'zone', 'group_id', 'mobile', 'email', 'suburb',
   'postcode', 'state', 'medical_conditions_enc', 'dietary_requirements_enc', 'other_medications',
@@ -435,12 +452,8 @@ export const PERSON_UPDATE_COLS = [
   'invoice_numbers',
 ] as const;
 
-/** B-1: presence is written on UPDATE only by the presence writers (`{ presence: true }`). */
-export const PRESENCE_COLS = ['lifecycle', 'at_camp'] as const;
-
-function updateCols(opts?: PersonSaveOpts): readonly string[] {
-  return opts?.presence ? [...PERSON_UPDATE_COLS, ...PRESENCE_COLS] : PERSON_UPDATE_COLS;
-}
+/** B-1: presence is written on UPDATE only by the presence writers (savePresence*). */
+const PERSON_UPDATE_COLS_WITH_PRESENCE = [...PERSON_UPDATE_COLS, 'lifecycle', 'at_camp'] as const;
 
 /**
  * Append a person's history child rows additively (INSERT … ON CONFLICT DO NOTHING).

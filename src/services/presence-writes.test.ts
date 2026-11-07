@@ -24,7 +24,7 @@ const ev = { leaderName: 'L', authorId: 'u', timestamp: now };
 async function repoWith(...people: Person[]) {
   const repo = new InMemoryPersonRepository();
   await repo.init();
-  for (const p of people) await repo.save(p, { presence: true });
+  for (const p of people) await repo.savePresence(p);
   return repo;
 }
 
@@ -40,7 +40,7 @@ describe('B-1 presence column split', () => {
 
   it('a presence save moves atCamp/lifecycle; a plain insert writes them too', async () => {
     const repo = await repoWith(P({ id: 'x', lifecycle: 'arrived', atCamp: true }));
-    await repo.saveMany([P({ id: 'x', lifecycle: 'checked_out', atCamp: false })], { presence: true });
+    await repo.savePresenceMany([P({ id: 'x', lifecycle: 'checked_out', atCamp: false })]);
     expect((await repo.findById('x'))!).toMatchObject({ atCamp: false, lifecycle: 'checked_out' });
     await repo.save(P({ id: 'new', lifecycle: 'cancelled', atCamp: false }));
     expect((await repo.findById('new'))!.lifecycle).toBe('cancelled');
@@ -53,7 +53,7 @@ describe('B-1 presence column split', () => {
     const realSave = repo.save.bind(repo);
     let gate!: () => void;
     const paused = new Promise<void>((r) => (gate = r));
-    repo.save = async (p, o) => { repo.save = realSave; await paused; return realSave(p, o); };
+    repo.save = async (p) => { repo.save = realSave; await paused; return realSave(p); };
     const patch = svc.update(admin, 'x', { otherMedications: 'Ventolin' } as Partial<Person>);
     await new Promise((r) => setTimeout(r, 0));
     await svc.signEvent(admin, 'x', { type: 'out', ...ev });

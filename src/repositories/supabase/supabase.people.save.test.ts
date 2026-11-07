@@ -63,8 +63,8 @@ describe('SupabasePersonRepository presence columns (B-1)', () => {
 
   it('a presence save/saveMany includes at_camp and lifecycle in the UPDATE set', async () => {
     for (const write of [
-      (r: SupabasePersonRepository) => r.save(person(), { presence: true }),
-      (r: SupabasePersonRepository) => r.saveMany([person()], { presence: true }),
+      (r: SupabasePersonRepository) => r.savePresence(person()),
+      (r: SupabasePersonRepository) => r.savePresenceMany([person()]),
     ]) {
       const { sql, stmts } = fakeSql();
       await write(new SupabasePersonRepository(sql as never));

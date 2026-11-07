@@ -204,7 +204,7 @@ export function makeAdminService(
       await personRepo.clearPresenceHistory();
       if (touched.length) {
         const now = nowISO();
-        await personRepo.saveMany(
+        await personRepo.savePresenceMany(
           touched.map((p) => ({
             ...p,
             checkInHistory: [],
@@ -215,7 +215,6 @@ export function makeAdminService(
             lifecycle: p.lifecycle === 'cancelled' || p.lifecycle === 'registered' ? p.lifecycle : 'registered',
             updatedAt: now,
           })),
-          { presence: true },
         );
       }
 
@@ -417,7 +416,7 @@ export function makeAdminService(
             ],
             updatedAt: now,
           }));
-          await personRepo.saveMany(updated, { presence: true });
+          await personRepo.savePresenceMany(updated);
           invalidateDashboardCache();
         }
       }

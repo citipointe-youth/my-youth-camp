@@ -38,15 +38,19 @@ export interface IAllocationOverrideRepository extends IRepository<AllocationOve
  */
 /**
  * B-1 (first slice of the P3 presence seam): `atCamp` and `lifecycle` are written on an UPDATE
- * only when the caller passes `{ presence: true }`. A plain save of an existing person keeps the
- * stored values, so a stale read (PATCH, import, check-in tap) can't revert a sign-in/out.
- * An INSERT (new person) always writes every column.
+ * only by `savePresence`/`savePresenceMany` (the presence writers). A plain `save`/`saveMany` of
+ * an existing person keeps the stored values, so a stale read (PATCH, import, check-in tap) can't
+ * revert a sign-in/out. An INSERT (new person) always writes every column.
+ *
+ * ⚠ The value a plain save returns is not a read-back: on Supabase it is the caller's own copy,
+ * so its `atCamp`/`lifecycle` may differ from what is stored (the in-memory repo returns the
+ * stored pair). Don't build a response or decision on the returned presence; re-read instead.
  */
-export interface PersonSaveOpts { presence?: true }
-
 export interface IPersonRepository extends IRepository<Person> {
-  save(person: Person, opts?: PersonSaveOpts): Promise<Person>;
-  saveMany(people: Person[], opts?: PersonSaveOpts): Promise<Person[]>;
+  save(person: Person): Promise<Person>;
+  saveMany(people: Person[]): Promise<Person[]>;
+  savePresence(person: Person): Promise<Person>;
+  savePresenceMany(people: Person[]): Promise<Person[]>;
   search(q: string): Promise<Person[]>;
   findByChurch(churchId: string): Promise<Person[]>;
   findByZone(zone: string): Promise<Person[]>;
