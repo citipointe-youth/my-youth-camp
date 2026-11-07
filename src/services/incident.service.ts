@@ -7,7 +7,6 @@ import { CreateIncidentSchema } from '../core/validation/incident.schema';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { ForbiddenError, NotFoundError } from '../core/errors/app-error';
-import { invalidateDashboardCache } from './dashboard-cache';
 import type { PushService } from './push.service';
 
 /**
@@ -93,7 +92,6 @@ export function makeIncidentService(
            forgotten — see the contract on `sendNow` for why that matters on serverless. */
         if (push) await push.sendNow(notif);
       }
-      invalidateDashboardCache(); // a 'high' incident changes AtCampDashboard.latestNotification
       return saved;
     },
 
@@ -110,7 +108,6 @@ export function makeIncidentService(
       const existing = await incidentRepo.findById(id);
       if (!existing) throw new NotFoundError('Incident not found');
       await incidentRepo.delete(id);
-      invalidateDashboardCache();
       return { ok: true };
     },
   };

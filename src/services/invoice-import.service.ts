@@ -11,7 +11,6 @@ import { field, isBlankRow, titleCaseName } from './elvanto-mapping';
 import {
   buildNameIndex, findPersonMatch, mergeOwnedFields,
 } from './person-matching';
-import { invalidateDashboardCache } from './dashboard-cache';
 import { buildTicketPriceTable, priceForTicket, ticketPriceCatalogue } from './ticket-prices';
 import { resolveInvoiceSplit } from './invoice-split';
 import { z } from 'zod';
@@ -696,7 +695,6 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
 
       if (!opts.dryRun && touched.size > 0) {
         await personRepo.saveMany([...touched.values()]);
-        invalidateDashboardCache();
       }
 
       return {

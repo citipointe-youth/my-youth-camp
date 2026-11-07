@@ -1,7 +1,7 @@
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { makeDashboardService } from './dashboard.service';
-import { invalidateDashboardCache } from './dashboard-cache';
-import { makePersonService } from './person.service';
+import { makeDashboardCache } from './dashboard-cache';
+import { buildMemoryContainer } from '../container';
 import {
   InMemoryPersonRepository,
   InMemoryNotificationRepository,
@@ -14,11 +14,7 @@ import { SETTINGS_ID } from '../core/entities/settings';
 import type { Actor } from '../core/entities/user';
 import type { Notification } from '../core/entities/notification';
 
-// The dashboard service keeps a module-level response cache keyed by actor
-// scope (see dashboard-cache.ts). Each test below builds fresh repositories,
-// so clear the cache to avoid one test's result leaking into another via a
-// shared actor key (e.g. the many `actor('admin')` calls in this file).
-beforeEach(() => invalidateDashboardCache());
+// D3: each build() gets its own dashboard cache (one per container), so no test can see another's.
 
 // ---------------------------------------------------------------------------
 // At-camp dashboard calculation audit fixes:
@@ -80,8 +76,16 @@ async function build() {
   const notifRepo = new InMemoryNotificationRepository();
   const churchRepo = new InMemoryChurchRepository();
   for (const r of [personRepo, notifRepo, churchRepo]) await r.init();
-  const svc = makeDashboardService(personRepo, notifRepo, churchRepo);
-  return { svc, personRepo, notifRepo };
+  const cache = makeDashboardCache();
+  const svc = makeDashboardService(personRepo, notifRepo, churchRepo, cache);
+  return { svc, personRepo, notifRepo, cache };
+}
+
+/** D3: the real wiring — writes flush the cache through the container's repo seam. Seeding via
+ *  `personRepo` (the raw repo) bypasses the seam, like a direct DB write. */
+async function buildContainer() {
+  const c = await buildMemoryContainer();
+  return { svc: c.services.dashboard, personRepo: c.repos.people, personSvc: c.services.person };
 }
 
 describe('at-camp dashboard — D1 current session = latest started', () => {
@@ -245,7 +249,7 @@ describe('at-camp dashboard — sessionExpected (New Feature 2)', () => {
 // scope (role + churchId + zone). Two hard requirements verified below:
 //  1. A cached response must never leak from one church/zone scope to another.
 //  2. Every write that changes the DTO must invalidate the cache immediately —
-//     no manual invalidateDashboardCache() call should be needed from a caller.
+//     no manual flush call is needed from a caller (D3: the container's repo seam does it).
 // ---------------------------------------------------------------------------
 
 describe('dashboard response cache', () => {
@@ -392,14 +396,14 @@ describe('dashboard response cache', () => {
     expect(res.totalExpected).toBe(2);
   });
 
-  it('invalidateDashboardCache() forces the next call to re-read fresh data', async () => {
+  it('cache.invalidate() forces the next call to re-read fresh data', async () => {
     pinClock('2026-07-01T15:00:00Z');
     const h = await build();
     const a = actor('admin');
     await h.personRepo.save(camper({ id: 'x', atCamp: true }));
     const first = await h.svc.home(a, settings());
     await h.personRepo.save(camper({ id: 'y', atCamp: true }));
-    invalidateDashboardCache();
+    h.cache.invalidate();
     const second = await h.svc.home(a, settings());
     if (first.mode !== 'at-camp' || second.mode !== 'at-camp') throw new Error('expected at-camp');
     expect(second.totalExpected).toBe(first.totalExpected + 1);
@@ -410,7 +414,7 @@ describe('dashboard response cache', () => {
   // These two tests previously asserted the OPPOSITE (that person.service flushed the cache
   // on every check-in). That was changed on 2026-07-30 for load reasons: these are the only
   // two BURSTY writes in the app — at a check-in window ~100 devices tap through rosters at
-  // once — and `invalidateDashboardCache()` wipes EVERY key globally, so one tap destroyed
+  // once — and a flush wipes EVERY key, so one tap destroyed
   // the cache for all ~30 distinct keys exactly while every device was loading /home.
   //
   // The tests are inverted rather than deleted so the trade-off is pinned in both
@@ -418,8 +422,8 @@ describe('dashboard response cache', () => {
 
   it('a daily check-in does NOT flush the cache — the count is stale within the 30s TTL', async () => {
     pinClock('2026-07-01T15:00:00Z'); // PM current
-    const h = await build();
-    const personSvc = makePersonService(h.personRepo);
+    const h = await buildContainer();
+    const personSvc = h.personSvc;
     const a = actor('admin');
     await h.personRepo.save(camper({ id: 'x', atCamp: true }));
     const before = await h.svc.home(a, settings());
@@ -438,8 +442,8 @@ describe('dashboard response cache', () => {
 
   it('the check-in count refreshes once the 30s cache TTL lapses', async () => {
     pinClock('2026-07-01T15:00:00Z');
-    const h = await build();
-    const personSvc = makePersonService(h.personRepo);
+    const h = await buildContainer();
+    const personSvc = h.personSvc;
     const a = actor('admin');
     await h.personRepo.save(camper({ id: 'x', atCamp: true }));
     const before = await h.svc.home(a, settings());
@@ -461,8 +465,8 @@ describe('dashboard response cache', () => {
 
   it('an attendance sign-out does NOT flush the cache, but refreshes after the TTL', async () => {
     pinClock('2026-07-01T15:00:00Z');
-    const h = await build();
-    const personSvc = makePersonService(h.personRepo);
+    const h = await buildContainer();
+    const personSvc = h.personSvc;
     const a = actor('admin');
     await h.personRepo.save(camper({ id: 'x', atCamp: true }));
     const before = await h.svc.home(a, settings());
@@ -484,8 +488,8 @@ describe('dashboard response cache', () => {
   });
 
   it('a registrant create (person.service.create) invalidates the pre-camp cache automatically', async () => {
-    const h = await build();
-    const personSvc = makePersonService(h.personRepo);
+    const h = await buildContainer();
+    const personSvc = h.personSvc;
     const preCampSettings: CampSettings = { ...settings(), campMode: 'pre-camp' };
     const a = actor('admin');
     const before = await h.svc.home(a, preCampSettings);

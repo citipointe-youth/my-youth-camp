@@ -9,7 +9,6 @@ import { assertCan } from './access-control';
 import { BadRequestError, NotFoundError } from '../core/errors/app-error';
 import { UpdateSettingsSchema } from '../core/validation/content.schema';
 import { nowISO } from '../utils/date';
-import { invalidateDashboardCache } from './dashboard-cache';
 
 export interface SettingsService {
   get(): Promise<CampSettings>;
@@ -130,7 +129,6 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
 
       // A stamp or lastExportedAt written during applyDayMoves is not reverted.
       const saved = await repo.patchSingleton(fields);
-      invalidateDashboardCache();
       return saved;
     },
 
@@ -143,7 +141,6 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
       assertCan(actor, 'admin:manage');
       await get(); // 404 if the row is missing
       const saved = await repo.patchSingleton({ campMode: mode, updatedAt: nowISO() });
-      invalidateDashboardCache();
       return saved;
     },
 
@@ -170,7 +167,6 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
       }
       await get(); // 404 if the row is missing
       const saved = await repo.patchSingleton({ discountCodeTags: clean, updatedAt: nowISO() });
-      invalidateDashboardCache();
       return saved;
     },
   };
