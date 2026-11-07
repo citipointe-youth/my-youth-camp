@@ -156,7 +156,7 @@ export function makeOfflineSignInService(personRepo: IPersonRepository, settings
           };
           return withSignEvent(p, event, now);
         });
-        await personRepo.saveMany(updated);
+        await personRepo.saveMany(updated, { presence: true });
         invalidateDashboardCache();
       }
 

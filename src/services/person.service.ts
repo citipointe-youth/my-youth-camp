@@ -290,7 +290,8 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       if (!canAccessPerson(actor, updated)) {
         throw new BadRequestError('Cannot move a person outside your scope');
       }
-      const saved = await repo.save(updated);
+      // B-1: only a cancel/uncancel moves presence; any other PATCH is a plain field write.
+      const saved = await repo.save(updated, cancelling || unCancelling ? { presence: true } : undefined);
       invalidateDashboardCache();
       return saved;
     },
@@ -328,7 +329,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
         throw new BadRequestError('Camp has not started yet, so nobody can be signed in.');
       }
       const full: SignOutEvent = { ...event, id: newId('so') };
-      const saved = await repo.save(withSignEvent(person, full, nowISO()));
+      const saved = await repo.save(withSignEvent(person, full, nowISO()), { presence: true });
       // ⚠ `invalidateDashboardCache()` is DELIBERATELY NOT called here or in `checkIn`.
       //
       // These two are the ONLY writes that fire in a burst: at a check-in window every

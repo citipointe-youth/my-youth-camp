@@ -215,6 +215,7 @@ export function makeAdminService(
             lifecycle: p.lifecycle === 'cancelled' || p.lifecycle === 'registered' ? p.lifecycle : 'registered',
             updatedAt: now,
           })),
+          { presence: true },
         );
       }
 
@@ -417,7 +418,7 @@ export function makeAdminService(
             ],
             updatedAt: now,
           }));
-          await personRepo.saveMany(updated);
+          await personRepo.saveMany(updated, { presence: true });
           invalidateDashboardCache();
         }
       }

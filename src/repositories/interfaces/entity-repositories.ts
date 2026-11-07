@@ -36,7 +36,17 @@ export interface IAllocationOverrideRepository extends IRepository<AllocationOve
  * query surfaces over one store. `findCampers`/`findRegistrants` query by lifecycle so
  * the pre-camp and at-camp views read from the same table.
  */
+/**
+ * B-1 (first slice of the P3 presence seam): `atCamp` and `lifecycle` are written on an UPDATE
+ * only when the caller passes `{ presence: true }`. A plain save of an existing person keeps the
+ * stored values, so a stale read (PATCH, import, check-in tap) can't revert a sign-in/out.
+ * An INSERT (new person) always writes every column.
+ */
+export interface PersonSaveOpts { presence?: true }
+
 export interface IPersonRepository extends IRepository<Person> {
+  save(person: Person, opts?: PersonSaveOpts): Promise<Person>;
+  saveMany(people: Person[], opts?: PersonSaveOpts): Promise<Person[]>;
   search(q: string): Promise<Person[]>;
   findByChurch(churchId: string): Promise<Person[]>;
   findByZone(zone: string): Promise<Person[]>;

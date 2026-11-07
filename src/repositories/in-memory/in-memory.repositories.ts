@@ -26,6 +26,7 @@ import type {
   IChurchRepository,
   IAllocationOverrideRepository,
   IPersonRepository,
+  PersonSaveOpts,
   IClassroomRepository,
   IAllocationRepository,
   IClassroomFreezeRepository,
@@ -121,6 +122,20 @@ export class InMemoryPersonRepository
 {
   constructor(persistence?: IPersistenceAdapter<Person>) {
     super(persistence);
+  }
+
+  /** B-1: without `presence`, an existing row keeps its stored atCamp/lifecycle (mirrors Supabase). */
+  private keepPresence(p: Person, opts?: PersonSaveOpts): Person {
+    const stored = this.store.get(p.id);
+    return stored && !opts?.presence ? { ...p, atCamp: stored.atCamp, lifecycle: stored.lifecycle } : p;
+  }
+
+  override async save(person: Person, opts?: PersonSaveOpts): Promise<Person> {
+    return super.save(this.keepPresence(person, opts));
+  }
+
+  override async saveMany(people: Person[], opts?: PersonSaveOpts): Promise<Person[]> {
+    return super.saveMany(people.map((p) => this.keepPresence(p, opts)));
   }
 
   async search(q: string): Promise<Person[]> {
