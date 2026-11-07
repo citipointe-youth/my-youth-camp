@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeCheckInService } from './checkin.service';
+import { sessionClock } from './checkin-sessions';
 import { InMemoryPersonRepository, InMemorySettingsRepository } from '../repositories/in-memory';
 import type { Person } from '../core/entities/person';
 import type { CampSettings } from '../core/entities/settings';
@@ -327,5 +328,18 @@ describe('getSessionStatus — RosterEntry enriched fields', () => {
     const result = await svc.getSessionStatus(actor(), SESSION_ID);
 
     expect(result.roster[0]!.medicalFlag).toBe(false);
+  });
+});
+
+// P4: the status the SPA saves as its offline roster carries the session clock.
+describe('getSessionStatus — clock (P4)', () => {
+  it('returns sessionClock(settings), restricted windows included', async () => {
+    const personRepo = new InMemoryPersonRepository();
+    const settingsRepo = new InMemorySettingsRepository();
+    const s = settings({ churchCheckinTimeRestricted: true, checkinWindowAmStart: '05:00', checkinWindowPmEnd: '23:30' });
+    await settingsRepo.saveSingleton(s);
+    const result = await makeCheckInService(personRepo, settingsRepo).getSessionStatus(actor(), SESSION_ID);
+    expect(result.clock).toEqual(sessionClock(s));
+    expect(result.clock).toMatchObject({ tz: 'UTC', restricted: true, windows: { amStart: '05:00', pmEnd: '23:30' } });
   });
 });

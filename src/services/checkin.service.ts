@@ -10,13 +10,13 @@ import {
   buildSessions,
   currentSession as pickCurrentSession,
   parseSessionId,
+  sessionClock,
   sessionFor,
   type CheckInSession,
+  type SessionClock,
 } from './checkin-sessions';
 
 export type { CheckInSession } from './checkin-sessions';
-
-const DEFAULT_TZ = 'Australia/Brisbane';
 
 export interface SessionStatus {
   session: CheckInSession;
@@ -25,6 +25,8 @@ export interface SessionStatus {
   totalCount: number;
   /** Youth in scope who are not on site and so not on this roster (not arrived or signed out). */
   notOnSiteCount: number;
+  /** P4: the clock the SPA's saved offline roster works the session and window out from. */
+  clock: SessionClock;
 }
 
 /** What `assertSessionAllowed` would decide right now, without throwing — so the UI can grey
@@ -59,9 +61,10 @@ export function makeCheckInService(
   personRepo: IPersonRepository,
   settingsRepo: ISettingsRepository,
 ): CheckInService {
-  async function ctx(): Promise<{ days: string[]; tz: string }> {
+  async function ctx(): Promise<{ days: string[]; tz: string; clock: SessionClock }> {
     const settings = await settingsRepo.getSingleton();
-    return { days: settings?.checkInDays ?? [], tz: settings?.timezone || DEFAULT_TZ };
+    const clock = sessionClock(settings);
+    return { days: settings?.checkInDays ?? [], tz: clock.tz, clock };
   }
 
   const UNRESTRICTED: AllowedSession = { session: null, restricted: false, reason: null };
@@ -71,16 +74,10 @@ export function makeCheckInService(
   // here, so the button a leader sees can never disagree with the write that follows it.
   async function allowedSession(actor: Actor): Promise<AllowedSession> {
     if (actor.role !== 'church') return UNRESTRICTED;
-    const settings = await settingsRepo.getSingleton();
-    if (!settings?.churchCheckinTimeRestricted) return UNRESTRICTED;
-    const { days, tz } = await ctx();
+    const { days, tz, clock } = await ctx();
+    if (!clock.restricted) return UNRESTRICTED;
     const { date, time } = zonedNow(tz);
-    const windows = {
-      amStart: settings.checkinWindowAmStart ?? '06:00',
-      amEnd: settings.checkinWindowAmEnd ?? '12:00',
-      pmStart: settings.checkinWindowPmStart ?? '12:00',
-      pmEnd: settings.checkinWindowPmEnd ?? '22:00',
-    };
+    const windows = clock.windows;
     const session = allowedWindowSession(days, date, time, windows);
     return {
       session,
@@ -108,7 +105,7 @@ export function makeCheckInService(
     async getSessionStatus(actor, sessionId) {
       assertCan(actor, 'checkin:write');
       const parsed = parseSessionId(sessionId);
-      const { days, tz } = await ctx();
+      const { days, tz, clock } = await ctx();
       if (!parsed || !days.includes(parsed.day)) throw new NotFoundError('Session not found');
 
       const session = sessionFor(parsed.day, parsed.sfx);
@@ -129,7 +126,7 @@ export function makeCheckInService(
       const roster: RosterEntry[] = scoped.map((p) => toRosterEntry(p, sessionId));
       const checkedInCount = roster.filter((r) => r.checkedIn).length;
 
-      return { session, roster, checkedInCount, totalCount: roster.length, notOnSiteCount };
+      return { session, roster, checkedInCount, totalCount: roster.length, notOnSiteCount, clock };
     },
 
     async assertSessionAllowed(actor, sessionId) {

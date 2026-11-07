@@ -7,7 +7,7 @@ import type { CampSettings } from '../core/entities/settings';
 import type { Actor } from '../core/entities/user';
 import { daysUntil, zonedNow, nowISO } from '../utils/date';
 import { canSeeNotification, byPublishedDesc } from './notification-visibility';
-import { buildSessions, currentSession as pickCurrentSession } from './checkin-sessions';
+import { buildSessions, currentSession as pickCurrentSession, sessionClock } from './checkin-sessions';
 import type { Person } from '../core/entities/person';
 import { isRegistrant, isCamper } from '../core/entities/person';
 import { canAccessPerson } from './person.service';
@@ -165,7 +165,7 @@ export function makeDashboardService(
 
         // Check-in sessions are derived from the camp's check-in days (settings), not
         // the schedule — two per day (AM/PM). B3 FIX: today + now from the camp tz.
-        const { date: todayStr, time: nowTime } = zonedNow(settings.timezone || 'Australia/Brisbane');
+        const { date: todayStr, time: nowTime } = zonedNow(sessionClock(settings).tz);
         const days = settings.checkInDays ?? [];
         const todaySessions = buildSessions(days).filter((s) => s.day === todayStr);
         // H-2 FIX: use the SHARED currentSession helper (AM before 12:00 / PM at-or-after),
