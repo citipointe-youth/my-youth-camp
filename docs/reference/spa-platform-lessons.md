@@ -4,6 +4,14 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Service worker 5xx fallback, `?nav=`, first-install reload; downloads via `_doFetch` — `camp-v152` — 7 Nov 2026 (Phase B)
+
+- **The shell branch of `sw.js` serves the cached shell on a 5xx** (B-12a): a server outage on opening the app shows the cached app in offline mode instead of Vercel's error page. A 5xx is never cached (the `res.ok` guard on `cache.put` is unchanged); with an empty cache the 5xx passes through.
+- **`?nav=` matches with `ignoreSearch`** (B-12b): tapping a notification offline with the app closed opens the app instead of the browser's offline page. `/index.html` (as opposed to `/`) still misses offline; nothing opens it.
+- **No reload on first install** (B-12c): `controllerchange` skips the first claim (`hadCtrl`), so a first visit no longer reloads mid-login; later deploys still reload once. Manual check still owed: in a fresh private window, type the username while the SW installs; the text must survive.
+- **`_doFetch(path,{as:'blob'})`** (B-13) is the download path for the audit workbook and the offline sign-in sheet: 90 s timeout (`API_IMPORT_TIMEOUT_MS`), the same `_isAppAnswer`/401/`!res.ok` handling as JSON calls, and a Blob never enters `Cache`/`_inflight`. Ceiling: the timer covers the time to response headers, not a stalled body.
+- Harnesses: `scripts/sw-harness.js` (real `sw.js` + the `controllerchange` block) and `scripts/preview-queue-harness.js`; `npm run harness` now runs 15.
+
 ## 16-item owner batch — push latency, parent masking, Android review — 2026-08-03
 
 Owner list of 20 items; one was withdrawn during clarification (a check-in-screen button,

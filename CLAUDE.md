@@ -40,7 +40,7 @@ unbuilt designs + topics queued for future brainstorming), `docs/archive/` (hist
    deploys still work but the git auto-deploy fails with *"Cannot find module './data/seed'"*.
 
 ### Status of the bigger roadmap
-- **Verification gate:** `npm run typecheck` clean, `npm test` green (88 files / 1,394 tests on 2026-11-07), `npm run harness` exit 0.
+- **Verification gate:** `npm run typecheck` clean, `npm test` green (91 files / 1,433 tests on 2026-11-07, Phase B), `npm run harness` exit 0.
 - **Supabase repo layer is complete and wired** (`PERSISTENCE==='supabase'` branch in `container.ts`); migrations applied; all repos verified round-tripping in prod (R11 closed).
 - **Phase 1 (Person unification) is COMPLETE.** The unified `Person` entity/repo/service is the live path. `/registrants` and `/campers` are lifecycle-filtered DTO views over `PersonService` — no separate Registrant/Camper services exist. The Supabase layer targets the `people` table. `docs/archive/STEP4-SWITCHOVER.md` is historical.
 - **Fixed defects** (now compiler-confirmed): app-won't-start, accommodation availability (B1), reset/new-year (A3/A4), timezone (B3), CSV import perf + BOM (C1), remind scoping (C2), stateless auth + security headers + login rate-limit.
@@ -70,7 +70,7 @@ A deep audit across three areas was completed and all bugs addressed. Key change
 - **2026-11-07 (A-2, `camp-v151`):** `force` + `confirmWipe` no longer skips the export check. Reset, Reset logs and New Year each need an audit workbook export after the last wipe, and each wipe nulls `lastExportedAt`. See `docs/reference/infrastructure-and-safety.md`.
 
 **Backend:**
-- **BUG-08**: Audit controller reads settings *after* the service call so `lastExportedAt` stamp never races with `lastTempPasswords` clearing.
+- **BUG-08** (superseded 2026-11-07, B-7): the audit controller now patches only `{lastExportedAt, updatedAt}` and the temp-password clear patches only `lastTempPasswords`, so neither can revert the other or any concurrent settings change. Every settings writer uses `patchSingleton`; `saveSingleton` is seed-only.
 - Import service preserves existing `elvantoMeta` on update if the CSV row has no `dateSubmitted`.
 
 **New tests:**
@@ -87,7 +87,7 @@ npm run dev          # backend + frontend on http://localhost:4200 (tsx watch)
 npm run start        # same, no watch
 npm run typecheck    # tsc --noEmit (strict)
 npm run test         # vitest
-npm run harness      # the 13 SPA harnesses (scripts/*-harness.js; vpkick excluded) — run after SPA edits
+npm run harness      # the 15 SPA harnesses (scripts/*-harness.js; vpkick excluded) — run after SPA edits
 ```
 
 Default port: **4200**. Set `PORT=xxxx` to override.
@@ -219,6 +219,7 @@ Users in pre-camp mode can tap **"👁 Preview at-camp view"** on the pre-camp h
 - **Write blocking:** the `api()` function short-circuits any non-GET request while `PREVIEW_MODE` **or `ACCOUNT_PREVIEW`** is true — shows a toast and throws. Covers every write in the app without per-screen changes.
 - **Logout safety:** `logout()` clears `PREVIEW_MODE`/`ACCOUNT_PREVIEW`/`_previewStash` before POSTing to `/auth/logout` so the write guard never blocks logout itself. `sessionExpired()` and `doLogin()` clear the same preview state plus `ycp_preview_stash` and the banner (`sessionExpired` also clears `LAST_LEADER` and `ycp_settings`), and `_tryRestoreSession()` drops a stash for the signed-in user instead of re-entering preview; a non-401 refusal of the restore also drops preview state (2026-11-07, `scripts/session-teardown-harness.js`).
 - All roles can enter preview. Preview uses real live data (campers, schedule, devotionals already imported).
+- **Queue (B-14, 2026-11-07):** entering either preview calls `_queueStop()` before any state change; exiting calls `_queueLoad(true)` and drains, so the admin's saved taps send after Exit. A check-in tap during an at-camp account preview is refused in `_performCheck` with the read-only toast (`scripts/preview-queue-harness.js`).
 - **Banner is shared with account preview** (see "Account preview" above): `#previewBanner`'s label/toggle/exit are driven by `_updatePreviewBanner()` (called from `updateModeUI`); the Exit button dispatches via `_exitAnyPreview()` to `exitPreview()` (same-user) or `exitAccountPreview()` (account preview).
 
 ## Daily check-in (twice daily)
@@ -247,12 +248,13 @@ exist.
 `atCamp` and `lifecycle` are **orthogonal**:
 
 - `atCamp` — is the person **physically on site right now?** Only written by `withSignEvent` (attendance sign-in/sign-out path).
+- **On UPDATE, `atCamp`/`lifecycle` are written only by saves passing `{presence:true}`** (B-1, 2026-11-07): `signEvent`, cancel/uncancel, the offline sheet import, `resetLogs` and the setMode revert. Any other `save`/`saveMany` keeps the stored presence (Supabase `PRESENCE_COLS`, in-memory `merge()`). A new presence writer must pass the flag.
 - `lifecycle` — registration state machine: `registered → arrived → checked_out → departed | cancelled`. Only `withSignEvent` advances this beyond `registered`.
 - `withCheckIn` (daily session log) **never** touches `atCamp` or `lifecycle`. It appends to `checkInHistory` only.
-- **`withCheckIn` is idempotent per (session, person, type) — N5, 2026-07-31.** If the LAST entry for the same `sessionId` already has the same `type`, the write is a no-op and the person is returned unchanged (no `updatedAt` bump), so a crash-replay from the SPA's persisted check-in queue can't write a duplicate row into the compliance export. ⚠ It compares against the **last entry for that session only**, never the whole history, because **"checked in" is LAST-ENTRY-WINS** (`toRosterEntry`, `checkin-warnings.ts`) — a genuine in → out → in is three real entries and must keep working. Tests: `person-lifecycle.test.ts`.
+- **`withCheckIn` is idempotent per (session, person, type) — N5, 2026-07-31.** If the LAST entry for the same `sessionId` already has the same `type`, the write is a no-op and the person is returned unchanged (no `updatedAt` bump), so a crash-replay from the SPA's persisted check-in queue can't write a duplicate row into the compliance export. On Supabase it is also enforced in SQL (B-5): the check-in insert skips a row whose type matches the last stored row for that person+session, atomic because the `people` upsert row-locks the person first. **Keep the upsert before `appendHistories`.** ⚠ It compares against the **last entry for that session only**, never the whole history, because **"checked in" is LAST-ENTRY-WINS** (`toRosterEntry`, `checkin-warnings.ts`) — a genuine in → out → in is three real entries and must keep working. Tests: `person-lifecycle.test.ts`.
 - `checkIn()` in `person.service.ts` guards: throws `BadRequestError` for `lifecycle === 'cancelled'` OR `atCamp === false`. Day-1 first-arrival must go through `signEvent` (attendance sign-in), not the daily check-in path.
 - The check-in roster in `getSessionStatus` filters on `p.atCamp === true`, not `isCamper(p)`. A person no longer at camp stays only on PAST sessions they were checked in for; the CURRENT session excludes them (QA item 13, 2026-11-03), and `notOnSiteCount` reports them.
-- `withSignEvent` ignores a repeat of the same type when the person is already in that state (QA item 16), so a double tap writes one compliance row. Church, zone and first-aid logins cannot sign someone in during pre-camp.
+- A sign event that doesn't move lifecycle or atCamp writes nothing (B-2, replaces the QA-16 rule), so a double tap writes one compliance row. Signing in a cancelled person is a 400. Cancelling someone at camp first writes an 'out' event, reason "Registration cancelled" (B-3). Church, zone and first-aid logins cannot sign someone in during pre-camp.
 - `checkInsDue` on the at-camp dashboard is scoped to `atCampNow` (persons with `atCamp===true`), not all `isCamper()` persons. This prevents departed campers inflating the "still to check in" count.
 
 ## Key design rules
@@ -397,4 +399,5 @@ This file keeps only rules that stay true. Dated session write-ups were moved ou
 - **Cron:** `camp-push-tick` (every 5 min, `0014`) reads its bearer from **Vault** (`cron_secret`), not a literal. Planned `0031` (not yet applied as of 2026-10-02) adds weekly `camp-cron-prune` (keeps 7 days of `cron.job_run_details`).
 - **QA round 2026-11-03/04** (`camp-v146` to `camp-v148`, master `6d25a08`, rollbacks `07a78d2` / `7fec4b5` / `cdfb68f`): access, masking and offline changes are in `docs/reference/at-camp-screens.md`. `payment_status` can hold `free`/`refunded` (plain text, no migration; existing rows change at the next Ticket import). **Accepted limits, do not build without asking:** deleted or demoted accounts keep access up to 48 h (QA item 1, ruled don't fix); no sensitive-note alerts; no single-church notices; director/admin delete and church cancel via the API unchanged.
 - **Architecture round Phase A 2026-11-07** (`camp-v151`, branch `arch/2026-11-07`, round folder `src/camp-arch-2026-11-07`): consents tri-state with a missing-column hard stop; the Form absent-delete keeps ticket/invoice/payment holders; fuzzy Ticket and billing-name matches are never applied; the offline sheet import is director/admin and at-camp only; `leaderName` required on sign-in/out; `GET /settings` needs auth; per-account dashboard cache; firstAid/prayer money strip; wipes need an export after the last wipe and Reset logs really deletes; preview/session teardown. Details in `docs/reference/` (imports, at-camp-screens, auth-and-accounts, infrastructure-and-safety); deferrals in `docs/PLANNED-IMPROVEMENTS.md`.
-- **Service worker:** `public/sw.js` `CACHE` is the SPA version label (`camp-v151` is architecture round Phase A; `camp-v150` adds Undo cancel on the Data Import card, on branch `sec/camp-closeout`, not yet shipped; `camp-v149` is the 4 Nov security batch (CSV formula guard in two browser exports); `camp-v148` after QA batch 3 of 2026-11-04; `camp-v147` QA batch 2; `camp-v146` the QA security fixes; `camp-v145` was prayer-record amendments; `camp-v144` the prayer team role). `camp-v132` did ship (commit `075f2dd`) but no commit message names it — search `git log -S"camp-vNNN" -- public/sw.js`, not message text.
+- **Architecture round Phase B 2026-11-07** (`camp-v152`, same branch): presence column split (B-1), no-op sign events + cancelled sign-in 400 (B-2), cancel at camp signs out (B-3), SQL check-in dedupe (B-5), push claim kept on edit (B-6), column-scoped settings writes (B-7), church zone re-stamp (B-15), Form seed-only for Ticket/Invoice fields (B-16), note session only from a check-in row (B-10), blob downloads via `_doFetch` (B-13), SW 5xx/`?nav=`/first-install fixes (B-12), previews park the queue (B-14). New SQL was checked on prod with read-only SELECTs. Same doc set plus notifications-push and spa-platform-lessons.
+- **Service worker:** `public/sw.js` `CACHE` is the SPA version label (`camp-v152` is architecture round Phase B; `camp-v151` is architecture round Phase A; `camp-v150` adds Undo cancel on the Data Import card, on branch `sec/camp-closeout`, not yet shipped; `camp-v149` is the 4 Nov security batch (CSV formula guard in two browser exports); `camp-v148` after QA batch 3 of 2026-11-04; `camp-v147` QA batch 2; `camp-v146` the QA security fixes; `camp-v145` was prayer-record amendments; `camp-v144` the prayer team role). `camp-v132` did ship (commit `075f2dd`) but no commit message names it — search `git log -S"camp-vNNN" -- public/sw.js`, not message text.

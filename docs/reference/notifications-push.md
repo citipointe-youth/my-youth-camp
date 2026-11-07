@@ -4,6 +4,10 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## An edit racing the push claim keeps `push_sent_at` — `camp-v152` — 7 Nov 2026 (Phase B, B-6)
+
+`SupabaseNotificationRepository.save` sets `push_sent_at = coalesce(notifications.push_sent_at, excluded.push_sent_at)`, and the in-memory repo keeps a stored `pushSentAt`. Only `claimForPush` sets it; a whole-row save never clears it, so editing a notice while its push is being claimed no longer sends the push twice.
+
 ## Phones identified by the leader's OWN initials — migration `0028` — 2026-09-23
 
 Owner, on seeing the screen below: *"they shouldn't have a new notification and field to fill out

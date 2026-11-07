@@ -4,6 +4,13 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Phase B architecture round — `camp-v152` — 7 Nov 2026
+
+Round folder `src/camp-arch-2026-11-07` (`build/b-*.md`, `build/phase-b-merge.md`). Tests are in-memory plus vm harnesses; the new Supabase SQL was checked with read-only SELECTs on production (`build/phase-b-merge.md`). No migration.
+
+- **The Form is seed-only for Ticket/Invoice-owned fields** (B-16). On a person that existed before the file, `registrationType`, `registrationCost`, `discountCode`, `accommodationKind` and `accommodationKindRaw` are written only when the stored value is null (stored kind = `accommodationKindRaw` when set). A Form-only re-import no longer overwrites a ticket type, cost, code or kind, so a `confirmed` kind stays correct. For a person created earlier in the same file, a later duplicate submission still wins field by field. A church accommodation override added later is re-applied by the Ticket import, not by a Form-only re-import (IA OQ-6).
+- **A church zone edit moves its people's `zone` straight away** (B-15). `updateChurch` re-stamps `churchName` and `zone` on every attached person in one plain `saveMany` when either changed, so zone-leader access follows without waiting for a Form re-import, and presence is never reverted.
+
 ## Phase A architecture round — `camp-v151` — 7 Nov 2026
 
 Round folder `src/camp-arch-2026-11-07` (`ITEMS.md`, `RULINGS.md`, `build/*.md`). Tests are in-memory only; the Supabase adapter was checked by reading the code. No migration.

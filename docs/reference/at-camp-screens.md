@@ -4,6 +4,18 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## Phase B architecture round — `camp-v152` — 7 Nov 2026
+
+Round folder `src/camp-arch-2026-11-07` (`build/b-*.md`, `build/phase-b-merge.md`). Tests are in-memory plus vm harnesses; the new Supabase SQL was checked with read-only SELECTs on production (`build/phase-b-merge.md`). No migration.
+
+- **Presence is written only by presence writers** (B-1). On an existing person, `at_camp`/`lifecycle` are in the Supabase `ON CONFLICT DO UPDATE` set only when the save passes `{presence:true}`: `signEvent`, cancel/uncancel in `person.service.update`, the offline sheet import, `resetLogs` and the setMode revert. Every other save (plain PATCH, check-in, imports, allocation, church re-stamp) keeps the stored presence, so a stale read can no longer undo a sign-out. The in-memory repo mirrors this in `merge()`.
+- **A sign event that moves nothing writes nothing** (B-2): `withSignEvent` returns the person untouched when lifecycle and atCamp don't change, and `signEvent` skips the save. **Signing in a cancelled person is a 400** "Cannot sign in a cancelled person" (the SPA toast; `fdConfirmAll` shows "1 failed — ..."). `checkIn` is unchanged.
+- **Cancelling someone at camp signs them out first** (B-3): an 'out' event with reason "Registration cancelled", authored by the actor (`displayName || 'Staff'`), then the cancel. Undo then sign-in gives in, out, in.
+- **Same-type check-in taps write one row on Supabase too** (B-5). The check-in history insert is `insert ... select from jsonb_to_recordset(...) where (last stored type for that person+session) is distinct from v.type on conflict (id) do nothing`. It is atomic because the `people` upsert runs first and row-locks the person; keep that order. No refusal, server time (Q9). The guard compares against stored rows only, so two new same-type rows in one save would both land; only `checkIn` adds check-in rows, one per save. Sign-out history stays unconditional.
+- **A note's Session column is set only from a check-in row** (B-10). `notePrompt(id,name,sessionId)` carries the session through Review and Edit; notes from Students, profile and search go untagged.
+- **Previews park the check-in queue** (B-14). `enterPreview`/`enterAccountPreview` call `_queueStop()` before any state change or login swap; `exitPreview`/`exitAccountPreview` call `_queueLoad(true)` and drain. The admin's saved taps stay under `ycp_ciq_<admin>` and send after Exit. A check-in tap made during an at-camp account preview is refused up front with "Preview — this is read-only" (Phase B fix-up), so no "Not saved" banner is left after Exit. `scripts/preview-queue-harness.js`.
+- **Audit workbook and offline sheet downloads go through `_doFetch`** (B-13): progress bar, a wifi sign-in page is not saved as the file, an expired session goes to login, and a refusal shows the server's message. See `spa-platform-lessons.md`.
+
 ## Phase A architecture round — `camp-v151` — 7 Nov 2026
 
 Round folder `src/camp-arch-2026-11-07` (`ITEMS.md`, `RULINGS.md`, `build/*.md`). Tests are in-memory only; the Supabase adapter was checked by reading the code. No migration.

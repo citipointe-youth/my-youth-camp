@@ -7,6 +7,16 @@ without going through clarifying questions first.
 
 ---
 
+## 2026-11-07 — Deferred from the camp architecture round (Phase B, `camp-v152`) — OPEN
+
+Source: `src/camp-arch-2026-11-07/build/b-*.md`. None is a defect in what shipped.
+
+- **SettingsService intents** (`stampExport`, `stampImport`, `clearTempPasswords`). B-7 converted the writers in place; moving them behind service intents lands with D4 (controllers lose their raw repos).
+- **The B-5 guard is per statement, not per row.** The SQL compares each new check-in row against stored rows only, so two new same-type rows for one person+session in a single save would both insert (the in-memory mirror would keep one). No writer does that today (`checkIn` adds one row per save). Fix if a batch writer ever appends several: insert the rows one by one, or dedupe in `appendHistories`.
+- **In-memory sign-out history still replaces on save** (Supabase appends). Parity is P3's job.
+- **The B-13 download timeout covers headers only**, not a stalled body (same as JSON calls).
+- **The B-1 sign-vs-sign race** stays as listed under Phase A's known residuals.
+
 ## 2026-11-07 — Deferred from the camp architecture round (Phase A, `camp-v151`) — OPEN
 
 Source: `src/camp-arch-2026-11-07` (`ITEMS.md`, `RULINGS.md`, `IMPACT-SUMMARY.md`, `impact/*.md`).

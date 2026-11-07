@@ -3,6 +3,29 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase B (camp-v152)
+-----------------------------------------------------------------------------------
+Four lanes merged on arch/2026-11-07; no migration. Presence: atCamp/lifecycle are
+written on UPDATE only by saves passing {presence:true} (sign events, cancel/uncancel,
+offline sheet, Reset logs, setMode revert), so a stale PATCH, import or check-in can't
+undo a sign-out (B-1); a sign event that moves nothing writes nothing and signing in a
+cancelled person is a 400 (B-2); cancelling someone at camp writes an 'out' event
+"Registration cancelled" first (B-3); same-type check-in taps write one row on Supabase
+via a conditional jsonb_to_recordset insert under the people row lock (B-5). Settings:
+every writer patches only its own columns, so exports, import stamps, defaults, mode and
+settings edits can't revert a lock, revoke, mode or a wipe's cleared lastExportedAt;
+failed import stamps are logged (B-7). Notices: an edit racing the push claim keeps
+push_sent_at (B-6). Churches: a zone edit re-stamps zone on its people (B-15). Imports:
+the Form is seed-only for ticket type, cost, discount code and kind on an existing
+person (B-16). SPA: a note's Session comes only from a check-in row (B-10); workbook and
+offline-sheet downloads go through _doFetch blob mode (B-13); the SW serves the cached
+shell on a 5xx and for ?nav=, and no longer reloads on first install (B-12); previews
+park the check-in queue and resume it on Exit, and a tap during an account preview is
+refused with the read-only toast (B-14 + fix-up). New SQL checked on production with
+read-only SELECTs only. New harnesses scripts/sw-harness.js and
+scripts/preview-queue-harness.js. sw.js camp-v151 -> camp-v152. Verified: npx tsc
+--noEmit clean, npx vitest run 1433 pass / 91 files, npm run harness all green.
+
 2026-11-07 - Architecture round, Phase A (camp-v151)
 -----------------------------------------------------------------------------------
 Five lanes merged on arch/2026-11-07; no migration. Imports: Form re-import keeps a
@@ -26,9 +49,8 @@ to act in the Student data table; ticket-possible-match replaces the duplicate
 unmatched-orphan-created row (no "edit distance"); clearer wipe-guard, New Year and
 offline-sheet wording; an account with no first/last name signs as its username; a
 refused session restore drops preview state. New harness scripts/import-preview-harness.js.
-Known limit (M2, fixed by Phase B item B-7): stampImport, the audit export stamp and the
-settings service still write the whole settings row, so one that read the row before a
-wipe can write back the old lastExportedAt and let the next wipe skip a fresh export.
+Known limit M2 (whole-row settings writers could bring back the old lastExportedAt) was
+closed by Phase B item B-7 in camp-v152.
 
 2026-10-03 - Prayer-record amendments (camp-v145)
 -----------------------------------------------------------------------------------
