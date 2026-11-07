@@ -1,7 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { applyCheckIn, applySignOut, applySignIn, withCheckIn, withSignEvent } from './person-lifecycle';
+import { transition, type PresenceIntent, type PresenceCtx } from './presence';
+import type { Actor } from '../core/entities/user';
 import type { Person } from '../core/entities/person';
 import type { CheckInEntry, SignOutEvent } from '../core/entities/person';
+
+const ACTOR: Actor = { id: 'u1', role: 'church', churchId: 'c1', churchName: 'Victory', zone: 'Yellow', displayName: 'Vic' };
+const ctx = (over: Partial<PresenceCtx> = {}): PresenceCtx => ({ actor: ACTOR, now: 'now', ...over });
+
+// P1+I4: the pre-P1 helpers are now intents of `transition`. These shims keep every earlier
+// assertion verbatim (characterisation of the old person-lifecycle.ts behaviour).
+function withCheckIn(p: Person, entry: CheckInEntry, now: string): Person {
+  const o = transition(p, { kind: 'checkIn', entry }, ctx({ now }));
+  if (o.result === 'refused') throw new Error(o.reason);
+  return o.result === 'applied' ? o.next : p;
+}
+function withSignEvent(p: Person, event: SignOutEvent, now: string): Person {
+  const o = transition(p, { kind: event.type === 'in' ? 'signIn' : 'signOut', event }, ctx({ now }));
+  return o.result === 'applied' ? o.next : p;
+}
+function applyCheckIn(p: Pick<Person, 'lifecycle' | 'atCamp'>, type: 'in' | 'out') {
+  const n = withSignEvent(basePerson(p), { id: 'e', type, leaderName: 'L', authorId: 'u1', timestamp: 't' }, 'now');
+  return { lifecycle: n.lifecycle, atCamp: n.atCamp };
+}
+const applySignOut = (p: Pick<Person, 'lifecycle' | 'atCamp'>) => applyCheckIn(p, 'out');
+const applySignIn = (p: Pick<Person, 'lifecycle' | 'atCamp'>) => applyCheckIn(p, 'in');
 
 // ---------------------------------------------------------------------------
 // Locks the design-D2 promotion rule: Day-1 first check-in promotes a registrant
@@ -98,7 +120,7 @@ function basePerson(over: Partial<Person> = {}): Person {
   };
 }
 
-describe('withCheckIn — immutable append only (never touches lifecycle or atCamp)', () => {
+describe('checkIn intent (was withCheckIn) — immutable append only (never touches lifecycle or atCamp)', () => {
   const entry: CheckInEntry = {
     id: 'ci1',
     sessionId: 's1',
@@ -158,7 +180,7 @@ describe('withCheckIn — immutable append only (never touches lifecycle or atCa
 // a no-op. A genuine in -> out -> in sequence must still be three entries
 // ("checked in" is last-entry-wins for a session).
 // ---------------------------------------------------------------------------
-describe('withCheckIn — (sessionId, person, type) dedup', () => {
+describe('checkIn intent (was withCheckIn) — (sessionId, person, type) dedup', () => {
   const inEntry: CheckInEntry = {
     id: 'ci1',
     sessionId: 's1',
@@ -225,7 +247,7 @@ describe('withCheckIn — (sessionId, person, type) dedup', () => {
   });
 });
 
-describe('withSignEvent — immutable append + lifecycle/atCamp transition', () => {
+describe('signIn/signOut intents (was withSignEvent) — immutable append + lifecycle/atCamp transition', () => {
   it('a sign-OUT event moves arrived -> checked_out, sets atCamp=false, appends history', () => {
     const p = basePerson({ lifecycle: 'arrived', atCamp: true });
     const ev: SignOutEvent = { id: 'so1', type: 'out', leaderName: 'Leader', authorId: 'u1', timestamp: 't' };
@@ -271,5 +293,149 @@ describe('withSignEvent — immutable append + lifecycle/atCamp transition', () 
     const next = withSignEvent(p, { id: 'e', type, leaderName: 'L', authorId: 'u1', timestamp: 't' }, 'now');
     expect(next.signOutHistory).toHaveLength(n);
     if (n === 0) expect(next).toBe(p);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1+I4 interface tests for `transition`.
+// ---------------------------------------------------------------------------
+describe('transition — interface (P1+I4)', () => {
+  const ev = (type: 'in' | 'out', over: Partial<SignOutEvent> = {}): SignOutEvent =>
+    ({ id: 'e1', type, leaderName: 'L', authorId: 'someone-else', timestamp: 't', ...over });
+  const entry: CheckInEntry = { id: 'ci1', sessionId: 's1', sessionLabel: 'Wed AM', type: 'in', leaderId: 'AB', timestamp: 't' };
+  const director: Actor = { ...ACTOR, id: 'd1', role: 'director', churchId: null, churchName: null, zone: null, displayName: 'Dee' };
+  const admin: Actor = { ...director, id: 'a1', role: 'admin', displayName: 'Ad' };
+
+  it('checkIn keeps exactly the two frozen refusal messages (queue contract)', () => {
+    expect(transition(basePerson({ lifecycle: 'cancelled' }), { kind: 'checkIn', entry }, ctx()))
+      .toEqual({ result: 'refused', reason: 'Cannot check in a cancelled person' });
+    expect(transition(basePerson({ lifecycle: 'checked_out', atCamp: false }), { kind: 'checkIn', entry }, ctx()))
+      .toEqual({ result: 'refused', reason: 'Cannot check in a person who is not currently at camp' });
+  });
+
+  it('checkIn never refuses an at-camp, non-cancelled person in any camp mode', () => {
+    for (const campMode of ['pre-camp', 'at-camp', undefined] as const) {
+      for (const lifecycle of ['registered', 'arrived', 'checked_out'] as const) {
+        const o = transition(basePerson({ lifecycle, atCamp: true }), { kind: 'checkIn', entry }, ctx({ campMode }));
+        expect(o.result).toBe('applied');
+      }
+    }
+  });
+
+  it('checkIn applied reports the appended row and never moves presence', () => {
+    const o = transition(basePerson({ lifecycle: 'arrived', atCamp: true }), { kind: 'checkIn', entry }, ctx());
+    if (o.result !== 'applied') throw new Error('expected applied');
+    expect(o.appended).toEqual({ checkIn: entry });
+    expect(o.next.atCamp).toBe(true);
+    expect(o.next.lifecycle).toBe('arrived');
+    expect(o.next.signOutHistory).toHaveLength(0);
+  });
+
+  it('sign events are authored by ctx.actor, whatever the event says', () => {
+    const o = transition(basePerson(), { kind: 'signIn', event: ev('in') }, ctx());
+    if (o.result !== 'applied') throw new Error('expected applied');
+    expect(o.next.signOutHistory[0]!.authorId).toBe('u1');
+    expect(o.appended.signEvent!.authorId).toBe('u1');
+  });
+
+  it('the intent kind decides the event type', () => {
+    const o = transition(basePerson(), { kind: 'signIn', event: ev('out') }, ctx());
+    if (o.result !== 'applied') throw new Error('expected applied');
+    expect(o.next.signOutHistory[0]!.type).toBe('in');
+  });
+
+  it('pre-camp signIn is refused for church/zone/firstAid, allowed for director/admin', () => {
+    const msg = 'Camp has not started yet, so nobody can be signed in.';
+    for (const role of ['church', 'zoneLeader', 'firstAid'] as const) {
+      expect(transition(basePerson(), { kind: 'signIn', event: ev('in') }, ctx({ actor: { ...ACTOR, role }, campMode: 'pre-camp' })))
+        .toEqual({ result: 'refused', reason: msg });
+    }
+    for (const actor of [director, admin]) {
+      expect(transition(basePerson(), { kind: 'signIn', event: ev('in') }, ctx({ actor, campMode: 'pre-camp' })).result).toBe('applied');
+    }
+    // pre-camp never refuses a sign-OUT
+    expect(transition(basePerson({ lifecycle: 'arrived', atCamp: true }), { kind: 'signOut', event: ev('out') }, ctx({ campMode: 'pre-camp' })).result).toBe('applied');
+  });
+
+  it('signIn of a cancelled person is refused (B-2); signOut is a no-op', () => {
+    const p = basePerson({ lifecycle: 'cancelled' });
+    expect(transition(p, { kind: 'signIn', event: ev('in') }, ctx())).toEqual({ result: 'refused', reason: 'Cannot sign in a cancelled person' });
+    expect(transition(p, { kind: 'signOut', event: ev('out') }, ctx())).toEqual({ result: 'noop' });
+  });
+
+  it('cancel at camp writes exactly one out event then cancels (B-3)', () => {
+    const o = transition(basePerson({ lifecycle: 'arrived', atCamp: true }), { kind: 'cancel' }, ctx({ now: 'T' }));
+    if (o.result !== 'applied') throw new Error('expected applied');
+    expect(o.next).toMatchObject({ lifecycle: 'cancelled', atCamp: false, cancelledAt: 'T', updatedAt: 'T' });
+    expect(o.next.signOutHistory).toHaveLength(1);
+    expect(o.next.signOutHistory[0]).toMatchObject({ type: 'out', reason: 'Registration cancelled', leaderName: 'Vic', authorId: 'u1', timestamp: 'T' });
+    expect(o.appended.signEvent).toBe(o.next.signOutHistory[0]);
+  });
+
+  it('cancel away from camp writes no event; displayName blank falls back to Staff', () => {
+    const away = transition(basePerson({ lifecycle: 'checked_out' }), { kind: 'cancel' }, ctx());
+    if (away.result !== 'applied') throw new Error('expected applied');
+    expect(away.next.signOutHistory).toHaveLength(0);
+    expect(away.appended).toEqual({});
+    const blank = transition(basePerson({ lifecycle: 'arrived', atCamp: true }), { kind: 'cancel' }, ctx({ actor: { ...ACTOR, displayName: '' } }));
+    if (blank.result !== 'applied') throw new Error('expected applied');
+    expect(blank.next.signOutHistory[0]!.leaderName).toBe('Staff');
+  });
+
+  it('cancel on cancelled / uncancel on not-cancelled are no-ops; uncancel restores registered', () => {
+    expect(transition(basePerson({ lifecycle: 'cancelled' }), { kind: 'cancel' }, ctx())).toEqual({ result: 'noop' });
+    expect(transition(basePerson(), { kind: 'uncancel' }, ctx())).toEqual({ result: 'noop' });
+    const o = transition(basePerson({ lifecycle: 'cancelled', cancelledAt: 'x' }), { kind: 'uncancel' }, ctx({ now: 'T' }));
+    if (o.result !== 'applied') throw new Error('expected applied');
+    expect(o.next).toMatchObject({ lifecycle: 'registered', atCamp: false, cancelledAt: null, updatedAt: 'T' });
+    expect(o.next.signOutHistory).toHaveLength(0);
+  });
+
+  it('modeRevert: atCamp -> registered with one out; checked_out and cancelled untouched (B-X3)', () => {
+    const revert = (p: Person) => transition(p, { kind: 'modeRevert', event: ev('out', { reason: 'Camp mode reverted to pre-camp' }) }, ctx({ now: 'T' }));
+    const o = revert(basePerson({ lifecycle: 'arrived', atCamp: true }));
+    if (o.result !== 'applied') throw new Error('expected applied');
+    expect(o.next).toMatchObject({ lifecycle: 'registered', atCamp: false, updatedAt: 'T' });
+    expect(o.next.signOutHistory).toEqual([{ ...ev('out', { reason: 'Camp mode reverted to pre-camp' }), authorId: 'u1' }]);
+    expect(revert(basePerson({ lifecycle: 'checked_out', atCamp: false }))).toEqual({ result: 'noop' });
+    expect(revert(basePerson({ lifecycle: 'cancelled', atCamp: false }))).toEqual({ result: 'noop' });
+    expect(revert(basePerson({ lifecycle: 'registered', atCamp: false }))).toEqual({ result: 'noop' });
+  });
+
+  it('every applied outcome that changes atCamp appends exactly one sign event; a noop changes nothing', () => {
+    const states = [
+      // registered+atCamp is left out: unreachable (only a sign-in sets atCamp, and it sets arrived).
+      // A cancel on it would clear atCamp with no event, unchanged from before P1.
+      ['registered', false], ['arrived', true], ['arrived', false],
+      ['checked_out', false], ['checked_out', true], ['cancelled', false],
+    ] as const;
+    const intents: PresenceIntent[] = [
+      { kind: 'checkIn', entry }, { kind: 'signIn', event: ev('in') }, { kind: 'signOut', event: ev('out') },
+      { kind: 'cancel' }, { kind: 'uncancel' }, { kind: 'modeRevert', event: ev('out') },
+    ];
+    for (const [lifecycle, atCamp] of states) {
+      for (const intent of intents) {
+        for (const campMode of ['pre-camp', 'at-camp'] as const) {
+          const p = basePerson({ lifecycle, atCamp });
+          const o = transition(p, intent, ctx({ campMode }));
+          const label = `${lifecycle}/${atCamp}/${intent.kind}/${campMode}`;
+          if (o.result !== 'applied') continue;
+          const added = o.next.signOutHistory.length - p.signOutHistory.length;
+          if (o.next.atCamp !== p.atCamp) expect(added, label).toBe(1);
+          expect(added, label).toBe(o.appended.signEvent ? 1 : 0);
+          expect(o.next.checkInHistory.length - p.checkInHistory.length, label).toBe(o.appended.checkIn ? 1 : 0);
+          if (intent.kind === 'checkIn') expect([o.next.atCamp, o.next.lifecycle], label).toEqual([p.atCamp, p.lifecycle]);
+        }
+      }
+    }
+  });
+
+  it('never mutates the input person', () => {
+    const p = basePerson({ lifecycle: 'arrived', atCamp: true });
+    const snapshot = JSON.stringify(p);
+    for (const intent of [{ kind: 'checkIn', entry }, { kind: 'signOut', event: ev('out') }, { kind: 'cancel' }, { kind: 'modeRevert', event: ev('out') }] as PresenceIntent[]) {
+      transition(p, intent, ctx());
+    }
+    expect(JSON.stringify(p)).toBe(snapshot);
   });
 });

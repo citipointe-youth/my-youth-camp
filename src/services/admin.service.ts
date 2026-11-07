@@ -35,6 +35,7 @@ import { makeSettingsService } from './settings.service';
 import { generateTempPassword } from '../utils/temp-password';
 import { hashPassword } from '../utils/crypto';
 import { invalidateDashboardCache } from './dashboard-cache';
+import { transition } from './presence';
 
 export interface TempPasswordEntry {
   username: string;
@@ -392,30 +393,19 @@ export function makeAdminService(
         // pre-camp screen (Home, Budget, Data, accommodation) — those all read the
         // registrants view (`lifecycle==='registered'`), and the presence model has no
         // normal transition back to 'registered' (arrived/checked_out only cycle between
-        // each other — see person-lifecycle.ts). This bypasses withSignEvent and sets the
-        // fields directly for exactly that reason, while still appending an audit sign-out
-        // event so the history reflects what happened.
+        // each other). The presence module's `modeRevert` intent is that transition: atCamp
+        // people (not checked_out, not cancelled — B-X3) go back to registered with one audit
+        // sign-out event so the history reflects what happened.
         const people = await personRepo.findAll();
         const now = nowISO();
-        const toRevert = people.filter((p) => p.atCamp && p.lifecycle !== 'cancelled');
-        if (toRevert.length > 0) {
-          const updated: Person[] = toRevert.map((p) => ({
-            ...p,
-            lifecycle: 'registered',
-            atCamp: false,
-            signOutHistory: [
-              ...p.signOutHistory,
-              {
-                id: newId('so'),
-                type: 'out',
-                leaderName: actor.displayName,
-                reason: 'Camp mode reverted to pre-camp',
-                authorId: actor.id,
-                timestamp: now,
-              },
-            ],
-            updatedAt: now,
-          }));
+        const updated: Person[] = [];
+        for (const p of people) {
+          const o = transition(p, { kind: 'modeRevert', event: { id: newId('so'), type: 'out',
+            leaderName: actor.displayName, reason: 'Camp mode reverted to pre-camp', authorId: actor.id, timestamp: now } },
+          { actor, now });
+          if (o.result === 'applied') updated.push(o.next);
+        }
+        if (updated.length > 0) {
           await personRepo.savePresenceMany(updated);
           invalidateDashboardCache();
         }

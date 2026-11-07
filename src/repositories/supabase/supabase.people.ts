@@ -474,7 +474,7 @@ async function appendHistories(tx: TxClient, p: Person): Promise<void> {
     /* B-5: two taps on one person+session at once (a queue re-drain while a request is in
        flight) each carry a fresh `newId('ci')`, so `on conflict (id)` can't dedupe them. A row
        is inserted only if the LAST stored row for its (person, session) is not the same type —
-       withCheckIn's N5 rule, enforced in SQL. Atomic because the caller's `people` upsert has
+       the presence module's checkIn N5 rule (presence.ts), enforced in SQL. Atomic because the caller's `people` upsert has
        already row-locked this person: the second tap's transaction waits there until the first
        commits, and under READ COMMITTED this later statement then sees the first tap's row.
        No refusal (the tap still answers 200) and the timestamp stays server time (Q9).

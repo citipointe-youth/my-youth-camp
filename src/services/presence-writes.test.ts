@@ -115,6 +115,19 @@ describe('B-2 signEvent on wrong-state people (IA OQ-8)', () => {
     await expect(svc.checkIn(admin, 'c', e)).rejects.toMatchObject({ statusCode: 400, message: 'Cannot check in a cancelled person' });
     await expect(svc.checkIn(admin, 'r', e)).rejects.toMatchObject({ statusCode: 400, message: 'Cannot check in a person who is not currently at camp' });
   });
+
+  it('P1: a replayed check-in (N5 no-op) resolves and writes nothing', async () => {
+    const repo = await repoWith(P({ id: 'h', lifecycle: 'arrived', atCamp: true }));
+    const svc = makePersonService(repo);
+    const e = { sessionId: 's1', sessionLabel: 'S1', type: 'in' as const, leaderId: 'u', timestamp: now };
+    await svc.checkIn(admin, 'h', e);
+    let saves = 0;
+    const realSave = repo.save.bind(repo);
+    repo.save = async (p) => { saves++; return realSave(p); };
+    await expect(svc.checkIn(admin, 'h', e)).resolves.toMatchObject({ id: 'h' });
+    expect(saves).toBe(0);
+    expect((await repo.findById('h'))!.checkInHistory).toHaveLength(1);
+  });
 });
 
 describe('B-3 cancelling someone at camp signs them out first', () => {
