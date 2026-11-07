@@ -3,6 +3,7 @@ import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
 import { canAccessPerson } from './person.service';
 import { toRosterEntry, type RosterEntry } from '../api/dto/person.dto';
+import { onSessionRoster } from './session-roster';
 import { NotFoundError, ForbiddenError } from '../core/errors/app-error';
 import { zonedNow } from '../utils/date';
 import {
@@ -118,8 +119,7 @@ export function makeCheckInService(
       // signed-out person is off the list (QA item 13), so the roster agrees with the dashboard.
       const { date, time } = zonedNow(tz);
       const current = pickCurrentSession(days, date, time);
-      const onRoster = (p: (typeof allPeople)[number]) =>
-        p.atCamp || (sessionId !== current?.id && p.checkInHistory.some((e) => e.sessionId === sessionId));
+      const onRoster = (p: (typeof allPeople)[number]) => onSessionRoster(p, sessionId, current?.id ?? null);
       const youth = allPeople.filter((p) => p.kind !== 'leader' && canAccessPerson(actor, p));
       const scoped = youth.filter(onRoster);
       const notOnSiteCount = youth.filter((p) => !p.atCamp && p.lifecycle !== 'cancelled' && !onRoster(p)).length;

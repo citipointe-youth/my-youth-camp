@@ -6,6 +6,7 @@ import { allowedWindowSession, currentSession, sessionClock } from './checkin-se
 import { canAccessPerson } from './person.service';
 import { toActor } from './auth.service';
 import { zonedNow, zonedToInstant } from '../utils/date';
+import { isCheckedInFor, onSessionRoster } from './session-roster';
 
 /** How long before a window closes to warn. Design D4. */
 export const WARN_LEAD_MINUTES = 60;
@@ -25,17 +26,6 @@ export interface ChurchBehind {
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':');
   return Number(h) * 60 + Number(m);
-}
-
-/**
- * Checked-in for a session, matching `toRosterEntry` in src/api/dto/person.dto.ts EXACTLY:
- * the LAST entry for that session wins. A student checked in and then out is NOT checked in.
- * Diverging from this makes the push count disagree with the roster the leader is reading.
- */
-function isCheckedIn(p: Person, sessionId: string): boolean {
-  const entries = p.checkInHistory.filter((e) => e.sessionId === sessionId);
-  const last = entries[entries.length - 1];
-  return last?.type === 'in';
 }
 
 export interface WarnWindow {
@@ -169,8 +159,9 @@ export function churchesBehindFor(
 ): ChurchBehind[] {
   const { session, windowEnd, windowEndAt } = gate;
 
-  // Same roster population as checkin.service.getSessionStatus: present, non-leader.
-  const roster = people.filter((p) => p.atCamp && p.kind !== 'leader');
+  // Same roster population as checkin.service.getSessionStatus (session-roster.ts): the warned
+  // session is the current one, so that is present, non-leader.
+  const roster = people.filter((p) => onSessionRoster(p, session.id, session.id));
 
   const out: ChurchBehind[] = [];
   for (const u of users) {
@@ -180,7 +171,7 @@ export function churchesBehindFor(
 
     const actor = toActor(u);
     const remaining = roster.filter(
-      (p) => canAccessPerson(actor, p) && !isCheckedIn(p, session.id),
+      (p) => canAccessPerson(actor, p) && !isCheckedInFor(p, session.id),
     ).length;
 
     // D4 condition 4: never send "0 students still to check in".
