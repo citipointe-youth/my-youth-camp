@@ -256,7 +256,7 @@ exist.
 - `checkIn()` in `person.service.ts` refuses (via `presence.ts`, same two messages) with `BadRequestError` for `lifecycle === 'cancelled'` OR `atCamp === false`. Day-1 first-arrival must go through `signEvent` (attendance sign-in), not the daily check-in path.
 - The check-in roster in `getSessionStatus` filters on `p.atCamp === true` (`onSessionRoster`), not `isCamper(p)`. A person no longer at camp stays only on PAST sessions they were checked in for; the CURRENT session excludes them (QA item 13, 2026-11-03), and `notOnSiteCount` reports them.
 - A sign event that doesn't move lifecycle or atCamp writes nothing (B-2, replaces the QA-16 rule), so a double tap writes one compliance row. Signing in a cancelled person is a 400. Cancelling someone at camp first writes an 'out' event, reason "Registration cancelled" (B-3). Church, zone and first-aid logins cannot sign someone in during pre-camp.
-- `checkInsDue` on the at-camp dashboard is scoped to `atCampNow` (persons with `atCamp===true`), not all `isCamper()` persons. This prevents departed campers inflating the "still to check in" count.
+- `checkInsDue` on the at-camp dashboard is scoped by the shared roster rule `onSessionRoster(p, cur, cur)` (`src/services/session-roster.ts`: non-leader with `atCamp===true` for the current session), counting those not `isCheckedInFor` it — not all `isCamper()` persons. This prevents departed campers inflating the "still to check in" count.
 
 ## Key design rules
 
