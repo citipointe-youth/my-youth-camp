@@ -197,7 +197,11 @@ describe('B-5 check-in history guard (in-memory mirror of the Supabase condition
   it('in -> out -> in is still three rows', async () => {
     const repo = await repoWith(P({ id: 'x', lifecycle: 'arrived', atCamp: true }));
     const svc = makePersonService(repo);
-    for (const type of ['in', 'out', 'in'] as const) await svc.checkIn(admin, 'x', { ...tap, type });
+    // distinct server times: history is (timestamp, id) ordered, so a same-ms tie would sort by id
+    let s = 0;
+    for (const type of ['in', 'out', 'in'] as const) {
+      await svc.checkIn(admin, 'x', { ...tap, type, timestamp: `2026-01-01T00:00:0${s++}.000Z` });
+    }
     expect((await repo.findById('x'))!.checkInHistory.map((e) => e.type)).toEqual(['in', 'out', 'in']);
   });
 });
@@ -258,5 +262,16 @@ describe('P3 presence seam: decisions are made on the stored row', () => {
     gate();
     await expect(tapP).rejects.toMatchObject({ statusCode: 400, message: 'Cannot check in a cancelled person' });
     expect((await repo.findById('x'))!.checkInHistory).toEqual([]);
+  });
+});
+
+describe('B-5 tiebreak (gate C9 item 3)', () => {
+  it('an exact-timestamp tie orders history by (timestamp, id), as Supabase hydrates it', async () => {
+    const ci = (id: string, type: 'in' | 'out') =>
+      ({ id, sessionId: 's1', sessionLabel: 'S1', type, leaderId: 'u', timestamp: now });
+    const repo = await repoWith(P({ id: 'x', lifecycle: 'arrived', atCamp: true, checkInHistory: [ci('ci_b', 'in')] }));
+    await repo.transition('x', () => ({ atCamp: true, lifecycle: 'arrived', updatedAt: now, appendCheckIn: ci('ci_a', 'out') }));
+    // the SQL guard's "last" is `timestamp desc, id desc` = ci_b, so the person still reads checked in
+    expect((await repo.findById('x'))!.checkInHistory.map((e) => e.id)).toEqual(['ci_a', 'ci_b']);
   });
 });

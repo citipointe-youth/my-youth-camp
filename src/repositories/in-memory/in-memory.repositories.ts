@@ -121,6 +121,14 @@ export class InMemoryChurchRepository
 // ---------------------------------------------------------------------------
 // People (unified registrant + camper — design D2)
 // ---------------------------------------------------------------------------
+/** Check-in history in Supabase hydrate order `(timestamp, id)`, so N5's "last entry" is the
+ *  same row the B-5 SQL guard picks (`timestamp desc, id desc`) on an exact-ms tie. */
+function hydrateOrder(p: Person): Person {
+  const checkInHistory = [...p.checkInHistory].sort((a, b) =>
+    Date.parse(a.timestamp) - Date.parse(b.timestamp) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return { ...p, checkInHistory };
+}
+
 export class InMemoryPersonRepository
   extends InMemoryBaseRepository<Person>
   implements IPersonRepository
@@ -158,7 +166,7 @@ export class InMemoryPersonRepository
     if (!stored) throw new NotFoundError('Person not found');
     const w = decide(this.clone(stored));
     if (!w) return this.clone(stored);
-    const next = withPresenceWrite(stored, w);
+    const next = hydrateOrder(withPresenceWrite(stored, w));
     this.store.set(id, this.clone(next));
     await this.writeToPersistence();
     return this.clone(next);
@@ -173,7 +181,7 @@ export class InMemoryPersonRepository
       if (!stored) continue;
       const w = decide(this.clone(stored));
       if (w) changed = true;
-      out.push(w ? withPresenceWrite(stored, w) : stored);
+      out.push(w ? hydrateOrder(withPresenceWrite(stored, w)) : stored);
     }
     if (changed) {
       for (const p of out) this.store.set(p.id, this.clone(p));

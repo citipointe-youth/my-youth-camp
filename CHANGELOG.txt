@@ -13,6 +13,8 @@ at_camp/lifecycle/cancelled_at or history on UPDATE. Concurrent taps/cancels no 
 other (gate B M3, N1). A check-in whose person was signed out/cancelled meanwhile now gets the
 existing 400. users/notifications saveMany run in one tx. Contract suite for the in-memory repo.
 D2: dead zone/group repos and unused finders deleted (no DDL).
+B-5 tiebreak (gate C9 item 3): the check-in dedupe picks the last row by (timestamp desc, id desc),
+the same order history hydrates in; the in-memory repo stores check-in history in that order too.
 
 
 2026-11-07 - Architecture round, Phase C8: P2 (server only, no cache bump)

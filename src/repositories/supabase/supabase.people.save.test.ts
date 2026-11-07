@@ -98,7 +98,7 @@ describe('SupabasePersonRepository save/saveMany (B-1, P3)', () => {
     expect(f.stmts.map((s) => words(s))).toEqual(['insert into people', 'insert into check_in_history', 'insert into sign_out_history']);
     const ci = flat(f.stmts[1]!);
     expect(ci).toContain('where h.person_id = v.person_id and h.session_id = v.session_id');
-    expect(ci).toContain('order by h."timestamp" desc limit 1');
+    expect(ci).toContain('order by h."timestamp" desc, h.id desc limit 1');
     expect(ci).toContain('is distinct from v.type');
     expect(ci).toContain('on conflict (id) do nothing');
     expect(f.stmts[1]!.values[0]).toEqual({ json: [{ id: 'ci2', person_id: 'p1', session_id: '2026-09-28~pm',
