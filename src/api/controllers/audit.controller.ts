@@ -20,11 +20,10 @@ export function makeAuditController(services: AuditControllerServices) {
       if (!req.ctx) throw new UnauthorizedError();
       const buffer = await auditExport.exportMasterWorkbook(req.ctx.actor);
 
-      // Read settings AFTER the service runs so we pick up any mutations it made
-      // (e.g. clearing lastTempPasswords) before adding lastExportedAt.
-      const settings = await settingsRepo.getSingleton();
-      if (settings) {
-        await settingsRepo.saveSingleton({ ...settings, lastExportedAt: nowISO(), updatedAt: nowISO() });
+      // Patch only lastExportedAt (B-7), so a lock, mode change or wipe that lands meanwhile
+      // is never written back over.
+      if (await settingsRepo.getSingleton()) {
+        await settingsRepo.patchSingleton({ lastExportedAt: nowISO(), updatedAt: nowISO() });
       }
       logger.info(`[audit] workbook exported by ${req.ctx.actor.displayName} (${req.ctx.actor.role}) from ${req.ip ?? 'unknown'}`);
 

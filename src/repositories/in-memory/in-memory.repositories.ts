@@ -535,7 +535,10 @@ export class InMemorySettingsRepository implements ISettingsRepository {
 
   async patchSingleton(fields: Partial<CampSettings>): Promise<CampSettings> {
     if (!this.settings) throw new Error('Settings row missing; nothing to patch');
-    return this.saveSingleton({ ...this.settings, ...fields, updatedAt: fields.updatedAt ?? new Date().toISOString() });
+    // Same contract as Supabase patchCols: undefined is skipped, id/createdAt are never written.
+    const { id: _id, createdAt: _c, ...rest } = fields;
+    const defined = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+    return this.saveSingleton({ ...this.settings, ...defined, updatedAt: fields.updatedAt ?? new Date().toISOString() });
   }
 }
 
