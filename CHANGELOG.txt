@@ -3,6 +3,19 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C15: S1+S3 (camp-v156)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change. SPA only. S1: one session module in public/index.html.
+enterShell(kind) (login / changePassword / restore) owns the shell start-up order; leave(reason)
+(expired / refused / logout) replaces sessionExpired(), logout() and two hand-copied restore
+teardowns; _queueStep(kind) is the one map from session event to queue action (queue functions
+themselves untouched); the five preview switches share _previewShell(). S3: _doFetch no longer
+calls the UI; a 401 with a token raises ycp:session-ended and MUST_CHANGE_PASSWORD raises
+ycp:must-change-password, both synchronous window events. Ruled changes: after a change of
+password the saved taps are loaded and sent and the note draft offered, like login (IA-OQ-11;
+only with MUST_CHANGE_PASSWORD_ENFORCED, currently off); enforceInitials returns in a preview
+(gate B2 L-1). Harnesses: session-teardown, qa-batch2, preview-queue.
+
 2026-11-07 - Architecture round, Phase C14: I5 (camp-v155)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change. I5: both Invoice passes (single / shared) call one apply step

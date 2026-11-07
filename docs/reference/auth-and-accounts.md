@@ -542,7 +542,7 @@ both fixed. `sw.js` → `camp-v50`.
    passed the gate**: the app rendered as if signed in and only collapsed a tick later when
    `_prefetch()`'s authenticated calls 401'd. Restore now does **`await api('/auth/me',{noCache:true})`**
    — an `auth: true` route — before touching `/settings`. On failure `_doFetch` already runs
-   `sessionExpired()` and the existing `catch` clears `localStorage`, so the next load is a clean
+   `sessionExpired()` (now `leave('expired')`, raised via the `ycp:session-ended` event since S3) and the existing `catch` clears `localStorage`, so the next load is a clean
    login screen. **Never use an `auth:false` route as a session probe**; `/setup` is the one that looks
    tempting (`/settings` was the other until it became `auth: true` on 2026-11-07).
 2. **The 401 handler was guarded on `&& TOKEN`.** `_prefetch()` issues five requests in the same

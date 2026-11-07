@@ -94,7 +94,7 @@ insert AND on-conflict list, so without the column every subscribe AND every pos
     (`.la-devs`/`.la-devline`/`.la-devhist`). A phone with no deliveries is a plain line.
 - **One phone, two accounts (answered for the owner):** a subscription is per phone
   (`endpoint`), not per login, and it belongs to whichever account last turned alerts on. Logging
-  out does NOT unsubscribe (`logout()` never touches push), so a phone switched from `b-x` to
+  out does NOT unsubscribe (`leave('logout')`, was `logout()`, never touches push), so a phone switched from `b-x` to
   `g-x` keeps getting `b-x`'s alerts — and `_renderPushCard` still says "Alerts are on for this
   device" to `g-x`, because it only checks the phone's local subscription. The phone moves to
   `g-x` only if `g-x` turns alerts off then on. **Now surfaced, minimally (owner, same day):**
