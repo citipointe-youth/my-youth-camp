@@ -183,6 +183,19 @@ describe('[A-Q12][B-9] ticket/invoice/payment holders survive the Form absent-de
       expect(!!(await w.byName('Plain'))).toBe(dryRun);
     }
   });
+  it('[CH-1][Q12] a hand-set payment status (not unpaid) also keeps an absent person; unpaid does not', async () => {
+    const w = await world();
+    await w.form(`First Name,Last Name,Church,Grade,${C}
+Paidup,Person,Victory,9,Yes,Yes,Yes
+Unpaid,Person,Victory,9,Yes,Yes,Yes`);
+    await w.set('Paidup', { paymentStatus: 'paid' });
+    const r = await w.form(`First Name,Last Name,Church,Grade,${C}
+Nobody,Else,Victory,9,Yes,Yes,Yes`);
+    expect(r).toMatchObject({ deleted: 1, retained: 1 });
+    expect(r.warnings.filter((x) => x.code === 'absent-kept-needs-review').map((x) => x.message.split(' ')[0])).toEqual(['Paidup']);
+    expect(await w.byName('Paidup')).toBeDefined();
+    expect(await w.byName('Unpaid')).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

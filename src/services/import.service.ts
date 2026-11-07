@@ -564,7 +564,9 @@ export function makeImportService(
         p.amountPaid != null ||
         p.discountAmount != null ||
         p.feesAmount != null ||
-        p.taxAmount != null;
+        p.taxAmount != null ||
+        // CH-1: the Form only writes 'unpaid', so any other status was set by hand or a Ticket run.
+        (p.paymentStatus != null && p.paymentStatus !== 'unpaid');
       const absentSetAll = new Set(absentIdsAll);
       const protectedPeople = allPersons.filter((p) => absentSetAll.has(p.id) && isProtected(p));
       const protectedIds = new Set(protectedPeople.map((p) => p.id));
