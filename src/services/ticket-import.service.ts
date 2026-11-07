@@ -195,9 +195,10 @@ export function makeTicketImportService(
           const match = findPersonMatch(index, { firstName, lastName, phone: phoneRaw });
 
           /* A-4 (ruling Q5): a FUZZY match is never applied — it would overwrite another
-             student's ticket#, invoice#, payment status and confirmed kind. The row takes the
-             orphan branch below with a 'ticket-possible-match' warning for review. */
-          if (match.status === 'matched' && match.via !== 'fuzzy') {
+             student's ticket#, invoice#, payment status and confirmed kind. The matcher reports
+             it as 'possible' (I3), so the row takes the orphan branch below with a
+             'ticket-possible-match' warning for review. */
+          if (match.status === 'matched') {
             const existing = touched.get(match.person.id) ?? match.person;
             /* Item A/B (2026-07-28) — SECOND ACTIVE TICKET FOR THE SAME PERSON.
                The "bought the wrong ticket, then bought the right one with a difference-only
@@ -285,7 +286,12 @@ export function makeTicketImportService(
             addToIndex(index, merged);
             if (firstTouch) updated++;
           } else {
-            const possible = match.status === 'matched' ? match : null;
+            const possible = match.status === 'possible' ? match : null;
+            // OQ-57: an ambiguous name keeps the same code; only the text now says why.
+            const ambiguous = match.status === 'no_match' && match.reason === 'ambiguous' ? match.candidates.length : 0;
+            const whyNoMatch = ambiguous
+              ? `No single match for "${firstName} ${lastName}" — ${ambiguous} people share or nearly share this name and the phone did not tell them apart`
+              : `No matching person found for "${firstName} ${lastName}"`;
             const possibleText = possible
               ? `possible match: ${possible.person.firstName} ${possible.person.lastName} (${possible.person.churchName || 'no church'})`
               : '';
@@ -336,7 +342,9 @@ export function makeTicketImportService(
               taxAmount: null,
               needsReview: true,
               needsReviewReason:
-                `No matching person found for ticket row ${rowNum} (ticket #${ticketNumber || '—'}) — ` +
+                (ambiguous
+                  ? `${ambiguous} people share or nearly share this name — no single match for ticket row ${rowNum} (ticket #${ticketNumber || '—'}); `
+                  : `No matching person found for ticket row ${rowNum} (ticket #${ticketNumber || '—'}) — `) +
                 'created as an unmatched orphan' + (possible ? ` (${possibleText})` : ''),
               lifecycle: 'registered',
               atCamp: false,
@@ -361,7 +369,7 @@ export function makeTicketImportService(
               : {
                   code: 'unmatched-orphan-created',
                   row: rowNum,
-                  message: `No matching person found for "${firstName} ${lastName}" — created as an unmatched orphan`,
+                  message: `${whyNoMatch} — created as an unmatched orphan`,
                 });
             created++;
           }

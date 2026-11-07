@@ -13,7 +13,7 @@ import { assertCan } from './access-control';
 // ⚠️ ONE copy of the phone rule, shared with the Ticket List / Invoice importers. This file
 // used to carry its own identical digits-only copy; two copies of a matching rule is how the
 // same person ends up matched differently by different importers.
-import { phoneDigits } from './person-matching';
+import { phoneDigits, resolvePool } from './person-matching';
 import { BadRequestError } from '../core/errors/app-error';
 import { parseCsv } from '../utils/csv';
 import { newId } from '../utils/id';
@@ -183,17 +183,6 @@ export function makeImportService(
         const list = overridesByName.get(k);
         if (list) list.push(o);
         else overridesByName.set(k, [o]);
-      }
-
-      function pickMatch(pool: Person[] | undefined, phone: string): Person | undefined {
-        if (!pool || pool.length === 0) return undefined;
-        if (phone) {
-          const byPhone = pool.find((p) => phoneDigits(p.mobile) === phone);
-          if (byPhone) return byPhone;
-          if (pool.length === 1 && !phoneDigits(pool[0]!.mobile)) return pool[0];
-          return undefined;
-        }
-        return pool.length === 1 ? pool[0] : undefined;
       }
 
       // Resolve a church name to an id, creating a minimal church on a miss (phantom). The church
@@ -417,7 +406,7 @@ export function makeImportService(
 
           const rowPhone = phoneDigits(mobile);
           const pool = poolByNameChurch.get(nck);
-          const match = pickMatch(pool, rowPhone);
+          const match = resolvePool(pool, rowPhone, 'phone-must-agree'); // I3: the Form's rule, explicit
           const isExisting = match !== undefined && !createdIds.has(match.id);
 
           if (match && isExisting && !opts.updateExisting) {
