@@ -20,6 +20,15 @@ Reset logs really deletes history on Supabase. SPA: session expiry and login cle
 preview state and the last "who" name. New harness scripts/session-teardown-harness.js.
 sw.js camp-v150 -> camp-v151. Verified: npx tsc --noEmit clean, npx vitest run 1394
 pass / 88 files, npm run harness all green.
+Gate fix-up (same camp-v151): the import preview hides Confirm when a file is refused
+and says "Nothing was imported"; the kept-needs-review group opens by default and says
+to act in the Student data table; ticket-possible-match replaces the duplicate
+unmatched-orphan-created row (no "edit distance"); clearer wipe-guard, New Year and
+offline-sheet wording; an account with no first/last name signs as its username; a
+refused session restore drops preview state. New harness scripts/import-preview-harness.js.
+Known limit (M2, fixed by Phase B item B-7): stampImport, the audit export stamp and the
+settings service still write the whole settings row, so one that read the row before a
+wipe can write back the old lastExportedAt and let the next wipe skip a fresh export.
 
 2026-10-03 - Prayer-record amendments (camp-v145)
 -----------------------------------------------------------------------------------

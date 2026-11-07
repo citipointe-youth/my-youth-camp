@@ -87,7 +87,7 @@ npm run dev          # backend + frontend on http://localhost:4200 (tsx watch)
 npm run start        # same, no watch
 npm run typecheck    # tsc --noEmit (strict)
 npm run test         # vitest
-npm run harness      # the 12 SPA harnesses (scripts/*-harness.js; vpkick excluded) — run after SPA edits
+npm run harness      # the 13 SPA harnesses (scripts/*-harness.js; vpkick excluded) — run after SPA edits
 ```
 
 Default port: **4200**. Set `PORT=xxxx` to override.
@@ -217,7 +217,7 @@ Users in pre-camp mode can tap **"👁 Preview at-camp view"** on the pre-camp h
 - **Entry:** `enterPreview()` — sets `PREVIEW_MODE=true`, flips `CAMP_MODE` to `'at-camp'` locally, shows amber `#previewBanner` strip, rebuilds tabs, navigates home.
 - **Exit:** `exitPreview()` — restores `CAMP_MODE` from `SETTINGS.campMode`, removes banner, rebuilds tabs.
 - **Write blocking:** the `api()` function short-circuits any non-GET request while `PREVIEW_MODE` **or `ACCOUNT_PREVIEW`** is true — shows a toast and throws. Covers every write in the app without per-screen changes.
-- **Logout safety:** `logout()` clears `PREVIEW_MODE`/`ACCOUNT_PREVIEW`/`_previewStash` before POSTing to `/auth/logout` so the write guard never blocks logout itself. `sessionExpired()` and `doLogin()` clear the same preview state plus `ycp_preview_stash` and the banner (`sessionExpired` also clears `LAST_LEADER` and `ycp_settings`), and `_tryRestoreSession()` drops a stash for the signed-in user instead of re-entering preview (2026-11-07, `scripts/session-teardown-harness.js`).
+- **Logout safety:** `logout()` clears `PREVIEW_MODE`/`ACCOUNT_PREVIEW`/`_previewStash` before POSTing to `/auth/logout` so the write guard never blocks logout itself. `sessionExpired()` and `doLogin()` clear the same preview state plus `ycp_preview_stash` and the banner (`sessionExpired` also clears `LAST_LEADER` and `ycp_settings`), and `_tryRestoreSession()` drops a stash for the signed-in user instead of re-entering preview; a non-401 refusal of the restore also drops preview state (2026-11-07, `scripts/session-teardown-harness.js`).
 - All roles can enter preview. Preview uses real live data (campers, schedule, devotionals already imported).
 - **Banner is shared with account preview** (see "Account preview" above): `#previewBanner`'s label/toggle/exit are driven by `_updatePreviewBanner()` (called from `updateModeUI`); the Exit button dispatches via `_exitAnyPreview()` to `exitPreview()` (same-user) or `exitAccountPreview()` (account preview).
 
