@@ -1718,6 +1718,7 @@ function leave(reason){
     // C15 gate: first, while ACTOR is still this login. A throw in enterShell after the restore loaded the
     // taps lands here; memory must not keep them for the next login (the saved copy stays for this one).
     _queueStep('leave');
+    _checkinFailed=0;_checkinFailReason='';_checkinFailNames=[];_checkinOldNames=[];_checkinOldCount=0;_lastRoster=null;_pulseSess=null;_ciPulseChurch=null; // ZN-1: no banner names or roster for the next login
     TOKEN=null;ACTOR=null;
     localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
     // Gate A L2: a non-401 refusal never ran leave('expired'), so drop the preview here too.
@@ -1727,6 +1728,7 @@ function leave(reason){
   _rosterClear(); // the session is over, so nothing of the group stays on the phone
   try{localStorage.removeItem('ycp_settings');}catch(_){} // the camp-wide row (prices, discount tags, site map) too
   _queueStep('leave'); // before ACTOR is nulled: _persistQueue keys on it
+  _checkinFailed=0;_checkinFailReason='';_checkinFailNames=[];_checkinOldNames=[];_checkinOldCount=0;_lastRoster=null;_pulseSess=null;_ciPulseChurch=null; // ZN-1: a shared phone's next login must not see these names (saved taps untouched)
   clearTimeout(_undoTimer);_undoCamperId=null;_hideUndoToast();
   _bootOffline=false;_netStrip();
   Cache.clear();

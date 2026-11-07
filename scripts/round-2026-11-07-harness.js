@@ -52,6 +52,7 @@ function box(opt={}){
       if(t.preview)return reply(403,{code:'FORBIDDEN',message:'preview read only'});
       const res=typeof srv.checkin==='function'?srv.checkin(body,t):srv.checkin;
       if(res==='503')return reply(503,{code:'INTERNAL',message:'Server error'});
+      if(res==='404')return reply(404,{code:'NOT_FOUND',message:'Person not found'});
       srv.posts.push({user:t.user,camperId:body.camperId,sessionId:body.sessionId,type:body.type,initials:body.initials});
       return reply(200,{ok:true});
     }
@@ -213,6 +214,15 @@ await T('[B-11] expiry then another login: LAST_LEADER is blank',async()=>{
   const b=box();await b.login('alice');b.r("LAST_LEADER='Sarah'");
   await expireNow(b,'alice');
   await b.login('bob');assert.strictEqual(b.get('LAST_LEADER'),'');
+});
+// ZN-1: a shared phone. The next login must not see the last login's "Not saved" / over-48 h names.
+await T('[ZN-1] expiry then another login: no failed/old check-in names, roster or pulse state carried over',async()=>{
+  const b=box();await b.login('alice');b.srv.checkin='404';b.tap('k1');await flush();
+  assert.strictEqual(b.get('_checkinFailed'),1,'setup: the 404 put the tap in the red banner');
+  b.r("_checkinOldNames=['Old Kid'];_checkinOldCount=1;_lastRoster={s:1};_pulseSess='s1';_ciPulseChurch='c1'");
+  await expireNow(b,'alice');await b.login('bob');
+  assert.deepStrictEqual(JSON.parse(b.r('JSON.stringify([_checkinFailed,_checkinFailReason,_checkinFailNames,_checkinOldNames,_checkinOldCount,_lastRoster,_pulseSess,_ciPulseChurch])')),
+    [0,'',[],[],0,null,null,null]);
 });
 console.log(results.join('\n'));
 console.log(failures?failures+' FAILED':'all passed'+(KNOWN.length?' ('+KNOWN.length+' KNOWN-FAIL)':''));
