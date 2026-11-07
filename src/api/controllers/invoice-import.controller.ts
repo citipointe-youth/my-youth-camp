@@ -1,12 +1,11 @@
 import type { HttpRequest } from '../http/types';
 import type { InvoiceImportService } from '../../services/invoice-import.service';
-import type { ISettingsRepository } from '../../repositories/interfaces/entity-repositories';
+import type { SettingsService } from '../../services/settings.service';
 import { UnauthorizedError } from '../../core/errors/app-error';
-import { stampImport } from './_import-stamp';
 
 export interface InvoiceImportControllerServices {
   invoiceImport: InvoiceImportService;
-  settingsRepo: ISettingsRepository;
+  settings: Pick<SettingsService, 'stampImport'>;
 }
 
 export function makeInvoiceImportController(services: InvoiceImportControllerServices) {
@@ -14,7 +13,7 @@ export function makeInvoiceImportController(services: InvoiceImportControllerSer
     async run(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       const result = await services.invoiceImport.importInvoicesCsv(req.ctx.actor, req.body);
-      await stampImport(services.settingsRepo, 'invoicesImportedAt', result);
+      await services.settings.stampImport('invoices', result);
       return result;
     },
   };

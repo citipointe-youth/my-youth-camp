@@ -1,7 +1,5 @@
 import type { Route, BufferRoute } from './types';
 import type { Services } from '../../container';
-import { BadRequestError, NotFoundError, ForbiddenError } from '../../core/errors/app-error';
-import { hashPassword } from '../../utils/crypto';
 import { makeAuthController } from '../controllers/auth.controller';
 import { makeDashboardController } from '../controllers/dashboard.controller';
 import { makeRegistrantController } from '../controllers/registrant.controller';
@@ -29,7 +27,7 @@ import { makeCronController } from '../controllers/cron.controller';
 import { makePushController } from '../controllers/push.controller';
 
 export function buildRoutes(services: Services): (Route | BufferRoute)[] {
-  const auth = makeAuthController({ auth: services.auth, users: services.users });
+  const auth = makeAuthController({ auth: services.auth });
   const dashboard = makeDashboardController({ dashboard: services.dashboard, settings: services.settings });
   const registrant = makeRegistrantController({ person: services.person });
   const accommodation = makeAccommodationController({ accommodation: services.accommodation });
@@ -42,33 +40,22 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
   const note = makeNoteController({ note: services.note });
   const attendance = makeAttendanceController({ person: services.person });
   const content = makeContentController({ content: services.content });
-  const importCtrl = makeImportController({ importService: services.importService, settingsRepo: services.settingsRepo });
+  const importCtrl = makeImportController({ importService: services.importService, settings: services.settings });
   const allocationCtrl = makeAllocationController({ allocation: services.allocation });
-  const ticketImportCtrl = makeTicketImportController({ ticketImport: services.ticketImport, settingsRepo: services.settingsRepo });
-  const invoiceImportCtrl = makeInvoiceImportController({ invoiceImport: services.invoiceImport, settingsRepo: services.settingsRepo });
-  const auditCtrl = makeAuditController({ auditExport: services.auditExport, settingsRepo: services.settingsRepo });
+  const ticketImportCtrl = makeTicketImportController({ ticketImport: services.ticketImport, settings: services.settings });
+  const invoiceImportCtrl = makeInvoiceImportController({ invoiceImport: services.invoiceImport, settings: services.settings });
+  const auditCtrl = makeAuditController({ auditExport: services.auditExport, settings: services.settings });
   const offlineSignInCtrl = makeOfflineSignInController({ offlineSignIn: services.offlineSignIn });
   const exportCtrl = makeExportController({ exportService: services.exportService });
   const account = makeAccountController({ account: services.account, auth: services.auth });
   const settingsCtrl = makeSettingsController({ settings: services.settings });
   const admin = makeAdminController({ admin: services.admin, cron: services.cron });
   const cronCtrl = makeCronController({ tick: services.cron });
-  const pushCtrl = makePushController({ subscriptions: services.pushSubscriptionRepo, push: services.push, users: services.users });
+  const pushCtrl = makePushController({ subscriptions: services.pushSubscriptions, push: services.push });
 
   return [
     // ----- First-run admin setup (permanently disabled once admin has a password) -----
-    { method: 'POST', path: '/setup', auth: false, handler: async (req) => {
-      const body = req.body as { username?: string; password?: string };
-      if (!body.username || !body.password) throw new BadRequestError('username and password required');
-      if (body.password.length < 8) throw new BadRequestError('Password must be at least 8 characters');
-      const admins = await services.users.findByRole('admin');
-      const admin = admins[0];
-      if (!admin) throw new NotFoundError('No admin account found — run migrations first');
-      if (admin.passwordHash) throw new ForbiddenError('Admin password already set');
-      const hash = await hashPassword(body.password);
-      await services.users.save({ ...admin, username: body.username, passwordHash: hash });
-      return { ok: true };
-    }},
+    { method: 'POST', path: '/setup', auth: false, handler: (r) => auth.setup(r) },
 
     // ----- Auth -----
     { method: 'POST', path: '/auth/login', auth: false, handler: (r) => auth.login(r) },

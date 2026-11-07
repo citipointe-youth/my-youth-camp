@@ -10,6 +10,15 @@ import { BadRequestError, NotFoundError } from '../core/errors/app-error';
 import { UpdateSettingsSchema } from '../core/validation/content.schema';
 import { nowISO } from '../utils/date';
 import { invalidateDashboardCache } from './dashboard-cache';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('settings');
+
+/** Which settings timestamp a real (non-dry-run) import of each source stamps. */
+export type ImportSource = 'form' | 'tickets' | 'invoices';
+const IMPORT_STAMP_FIELD = {
+  form: 'formImportedAt', tickets: 'ticketsImportedAt', invoices: 'invoicesImportedAt',
+} as const satisfies Record<ImportSource, keyof CampSettings>;
 
 export interface SettingsService {
   get(): Promise<CampSettings>;
@@ -17,6 +26,20 @@ export interface SettingsService {
   getMode(): Promise<CampMode>;
   setMode(actor: Actor, mode: CampMode): Promise<CampSettings>;
   updateDiscountCodeTags(actor: Actor, tags: Record<string, string>): Promise<CampSettings>;
+  /*
+   * Named single-purpose writes (D4). Each patches only its own column(s) via patchSingleton
+   * (B-7), so none can revert a concurrent lock, revoke, mode change or wipe. A missing settings
+   * row (tests / first run) is a no-op for all four. No permission check: callers have already
+   * asserted theirs (export, import, wipe).
+   */
+  /** The full audit workbook was exported (OQ-25: the sign-in/out CSV doesn't count). */
+  stampExport(): Promise<void>;
+  /** A wipe ran: the next wipe needs a fresh export (A-2). */
+  clearExportStamp(): Promise<void>;
+  /** A real import of `source` finished. Best-effort: never throws, a failure is logged. */
+  stampImport(source: ImportSource, result: { dryRun?: boolean }): Promise<void>;
+  /** The temp passwords were handed out in an export. */
+  clearTempPasswords(): Promise<void>;
 }
 
 /**
@@ -89,8 +112,29 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
     }
   }
 
+  /** patchSingleton only when the row exists, so a missing row stays missing. */
+  async function patchIfPresent(fields: Partial<CampSettings>): Promise<void> {
+    if (!(await repo.getSingleton())) return;
+    await repo.patchSingleton({ ...fields, updatedAt: nowISO() });
+  }
+
   return {
     get,
+
+    stampExport: () => patchIfPresent({ lastExportedAt: nowISO() }),
+    clearExportStamp: () => patchIfPresent({ lastExportedAt: null }),
+    clearTempPasswords: () => patchIfPresent({ lastTempPasswords: null }),
+
+    async stampImport(source, result) {
+      if (result.dryRun) return;
+      const field = IMPORT_STAMP_FIELD[source];
+      try {
+        await patchIfPresent({ [field]: nowISO() });
+      } catch (err) {
+        // Non-fatal: the import itself is committed; the timestamp is cosmetic.
+        logger.warn(`could not stamp ${field}`, err instanceof Error ? err.message : err);
+      }
+    },
 
     async update(actor, patch) {
       assertCan(actor, 'admin:manage');
