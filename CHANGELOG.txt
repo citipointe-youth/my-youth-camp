@@ -3,6 +3,18 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C1: S2 + P4 (camp-v153)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change. S2: new src/services/budget.parity.test.ts pins the
+SPA budget mirror (computeBudgetClient, sponsor and discount summaries, per-person values)
+to budget.ts on 39 fixture people; no drift found, so no money change. P4: one session
+clock. sessionClock() in checkin-sessions.ts is now the only place the tz and window
+defaults live (checkin.service, checkin-warnings and dashboard.service read it);
+GET /checkin/sessions/:id/status returns it as clock, the SPA saves it with the offline
+roster, and _sessionNow/_windowClosed use it, so the offline session follows the server tz
+and windows. With prod settings (Brisbane, AM 05-12, PM 12-23:30) nothing changes. A list
+saved before P4 uses the old rule. sw.js camp-v152 -> camp-v153.
+
 2026-11-07 - Architecture round, Phase B (camp-v152)
 -----------------------------------------------------------------------------------
 Four lanes merged on arch/2026-11-07; no migration. Presence: atCamp/lifecycle are
