@@ -3,10 +3,20 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C8: P2 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change, no public/ change. P2: one session-roster rule.
+src/services/session-roster.ts (lastEntryFor, isCheckedInFor, onSessionRoster) replaces the
+copies of the last-entry-wins scan and the "who is on this session's roster" rule in
+person.dto toRosterEntry, checkin.service getSessionStatus, checkin-warnings, dashboard.service
+and the presence.ts N5 dedupe. Behaviour unchanged (the copies already agreed). Also from C7:
+PresenceCtx.campMode is now required so a caller cannot skip the pre-camp rule.
+
+
 2026-11-07 - Architecture round, Phase C7: P1+I4 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change, no public/ change. P1+I4: one presence-transition module.
-src/services/presence.ts transition(person, intent, {actor, campMode?, now}) decides every presence
+src/services/presence.ts transition(person, intent, {actor, campMode, now}) decides every presence
 write (checkIn, signIn, signOut, cancel, uncancel, modeRevert) and returns applied/noop/refused;
 PersonService.checkIn/signEvent/update, the offline sign-in sheet and admin.setMode revert only do
 I/O. person-lifecycle.ts is deleted. Behaviour unchanged except an N5 check-in replay no longer
