@@ -3,6 +3,15 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C3: A2 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change, no public/ change. A2: person DTOs are viewer-aware.
+toCamperDto/toCamperDetailDto/toRegistrantDto/toRegistrantDetailDto take the actor (required
+on the registrant pair) and apply the parent-phone mask inside person.dto.ts; the camper,
+registrant and search controllers drop their maskParentPhone wrappers and maskParentPhone is
+no longer exported, so a new route cannot skip the mask. allocation.controller passes the
+actor (director/admin only, output still unmasked). No behaviour change.
+
 2026-11-07 - Architecture round, Phase C2: D4 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change, no public/ change. D4: controllers stop holding raw
