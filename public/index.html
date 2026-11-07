@@ -1119,12 +1119,15 @@ function _isAppAnswer(j,res){
   if(res.ok)return !String(res.headers.get('content-type')||'').includes('text/html'); // a portal can answer 200 with its page
   return !!j&&typeof j.code==='string'&&typeof j.message==='string';
 }
+// opt.as==='blob' (B-13, downloads): an ok answer is returned as a Blob instead of parsed JSON, with
+// the import timeout. Every check below (sign-in page, 401, refusals) is the same as for JSON.
 async function _doFetch(path,opt){
   _npStart();
   try{
   const isImport=path.indexOf('/import')===0||path.indexOf('/import')===path.length-7;
+  const asBlob=opt.as==='blob';
   const ctrl=new AbortController();
-  const timer=setTimeout(()=>ctrl.abort(),isImport?API_IMPORT_TIMEOUT_MS:API_TIMEOUT_MS);
+  const timer=setTimeout(()=>ctrl.abort(),isImport||asBlob?API_IMPORT_TIMEOUT_MS:API_TIMEOUT_MS);
   let res;
   let j=null;
   try{
@@ -1136,7 +1139,10 @@ async function _doFetch(path,opt){
     const ne=new Error(e&&e.name==='AbortError'?'That took too long. Check your signal and try again.':'No signal. Check your connection and try again.');
     ne.transient=true;throw ne;
   }finally{clearTimeout(timer);}
-  try{j=await res.json();}catch(e){j=null;}
+  let blob=null;
+  if(asBlob&&res.ok){
+    try{blob=await res.blob();}catch(e){const ne=new Error('No signal. Check your connection and try again.');ne.transient=true;throw ne;}
+  }else try{j=await res.json();}catch(e){j=null;}
   // A 401 on any path except the login POST means the session is gone. This used to be guarded
   // on `TOKEN`, which broke on a CASCADE: _prefetch() fires 5 requests at once, the first 401
   // runs sessionExpired() (which nulls TOKEN), and the remaining four then fell through this
@@ -1168,7 +1174,7 @@ async function _doFetch(path,opt){
     }
     throw err;
   }
-  return j;
+  return asBlob?blob:j;
   }finally{_npDone();}
 }
 async function api(path,opt={}){
@@ -8504,20 +8510,18 @@ function _exportName(base,ext){
   const d=new Date().toISOString().slice(0,10);
   return `youth-camp-${y}-${base}-${d}.${ext}`;
 }
+// B-13: through _doFetch's blob mode, so a wifi sign-in page is never saved as the file, a 401 ends
+// the session and a stalled network times out. _doFetch, not api(): a Blob must not enter Cache.
 async function downloadAuditExport(){
   try{
-    const resp=await fetch('/export/audit',{headers:{Authorization:'Bearer '+TOKEN}});
-    if(!resp.ok){const e=await resp.json().catch(()=>({}));toast(e.message||'Export failed');return;}
-    const blob=await resp.blob();
+    const blob=await _doFetch('/export/audit',{as:'blob'});
     _rlSaveBlob(blob,_exportName('audit-workbook','xlsx'));
     toast('Audit workbook downloaded');
   }catch(e){toast(e.message||'Export failed');}
 }
 async function downloadCsvExport(path,filename){
   try{
-    const resp=await fetch(path,{headers:{Authorization:'Bearer '+TOKEN}});
-    if(!resp.ok){toast('Export failed');return;}
-    const blob=await resp.blob();
+    const blob=await _doFetch(path,{as:'blob'});
     _rlSaveBlob(blob,filename);
     toast('Downloaded');
   }catch(e){toast(e.message||'Export failed');}

@@ -297,8 +297,51 @@ async function noteSession() {
   assert.ok(/notePrompt\('\$\{c\.id\}','\$\{esc\(jsq\(c\.name\)\)\}',SEL_SESSION\)/.test(extract('function rowHtml(')), 'the check-in row passes its session');
 }
 
+// B-13: downloads go through _doFetch's blob mode: a wifi sign-in page is not saved as the file, a
+// 401 ends the session, and they get the 90 s timeout. The default JSON path is unchanged.
+async function downloads() {
+  function run(answer, call) {
+    const out = { saved: [], toasts: [], expired: 0, timeouts: [] };
+    const c = {
+      AbortController, String, JSON, Error, Response,
+      setTimeout: (f, ms) => { out.timeouts.push(ms); return 0; }, clearTimeout() {},
+      fetch: async () => answer(), _npStart() {}, _npDone() {}, _showChangePasswordGate() {},
+      _rlSaveBlob: (b, n) => out.saved.push([b, n]), toast: (m) => out.toasts.push(m),
+      sessionExpired: () => { out.expired++; }, localStorage: { setItem() {} },
+    };
+    vm.createContext(c);
+    vm.runInContext('var TOKEN="t",ACTOR={},SETTINGS={year:2026};' + stmt('const API_TIMEOUT_MS=')
+      + ['function _isAppAnswer(', 'async function _doFetch(', 'function _exportName(', 'async function downloadAuditExport(',
+        'async function downloadCsvExport(', 'async function downloadOfflineSignInTemplate('].map(extract).join('\n'), c);
+    return Promise.resolve(call(c)).then((r) => ({ ...out, r }));
+  }
+  const res = (body, status, type) => () => new Response(body, { status, headers: { 'content-type': type } });
+  const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  for (const dl of [(c) => c.downloadAuditExport(), (c) => c.downloadOfflineSignInTemplate()]) {
+    const portal = await run(res('<html>Sign in to wifi</html>', 200, 'text/html; charset=utf-8'), dl);
+    assert.strictEqual(portal.saved.length, 0, 'a wifi sign-in page is not saved as the file');
+    assert.ok(/sign-in page/.test(portal.toasts[0]), portal.toasts[0]);
+    const gone = await run(res(JSON.stringify({ code: 'UNAUTHORIZED', message: 'Session expired' }), 401, 'application/json'), dl);
+    assert.strictEqual(gone.expired, 1, 'a 401 ends the session');
+    assert.strictEqual(gone.saved.length, 0);
+    const ok = await run(res('PK-xlsx', 200, XLSX), dl);
+    assert.strictEqual(ok.saved.length, 1, 'the real file is saved');
+    assert.strictEqual(await ok.saved[0][0].text(), 'PK-xlsx');
+    assert.deepStrictEqual(ok.timeouts, [90000], 'downloads get the 90 s timeout');
+  }
+  const named = await run(res('PK', 200, XLSX), (c) => c.downloadOfflineSignInTemplate());
+  assert.ok(/^youth-camp-2026-offline-sign-in-\d{4}-\d\d-\d\d\.xlsx$/.test(named.saved[0][1]), named.saved[0][1]);
+  const refused = await run(res(JSON.stringify({ code: 'FORBIDDEN', message: 'Not allowed' }), 403, 'application/json'), (c) => c.downloadAuditExport());
+  assert.deepStrictEqual(refused.toasts, ['Not allowed'], 'the app refusal message is shown');
+  // Control: a JSON call is untouched (20 s timeout, parsed body).
+  const json = await run(res('{"a":1}', 200, 'application/json'), (c) => c._doFetch('/home', {}));
+  assert.deepStrictEqual(json.r, { a: 1 });
+  assert.deepStrictEqual(json.timeouts, [20000]);
+}
+
 (async () => {
   await noteSession();
+  await downloads();
   const nonApp = Object.assign(new Error('x'), { transient: true, nonApp: true });
   const net = Object.assign(new Error('x'), { transient: true });
   const appNo = Object.assign(new Error('x'), { code: 'FORBIDDEN' });
