@@ -863,8 +863,9 @@ traps are baked in and must not be "cleaned up":
 2. **AC-1**: the first camp day is **PM-only** and the last day is **AM-only**, so there is no
    AM window to warn about on day 1 and no PM window on the last day. This arrives as
    `allowedWindowSession()` returning null, which is easy to mistake for a bug.
-3. **Brisbane, not UTC.** `DEFAULT_TZ = 'Australia/Brisbane'` mirrors `checkin.service.ts` and
-   must stay byte-identical to it, or the reminder and the enforcement disagree.
+3. **Brisbane, not UTC.** The tz and window defaults live only in `sessionClock()`
+   (`checkin-sessions.ts`, P4 7 Nov 2026); `checkin.service`, this file and the dashboard all read it, so the
+   reminder and the enforcement can not disagree.
    `WARN_LEAD_MINUTES = 60`.
 
 ### S2 — check-in queue persistence
