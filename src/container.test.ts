@@ -14,7 +14,7 @@ describe('container (D1)', () => {
     const services = buildServices(memoryRepos());
     const missing = Object.entries(services).filter(([, v]) => v == null).map(([k]) => k);
     expect(missing).toEqual([]);
-    expect(Object.keys(services).length).toBe(27);
+    expect(Object.keys(services).length).toBe(25);
   });
 
   it('buildServices is synchronous and does not touch the Supabase client', () => {
