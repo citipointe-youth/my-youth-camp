@@ -5,9 +5,16 @@ import type { Person } from '../core/entities/person';
 //
 // This module has NO knowledge of CSV columns or Elvanto headers. It operates
 // purely on `Person[]`/plain objects and generalizes the existing
-// church-scoped exact-match pattern in `import.service.ts`
-// (`nameChurchKey`/`phoneKey`/`pickMatch`) to a cross-church name index with a
-// bounded fuzzy fallback. Shared by the Ticket List and Invoice CSV importers.
+// church-scoped exact-match pattern in `import.service.ts` to a cross-church
+// name index with a bounded fuzzy fallback. Shared by the Ticket List and
+// Invoice CSV importers.
+//
+// I3 (2026-11-07): the result always says HOW it matched, and a fuzzy hit is
+// its own status ('possible'), never 'matched' — so no caller can apply a
+// near-miss name by accident (ruling Q5, IA OQ-4). The two phone rules in use
+// are one function with an explicit `PhoneRule` (the Form import's church pool
+// uses 'phone-must-agree'); name normalisation still differs by scope (OQ-57:
+// Form lowercases in-church, this index strips punctuation across churches).
 // ---------------------------------------------------------------------------
 
 // ---------- Name normalization ----------
@@ -75,25 +82,33 @@ export interface MatchQuery {
 }
 
 export type MatchResult =
-  | { status: 'matched'; person: Person; via: 'exact' | 'exact+phone' | 'fuzzy'; distance?: number }
-  | { status: 'no_match'; reason: 'not_found' | 'ambiguous'; candidates: Person[] };
+  | { status: 'matched'; person: Person; via: 'exact' | 'exact+phone' }
+  | { status: 'no_match'; reason: 'not_found' | 'ambiguous'; candidates: Person[] }
+  /** A near-miss spelling (edit distance <= 2) resolved to one person. NEVER applied
+   *  automatically: the caller reports it for review (Q5). */
+  | { status: 'possible'; person: Person; distance: number };
 
 /**
- * Resolve a pool of same-named people to at most one person using the phone tiebreak
- * rule shared by the exact and fuzzy stages:
- * - empty pool -> undefined
- * - single-member pool -> that person
- * - multi-member pool with a non-empty query phone -> the member whose phone digits
- *   match exactly, else undefined (no match found among the pool)
- * - multi-member pool with no query phone -> undefined (deliberately no auto-pick)
+ * How a pool of same-named people resolves to at most one person. `phone` is already
+ * `phoneDigits`-normalised ('' = the row has no phone).
+ * - 'pool-of-one-wins' (cross-church Ticket/Invoice index): a single member wins even when
+ *   the phones differ; 2+ members need an exact phone match, else none.
+ * - 'phone-must-agree' (the Form's in-church pool): with a phone, the member whose phone
+ *   matches, or a lone member with no phone on record; without one, only a lone member.
+ *   So a lone member whose phone DIFFERS from the row's is not a match here (twins by phone).
  */
-function resolvePool(pool: Person[] | undefined, phone: string): Person | undefined {
+export type PhoneRule = 'pool-of-one-wins' | 'phone-must-agree';
+
+export function resolvePool(pool: Person[] | undefined, phone: string, rule: PhoneRule): Person | undefined {
   if (!pool || pool.length === 0) return undefined;
-  if (pool.length === 1) return pool[0];
-  if (phone) {
-    return pool.find((p) => phoneDigits(p.mobile) === phone);
+  if (rule === 'phone-must-agree') {
+    if (!phone) return pool.length === 1 ? pool[0] : undefined;
+    const byPhone = pool.find((p) => phoneDigits(p.mobile) === phone);
+    if (byPhone) return byPhone;
+    return pool.length === 1 && !phoneDigits(pool[0]!.mobile) ? pool[0] : undefined;
   }
-  return undefined;
+  if (pool.length === 1) return pool[0];
+  return phone ? pool.find((p) => phoneDigits(p.mobile) === phone) : undefined;
 }
 
 /**
@@ -108,14 +123,8 @@ export function findPersonMatch(index: NameIndex, query: MatchQuery): MatchResul
 
   // ---- EXACT STAGE ----
   if (pool && pool.length > 0) {
-    if (pool.length === 1) {
-      return { status: 'matched', person: pool[0]!, via: 'exact' };
-    }
-    // pool.length > 1: tiebreak by phone.
-    if (phone) {
-      const byPhone = pool.find((p) => phoneDigits(p.mobile) === phone);
-      if (byPhone) return { status: 'matched', person: byPhone, via: 'exact+phone' };
-    }
+    const person = resolvePool(pool, phone, 'pool-of-one-wins');
+    if (person) return { status: 'matched', person, via: pool.length === 1 ? 'exact' : 'exact+phone' };
     return { status: 'no_match', reason: 'ambiguous', candidates: pool };
   }
 
@@ -124,7 +133,7 @@ export function findPersonMatch(index: NameIndex, query: MatchQuery): MatchResul
   for (const candidateKey of index.byName.keys()) {
     const distance = levenshteinWithin(key, candidateKey, 2);
     if (distance === null) continue;
-    const person = resolvePool(index.byName.get(candidateKey), phone);
+    const person = resolvePool(index.byName.get(candidateKey), phone, 'pool-of-one-wins');
     if (!person) continue;
     const existing = resolved.get(person.id);
     if (!existing || distance < existing.distance) {
@@ -134,7 +143,7 @@ export function findPersonMatch(index: NameIndex, query: MatchQuery): MatchResul
 
   if (resolved.size === 1) {
     const [entry] = resolved.values();
-    return { status: 'matched', person: entry!.person, via: 'fuzzy', distance: entry!.distance };
+    return { status: 'possible', person: entry!.person, distance: entry!.distance };
   }
   if (resolved.size === 0) {
     return { status: 'no_match', reason: 'not_found', candidates: [] };

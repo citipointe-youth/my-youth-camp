@@ -374,11 +374,11 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
               lastName: billingLast,
               phone: billingPhone,
             });
-            if (result.status === 'matched' && result.via === 'fuzzy') {
+            if (result.status === 'possible') {
               /* IA OQ-4 (with A-4 / ruling Q5): a fuzzy billing-name match applies no money — the
                  payer is often a parent, so a near-miss name is weak evidence. It falls through
                  to invoice-unmatched below, naming the possible match for review. */
-              possibleMatch = ` — possible match: ${result.person.firstName} ${result.person.lastName} (distance ${result.distance ?? '?'})`;
+              possibleMatch = ` — possible match: ${result.person.firstName} ${result.person.lastName} (distance ${result.distance})`;
             } else if (result.status === 'matched') {
               matchedPeople = [result.person];
               warnings.push({

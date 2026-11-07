@@ -6,6 +6,7 @@ import {
   buildNameIndex,
   addToIndex,
   findPersonMatch,
+  resolvePool,
   levenshteinWithin,
   isBlank,
   phoneDigits,
@@ -290,9 +291,8 @@ describe('findPersonMatch — exact stage', () => {
     }
   });
 
-  it('a >1 pool where only ONE member also lacks a phone is still ambiguous (stricter than pickMatch)', () => {
-    // Deliberately stricter than import.service.ts's church-scoped pickMatch, which would
-    // auto-pick a lone phone-less pool member. Cross-church collisions are a real risk here.
+  it('a >1 pool with no row phone is ambiguous, even when only ONE member lacks a phone', () => {
+    // Cross-church collisions are a real risk here; see resolvePool for both phone rules.
     const ada1 = person({ id: 'ada1', firstName: 'Ada', lastName: 'Lovelace', mobile: null });
     const ada2 = person({ id: 'ada2', firstName: 'Ada', lastName: 'Lovelace', mobile: '0422222222' });
     const index = buildNameIndex([ada1, ada2]);
@@ -312,18 +312,36 @@ describe('findPersonMatch — exact stage', () => {
   });
 });
 
+describe('resolvePool — the two phone rules (I3, explicit)', () => {
+  const a = person({ id: 'a', firstName: 'Ada', lastName: 'Lovelace', mobile: '0411111111' });
+  const b = person({ id: 'b', firstName: 'Ada', lastName: 'Lovelace', mobile: '0422222222' });
+  const bare = person({ id: 'n', firstName: 'Ada', lastName: 'Lovelace', mobile: null });
+  const cases: Array<[string, Person[], string, string | undefined, string | undefined]> = [
+    //  label,                                   pool,         row phone,     pool-of-one-wins, phone-must-agree
+    ['empty pool',                              [],           '0411111111',  undefined, undefined],
+    ['lone member, no row phone',               [a],          '',            'a',       'a'],
+    ['lone member, same phone',                 [a],          '0411111111',  'a',       'a'],
+    ['lone member, DIFFERENT phone',            [a],          '0499999999',  'a',       undefined],
+    ['lone member with no phone, row phone',    [bare],       '0499999999',  'n',       'n'],
+    ['twins, row phone picks one',              [a, b],       '0422222222',  'b',       'b'],
+    ['twins, no row phone',                     [a, b],       '',            undefined, undefined],
+    ['twins, unknown phone',                    [a, bare],    '0499999999',  undefined, undefined],
+  ];
+  for (const [label, pool, phone, cross, form] of cases) {
+    it(label, () => {
+      expect(resolvePool(pool, phone, 'pool-of-one-wins')?.id).toBe(cross);
+      expect(resolvePool(pool, phone, 'phone-must-agree')?.id).toBe(form);
+    });
+  }
+});
+
 describe('findPersonMatch — fuzzy stage', () => {
-  it('matches a single close-name candidate within distance 2', () => {
+  it('a single close-name candidate within distance 2 is POSSIBLE, never matched (I3, Q5)', () => {
     const ada = person({ id: 'ada', firstName: 'Ada', lastName: 'Lovelace' });
     const index = buildNameIndex([ada]);
     // "Aida Lovelace" vs "Ada Lovelace": insert 'i' -> distance 1
     const result = findPersonMatch(index, { firstName: 'Aida', lastName: 'Lovelace' });
-    expect(result.status).toBe('matched');
-    if (result.status === 'matched') {
-      expect(result.via).toBe('fuzzy');
-      expect(result.person).toBe(ada);
-      expect(result.distance).toBe(1);
-    }
+    expect(result).toEqual({ status: 'possible', person: ada, distance: 1 });
   });
 
   it('returns not_found when no candidate is within distance 2', () => {
@@ -362,11 +380,7 @@ describe('findPersonMatch — fuzzy stage', () => {
     const ida2 = person({ id: 'ida2', firstName: 'Ida', lastName: 'Lovelace', mobile: '0422222222' });
     const index = buildNameIndex([ida1, ida2]);
     const result = findPersonMatch(index, { firstName: 'Ada', lastName: 'Lovelace', phone: '0422222222' });
-    expect(result.status).toBe('matched');
-    if (result.status === 'matched') {
-      expect(result.person).toBe(ida2);
-      expect(result.via).toBe('fuzzy');
-    }
+    expect(result).toEqual({ status: 'possible', person: ida2, distance: 1 });
   });
 
   it('deduplicates the same person resolved from multiple surviving keys', () => {

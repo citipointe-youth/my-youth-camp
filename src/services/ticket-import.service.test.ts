@@ -189,6 +189,11 @@ describe('TicketImportService.importTicketsCsv — cross-church matching', () =>
     expect(all).toHaveLength(3); // orphan created; both existing twins untouched
     expect(all.find((p) => p.id === 'p1')!.ticketNumber).toBeNull();
     expect(all.find((p) => p.id === 'p2')!.ticketNumber).toBeNull();
+    // I3 / OQ-57: same code, but the text says the name was ambiguous, not "not found".
+    const w = res.warnings.find((x) => x.code === 'unmatched-orphan-created')!;
+    expect(w.message).toContain('2 people share or nearly share this name');
+    expect(w.message).not.toContain('No matching person found');
+    expect(all.find((p) => p.id !== 'p1' && p.id !== 'p2')!.needsReviewReason).toContain('2 people share or nearly share this name');
   });
 });
 
