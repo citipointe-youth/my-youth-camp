@@ -3,6 +3,15 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C6: D1 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change, no public/ change. D1: the service graph is built once.
+container.ts now has supabaseRepos(sql) and memoryRepos({dataDir?}) adapters that only build
+the repository set, initRepos (parallel), and one pure buildServices(repos); buildContainer
+picks the adapter by PERSISTENCE and buildMemoryContainer() gives tests fresh state. The two
+duplicated 24-service wiring blocks and the makeJsonPersistence ternaries are gone; JSON file
+names unchanged. Services keeps cron/push/pushSubscriptions (A3). No behaviour change.
+
 2026-11-07 - Architecture round, Phase C5: A3 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change, no public/ change. A3: one PATCH interpreter.
