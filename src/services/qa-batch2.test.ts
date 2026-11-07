@@ -4,7 +4,7 @@ import { makeCheckInService } from './checkin.service';
 import { makePersonService } from './person.service';
 import { makeNoteService } from './note.service';
 import { makeSettingsService } from './settings.service';
-import { withSignEvent } from './person-lifecycle';
+import { transition } from './presence';
 import { toRosterEntry } from '../api/dto/person.dto';
 import { UpdateChurchContactsSchema, UpdateSettingsSchema, CheckInInputSchema, RegistrantPatchSchema } from '../core/validation';
 import {
@@ -145,6 +145,12 @@ describe('item 13: a signed-out child leaves the current session', () => {
     expect(st.roster.map((r) => r.camperId).sort()).toEqual(['gone', 'here']);
   });
 });
+
+// P1+I4: the old withSignEvent helper is now the presence module's signIn/signOut intents.
+function withSignEvent(p: Person, event: { id: string; type: 'in' | 'out'; leaderName: string; authorId: string; timestamp: string }, at: string): Person {
+  const o = transition(p, { kind: event.type === 'in' ? 'signIn' : 'signOut', event }, { actor: actor('director', { id: 'a' }), now: at });
+  return o.result === 'applied' ? o.next : p;
+}
 
 describe('item 16: a repeat sign event writes no second row', () => {
   const ev = (type: 'in' | 'out') =>

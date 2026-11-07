@@ -5,7 +5,7 @@ import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
 import { canAccessPerson } from './person.service';
 import { parseCsv } from '../utils/csv';
-import { withSignEvent } from './person-lifecycle';
+import { transition } from './presence';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { BadRequestError } from '../core/errors/app-error';
@@ -23,8 +23,7 @@ export interface OfflineSignInResult {
    * cancelled person must never be counted into `signedIn` or given a sign-in event: `atCamp`
    * for a cancelled person is `false` (never `true`, see person.service.ts's cancel transition),
    * so the pre-existing `alreadySignedIn` guard never catches them — without this explicit skip
-   * they would get a real "in" event appended to `signOutHistory` (person-lifecycle.ts's
-   * `withSignEvent` always appends the event even though `applyCheckIn` correctly refuses to
+   * they would get a real "in" event appended to `signOutHistory` (the pre-P1 sign-event helper always appended the event even though it refused to
    * change a cancelled person's lifecycle/atCamp), a phantom row in the compliance audit trail
    * for someone who never actually arrived.
    */
@@ -83,7 +82,8 @@ export function makeOfflineSignInService(personRepo: IPersonRepository, settings
       assertCan(actor, 'import:run');
       // A-3 (Q6 + IA OQ-3): a bulk Y-sheet before camp is always a false record, so unlike the
       // single-tap signEvent this refuses every role, director and admin included.
-      if ((await settings.getSingleton())?.campMode === 'pre-camp') {
+      const campMode = (await settings.getSingleton())?.campMode;
+      if (campMode === 'pre-camp') {
         throw new BadRequestError('Camp has not started yet, so nobody can be signed in. Switch the app to At-Camp mode first, then import again.');
       }
       const rows = parseCsv(csvData);
@@ -128,35 +128,27 @@ export function makeOfflineSignInService(personRepo: IPersonRepository, settings
           continue;
         }
         const person = live[0] ?? matches[0]!;
-        // Task 16 fix round 1 — a cancelled person can now appear on the template (marked
-        // "Cancelled"). Never sign them in: no roster breach either way (`applyCheckIn` refuses
-        // to change their lifecycle/atCamp), but `withSignEvent` would still append a phantom
-        // "in" event to their audit trail and this row would inflate `signedIn`.
-        if (person.lifecycle === 'cancelled') {
+        const event: SignOutEvent = {
+          id: newId('so'), type: 'in', leaderName: actor.displayName,
+          reason: 'Offline sign-in sheet', authorId: actor.id, timestamp: now,
+        };
+        const o = transition(person, { kind: 'signIn', event }, { actor, campMode, now });
+        // Task 16 fix round 1 — a cancelled person can appear on the template (marked "Cancelled").
+        // The module refuses them, so no phantom 'in' row and no inflated `signedIn`.
+        if (o.result === 'refused') {
           cancelledSkipped.push(`${firstName} ${lastName} (${church})`);
           continue;
         }
-        if (person.atCamp || queued.has(person.id)) {
+        if (person.atCamp || queued.has(person.id) || o.result === 'noop') {
           alreadySignedIn++;
           continue;
         }
         queued.add(person.id);
-        toSignIn.push(person);
+        toSignIn.push(o.next);
       }
 
       if (toSignIn.length > 0) {
-        const updated = toSignIn.map((p) => {
-          const event: SignOutEvent = {
-            id: newId('so'),
-            type: 'in',
-            leaderName: actor.displayName,
-            reason: 'Offline sign-in sheet',
-            authorId: actor.id,
-            timestamp: now,
-          };
-          return withSignEvent(p, event, now);
-        });
-        await personRepo.savePresenceMany(updated);
+        await personRepo.savePresenceMany(toSignIn);
         invalidateDashboardCache();
       }
 

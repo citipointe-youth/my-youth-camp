@@ -8,7 +8,7 @@ import { NotFoundError, BadRequestError } from '../core/errors/app-error';
 import { RegistrantPatchSchema } from '../core/validation';
 import { ageFromDob, nowISO } from '../utils/date';
 import { newId } from '../utils/id';
-import { withCheckIn, withSignEvent } from './person-lifecycle';
+import { transition } from './presence';
 import { invalidateDashboardCache } from './dashboard-cache';
 
 /**
@@ -252,23 +252,22 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
          Refund is pressed (see listRegistrants `includeCancelled`). */
       const cancelling = nextLifecycle === 'cancelled' && existing.lifecycle !== 'cancelled';
       const unCancelling = nextLifecycle === 'registered' && existing.lifecycle === 'cancelled';
-      const cancelPatch: Partial<Person> =
-        cancelling ? { atCamp: false, cancelledAt: nowISO() }
-        : unCancelling ? { cancelledAt: null }
-        : {};
       // A refund is money leaving — stamp when. Independent of cancel in both directions.
       const refundPatch: Partial<Person> =
         safeRest.refundAmount !== undefined && safeRest.refundAmount !== existing.refundAmount
           ? { refundedAt: safeRest.refundAmount == null ? null : nowISO() }
           : {};
-      /* B-3: cancelling someone at camp signs them out FIRST (arrived -> checked_out + one 'out'
-         event), then cancels. After the cancel, withSignEvent's no-op rule (B-2) would skip it. */
-      const base: Person = cancelling && existing.atCamp
-        ? withSignEvent(existing, { id: newId('so'), type: 'out', leaderName: actor.displayName || 'Staff',
-            reason: 'Registration cancelled', authorId: actor.id, timestamp: nowISO() }, nowISO())
-        : existing;
-      const updated: Person = { ...base, ...safeRest, ...rawPatch, ...cancelPatch, ...refundPatch,
-        id: existing.id, lifecycle: nextLifecycle, updatedAt: nowISO() };
+      /* Cancel/uncancel go through the presence module (presence.ts): cancelling sets atCamp false
+         + cancelledAt, and someone at camp is signed out first with one 'out' event (B-3). The moved
+         presence fields are re-applied after the patch so a patched `cancelledAt` can't override them. */
+      const now = nowISO();
+      const moved = cancelling || unCancelling
+        ? transition(existing, { kind: cancelling ? 'cancel' : 'uncancel' }, { actor, now })
+        : null;
+      const base = moved?.result === 'applied' ? moved.next : existing;
+      const presencePatch: Partial<Person> = moved ? { atCamp: base.atCamp, cancelledAt: base.cancelledAt } : {};
+      const updated: Person = { ...base, ...safeRest, ...rawPatch, ...presencePatch, ...refundPatch,
+        id: existing.id, lifecycle: nextLifecycle, updatedAt: now };
       // Fail-closed: the patched result must still be inside the actor's scope (a zoneLeader/
       // admin/director changing church/zone can't push a person out of what they may access).
       if (!canAccessPerson(actor, updated)) {
@@ -368,37 +367,28 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
     async checkIn(actor, personId, entry) {
       assertCan(actor, 'checkin:write');
       const person = await getOwned(actor, personId);
-      if (person.lifecycle === 'cancelled') {
-        throw new BadRequestError('Cannot check in a cancelled person');
-      }
-      if (!person.atCamp) {
-        throw new BadRequestError('Cannot check in a person who is not currently at camp');
-      }
-      const full: CheckInEntry = { ...entry, id: newId('ci') };
-      const saved = await repo.save(withCheckIn(person, full, nowISO()));
+      // ⚠ Queue path: the two refusals and their messages are frozen in presence.ts.
+      const o = transition(person, { kind: 'checkIn', entry: { ...entry, id: newId('ci') } }, { actor, now: nowISO() });
+      if (o.result === 'refused') throw new BadRequestError(o.reason);
+      // An N5 replay is a no-op: nothing is written and the endpoint still answers 200.
+      if (o.result === 'noop') return person;
       // NOT invalidated deliberately — see signEvent below.
-      return saved;
+      return repo.save(o.next);
     },
 
     async signEvent(actor, personId, event) {
       assertCan(actor, 'attendance:write');
       const person = await getOwned(actor, personId);
-      // QA item 21: nobody has arrived before camp, so a leader's sign-in would be a false record.
-      if (
-        event.type === 'in' && !isOversight(actor) &&
-        (await settings?.getSingleton())?.campMode === 'pre-camp'
-      ) {
-        throw new BadRequestError('Camp has not started yet, so nobody can be signed in.');
-      }
-      // B-2 (IA OQ-8): mirrors checkIn's refusal. A cancelled sign-OUT is a no-op in withSignEvent.
-      if (event.type === 'in' && person.lifecycle === 'cancelled') {
-        throw new BadRequestError('Cannot sign in a cancelled person');
-      }
-      const full: SignOutEvent = { ...event, id: newId('so') };
-      const next = withSignEvent(person, full, nowISO());
+      // QA item 21's pre-camp rule only concerns sign-ins (non-director/admin), so settings is read
+      // only for those. The rule itself and B-2's cancelled refusal live in presence.ts.
+      const campMode = event.type === 'in' && !isOversight(actor)
+        ? (await settings?.getSingleton())?.campMode : undefined;
+      const o = transition(person, { kind: event.type === 'in' ? 'signIn' : 'signOut', event: { ...event, id: newId('so') } },
+        { actor, campMode, now: nowISO() });
+      if (o.result === 'refused') throw new BadRequestError(o.reason);
       // A no-op writes nothing: re-saving this read with presence could revert a concurrent sign.
-      if (next === person) return person;
-      const saved = await repo.savePresence(next);
+      if (o.result === 'noop') return person;
+      const saved = await repo.savePresence(o.next);
       // ⚠ `invalidateDashboardCache()` is DELIBERATELY NOT called here or in `checkIn`.
       //
       // These two are the ONLY writes that fire in a burst: at a check-in window every
