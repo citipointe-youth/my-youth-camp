@@ -209,9 +209,41 @@ async function queueRules() {
     async (p, o) => { seq.push(o.body.type); throw boom; });
   await c.drainQueue();
   assert.deepStrictEqual(seq, ['in'], 'same child keeps its order');
-  // A live tap's 5xx stays the ruled banner-only drop.
-  assert.strictEqual(await drain(boom, {}), 0, 'live 5xx: dropped with the banner');
+  // B-17 (Tom, 7 Nov): a live tap's 5xx or timeout stays queued and retries; only a 4xx drops it.
+  assert.strictEqual(await drain(boom, {}), 1, 'live 5xx: kept');
   assert.strictEqual(await drain(boom, { offline: true }), 1, 'saved 5xx: kept');
+  const timeout = Object.assign(new Error('That took too long. Check your signal and try again.'), { transient: true });
+  const deadUplink = Object.assign(new Error('No signal. Check your connection and try again.'), { transient: true });
+  const bad = Object.assign(new Error('Check-in is closed'), { code: 'BAD_REQUEST', status: 400 });
+  c = drainCtx([{ camperId: 'a', sessionId: 's', type: 'in', name: 'Ann' }], async () => { throw boom; });
+  await c.drainQueue();
+  assert.strictEqual(c._checkinFailed, 0, 'live 5xx: no red banner');
+  assert.strictEqual(c.CHECKIN_QUEUE[0].tries, 1, 'live 5xx: marked tried, so the amber banner shows');
+  for (let i = 0; i < 8; i++) { c._drainRetry = null; await c.drainQueue(); }
+  assert.strictEqual(c.timers.length, 9, 'live 5xx: one timer per pass, no tight loop');
+  assert.strictEqual(c.timers[c.timers.length - 1], 300000, 'live 5xx: backoff capped at 5 min');
+  for (const [err, what] of [[timeout, 'timeout'], [deadUplink, 'dead uplink while onLine']]) {
+    c = drainCtx([{ camperId: 'a', sessionId: 's', type: 'in' }], async () => { throw err; });
+    await c.drainQueue();
+    assert.strictEqual(c.CHECKIN_QUEUE.length, 1, 'live ' + what + ': kept');
+    assert.strictEqual(c._checkinFailed, 0, 'live ' + what + ': no red banner');
+    assert.strictEqual(c._queueWaiting, true, 'live ' + what + ': waits');
+    assert.deepStrictEqual(c.timers, [30000], 'live ' + what + ': retries with backoff');
+  }
+  c = drainCtx([{ camperId: 'a', sessionId: 's', type: 'in', name: 'Ann' }], async () => { throw bad; });
+  await c.drainQueue();
+  assert.strictEqual(c.CHECKIN_QUEUE.length, 0, 'live 400: dropped');
+  assert.strictEqual(c._checkinFailed, 1, 'live 400: red banner');
+  assert.deepStrictEqual(Array.from(c._checkinFailNames), ['Ann'], 'live 400: names the tap');
+  assert.strictEqual(c._checkinFailReason, 'Check-in is closed', 'live 400: shows the reason');
+  // A live tap still failing after 48 h is cleared by the purge, not retried forever.
+  c = drainCtx([{ camperId: 'a', sessionId: 's', type: 'in', name: 'Ann', at: Date.now() - 49 * 36e5 }], async () => { throw boom; });
+  Object.assign(c, { _checkinOldCount: 0, _checkinOldNames: [], toast() {}, Date });
+  vm.runInContext(extract('function _queuePurgeOld('), c);
+  await c.drainQueue();
+  assert.strictEqual(c.CHECKIN_QUEUE.length, 0, '48 h purge clears a stuck live tap');
+  assert.strictEqual(c._checkinOldCount, 1, '48 h purge: counted in the old banner');
+  assert.strictEqual(c._checkinFailed, 0, '48 h purge: not a red Not saved');
 }
 // Final review: a saved queue belongs to its login.
 function restoreCtx(store, actor) {
@@ -364,7 +396,7 @@ async function downloads() {
   assert.strictEqual(await drain(nonApp, { offline: true }), 1, 'wifi page: saved tap kept');
   assert.strictEqual(await drain(nonApp, {}), 1, 'wifi page: live tap kept');
   assert.strictEqual(await drain(net, { offline: true }), 1, 'flaky: saved tap kept');
-  assert.strictEqual(await drain(net, {}), 0, 'flaky: live tap is the ruled banner-only drop');
+  assert.strictEqual(await drain(net, {}), 1, 'flaky: live tap kept (B-17)');
   assert.strictEqual(await drain(appNo, { offline: true }), 0, 'the app refused it: dropped with the banner');
   const named = drainCtx([{ camperId: 'a', sessionId: 's', type: 'in', offline: true, name: 'Ann' }], async () => { throw appNo; });
   await named.drainQueue();

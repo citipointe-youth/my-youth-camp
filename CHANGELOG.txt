@@ -31,7 +31,11 @@ before the church initials sheet (nothing stored over the church's initials); Un
 cleared when the queue parks; a 5xx is no longer called a wifi sign-in page; the offline
 strip has its own row and the sidebar shows on desktop; downloads toast "Preparing the
 file", run one at a time and name the file; the cancel modal says an at-camp person is
-signed out too; the SW keeps one shell copy under '/'. Verified: npx tsc --noEmit clean,
+signed out too; the SW keeps one shell copy under '/'. B-17 (Tom reversed the
+"banner only" ruling, 7 Nov): a live check-in tap that gets a 5xx/429, a 20 s timeout
+or no answer while the phone says online stays in ycp_ciq_<login> and retries with the
+30 s -> 5 min back-off under the amber "still trying"/"saved on this phone" banner; only
+a 4xx refusal drops and names the tap; the 48 h purge still clears it. Verified: npx tsc --noEmit clean,
 npx vitest run 1434 pass / 91 files, npm run harness all green.
 
 2026-11-07 - Architecture round, Phase A (camp-v151)
