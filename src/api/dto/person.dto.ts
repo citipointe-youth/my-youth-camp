@@ -1,4 +1,5 @@
 import type { Person } from '../../core/entities/person';
+import { paymentStanding, type PaymentStanding } from '../../services/payment-standing';
 import type { Actor } from '../../core/entities/user';
 import { isCamper } from '../../core/entities/person';
 import { maskPhone } from '../../utils/mask';
@@ -65,6 +66,9 @@ export interface RegistrantDto {
   accommodationKindConfidence: Person['accommodationKindConfidence'];
   discountAmount: number | null;
   amountPaid: number | null;
+  /** I5: the "Still needed" payment rule, worked out on the server (payment-standing.ts).
+   *  RegistrantDto only — never CamperDto/search (A-6). */
+  paymentStanding: PaymentStanding;
   feesAmount: number | null;
   taxAmount: number | null;
   needsReview: boolean;
@@ -231,6 +235,7 @@ export function toRegistrantDto(p: Person, actor: Actor): RegistrantDto {
     accommodationKindConfidence: p.accommodationKindConfidence ?? null,
     discountAmount: p.discountAmount ?? null,
     amountPaid: p.amountPaid ?? null,
+    paymentStanding: paymentStanding(p),
     feesAmount: p.feesAmount ?? null,
     taxAmount: p.taxAmount ?? null,
     needsReview: p.needsReview ?? false,

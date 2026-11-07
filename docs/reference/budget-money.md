@@ -4,6 +4,20 @@
 
 > Moved out of CLAUDE.md on 2026-10-02. Dated headings may be wrong: trust `git log`.
 
+## "Still needed" payment worked out on the server — architecture round Phase C (I5) — 2026-11-07
+
+The rule below now lives in `src/services/payment-standing.ts`: `paymentStanding(p)` returns
+`{state: 'settled'|'free'|'refunded'|'override'|'not-matched'|'owing', owing: number|null}`
+(`owing` = amount still due when a price is on record). It is sent as `paymentStanding` on
+`RegistrantDto` only (`/registrants`, `/registrants/:id`, `/import/unallocated`), never on
+`CamperDto` or search, so firstAid/prayer still get no money (A-6). The SPA's `_paymentMissing`
+reads `paymentStanding.state === 'owing'` and keeps its old body as the fallback for a cached
+response without the field; `payment-standing.test.ts` runs that fallback against the server rule
+on 4,860 combinations. Same order as before: a stored `paid`/`free`/`refunded` status wins over
+money that says owing (OQ-58; 4 people on 7 Nov). Budget totals are unchanged and stay in the SPA
+(S2). The Invoice import's two passes now share one apply step (`applyShare` + `commit` in
+`invoice-import.service.ts`), the duplication behind A-7.
+
 ## Payment status can be `free` or `refunded`; the church "Still needed" payment flag — `camp-v148` — 2026-11-04
 
 `Person.paymentStatus` is now `unpaid | deposit | paid | free | refunded`. `payment_status` is plain

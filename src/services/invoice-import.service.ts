@@ -309,6 +309,58 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
         return { acc, prior };
       };
 
+      /* I5: THE apply step, used by both passes. "Current person -> accumulate -> ledger ->
+         incoming" lived twice (singles and shared), and the copies drifted (A-7: the singles
+         copy merged onto the stale stored person). `person` must be this run's latest copy
+         (`touched.get(id) ?? stored`). Returns the owned fields this share writes; the caller
+         adds its own extras (price guess / split flag) and then calls `commit`. */
+      const applyShare = (
+        person: Person,
+        share: { row: number; invoiceNumber: string | null; cost: number | null; amountPaid: number | null;
+                 discountAmount: number | null; feesAmount: number | null; taxAmount: number | null;
+                 discountCode: string | null },
+        shared: boolean,
+      ): Partial<Person> => {
+        const { acc, prior } = accumulate(person.id, share);
+        recordLedger(person.id, {
+          row: share.row, invoiceNumber: share.invoiceNumber, amountPaid: share.amountPaid,
+          ticketTotal: share.cost, discountAmount: share.discountAmount, discountCode: share.discountCode,
+        });
+        const incoming: Partial<Person> = {};
+        if (prior) {
+          warnings.push({
+            code: 'multiple-invoices-summed',
+            row: share.row,
+            message: shared
+              ? `${person.firstName} ${person.lastName} has ${acc.rows} invoices in this file ` +
+                `(this one is shared) — amounts summed (paid ${acc.amountPaid ?? 0}, ` +
+                `discount ${acc.discountAmount ?? 0}). Flagged for review.`
+              : `${person.firstName} ${person.lastName} has ${acc.rows} invoices in this file — ` +
+                `amounts summed (paid ${acc.amountPaid ?? 0}, discount ${acc.discountAmount ?? 0}); ` +
+                `ticket total taken from this row. Flagged for review.`,
+          });
+          // Gate (item A/B): a person with more than one invoice is worth a human look before
+          // the budget is trusted — same review flag the Ticket List import uses.
+          incoming.needsReview = true;
+          incoming.needsReviewReason = `Multiple invoices found (${acc.rows}) — amounts were summed`;
+        }
+        // registrationCost is the TICKET PRICE, not money in — latest row wins, never summed.
+        if (share.cost !== null) incoming.registrationCost = share.cost;
+        if (acc.discountAmount !== null) incoming.discountAmount = acc.discountAmount;
+        if (acc.amountPaid !== null) incoming.amountPaid = acc.amountPaid;
+        if (acc.feesAmount !== null) incoming.feesAmount = acc.feesAmount;
+        if (acc.taxAmount !== null) incoming.taxAmount = acc.taxAmount;
+        if (share.discountCode) incoming.discountCode = share.discountCode;
+        return incoming;
+      };
+      const commit = (person: Person, incoming: Partial<Person>): void => {
+        const merged = applyRow('invoice', person, incoming); // I1: field-ownership.ts
+        merged.updatedAt = nowISO();
+        const firstTouch = !touched.has(merged.id);
+        touched.set(merged.id, merged);
+        if (firstTouch) updated++;
+      };
+
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]!;
         const rowNum = i + 2;
@@ -453,7 +505,6 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
           }
           // Single match.
           const person = touched.get(matchedPeople[0]!.id) ?? matchedPeople[0]!;
-          const incoming: Partial<Person> = {};
 
           /* Item A (2026-07-28) — MULTIPLE INVOICES FOR ONE PERSON.
              Real case: someone buys the wrong ticket ($150), is told to buy the correct one
@@ -466,33 +517,9 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
              ticket total (the corrected ticket is the one they're actually attending on).
              Accumulation starts from the rows in THIS file, never from the stored value — so
              re-importing the same export is idempotent and cannot double-count. */
-          const { acc, prior } = accumulate(person.id, {
-            amountPaid, discountAmount, feesAmount, taxAmount,
-          });
-          recordLedger(person.id, {
-            row: rowNum, invoiceNumber, amountPaid, ticketTotal, discountAmount, discountCode,
-          });
-          if (prior) {
-            warnings.push({
-              code: 'multiple-invoices-summed',
-              row: rowNum,
-              message:
-                `${person.firstName} ${person.lastName} has ${acc.rows} invoices in this file — ` +
-                `amounts summed (paid ${acc.amountPaid ?? 0}, discount ${acc.discountAmount ?? 0}); ` +
-                `ticket total taken from this row. Flagged for review.`,
-            });
-            // Gate (item A/B): a person with more than one invoice is worth a human look before
-            // the budget is trusted — same review flag the Ticket List import uses.
-            incoming.needsReview = true;
-            incoming.needsReviewReason = `Multiple invoices found (${acc.rows}) — amounts were summed`;
-          }
-
-          if (ticketTotal !== null) incoming.registrationCost = ticketTotal;
-          if (acc.discountAmount !== null) incoming.discountAmount = acc.discountAmount;
-          if (acc.amountPaid !== null) incoming.amountPaid = acc.amountPaid;
-          if (acc.feesAmount !== null) incoming.feesAmount = acc.feesAmount;
-          if (acc.taxAmount !== null) incoming.taxAmount = acc.taxAmount;
-          if (discountCode) incoming.discountCode = discountCode;
+          const incoming = applyShare(person, {
+            row: rowNum, invoiceNumber, cost: ticketTotal, amountPaid, discountAmount, feesAmount, taxAmount, discountCode,
+          }, false);
 
           const alreadyConfirmed =
             person.accommodationKind != null && person.accommodationKindConfidence === 'confirmed';
@@ -510,12 +537,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             skipped++;
             continue;
           }
-
-          const merged = applyRow('invoice', person, incoming); // I1: field-ownership.ts
-          merged.updatedAt = nowISO();
-          const firstTouch = !touched.has(merged.id);
-          touched.set(merged.id, merged);
-          if (firstTouch) updated++;
+          commit(person, incoming);
         } catch (err) {
           errors.push({ row: rowNum, message: err instanceof Error ? err.message : String(err) });
           skipped++;
@@ -590,53 +612,25 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
 
             for (let m = 0; m < matchedPeople.length; m++) {
               const person = touched.get(matchedPeople[m]!.id) ?? matchedPeople[m]!;
-              /* Through `accumulate`, NOT a direct assignment — see the note at its definition.
-                 A person can be on a family invoice AND hold one of their own; assigning here
-                 discarded whichever the singles pass had already recorded. */
-              const { acc, prior } = accumulate(matchedPeople[m]!.id, {
+              /* Through `applyShare` (so `accumulate`), NOT a direct assignment — see the note at
+                 `accumulate`. A person can be on a family invoice AND hold one of their own;
+                 assigning here discarded whichever the singles pass had already recorded. */
+              const incoming = applyShare(person, {
+                row: rowNum, invoiceNumber,
+                cost: costParts[m] ?? null,
                 amountPaid: paidParts[m] ?? null,
                 discountAmount: discountParts[m] ?? null,
                 feesAmount: feeParts[m] ?? null,
                 taxAmount: taxParts[m] ?? null,
-              });
-              recordLedger(matchedPeople[m]!.id, {
-                row: rowNum, invoiceNumber,
-                amountPaid: paidParts[m] ?? null,
-                ticketTotal: costParts[m] ?? null,
-                discountAmount: discountParts[m] ?? null,
                 discountCode,
-              });
-              const incoming: Partial<Person> = {};
-              // registrationCost is the TICKET PRICE, not money in — latest row wins, never summed.
-              if (costParts[m] != null) incoming.registrationCost = costParts[m]!;
-              if (acc.amountPaid !== null) incoming.amountPaid = acc.amountPaid;
-              if (acc.discountAmount !== null) incoming.discountAmount = acc.discountAmount;
-              if (acc.feesAmount !== null) incoming.feesAmount = acc.feesAmount;
-              if (acc.taxAmount !== null) incoming.taxAmount = acc.taxAmount;
-              if (discountCode) incoming.discountCode = discountCode;
-              if (prior) {
-                warnings.push({
-                  code: 'multiple-invoices-summed',
-                  row: rowNum,
-                  message:
-                    `${person.firstName} ${person.lastName} has ${acc.rows} invoices in this file ` +
-                    `(this one is shared) — amounts summed (paid ${acc.amountPaid ?? 0}, ` +
-                    `discount ${acc.discountAmount ?? 0}). Flagged for review.`,
-                });
-                incoming.needsReview = true;
-                incoming.needsReviewReason = `Multiple invoices found (${acc.rows}) — amounts were summed`;
-              }
+              }, true);
               if (split.needsReview) {
                 incoming.needsReview = true;
                 incoming.needsReviewReason =
                   `Shared invoice ${invoiceNumber ?? ''} split equally between ${matchedPeople.length} people — ticket price unknown`.trim();
               }
               if (Object.keys(incoming).length === 0) continue;
-              const merged = applyRow('invoice', person, incoming); // I1: field-ownership.ts
-              merged.updatedAt = nowISO();
-              const firstTouch = !touched.has(merged.id);
-              touched.set(merged.id, merged);
-              if (firstTouch) updated++;
+              commit(person, incoming);
             }
           } catch (err) {
             errors.push({ row: rowNum, message: err instanceof Error ? err.message : String(err) });
