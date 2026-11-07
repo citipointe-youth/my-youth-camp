@@ -82,6 +82,48 @@ function sandbox(api, batch) {
     assert.ok(!box.innerHTML.includes('Matches finalise'), 'batch: no suppression line');
     assert.ok(!box.innerHTML.includes('Confirm &amp; import'), 'batch: a refused file still hides Confirm');
   }
+  // C11 review 1: the batch body is over Vercel's 4.5 MB cap (413, a non-app answer) -> preview file
+  // by file with dryRun as before, same cards, old "Matches finalise" line, Confirm still offered.
+  {
+    const calls = [];
+    const ok = { created: 3, updated: 0, skipped: 0, errors: [], warnings: [] };
+    const api = (p, o) => {
+      if (p === '/settings') return Promise.resolve({});
+      calls.push({ p, body: o && o.body });
+      if (p === '/import/batch') return Promise.reject(Object.assign(new Error('That is too large to send. Try a smaller file.'), { transient: true, nonApp: true }));
+      return Promise.resolve(ok);
+    };
+    const { ctx, box } = sandbox(api, [{ type: 'form', name: 'form.csv', csvData: 'F' }, { type: 'tickets', name: 't.csv', csvData: 'T' }]);
+    await ctx._renderImportPreview();
+    assert.deepStrictEqual(calls.map((c) => c.p), ['/import/batch', '/import/csv', '/import/tickets'], '413: per-file fallback in order');
+    assert.ok(calls.slice(1).every((c) => c.body.dryRun === true && c.body.updateExisting === true), '413: fallback is a dry run');
+    assert.ok(!box.innerHTML.includes('too large'), '413: batch error not shown on the cards');
+    assert.ok(box.innerHTML.includes('3 to add'), '413: per-file counts shown');
+    assert.ok(box.innerHTML.includes('Matches finalise'), '413: fallback keeps the old ticket line');
+    assert.ok(box.innerHTML.includes('Confirm &amp; import'), '413: Confirm still offered');
+  }
+  // A real validation 4xx from the batch call stays on the cards (no fallback).
+  {
+    const calls = [];
+    const api = (p) => {
+      if (p === '/settings') return Promise.resolve({});
+      calls.push(p);
+      return Promise.reject(Object.assign(new Error('files: too many'), { status: 400 }));
+    };
+    const { ctx, box } = sandbox(api, [{ type: 'form', name: 'form.csv', csvData: 'F' }]);
+    await ctx._renderImportPreview();
+    assert.deepStrictEqual(calls, ['/import/batch'], '400: no fallback');
+    assert.ok(box.innerHTML.includes('files: too many'), '400: message shown');
+  }
+  // C11 UX 1: Ticket orphans with the Form in the same batch -> no "Import the Form file first".
+  {
+    const t = { created: 2, updated: 1, skipped: 0, errors: [], warnings: [] };
+    const api = (p) => Promise.resolve(p === '/settings' ? {} : { dryRun: true, results: [{ type: 'form', result: { created: 1, updated: 0, skipped: 0, errors: [], warnings: [] } }, { type: 'tickets', result: t }] });
+    const { ctx, box } = sandbox(api, [{ type: 'form', name: 'form.csv', csvData: 'F' }, { type: 'tickets', name: 't.csv', csvData: 'T' }]);
+    await ctx._renderImportPreview();
+    assert.ok(!box.innerHTML.includes('Import the <b>Form</b> file first'), 'form in batch: no import-Form-first advice');
+    assert.ok(box.innerHTML.includes('Check the names in the Ticket List against the Form'), 'form in batch: spelling advice');
+  }
   // UX 2: the needs-review "kept" group (and its block) render open, listing the names.
   {
     const { ctx } = sandbox(() => Promise.resolve({}), []);

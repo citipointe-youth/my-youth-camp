@@ -9160,12 +9160,15 @@ function _warnGroupHtml(r,key){
     ${inner}</details>`;
 }
 // Per-type "extra" warning line for the preview/result (orphans, guessed accommodation, unmatched).
-function _importExtraLine(type,r){
+function _importExtraLine(type,r,formInBatch){
   if(type==='tickets'){
     if(!r.created)return null;
     // Gate A UX 3: when every orphan is a near-miss spelling the Form is already in, so don't send them there.
+    // C11 UX 1: the same when the Form is in this batch (already applied in the preview).
     const near=(r.warnings||[]).filter(w=>w.code==='ticket-possible-match').length;
-    const advice=near>=r.created?'Check the spelling in the "Possible match" warnings below.':'Import the <b>Form</b> file first so tickets attach to real students.';
+    const advice=near>=r.created?'Check the spelling in the "Possible match" warnings below.'
+      :formInBatch?'Check the names in the Ticket List against the Form.'
+      :'Import the <b>Form</b> file first so tickets attach to real students.';
     return `${icSm('alert')} <b>${r.created}</b> ticket${r.created===1?'':'s'} didn't match an existing student — created as "Needs review". ${advice}`;
   }
   if(type==='invoices'){
@@ -10818,18 +10821,31 @@ async function _renderImportPreview(){
   let formImported=false;try{const s=await api('/settings');formImported=!!(s&&s.formImportedAt);}catch(e){}
   // I2 (IA OQ-22): ONE preview call over one server-side overlay, so Ticket/Invoice preview
   // against the people the Form file in this batch would create. Confirm stays per file.
-  let results;
+  let results,perFile=false;
   try{
     const out=await api('/import/batch',{method:'POST',body:{updateExisting:true,files:_importBatch.map(b=>({type:b.type,csvData:b.csvData}))}});
     results=_importBatch.map((b,i)=>{const x=(out.results||[])[i]||{};return x.error!=null?{b,err:x.error}:x.result?{b,r:x.result}:{b,err:'No preview returned'};});
-  }catch(e){results=_importBatch.map(b=>({b,err:e.message||'error'}));}
+  }catch(e){
+    // C11 review 1: Vercel caps a request body at 4.5 MB, so the three files together can 413. On that,
+    // a 5xx or no answer, preview file by file as before (Ticket/Invoice can't see the staged Form).
+    // An app 4xx with its own message (bad body, session gone) stays on the cards.
+    const real4xx=e.status>=400&&e.status<500&&e.status!==413&&!/^Request failed \(/.test(e.message||'');
+    if(real4xx)results=_importBatch.map(b=>({b,err:e.message}));
+    else{
+      perFile=true;results=[];
+      for(const b of _importBatch){
+        try{const r=await api(IMPORT_TYPES[b.type].endpoint,{method:'POST',body:{csvData:b.csvData,updateExisting:true,dryRun:true}});results.push({b,r});}
+        catch(e2){results.push({b,err:e2.message||'error'});}
+      }
+    }
+  }
   const formRes=results.find(x=>x.b.type==='form'&&x.r);
   const phantoms=(formRes&&formRes.r.phantomChurches)||[];
   // Per-file summary cards.
   const cards=results.map(({b,r,err})=>{
     if(err)return `<div class="warnbox">${esc(b.name)} (${IMPORT_TYPES[b.type].label}): ${esc(err)}</div>`;
     const del=r.deleted?` \xb7 <b style="color:var(--danger)">${r.deleted} to delete</b>`:'';
-    const extra=_importExtraLine(b.type,r);
+    const extra=(perFile&&b.type!=='form'&&formInBatch)?`<span style="color:var(--muted)">Matches finalise after the Form import runs first.</span>`:_importExtraLine(b.type,r,formInBatch);
     const errs=(r.errors||[]);
     const errList=errs.length?`<div style="margin-top:4px">${errs.slice(0,8).map(e=>`<div style="color:var(--danger);font-size:.76rem">Row ${e.row}: ${esc(e.message)}</div>`).join('')}${errs.length>8?`<div class="sub">+${errs.length-8} more error${errs.length-8===1?'':'s'}</div>`:''}</div>`:'';
     return `<div style="border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px">

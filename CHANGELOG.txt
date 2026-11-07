@@ -14,6 +14,9 @@ POST /import/batch (preview only, import:run): 1-3 files run in order over one o
 Ticket and Invoice preview counts see the Form people. SPA import preview makes that one call
 (public/index.html, camp-v154). The three per-file endpoints and the 11.1 console are unchanged.
 1,425-row batch preview timed in-memory: under 1 s (import-batch-timing.test.ts).
+Fix-ups: if /import/batch fails (413 over Vercel's 4.5 MB body cap, 5xx, no answer) the SPA falls
+back to the old per-file dryRun previews; a Ticket card with the Form in the same batch no longer
+says "Import the Form file first" (import-preview-harness.js).
 
 
 2026-11-07 - Architecture round, Phase C10: D3 (server only, no cache bump)
