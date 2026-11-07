@@ -286,6 +286,8 @@ export class SupabasePersonRepository implements IPersonRepository {
   async save(person: Person, opts?: PersonSaveOpts): Promise<Person> {
     const cols = updateCols(opts);
     await this.sql.begin(async (tx: TxClient) => {
+      // ⚠ The upsert MUST stay before appendHistories: it row-locks this person's `people` row,
+      // which is what makes B-5's conditional check-in insert atomic. Do not reorder.
       await tx`
         insert into people ${tx(personColumns(person))}
         on conflict (id) do update set ${tx(personColumns(person), ...cols)}
@@ -302,6 +304,7 @@ export class SupabasePersonRepository implements IPersonRepository {
       // Each person must be upserted individually — the batch ON CONFLICT DO UPDATE
       // would incorrectly overwrite every conflicting row with batch[0]'s values.
       for (const p of people) {
+        // ⚠ Upsert before appendHistories (row lock for B-5), as in save.
         await tx`
           insert into people ${tx(personColumns(p))}
           on conflict (id) do update set ${tx(personColumns(p), ...cols)}
@@ -455,17 +458,35 @@ function updateCols(opts?: PersonSaveOpts): readonly string[] {
  */
 async function appendHistories(tx: TxClient, p: Person): Promise<void> {
   if (p.checkInHistory.length > 0) {
-    await tx`insert into check_in_history ${tx(
-      p.checkInHistory.map((e) => ({
-        id: e.id,
-        person_id: p.id,
-        session_id: e.sessionId,
-        session_label: e.sessionLabel,
-        type: e.type,
-        leader_id: e.leaderId,
-        timestamp: e.timestamp,
-      })),
-    )} on conflict (id) do nothing`;
+    /* B-5: two taps on one person+session at once (a queue re-drain while a request is in
+       flight) each carry a fresh `newId('ci')`, so `on conflict (id)` can't dedupe them. A row
+       is inserted only if the LAST stored row for its (person, session) is not the same type —
+       withCheckIn's N5 rule, enforced in SQL. Atomic because the caller's `people` upsert has
+       already row-locked this person: the second tap's transaction waits there until the first
+       commits, and under READ COMMITTED this later statement then sees the first tap's row.
+       No refusal (the tap still answers 200) and the timestamp stays server time (Q9).
+       Sign-out history stays unconditional (OQ-33). */
+    const rows = p.checkInHistory.map((e) => ({
+      id: e.id,
+      person_id: p.id,
+      session_id: e.sessionId,
+      session_label: e.sessionLabel,
+      type: e.type,
+      leader_id: e.leaderId,
+      timestamp: e.timestamp,
+    }));
+    await tx`
+      insert into check_in_history (id, person_id, session_id, session_label, type, leader_id, "timestamp")
+      select v.id, v.person_id, v.session_id, v.session_label, v.type, v.leader_id, v."timestamp"
+      from jsonb_to_recordset(${tx.json(rows)}) as v(
+        id text, person_id text, session_id text, session_label text, type text, leader_id text, "timestamp" timestamptz
+      )
+      where (
+        select h.type from check_in_history h
+        where h.person_id = v.person_id and h.session_id = v.session_id
+        order by h."timestamp" desc limit 1
+      ) is distinct from v.type
+      on conflict (id) do nothing`;
   }
   if (p.signOutHistory.length > 0) {
     await tx`insert into sign_out_history ${tx(

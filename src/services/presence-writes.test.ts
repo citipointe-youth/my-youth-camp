@@ -143,3 +143,37 @@ describe('B-3 cancelling someone at camp signs them out first', () => {
     expect((await repo.findById('o'))!).toMatchObject({ lifecycle: 'cancelled', signOutHistory: [] });
   });
 });
+
+describe('B-5 check-in history guard (in-memory mirror of the Supabase conditional insert)', () => {
+  const tap = { sessionId: 's1', sessionLabel: 'S1', leaderId: 'u', timestamp: now };
+
+  it('two concurrent same-type taps from one stale read keep exactly one row; a later stale save keeps it', async () => {
+    const repo = await repoWith(P({ id: 'x', lifecycle: 'arrived', atCamp: true }));
+    const svc = makePersonService(repo);
+    const realFind = repo.findById.bind(repo);
+    // Every read waits on a gate: the PATCH's on `patchGate`, the two taps' on `tapGate`.
+    const gates: Array<Promise<void>> = [];
+    const opener: Array<() => void> = [];
+    for (let i = 0; i < 2; i++) gates.push(new Promise<void>((r) => opener.push(r)));
+    let reads = 0;
+    repo.findById = async (id) => { const p = await realFind(id); await gates[reads++ === 0 ? 0 : 1]; return p; };
+    const patch = svc.update(admin, 'x', { otherMedications: 'Ventolin' } as Partial<Person>);
+    const a = svc.checkIn(admin, 'x', { ...tap, type: 'in' });
+    const b = svc.checkIn(admin, 'x', { ...tap, type: 'in' });
+    await new Promise((r) => setTimeout(r, 0));
+    opener[1]!(); // both taps read the same empty history, then both save
+    await Promise.all([a, b]);
+    opener[0]!(); // the PATCH saves last, from a read with no check-in at all
+    await patch;
+    repo.findById = realFind;
+    const after = (await repo.findById('x'))!;
+    expect(after.checkInHistory.map((e) => e.type)).toEqual(['in']);
+  });
+
+  it('in -> out -> in is still three rows', async () => {
+    const repo = await repoWith(P({ id: 'x', lifecycle: 'arrived', atCamp: true }));
+    const svc = makePersonService(repo);
+    for (const type of ['in', 'out', 'in'] as const) await svc.checkIn(admin, 'x', { ...tap, type });
+    expect((await repo.findById('x'))!.checkInHistory.map((e) => e.type)).toEqual(['in', 'out', 'in']);
+  });
+});

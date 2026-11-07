@@ -124,18 +124,31 @@ export class InMemoryPersonRepository
     super(persistence);
   }
 
-  /** B-1: without `presence`, an existing row keeps its stored atCamp/lifecycle (mirrors Supabase). */
-  private keepPresence(p: Person, opts?: PersonSaveOpts): Person {
+  /** Mirrors the Supabase write of an existing row:
+   *  - B-1: without `presence`, the stored atCamp/lifecycle are kept.
+   *  - B-5: check-in history is append-only (kept rows + new ids), and a new row is skipped when
+   *    the last row for its session already has the same type (Supabase's conditional insert). */
+  private merge(p: Person, opts?: PersonSaveOpts): Person {
     const stored = this.store.get(p.id);
-    return stored && !opts?.presence ? { ...p, atCamp: stored.atCamp, lifecycle: stored.lifecycle } : p;
+    if (!stored) return p;
+    const checkInHistory = [...stored.checkInHistory];
+    const known = new Set(checkInHistory.map((e) => e.id));
+    for (const e of p.checkInHistory) {
+      if (known.has(e.id)) continue;
+      const last = checkInHistory.filter((h) => h.sessionId === e.sessionId).at(-1);
+      if (last?.type !== e.type) checkInHistory.push(e);
+    }
+    return opts?.presence
+      ? { ...p, checkInHistory }
+      : { ...p, checkInHistory, atCamp: stored.atCamp, lifecycle: stored.lifecycle };
   }
 
   override async save(person: Person, opts?: PersonSaveOpts): Promise<Person> {
-    return super.save(this.keepPresence(person, opts));
+    return super.save(this.merge(person, opts));
   }
 
   override async saveMany(people: Person[], opts?: PersonSaveOpts): Promise<Person[]> {
-    return super.saveMany(people.map((p) => this.keepPresence(p, opts)));
+    return super.saveMany(people.map((p) => this.merge(p, opts)));
   }
 
   async search(q: string): Promise<Person[]> {

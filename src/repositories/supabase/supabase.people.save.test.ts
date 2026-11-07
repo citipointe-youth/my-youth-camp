@@ -24,6 +24,7 @@ function fakeSql() {
     }
     return { helper: true, obj: first, cols: rest as string[] } as Helper;
   };
+  tx.json = (v: unknown) => ({ json: v });
   const sql = { begin: async (fn: (t: typeof tx) => Promise<void>) => fn(tx) };
   return { sql, stmts };
 }
@@ -69,5 +70,32 @@ describe('SupabasePersonRepository presence columns (B-1)', () => {
       await write(new SupabasePersonRepository(sql as never));
       expect(updateSetCols(stmts)).toEqual(expect.arrayContaining(['at_camp', 'lifecycle', 'first_name']));
     }
+  });
+});
+
+describe('SupabasePersonRepository check-in history guard (B-5)', () => {
+  const entry = { id: 'ci2', sessionId: '2026-09-28~pm', sessionLabel: 'Mon PM', type: 'in' as const, leaderId: 'AB', timestamp: now };
+
+  it('inserts a check-in row only when the last row for (person, session) is a different type', async () => {
+    const { sql, stmts } = fakeSql();
+    await new SupabasePersonRepository(sql as never).save(person({ checkInHistory: [entry] }));
+    const ci = stmts.find((s) => s.text.includes('insert into check_in_history'))!;
+    const sqlText = ci.text.replace(/\s+/g, ' ');
+    expect(sqlText).toContain('where h.person_id = v.person_id and h.session_id = v.session_id');
+    expect(sqlText).toContain('order by h."timestamp" desc limit 1');
+    expect(sqlText).toContain('is distinct from v.type');
+    expect(sqlText).toContain('on conflict (id) do nothing');
+    expect(ci.values[0]).toEqual({ json: [{ id: 'ci2', person_id: 'p1', session_id: '2026-09-28~pm',
+      session_label: 'Mon PM', type: 'in', leader_id: 'AB', timestamp: now }] });
+  });
+
+  it('upserts the people row (row lock) before any history insert, and sign-out history stays unconditional', async () => {
+    const { sql, stmts } = fakeSql();
+    await new SupabasePersonRepository(sql as never).save(person({ checkInHistory: [entry],
+      signOutHistory: [{ id: 'so1', type: 'in', leaderName: 'AB', authorId: 'u', timestamp: now }] }));
+    expect(stmts.map((s) => s.text.trim().split(/\s+/).slice(0, 3).join(' '))).toEqual([
+      'insert into people', 'insert into check_in_history', 'insert into sign_out_history',
+    ]);
+    expect(stmts[2]!.text).not.toContain('distinct');
   });
 });
