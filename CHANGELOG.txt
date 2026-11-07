@@ -3,6 +3,17 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C5: A3 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change, no public/ change. A3: one PATCH interpreter.
+PersonService.patch(actor, id, body) parses the wire body, maps the legacy aliases and drops
+unknown keys, then calls update; PATCH /registrants/:id passes the raw body to it. update now
+refuses (400) a bad accommodationOverride and a negative/non-finite amountPaidOverride or
+refundAmount, after the permission check. PATCH /campers/:id and the never-asserted
+camper:write permission are deleted (no SPA or console caller; IA OQ-20). Per-key body ->
+stored person mapping pinned before the refactor and unchanged. Edge changes: a role without
+registrant:write sending a bad override now gets 403 not 400; out-of-scope id gets 404 not 400.
+
 2026-11-07 - Architecture round, Phase C4: A1 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change, no public/ change. A1: one access-policy module.
