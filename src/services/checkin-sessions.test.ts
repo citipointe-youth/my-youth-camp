@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { allowedWindowSession, buildSessions, currentSession, parseSessionId } from './checkin-sessions';
+import { allowedWindowSession, buildSessions, currentSession, parseSessionId, sessionClock } from './checkin-sessions';
+import type { CampSettings } from '../core/entities/settings';
 
 // AC-1: youth arrive at lunch on the first day (PM session only) and depart at lunch on
 // the last day (AM session only). Interior days keep both AM and PM. A single-day camp is
@@ -121,5 +122,26 @@ describe('allowedWindowSession — item 11 hard AM/PM windows', () => {
     // (12:00 inclusive) has begun.
     const result = allowedWindowSession(days, '2026-07-02', '12:00', windows);
     expect(result?.id).toBe('2026-07-02~pm');
+  });
+});
+
+// P4: the clock is the one place the tz/window defaults live; the SPA's offline roster reads it.
+describe('sessionClock', () => {
+  it('defaults when there is no settings row (Brisbane, 12:00, unrestricted, 06-12 / 12-22)', () => {
+    expect(sessionClock(null)).toEqual({
+      tz: 'Australia/Brisbane', pmFrom: '12:00', restricted: false,
+      windows: { amStart: '06:00', amEnd: '12:00', pmStart: '12:00', pmEnd: '22:00' },
+    });
+  });
+  it('passes the settings through, and an empty timezone falls back to Brisbane', () => {
+    const s = {
+      timezone: 'Australia/Perth', churchCheckinTimeRestricted: true,
+      checkinWindowAmStart: '05:00', checkinWindowAmEnd: '13:00', checkinWindowPmStart: '13:00', checkinWindowPmEnd: '23:30',
+    } as CampSettings;
+    expect(sessionClock(s)).toEqual({
+      tz: 'Australia/Perth', pmFrom: '12:00', restricted: true,
+      windows: { amStart: '05:00', amEnd: '13:00', pmStart: '13:00', pmEnd: '23:30' },
+    });
+    expect(sessionClock({ ...s, timezone: '' }).tz).toBe('Australia/Brisbane');
   });
 });

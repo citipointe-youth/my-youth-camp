@@ -121,10 +121,10 @@ function view({ date, time, restricted, cache }) {
     ACTOR: { role: 'church', username: 'v' }, Date, JSON, Array, Object, String,
     SETTINGS: { churchCheckinTimeRestricted: !!restricted, checkinWindowAmStart: '06:00', checkinWindowAmEnd: '12:00', checkinWindowPmStart: '13:00', checkinWindowPmEnd: '22:00' },
     localStorage: { getItem: (k) => store[k] ?? null, removeItem: (k) => { delete store[k]; }, setItem: (k, v) => { store[k] = v; } },
-    localDateISO: () => date, brisbaneNowTime: () => time, _ciLabel: (s) => s.label,
+    localDateISO: (at, tz) => { c.tzSeen = tz; return date; }, brisbaneNowTime: (tz) => { c.tzSeen = tz; return time; }, _ciLabel: (s) => s.label,
   };
   vm.createContext(c);
-  for (const fn of ['_rosterKey', '_rosterClear', '_rosterLoad', '_sessionNow', '_windowClosed', '_rosterView', '_rosterSynced']) vm.runInContext(extract('function ' + fn + '('), c);
+  for (const fn of ['_rosterKey', '_rosterClear', '_rosterLoad', '_rosterClock', '_sessionNow', '_windowClosed', '_rosterView', '_rosterSynced']) vm.runInContext(extract('function ' + fn + '('), c);
   return { v: c._rosterView(), c };
 }
 const sess = (day, sfx, label) => ({ id: day + '~' + sfx, day, startTime: sfx === 'am' ? '08:00' : '13:00', label });
@@ -153,6 +153,42 @@ const saved = (over = {}) => ({ savedAt: new Date().toISOString(), session: MON_
   const v2 = c._rosterView();
   assert.strictEqual(v2.roster.find((r) => r.id === 'b').checkedIn, true, 'sent tap stays in');
   assert.strictEqual(v2.roster.find((r) => r.id === 'a').checkedIn, false);
+}
+// P4: a roster saved by this version carries the server's session clock; the offline answers come
+// from it (tz, windows, restriction), not from hard-coded Brisbane / '12:00' / ycp_settings.
+{
+  const clock = (over = {}) => ({ tz: 'Australia/Perth', pmFrom: '12:00', restricted: true,
+    windows: { amStart: '06:00', amEnd: '13:00', pmStart: '13:00', pmEnd: '22:00' }, ...over });
+  const r = view({ date: '2026-07-06', time: '12:30', cache: saved({ clock: clock() }) });
+  assert.strictEqual(r.v.session.id, MON_AM.id, 'clock windows AM to 13:00: 12:30 queues to AM, like /allowed');
+  assert.strictEqual(r.v.readOnly, null, 'AM window open at 12:30: not read-only');
+  assert.strictEqual(r.c.tzSeen, 'Australia/Perth', 'the saved clock tz is used');
+  const shut = view({ date: '2026-07-06', time: '12:30', restricted: false,
+    cache: saved({ clock: clock({ windows: { amStart: '06:00', amEnd: '12:00', pmStart: '13:00', pmEnd: '22:00' } }) }) }).v;
+  assert.ok(shut.readOnly, 'the clock says restricted even when ycp_settings does not');
+  const open = view({ date: '2026-07-06', time: '23:00', restricted: true, cache: saved({ clock: clock({ restricted: false }) }) }).v;
+  assert.strictEqual(open.readOnly, null, 'clock unrestricted: no window check');
+  assert.strictEqual(open.session.id, MON_PM.id, 'pmFrom picks PM');
+  const legacy = view({ date: '2026-07-06', time: '12:30', restricted: true, cache: saved() });
+  assert.ok(legacy.v.readOnly, 'no clock (older roster): falls back to the settings windows');
+  assert.strictEqual(legacy.c.tzSeen, 'Australia/Brisbane', 'no clock: Brisbane');
+  // _rosterSave keeps the clock from the status response.
+  const store = {};
+  const c = { ACTOR: { role: 'church', username: 'v' }, PREVIEW_MODE: false, ACCOUNT_PREVIEW: false, SESSIONS: [MON_AM, MON_PM], Date, JSON,
+    localStorage: { setItem: (k, v) => { store[k] = v; } } };
+  vm.createContext(c);
+  vm.runInContext(extract('function _rosterKey(') + extract('function _rosterSave('), c);
+  c._rosterSave({ session: MON_AM, roster: [], clock: clock() });
+  assert.deepStrictEqual(JSON.parse(store.ycp_roster_v).clock, clock(), 'saved roster carries the clock');
+  // The real clock helpers: a tz Intl rejects falls back to Brisbane; a good one is honoured.
+  const t = { Intl, Date };
+  vm.createContext(t);
+  vm.runInContext(extract('function _clockTz(') + extract('function localDateISO(') + extract('function brisbaneNowTime('), t);
+  assert.strictEqual(t.brisbaneNowTime('Not/AZone'), t.brisbaneNowTime(), 'bad tz: Brisbane');
+  assert.strictEqual(t.localDateISO(null, 'Not/AZone'), t.localDateISO(), 'bad tz: Brisbane date');
+  const at = '2026-07-06T15:30:00Z';
+  assert.strictEqual(t.localDateISO(at, 'Australia/Perth'), '2026-07-06');
+  assert.strictEqual(t.localDateISO(at), '2026-07-07', 'Brisbane is already the next day');
 }
 // Review of batch 3: saved taps survive anything but the app's own refusal.
 function drainCtx(queue, apiFn) {

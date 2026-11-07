@@ -2,13 +2,11 @@ import type { CampSettings } from '../core/entities/settings';
 import type { Person } from '../core/entities/person';
 import type { User } from '../core/entities/user';
 import type { CheckInSession } from './checkin-sessions';
-import { allowedWindowSession, currentSession } from './checkin-sessions';
+import { allowedWindowSession, currentSession, sessionClock } from './checkin-sessions';
 import { canAccessPerson } from './person.service';
 import { toActor } from './auth.service';
 import { zonedNow, zonedToInstant } from '../utils/date';
 
-/** Mirrors checkin.service.ts — must stay byte-identical or reminder and enforcement disagree. */
-const DEFAULT_TZ = 'Australia/Brisbane';
 /** How long before a window closes to warn. Design D4. */
 export const WARN_LEAD_MINUTES = 60;
 
@@ -61,17 +59,10 @@ export function warnWindow(settings: CampSettings, now: Date): WarnWindow | null
   // deadline, so "closing soon" would be misleading.
   if (!settings.churchCheckinTimeRestricted) return null;
 
-  const tz = settings.timezone || DEFAULT_TZ;
+  // Resolve tz and windows IDENTICALLY to checkin.service.assertSessionAllowed (same sessionClock).
+  const { tz, windows } = sessionClock(settings);
   const days = settings.checkInDays ?? [];
   const { date, time } = zonedNow(tz, now);
-
-  // Resolve windows IDENTICALLY to checkin.service.assertSessionAllowed.
-  const windows = {
-    amStart: settings.checkinWindowAmStart ?? '06:00',
-    amEnd: settings.checkinWindowAmEnd ?? '12:00',
-    pmStart: settings.checkinWindowPmStart ?? '12:00',
-    pmEnd: settings.checkinWindowPmEnd ?? '22:00',
-  };
 
   // The one session currently open. Returns null off a camp day, outside both windows, or —
   // via buildSessions/AC-1 — when the day simply has no session of that half (first camp day
@@ -112,17 +103,11 @@ export function warnWindow(settings: CampSettings, now: Date): WarnWindow | null
 export const CHECKIN_TEST_TTL_MINUTES = 60;
 
 export function testWarnWindow(settings: CampSettings, now: Date): WarnWindow | null {
-  const tz = settings.timezone || DEFAULT_TZ;
+  const { tz, windows } = sessionClock(settings);
   const days = settings.checkInDays ?? [];
   if (days.length === 0) return null;
 
   const { date, time } = zonedNow(tz, now);
-  const windows = {
-    amStart: settings.checkinWindowAmStart ?? '06:00',
-    amEnd: settings.checkinWindowAmEnd ?? '12:00',
-    pmStart: settings.checkinWindowPmStart ?? '12:00',
-    pmEnd: settings.checkinWindowPmEnd ?? '22:00',
-  };
 
   const session =
     allowedWindowSession(days, date, time, windows) ?? currentSession(days, date, time);

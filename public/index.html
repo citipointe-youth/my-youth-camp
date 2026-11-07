@@ -1907,15 +1907,21 @@ async function submitChangePassword(){
     _offerAlertsAfterLogin();
   }catch(e){_mcpErr(e.message);}
 }
+// The camp tz for the clock helpers below: `tz` when Intl accepts it, else Brisbane. Only the saved
+// offline roster passes one (its server clock, P4); every other caller stays on Brisbane.
+function _clockTz(tz){
+  if(!tz)return 'Australia/Brisbane';
+  try{new Intl.DateTimeFormat('en-CA',{timeZone:tz});return tz;}catch(_){return 'Australia/Brisbane';}
+}
 // Brisbane-anchored "today" (YYYY-MM-DD), mirroring the backend's zonedNow(). The camp's
-// timezone is hardcoded Australia/Brisbane (see adminSettings — the field was removed), so this
-// needs no settings lookup. Pass an ISO/Date to convert a specific instant instead of "now" —
+// timezone is Australia/Brisbane (see adminSettings — the field was removed), so this needs no
+// settings lookup; `tz` is for the saved roster's clock. Pass an ISO/Date to convert a specific instant instead of "now" —
 // e.g. a server createdAt timestamp — so UTC-vs-Brisbane day boundaries agree everywhere in the
 // SPA (a plain `new Date().toISOString().slice(0,10)` is WRONG here: it's UTC, so anywhere from
 // midnight to 10am Brisbane it still reports yesterday's date).
-function localDateISO(at){
+function localDateISO(at,tz){
   const d=at?new Date(at):new Date();
-  const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:'Australia/Brisbane',year:'numeric',month:'2-digit',day:'2-digit'});
+  const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:_clockTz(tz),year:'numeric',month:'2-digit',day:'2-digit'});
   return fmt.format(d); // en-CA formats as YYYY-MM-DD
 }
 // Real (non-preview) current camp day number, 1-based, from the actual check-in day dates —
@@ -1931,8 +1937,8 @@ function _realCampDayNumber(){
 }
 // Current Brisbane clock time as 'HH:MM' (24h), zero-padded, comparable to checkinSwitchoverTime.
 // formatToParts + the '24'→'00' guard avoids the midnight '24:00' quirk some engines emit.
-function brisbaneNowTime(){
-  const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Australia/Brisbane',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date());
+function brisbaneNowTime(tz){
+  const parts=new Intl.DateTimeFormat('en-GB',{timeZone:_clockTz(tz),hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date());
   let h=(parts.find(p=>p.type==='hour')||{}).value||'00';
   const m=(parts.find(p=>p.type==='minute')||{}).value||'00';
   if(h==='24')h='00';
@@ -3885,7 +3891,7 @@ function _rosterClear(){try{localStorage.removeItem(_rosterKey());}catch(_){}}
 function _rosterSave(st){
   if(ACTOR.role!=='church'||PREVIEW_MODE||ACCOUNT_PREVIEW||!st.session)return;
   const slim=s=>({id:s.id,day:s.day,startTime:s.startTime,label:s.label});
-  try{localStorage.setItem(_rosterKey(),JSON.stringify({savedAt:new Date().toISOString(),session:slim(st.session),sessions:SESSIONS.map(slim),
+  try{localStorage.setItem(_rosterKey(),JSON.stringify({savedAt:new Date().toISOString(),session:slim(st.session),sessions:SESSIONS.map(slim),clock:st.clock,
     roster:(st.roster||[]).map(r=>({id:r.camperId,name:(r.firstName+' '+r.lastName).trim(),grade:r.grade,checkedIn:!!r.checkedIn}))}));}catch(_){}
 }
 function _rosterLoad(){
@@ -3895,31 +3901,41 @@ function _rosterLoad(){
   if(Date.now()-new Date(c.savedAt).getTime()>48*36e5){_rosterClear();return null;}
   return c;
 }
+// P4: the server's session clock (sessionClock() in checkin-sessions.ts), saved with the roster. A
+// roster saved before P4 has none: rebuild it the old way, from ycp_settings and the constants.
+function _rosterClock(c){
+  if(c&&c.clock&&c.clock.windows)return c.clock;
+  const S=SETTINGS||{};
+  return {tz:'Australia/Brisbane',pmFrom:'12:00',restricted:!!S.churchCheckinTimeRestricted,
+    windows:{amStart:S.checkinWindowAmStart||'06:00',amEnd:S.checkinWindowAmEnd||'12:00',pmStart:S.checkinWindowPmStart||'12:00',pmEnd:S.checkinWindowPmEnd||'22:00'}};
+}
 // The rule of currentSession() in checkin-sessions.ts, without its fallback to a nearby day: with no
-// server to ask, a tap must only ever land on a session that is really today's.
-function _sessionNow(sessions){
-  const todays=(sessions||[]).filter(s=>s.day===localDateISO());
+// server to ask, a tap must only ever land on a session that is really today's. When church check-in
+// is restricted, the session whose window is open wins, as allowedWindowSession() decides on drain.
+function _sessionNow(sessions,clock){
+  const todays=(sessions||[]).filter(s=>s.day===localDateISO(null,clock.tz));
   if(!todays.length)return null;
-  const sfx=brisbaneNowTime()>='12:00'?'~pm':'~am';
+  if(clock.restricted){const open=todays.find(s=>!_windowClosed(s,clock));if(open)return open;}
+  const sfx=brisbaneNowTime(clock.tz)>=clock.pmFrom?'~pm':'~am';
   return todays.find(s=>s.id.endsWith(sfx))||todays[0];
 }
-// The church window rule of allowedWindowSession(), from the saved settings.
-function _windowClosed(session){
-  const S=SETTINGS||{};if(!S.churchCheckinTimeRestricted)return false;
-  const am=session.id.endsWith('~am'),t=brisbaneNowTime();
-  return t<(am?S.checkinWindowAmStart||'06:00':S.checkinWindowPmStart||'12:00')||t>=(am?S.checkinWindowAmEnd||'12:00':S.checkinWindowPmEnd||'22:00');
+// The church window rule of allowedWindowSession(), from the saved clock.
+function _windowClosed(session,clock){
+  if(!clock.restricted)return false;
+  const w=clock.windows,am=session.id.endsWith('~am'),t=brisbaneNowTime(clock.tz);
+  return t<(am?w.amStart:w.pmStart)||t>=(am?w.amEnd:w.pmEnd);
 }
 /* What the saved list may show right now. A list saved in an earlier session gives the names only:
    nobody is assumed done, and taps queue to the session running now. If that session can't be
    worked out, or its window is shut, the list is read-only and says why. */
 function _rosterView(){
   const c=_rosterLoad();if(!c)return null;
-  const now=_sessionNow(c.sessions),session=now||c.session,same=session.id===c.session.id;
+  const clock=_rosterClock(c),now=_sessionNow(c.sessions,clock),session=now||c.session,same=session.id===c.session.id;
   const sent=(c.synced&&c.synced[session.id])||{};
   return {savedAt:c.savedAt,session,savedFrom:same?null:_ciLabel(c.session),
     roster:c.roster.map(r=>({...r,checkedIn:r.id in sent?sent[r.id]==='in':(same&&r.checkedIn)})),
     readOnly:!now?'Today isn’t one of the saved check-in days, so nobody can be checked in until there is signal.'
-      :_windowClosed(now)?'Check-in is closed right now, so nobody can be checked in until the next window.':null};
+      :_windowClosed(now,clock)?'Check-in is closed right now, so nobody can be checked in until the next window.':null};
 }
 // A tap that really reached the server while on the saved list must stay ticked on that list.
 function _rosterSynced(entry){
@@ -8944,7 +8960,9 @@ async function saveSettings(){
     // Timezone is intentionally fixed at Australia/Brisbane (owner decision, Phase 6): the camp
     // is always Brisbane-time, so this re-asserts it on every save (self-healing). There is no
     // timezone field in the UI by design — if the camp ever moves timezones, this is the one line
-    // a developer changes. Drives compliance-export timestamp localisation (audit-export.service).
+    // a developer changes. Drives compliance-export timestamp localisation (audit-export.service)
+    // and, via the session clock on the check-in status (P4), the offline roster's session/window
+    // maths. The SPA's display-only dates (localDateISO with no tz) stay Brisbane.
     const churchLock=!!document.getElementById('stChurchLock')?.checked;
     const zoneLock=!!document.getElementById('stZoneLock')?.checked;
     const churchCheckinRestrict=!!document.getElementById('stChurchCheckinRestrict')?.checked;

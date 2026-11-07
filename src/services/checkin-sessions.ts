@@ -20,9 +20,40 @@ export const CHECKIN_PERIODS = [
   { sfx: 'pm' as const, label: 'PM', startTime: '13:00' },
 ] as const;
 
+import type { CampSettings } from '../core/entities/settings';
+
 // Before this clock time (camp tz) the Morning session is "current"; at/after it the
 // Afternoon session is.
 const PM_FROM = '12:00';
+
+/**
+ * P4 (2026-11-07): the session clock as DATA. The only place the timezone and window defaults
+ * live. The server resolves its own rules from it, and `GET /checkin/sessions/:id/status` sends it
+ * so the SPA's saved offline roster (ycp_roster_<login>) works the clock out the same way instead
+ * of from hard-coded copies.
+ */
+export interface SessionClock {
+  tz: string;
+  /** Navigation: AM before this time, PM at/after it. */
+  pmFrom: string;
+  /** Church check-in restricted to the windows below. */
+  restricted: boolean;
+  windows: { amStart: string; amEnd: string; pmStart: string; pmEnd: string };
+}
+
+export function sessionClock(settings: CampSettings | null | undefined): SessionClock {
+  return {
+    tz: settings?.timezone || 'Australia/Brisbane',
+    pmFrom: PM_FROM,
+    restricted: !!settings?.churchCheckinTimeRestricted,
+    windows: {
+      amStart: settings?.checkinWindowAmStart ?? '06:00',
+      amEnd: settings?.checkinWindowAmEnd ?? '12:00',
+      pmStart: settings?.checkinWindowPmStart ?? '12:00',
+      pmEnd: settings?.checkinWindowPmEnd ?? '22:00',
+    },
+  };
+}
 
 function weekdayShort(day: string): string {
   try {
