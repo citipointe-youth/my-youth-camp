@@ -177,9 +177,10 @@ export interface RosterEntry {
  *
  * director/admin/zoneLeader are deliberately unaffected: they run the camp and a masked
  * roster would add an audited tap to routine oversight work for no safeguarding gain.
- * `prayer` has no reveal step (no `camper:read:sensitive`), so it is not in this set either.
+ * `prayer` is masked too (Tom, Step 3 ruling T-1, 2026-11-07) and has no reveal step (no
+ * `camper:read:sensitive`), so prayer never sees the number; it contacts the church leader.
  */
-const PARENT_PHONE_MASKED_ROLES: ReadonlySet<Actor['role']> = new Set(['firstAid', 'church']);
+const PARENT_PHONE_MASKED_ROLES: ReadonlySet<Actor['role']> = new Set(['firstAid', 'church', 'prayer']);
 
 function maskParentPhone<T extends { parentPhone: string | null }>(dto: T, actor: Actor): T {
   if (!PARENT_PHONE_MASKED_ROLES.has(actor.role) || !dto.parentPhone) return dto;
@@ -305,8 +306,12 @@ export function toCamperDto(p: Person, actor: Actor): CamperDto {
     updatedAt: p.updatedAt,
   }, actor);
   if (!MONEY_HIDDEN_ROLES.has(actor.role)) return dto;
+  // T-1 (Tom, 7 Nov): prayer gets no parent or guardian contact and no camper mobile at all
+  // (firstAid/church keep the masked phone + reveal). The prayer screens never showed them.
+  const contact = actor.role === 'prayer' ? { parentPhone: null, parentGuardianName: null, mobile: null } : {};
   return {
     ...dto,
+    ...contact,
     amountPaidOverride: null,
     refundAmount: null,
     refundedAt: null,

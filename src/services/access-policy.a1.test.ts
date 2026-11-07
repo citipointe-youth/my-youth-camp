@@ -34,7 +34,7 @@ const ACTORS: Record<string, Actor> = {
 } as Record<string, Actor>;
 
 const NOW = '2026-11-07T00:00:00.000Z';
-type T = { churchId: string; zone: string; gender: Person['gender']; lifecycle: Person['lifecycle']; atCamp: boolean };
+type T = { churchId: string; zone: string; gender: Person['gender']; lifecycle: Person['lifecycle']; atCamp: boolean; signOutHistory?: unknown[] };
 const TARGETS: Record<string, T> = {
   ownM_arrived: { churchId: 'pc1', zone: 'Yellow', gender: 'male', lifecycle: 'arrived', atCamp: true },
   ownF_arrived: { churchId: 'pc1', zone: 'Yellow', gender: 'female', lifecycle: 'arrived', atCamp: true },
@@ -42,6 +42,9 @@ const TARGETS: Record<string, T> = {
   ownM_registered: { churchId: 'pc1', zone: 'Yellow', gender: 'male', lifecycle: 'registered', atCamp: false },
   ownF_signedOut: { churchId: 'pc1', zone: 'Yellow', gender: 'female', lifecycle: 'checked_out', atCamp: false },
   ownM_cancelled: { churchId: 'pc1', zone: 'Yellow', gender: 'male', lifecycle: 'cancelled', atCamp: false },
+  // T-2 (Tom, 7 Nov): cancelled after arriving (sent home): firstAid/prayer keep 'full' reach.
+  ownM_sentHome: { churchId: 'pc1', zone: 'Yellow', gender: 'male', lifecycle: 'cancelled', atCamp: false,
+    signOutHistory: [{ id: 'so-sh', type: 'in', leaderName: 'L', authorId: 'x', timestamp: NOW }] },
   sameZoneM_arrived: { churchId: 'pc2', zone: 'Yellow', gender: 'male', lifecycle: 'arrived', atCamp: true },
   sameZoneF_registered: { churchId: 'pc2', zone: 'Yellow', gender: 'female', lifecycle: 'registered', atCamp: false },
   otherZoneF_arrived: { churchId: 'pc3', zone: 'Blue', gender: 'female', lifecycle: 'arrived', atCamp: true },
@@ -84,15 +87,15 @@ describe('A1 access truth table (pinned pre-refactor)', () => {
   it('canAccessPerson', async () => {
     expect(await table((a, _id, t) => (canAccessPerson(a, t) ? 'Y' : '-'))).toMatchInlineSnapshot(`
       {
-        "admin": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=Y otherZoneM_registered=Y",
-        "church": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y sameZoneM_arrived=- sameZoneF_registered=- otherZoneF_arrived=- otherZoneM_registered=-",
-        "churchBoys": "ownM_arrived=Y ownF_arrived=- ownOther_arrived=Y ownM_registered=Y ownF_signedOut=- ownM_cancelled=Y sameZoneM_arrived=- sameZoneF_registered=- otherZoneF_arrived=- otherZoneM_registered=-",
-        "churchGirls": "ownM_arrived=- ownF_arrived=Y ownOther_arrived=Y ownM_registered=- ownF_signedOut=Y ownM_cancelled=- sameZoneM_arrived=- sameZoneF_registered=- otherZoneF_arrived=- otherZoneM_registered=-",
-        "director": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=Y otherZoneM_registered=Y",
-        "firstAid": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=Y otherZoneM_registered=Y",
-        "prayer": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=Y otherZoneM_registered=Y",
-        "zoneNull": "ownM_arrived=- ownF_arrived=- ownOther_arrived=- ownM_registered=- ownF_signedOut=- ownM_cancelled=- sameZoneM_arrived=- sameZoneF_registered=- otherZoneF_arrived=- otherZoneM_registered=-",
-        "zoneYellow": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=- otherZoneM_registered=-",
+        "admin": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y ownM_sentHome=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=Y otherZoneM_registered=Y",
+        "church": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y ownM_sentHome=Y sameZoneM_arrived=- sameZoneF_registered=- otherZoneF_arrived=- otherZoneM_registered=-",
+        "churchBoys": "ownM_arrived=Y ownF_arrived=- ownOther_arrived=Y ownM_registered=Y ownF_signedOut=- ownM_cancelled=Y ownM_sentHome=Y sameZoneM_arrived=- sameZoneF_registered=- otherZoneF_arrived=- otherZoneM_registered=-",
+        "churchGirls": "ownM_arrived=- ownF_arrived=Y ownOther_arrived=Y ownM_registered=- ownF_signedOut=Y ownM_cancelled=- ownM_sentHome=- sameZoneM_arrived=- sameZoneF_registered=- otherZoneF_arrived=- otherZoneM_registered=-",
+        "director": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y ownM_sentHome=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=Y otherZoneM_registered=Y",
+        "firstAid": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y ownM_sentHome=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=Y otherZoneM_registered=Y",
+        "prayer": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y ownM_sentHome=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=Y otherZoneM_registered=Y",
+        "zoneNull": "ownM_arrived=- ownF_arrived=- ownOther_arrived=- ownM_registered=- ownF_signedOut=- ownM_cancelled=- ownM_sentHome=- sameZoneM_arrived=- sameZoneF_registered=- otherZoneF_arrived=- otherZoneM_registered=-",
+        "zoneYellow": "ownM_arrived=Y ownF_arrived=Y ownOther_arrived=Y ownM_registered=Y ownF_signedOut=Y ownM_cancelled=Y ownM_sentHome=Y sameZoneM_arrived=Y sameZoneF_registered=Y otherZoneF_arrived=- otherZoneM_registered=-",
       }
     `);
   });
@@ -102,15 +105,15 @@ describe('A1 access truth table (pinned pre-refactor)', () => {
       `${canAccessChurch(a, t.churchId, t.zone) ? 'Y' : '-'}${canAccessChurch(a, t.churchId) ? 'Y' : '-'}`,
     )).toMatchInlineSnapshot(`
       {
-        "admin": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY sameZoneM_arrived=YY sameZoneF_registered=YY otherZoneF_arrived=YY otherZoneM_registered=YY",
-        "church": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY sameZoneM_arrived=-- sameZoneF_registered=-- otherZoneF_arrived=-- otherZoneM_registered=--",
-        "churchBoys": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY sameZoneM_arrived=-- sameZoneF_registered=-- otherZoneF_arrived=-- otherZoneM_registered=--",
-        "churchGirls": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY sameZoneM_arrived=-- sameZoneF_registered=-- otherZoneF_arrived=-- otherZoneM_registered=--",
-        "director": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY sameZoneM_arrived=YY sameZoneF_registered=YY otherZoneF_arrived=YY otherZoneM_registered=YY",
-        "firstAid": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY sameZoneM_arrived=YY sameZoneF_registered=YY otherZoneF_arrived=YY otherZoneM_registered=YY",
-        "prayer": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY sameZoneM_arrived=YY sameZoneF_registered=YY otherZoneF_arrived=YY otherZoneM_registered=YY",
-        "zoneNull": "ownM_arrived=-- ownF_arrived=-- ownOther_arrived=-- ownM_registered=-- ownF_signedOut=-- ownM_cancelled=-- sameZoneM_arrived=-- sameZoneF_registered=-- otherZoneF_arrived=-- otherZoneM_registered=--",
-        "zoneYellow": "ownM_arrived=Y- ownF_arrived=Y- ownOther_arrived=Y- ownM_registered=Y- ownF_signedOut=Y- ownM_cancelled=Y- sameZoneM_arrived=Y- sameZoneF_registered=Y- otherZoneF_arrived=-- otherZoneM_registered=--",
+        "admin": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY ownM_sentHome=YY sameZoneM_arrived=YY sameZoneF_registered=YY otherZoneF_arrived=YY otherZoneM_registered=YY",
+        "church": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY ownM_sentHome=YY sameZoneM_arrived=-- sameZoneF_registered=-- otherZoneF_arrived=-- otherZoneM_registered=--",
+        "churchBoys": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY ownM_sentHome=YY sameZoneM_arrived=-- sameZoneF_registered=-- otherZoneF_arrived=-- otherZoneM_registered=--",
+        "churchGirls": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY ownM_sentHome=YY sameZoneM_arrived=-- sameZoneF_registered=-- otherZoneF_arrived=-- otherZoneM_registered=--",
+        "director": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY ownM_sentHome=YY sameZoneM_arrived=YY sameZoneF_registered=YY otherZoneF_arrived=YY otherZoneM_registered=YY",
+        "firstAid": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY ownM_sentHome=YY sameZoneM_arrived=YY sameZoneF_registered=YY otherZoneF_arrived=YY otherZoneM_registered=YY",
+        "prayer": "ownM_arrived=YY ownF_arrived=YY ownOther_arrived=YY ownM_registered=YY ownF_signedOut=YY ownM_cancelled=YY ownM_sentHome=YY sameZoneM_arrived=YY sameZoneF_registered=YY otherZoneF_arrived=YY otherZoneM_registered=YY",
+        "zoneNull": "ownM_arrived=-- ownF_arrived=-- ownOther_arrived=-- ownM_registered=-- ownF_signedOut=-- ownM_cancelled=-- ownM_sentHome=-- sameZoneM_arrived=-- sameZoneF_registered=-- otherZoneF_arrived=-- otherZoneM_registered=--",
+        "zoneYellow": "ownM_arrived=Y- ownF_arrived=Y- ownOther_arrived=Y- ownM_registered=Y- ownF_signedOut=Y- ownM_cancelled=Y- ownM_sentHome=Y- sameZoneM_arrived=Y- sameZoneF_registered=Y- otherZoneF_arrived=-- otherZoneM_registered=--",
       }
     `);
   });
@@ -120,15 +123,15 @@ describe('A1 access truth table (pinned pre-refactor)', () => {
       sessionId: '2026-11-07~am', type: 'in', timestamp: NOW, leaderName: 'T',
     } as never)))).toMatchInlineSnapshot(`
       {
-        "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=400 ownF_signedOut=400 ownM_cancelled=400 sameZoneM_arrived=ok sameZoneF_registered=400 otherZoneF_arrived=ok otherZoneM_registered=400",
-        "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=400 ownF_signedOut=400 ownM_cancelled=400 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=400 ownF_signedOut=404 ownM_cancelled=400 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=400 ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=400 ownF_signedOut=400 ownM_cancelled=400 sameZoneM_arrived=ok sameZoneF_registered=400 otherZoneF_arrived=ok otherZoneM_registered=400",
-        "firstAid": "ownM_arrived=403 ownF_arrived=403 ownOther_arrived=403 ownM_registered=403 ownF_signedOut=403 ownM_cancelled=403 sameZoneM_arrived=403 sameZoneF_registered=403 otherZoneF_arrived=403 otherZoneM_registered=403",
-        "prayer": "ownM_arrived=403 ownF_arrived=403 ownOther_arrived=403 ownM_registered=403 ownF_signedOut=403 ownM_cancelled=403 sameZoneM_arrived=403 sameZoneF_registered=403 otherZoneF_arrived=403 otherZoneM_registered=403",
-        "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=400 ownF_signedOut=400 ownM_cancelled=400 sameZoneM_arrived=ok sameZoneF_registered=400 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=400 ownF_signedOut=400 ownM_cancelled=400 ownM_sentHome=400 sameZoneM_arrived=ok sameZoneF_registered=400 otherZoneF_arrived=ok otherZoneM_registered=400",
+        "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=400 ownF_signedOut=400 ownM_cancelled=400 ownM_sentHome=400 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=400 ownF_signedOut=404 ownM_cancelled=400 ownM_sentHome=400 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=400 ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=400 ownF_signedOut=400 ownM_cancelled=400 ownM_sentHome=400 sameZoneM_arrived=ok sameZoneF_registered=400 otherZoneF_arrived=ok otherZoneM_registered=400",
+        "firstAid": "ownM_arrived=403 ownF_arrived=403 ownOther_arrived=403 ownM_registered=403 ownF_signedOut=403 ownM_cancelled=403 ownM_sentHome=403 sameZoneM_arrived=403 sameZoneF_registered=403 otherZoneF_arrived=403 otherZoneM_registered=403",
+        "prayer": "ownM_arrived=403 ownF_arrived=403 ownOther_arrived=403 ownM_registered=403 ownF_signedOut=403 ownM_cancelled=403 ownM_sentHome=403 sameZoneM_arrived=403 sameZoneF_registered=403 otherZoneF_arrived=403 otherZoneM_registered=403",
+        "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=400 ownF_signedOut=400 ownM_cancelled=400 ownM_sentHome=400 sameZoneM_arrived=ok sameZoneF_registered=400 otherZoneF_arrived=404 otherZoneM_registered=404",
       }
     `);
   });
@@ -138,15 +141,15 @@ describe('A1 access truth table (pinned pre-refactor)', () => {
       type: 'out', timestamp: NOW, leaderName: 'T', reason: 'test',
     } as never)))).toMatchInlineSnapshot(`
       {
-        "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-        "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=ok ownF_signedOut=404 ownM_cancelled=ok sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-        "firstAid": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-        "prayer": "ownM_arrived=403 ownF_arrived=403 ownOther_arrived=403 ownM_registered=403 ownF_signedOut=403 ownM_cancelled=403 sameZoneM_arrived=403 sameZoneF_registered=403 otherZoneF_arrived=403 otherZoneM_registered=403",
-        "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=404 otherZoneM_registered=404",
+        "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+        "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=ok ownF_signedOut=404 ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+        "firstAid": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+        "prayer": "ownM_arrived=403 ownF_arrived=403 ownOther_arrived=403 ownM_registered=403 ownF_signedOut=403 ownM_cancelled=403 ownM_sentHome=403 sameZoneM_arrived=403 sameZoneF_registered=403 otherZoneF_arrived=403 otherZoneM_registered=403",
+        "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=404 otherZoneM_registered=404",
       }
     `);
   });
@@ -178,15 +181,15 @@ describe('A1 access truth table (pinned pre-refactor)', () => {
   it('person.get', async () => {
     expect(await table((a, id) => outcome(c.services.person.get(a, id)))).toMatchInlineSnapshot(`
       {
-        "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-        "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=ok ownF_signedOut=404 ownM_cancelled=ok sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-        "firstAid": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-        "prayer": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-        "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=404 otherZoneM_registered=404",
+        "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+        "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=ok ownF_signedOut=404 ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+        "firstAid": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+        "prayer": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+        "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=ok ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=404 otherZoneM_registered=404",
       }
     `);
   });
@@ -204,15 +207,15 @@ describe('A1 access truth table (pinned pre-refactor)', () => {
       return res[an]!['*'] ?? res[an]![id] ?? '-';
     })).toMatchInlineSnapshot(`
       {
-        "admin": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- sameZoneM_arrived=F sameZoneF_registered=- otherZoneF_arrived=F otherZoneM_registered=-",
-        "church": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- sameZoneM_arrived=L sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
-        "churchBoys": "ownM_arrived=F ownF_arrived=L ownOther_arrived=F ownM_registered=- ownF_signedOut=L ownM_cancelled=- sameZoneM_arrived=L sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
-        "churchGirls": "ownM_arrived=L ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- sameZoneM_arrived=L sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
-        "director": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- sameZoneM_arrived=F sameZoneF_registered=- otherZoneF_arrived=F otherZoneM_registered=-",
-        "firstAid": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=F ownF_signedOut=F ownM_cancelled=- sameZoneM_arrived=F sameZoneF_registered=F otherZoneF_arrived=F otherZoneM_registered=F",
-        "prayer": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=F ownF_signedOut=F ownM_cancelled=- sameZoneM_arrived=F sameZoneF_registered=F otherZoneF_arrived=F otherZoneM_registered=F",
-        "zoneNull": "ownM_arrived=L ownF_arrived=L ownOther_arrived=L ownM_registered=- ownF_signedOut=L ownM_cancelled=- sameZoneM_arrived=L sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
-        "zoneYellow": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- sameZoneM_arrived=F sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
+        "admin": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- ownM_sentHome=- sameZoneM_arrived=F sameZoneF_registered=- otherZoneF_arrived=F otherZoneM_registered=-",
+        "church": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- ownM_sentHome=- sameZoneM_arrived=L sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
+        "churchBoys": "ownM_arrived=F ownF_arrived=L ownOther_arrived=F ownM_registered=- ownF_signedOut=L ownM_cancelled=- ownM_sentHome=- sameZoneM_arrived=L sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
+        "churchGirls": "ownM_arrived=L ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- ownM_sentHome=- sameZoneM_arrived=L sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
+        "director": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- ownM_sentHome=- sameZoneM_arrived=F sameZoneF_registered=- otherZoneF_arrived=F otherZoneM_registered=-",
+        "firstAid": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=F ownF_signedOut=F ownM_cancelled=- ownM_sentHome=F sameZoneM_arrived=F sameZoneF_registered=F otherZoneF_arrived=F otherZoneM_registered=F",
+        "prayer": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=F ownF_signedOut=F ownM_cancelled=- ownM_sentHome=F sameZoneM_arrived=F sameZoneF_registered=F otherZoneF_arrived=F otherZoneM_registered=F",
+        "zoneNull": "ownM_arrived=L ownF_arrived=L ownOther_arrived=L ownM_registered=- ownF_signedOut=L ownM_cancelled=- ownM_sentHome=- sameZoneM_arrived=L sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
+        "zoneYellow": "ownM_arrived=F ownF_arrived=F ownOther_arrived=F ownM_registered=- ownF_signedOut=F ownM_cancelled=- ownM_sentHome=- sameZoneM_arrived=F sameZoneF_registered=- otherZoneF_arrived=L otherZoneM_registered=-",
       }
     `);
   });
@@ -220,15 +223,15 @@ describe('A1 access truth table (pinned pre-refactor)', () => {
   it('note.forCamper', async () => {
     expect(await table((a, id) => outcome(c.services.note.forCamper(a, id)))).toMatchInlineSnapshot(`
       {
-        "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=ok otherZoneM_registered=404",
-        "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=ok otherZoneM_registered=404",
-        "firstAid": "ownM_arrived=403 ownF_arrived=403 ownOther_arrived=403 ownM_registered=403 ownF_signedOut=403 ownM_cancelled=403 sameZoneM_arrived=403 sameZoneF_registered=403 otherZoneF_arrived=403 otherZoneM_registered=403",
-        "prayer": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-        "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-        "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=ok otherZoneM_registered=404",
+        "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=ok otherZoneM_registered=404",
+        "firstAid": "ownM_arrived=403 ownF_arrived=403 ownOther_arrived=403 ownM_registered=403 ownF_signedOut=403 ownM_cancelled=403 ownM_sentHome=403 sameZoneM_arrived=403 sameZoneF_registered=403 otherZoneF_arrived=403 otherZoneM_registered=403",
+        "prayer": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+        "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+        "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
       }
     `);
   });
@@ -238,15 +241,15 @@ describe('A1 access truth table (pinned pre-refactor)', () => {
     expect(await table((a, id) => outcome(c.services.note.add(a, { camperId: id, body: 'x', category: cat(a) }))))
       .toMatchInlineSnapshot(`
         {
-          "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=ok otherZoneM_registered=404",
-          "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-          "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-          "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-          "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=ok otherZoneM_registered=404",
-          "firstAid": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-          "prayer": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
-          "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
-          "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+          "admin": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=ok otherZoneM_registered=404",
+          "church": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+          "churchBoys": "ownM_arrived=ok ownF_arrived=404 ownOther_arrived=ok ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+          "churchGirls": "ownM_arrived=404 ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+          "director": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=ok otherZoneM_registered=404",
+          "firstAid": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+          "prayer": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=ok ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=ok sameZoneM_arrived=ok sameZoneF_registered=ok otherZoneF_arrived=ok otherZoneM_registered=ok",
+          "zoneNull": "ownM_arrived=404 ownF_arrived=404 ownOther_arrived=404 ownM_registered=404 ownF_signedOut=404 ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=404 sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
+          "zoneYellow": "ownM_arrived=ok ownF_arrived=ok ownOther_arrived=ok ownM_registered=404 ownF_signedOut=ok ownM_cancelled=404 ownM_sentHome=404 sameZoneM_arrived=ok sameZoneF_registered=404 otherZoneF_arrived=404 otherZoneM_registered=404",
         }
       `);
   });
@@ -256,15 +259,15 @@ describe('A1 access truth table (pinned pre-refactor)', () => {
       `${await outcome(c.services.search.revealContact(a, id, 'parent'))}/${await outcome(c.services.search.revealContact(a, id, `${TARGETS[id]!.gender === 'female' ? 'female' : 'male'}-primary`))}`,
     )).toMatchInlineSnapshot(`
       {
-        "admin": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok sameZoneM_arrived=ok/ok sameZoneF_registered=ok/ok otherZoneF_arrived=ok/ok otherZoneM_registered=ok/ok",
-        "church": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok sameZoneM_arrived=404/ok sameZoneF_registered=404/404 otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
-        "churchBoys": "ownM_arrived=ok/ok ownF_arrived=404/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=404/ok ownM_cancelled=ok/ok sameZoneM_arrived=404/ok sameZoneF_registered=404/404 otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
-        "churchGirls": "ownM_arrived=404/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=404/404 ownF_signedOut=ok/ok ownM_cancelled=404/404 sameZoneM_arrived=404/ok sameZoneF_registered=404/404 otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
-        "director": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok sameZoneM_arrived=ok/ok sameZoneF_registered=ok/ok otherZoneF_arrived=ok/ok otherZoneM_registered=ok/ok",
-        "firstAid": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok sameZoneM_arrived=ok/ok sameZoneF_registered=ok/ok otherZoneF_arrived=ok/ok otherZoneM_registered=ok/ok",
-        "prayer": "ownM_arrived=403/403 ownF_arrived=403/403 ownOther_arrived=403/403 ownM_registered=403/403 ownF_signedOut=403/403 ownM_cancelled=403/403 sameZoneM_arrived=403/403 sameZoneF_registered=403/403 otherZoneF_arrived=403/403 otherZoneM_registered=403/403",
-        "zoneNull": "ownM_arrived=404/ok ownF_arrived=404/ok ownOther_arrived=404/ok ownM_registered=404/404 ownF_signedOut=404/ok ownM_cancelled=404/404 sameZoneM_arrived=404/ok sameZoneF_registered=404/404 otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
-        "zoneYellow": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok sameZoneM_arrived=ok/ok sameZoneF_registered=ok/ok otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
+        "admin": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok ownM_sentHome=ok/ok sameZoneM_arrived=ok/ok sameZoneF_registered=ok/ok otherZoneF_arrived=ok/ok otherZoneM_registered=ok/ok",
+        "church": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok ownM_sentHome=ok/ok sameZoneM_arrived=404/ok sameZoneF_registered=404/404 otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
+        "churchBoys": "ownM_arrived=ok/ok ownF_arrived=404/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=404/ok ownM_cancelled=ok/ok ownM_sentHome=ok/ok sameZoneM_arrived=404/ok sameZoneF_registered=404/404 otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
+        "churchGirls": "ownM_arrived=404/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=404/404 ownF_signedOut=ok/ok ownM_cancelled=404/404 ownM_sentHome=404/404 sameZoneM_arrived=404/ok sameZoneF_registered=404/404 otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
+        "director": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok ownM_sentHome=ok/ok sameZoneM_arrived=ok/ok sameZoneF_registered=ok/ok otherZoneF_arrived=ok/ok otherZoneM_registered=ok/ok",
+        "firstAid": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok ownM_sentHome=ok/ok sameZoneM_arrived=ok/ok sameZoneF_registered=ok/ok otherZoneF_arrived=ok/ok otherZoneM_registered=ok/ok",
+        "prayer": "ownM_arrived=403/403 ownF_arrived=403/403 ownOther_arrived=403/403 ownM_registered=403/403 ownF_signedOut=403/403 ownM_cancelled=403/403 ownM_sentHome=403/403 sameZoneM_arrived=403/403 sameZoneF_registered=403/403 otherZoneF_arrived=403/403 otherZoneM_registered=403/403",
+        "zoneNull": "ownM_arrived=404/ok ownF_arrived=404/ok ownOther_arrived=404/ok ownM_registered=404/404 ownF_signedOut=404/ok ownM_cancelled=404/404 ownM_sentHome=404/404 sameZoneM_arrived=404/ok sameZoneF_registered=404/404 otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
+        "zoneYellow": "ownM_arrived=ok/ok ownF_arrived=ok/ok ownOther_arrived=ok/ok ownM_registered=ok/ok ownF_signedOut=ok/ok ownM_cancelled=ok/ok ownM_sentHome=ok/ok sameZoneM_arrived=ok/ok sameZoneF_registered=ok/ok otherZoneF_arrived=404/ok otherZoneM_registered=404/404",
       }
     `);
   });

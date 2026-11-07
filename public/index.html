@@ -1718,6 +1718,7 @@ function leave(reason){
     // C15 gate: first, while ACTOR is still this login. A throw in enterShell after the restore loaded the
     // taps lands here; memory must not keep them for the next login (the saved copy stays for this one).
     _queueStep('leave');
+    _checkinFailed=0;_checkinFailReason='';_checkinFailNames=[];_checkinOldNames=[];_checkinOldCount=0;_lastRoster=null;_pulseSess=null;_ciPulseChurch=null; // ZN-1: no banner names or roster for the next login
     TOKEN=null;ACTOR=null;
     localStorage.removeItem('ycp_token');localStorage.removeItem('ycp_actor');
     // Gate A L2: a non-401 refusal never ran leave('expired'), so drop the preview here too.
@@ -1727,6 +1728,7 @@ function leave(reason){
   _rosterClear(); // the session is over, so nothing of the group stays on the phone
   try{localStorage.removeItem('ycp_settings');}catch(_){} // the camp-wide row (prices, discount tags, site map) too
   _queueStep('leave'); // before ACTOR is nulled: _persistQueue keys on it
+  _checkinFailed=0;_checkinFailReason='';_checkinFailNames=[];_checkinOldNames=[];_checkinOldCount=0;_lastRoster=null;_pulseSess=null;_ciPulseChurch=null; // ZN-1: a shared phone's next login must not see these names (saved taps untouched)
   clearTimeout(_undoTimer);_undoCamperId=null;_hideUndoToast();
   _bootOffline=false;_netStrip();
   Cache.clear();
@@ -3833,6 +3835,8 @@ function _optimisticState(camperId,roster,queue){
 }
 // B-1: dropped taps are not reconstructed (banner only, owner ruling). The banner names them and
 // says to tap again; tapping the banner only clears it.
+// ZN-3: offline or waiting for a signal is not a server problem.
+function _stuckLead(){return (navigator.onLine&&!_queueWaiting)?'The server had a problem.':'No signal.';}
 function _dismissFailedCheckins(){
   _checkinFailed=0;_checkinFailReason='';_checkinFailNames=[];_checkinOldNames=[];_checkinOldCount=0;
   if(CHECKIN_QUEUE.length)drainQueue();else _rCheckin();
@@ -4126,7 +4130,7 @@ async function _renderDailyCheckin(){
   const syncingN=CHECKIN_QUEUE.length;
   const stuck=CHECKIN_QUEUE.filter(e=>e.tries>0);
   const stuckNames=[...new Set(stuck.map(e=>(roster.find(r=>r.id===e.camperId)||{}).name||''))].filter(Boolean);
-  const stuckBanner=stuck.length?`<div class="ci-sync ci-sync-pending" id="ciStuck">${icSm('alert')} <span>Not sent yet: ${esc(stuckNames.join(', ')||(stuck.length+' check-in'+(stuck.length===1?'':'s')))}. The server had a problem. Saved on this phone and still trying.</span></div>`:'';
+  const stuckBanner=stuck.length?`<div class="ci-sync ci-sync-pending" id="ciStuck">${icSm('alert')} <span>Not sent yet: ${esc(stuckNames.join(', ')||(stuck.length+' check-in'+(stuck.length===1?'':'s')))}. ${_stuckLead()} Saved on this phone and still trying.</span></div>`:'';
   const oldBanner=_checkinOldCount?`<div class="ci-sync ci-sync-fail" id="ciTooOld" role="button" onclick="_dismissFailedCheckins()">${icSm('alert')} <span>Not sent, over 48 hours old: ${esc(_checkinOldNames.join(', ')||_checkinOldCount+' check-in'+(_checkinOldCount===1?'':'s'))}${(_checkinOldNames.length&&_checkinOldCount>_checkinOldNames.length)?' and '+(_checkinOldCount-_checkinOldNames.length)+' more':''}. Check the paper sheet. Tap here to dismiss.</span></div>`:'';
   const syncBanner=(syncingN>stuck.length||_checkinFailed>0)?
     (_checkinFailed>0
@@ -7751,7 +7755,7 @@ RENDER.incidents=async function(){
   // zoneLeader/director have no other console from which to review/delete one (see the home
   // card comment above for the fuller rationale; reverted the at-camp-only gate 2026-07-18).
   if(!canManageIncident()){go('home');return;}
-  const list=await api('/incidents').catch(()=>[]);
+  const list=await api('/incidents').catch(()=>null); // ZN-4: null means it could not load
   _incSeverity='low';
   const canDelete=['admin','director'].includes(ACTOR.role);
   const rows=(list||[]).length?list.map(i=>{
@@ -7760,7 +7764,7 @@ RENDER.incidents=async function(){
     return `<div class="card"><div class="rowsb" style="align-items:center"><div class="nm">${sev}${i.zone?' <span class="sub">'+esc(i.zone)+' Zone</span>':''}</div>${del}</div>
       <div style="font-size:var(--t-body);margin:6px 0;white-space:pre-wrap">${esc(i.summary)}</div>
       <div class="sub">${esc(i.createdByName||'—')} · ${dtFmt(i.createdAt)}${i.occurredAt?' · <b>occurred</b> '+dtFmt(i.occurredAt):''}</div></div>`;
-  }).join(''):emptyState('alert','No incidents logged yet.');
+  }).join(''):emptyState('alert',list?'No incidents logged yet.':"Couldn't load incidents. Open this screen again to retry.");
   paint('incidents',`<div class="infobox" style="font-size:.82rem">Log a safeguarding or operational incident. <b>Low</b> is just recorded. <b>High</b> also sends an urgent alert to zone leaders, directors and admins.</div>
     <div class="card">
       <label>What happened?</label>
@@ -7773,7 +7777,7 @@ RENDER.incidents=async function(){
         <button type="button" class="on" id="incSev-low" onclick="setIncSeverity('low')">Low · record</button>
         <button type="button" id="incSev-high" onclick="setIncSeverity('high')">High · alert zones</button>
       </div>
-      <button class="btn" style="margin-top:12px" onclick="submitIncident()">Log incident</button>
+      <button class="btn" id="incLogBtn" style="margin-top:12px" onclick="submitIncident()">Log incident</button>
     </div>
     <h3 class="sec" style="margin-top:18px">Incidents</h3>
     <div id="incList">${rows}</div>`,'Incidents','Newest first');
@@ -7793,11 +7797,13 @@ function _incOccurredISO(){
 async function submitIncident(){
   const summary=val('incSummary');
   if(!summary){toast('Describe the incident');return;}
+  // ZN-2: one POST per tap; RENDER.incidents repaints a fresh button on success.
+  const btn=document.getElementById('incLogBtn');if(btn){if(btn.disabled)return;btn.disabled=true;}
   try{
     await api('/incidents',{method:'POST',body:{summary,severity:_incSeverity,occurredAt:_incOccurredISO()}});
     toast(_incSeverity==='high'?'Incident logged. Zone leaders, directors and admins are alerted.':'Incident logged');
     await RENDER.incidents();
-  }catch(e){toast(e.message);}
+  }catch(e){toast(e.message);if(btn)btn.disabled=false;}
 }
 async function deleteIncident(id){
   if(!await confirmSheet({title:'Delete this incident?',body:'This cannot be undone.',confirmLabel:'Delete',danger:true}))return;
@@ -9977,14 +9983,16 @@ RENDER.import=async function(){
    anyone marked Y who isn't already at camp. Matches by First+Last+Church text — no id column
    (the export is the source of these exact values, so a straight match is expected to work). */
 function _offlineSignInCardHtml(){
+  const pre=CAMP_MODE==='pre-camp'; // DIR-N1: the server refuses the import until camp starts (Q6)
   return `<div class="card">
     <div class="h3" style="margin-top:0">Offline Sign-In</div>
     <p class="note-hint" style="text-align:left">A fallback for churches who prefer a bulk/paper sign-in instead of the app. Export the sheet, have the church mark "Y" as students arrive, then import the filled sheet to sign in everyone marked Y who isn't already at camp.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn ghost" onclick="downloadOfflineSignInTemplate()">${icSm('download')} Export sign-in sheet</button>
-      <button class="btn ghost" onclick="document.getElementById('osiFileIn').click()">${icSm('upload')} Import filled sheet</button>
+      <button class="btn ghost" ${pre?'disabled ':''}onclick="document.getElementById('osiFileIn').click()">${icSm('upload')} Import filled sheet</button>
       <input type="file" id="osiFileIn" accept=".csv,.xlsx,.xls" style="display:none" onchange="offlineSignInUpload()">
     </div>
+    ${pre?'<p class="note-hint" style="text-align:left;margin-top:6px">Import is available once camp starts (At-Camp mode).</p>':''}
     <div id="osiResult" style="display:none;margin-top:10px"></div>
   </div>`;
 }
@@ -10883,8 +10891,9 @@ async function _renderImportPreview(){
   }catch(e){
     // C11 review 1: Vercel caps a request body at 4.5 MB, so the three files together can 413. On that,
     // a 5xx or no answer, preview file by file as before (Ticket/Invoice can't see the staged Form).
-    // An app 4xx with its own message (bad body, session gone) stays on the cards.
-    const real4xx=e.status>=400&&e.status<500&&e.status!==413&&!/^Request failed \(/.test(e.message||'');
+    // An app 4xx with its own message (bad body, session gone) stays on the cards. A 404 means the
+    // server has no /import/batch (rolled back before C11), so it falls back too (CR-N2).
+    const real4xx=e.status>=400&&e.status<500&&e.status!==413&&e.status!==404&&!/^Request failed \(/.test(e.message||'');
     if(real4xx)results=_importBatch.map(b=>({b,err:e.message}));
     else{
       perFile=true;results=[];

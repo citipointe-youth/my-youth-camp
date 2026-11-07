@@ -220,14 +220,19 @@ export function canAccessChurch(actor: Actor, churchId: string, churchZone?: str
  * How far an actor reaches a person on the at-camp lookup surfaces (search, notes, contacts):
  * - 'full': in scope, AND the person has arrived — or is a registrant and the actor is firstAid
  *   or prayer (they log and read records during pre-camp testing too; nobody is a camper until
- *   the Day-1 sign-in).
+ *   the Day-1 sign-in), or a student cancelled after arriving (firstAid/prayer only, T-2).
  * - 'locate': out of scope, but a church or zone leader may find any arrived camper to reach that
  *   camper's church leaders (items 6/7/10). Sensitive fields are redacted; no parent number.
  * - 'none': otherwise.
  */
 export function reach(actor: Actor, person: Person): 'full' | 'locate' | 'none' {
   if (inScope(actor, person)) {
-    const eligible = isCamper(person) || ((actor.role === 'firstAid' || actor.role === 'prayer') && isRegistrant(person));
+    const care = actor.role === 'firstAid' || actor.role === 'prayer';
+    // T-2 (Tom, 7 Nov): a student cancelled after arriving (any check-in or sign history) stays
+    // reachable for first aid and prayer, so their records stay visible and can still be logged.
+    const cancelledAfterArrival = person.lifecycle === 'cancelled' &&
+      ((person.checkInHistory?.length ?? 0) > 0 || (person.signOutHistory?.length ?? 0) > 0);
+    const eligible = isCamper(person) || (care && (isRegistrant(person) || cancelledAfterArrival));
     return eligible ? 'full' : 'none';
   }
   return (actor.role === 'church' || actor.role === 'zoneLeader') && isCamper(person) ? 'locate' : 'none';

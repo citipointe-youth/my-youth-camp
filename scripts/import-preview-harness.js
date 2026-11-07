@@ -102,6 +102,22 @@ function sandbox(api, batch) {
     assert.ok(box.innerHTML.includes('Matches finalise'), '413: fallback keeps the old ticket line');
     assert.ok(box.innerHTML.includes('Confirm &amp; import'), '413: Confirm still offered');
   }
+  // CR-N2: a server without /import/batch (rolled back before C11, newer SPA shell) answers 404 ->
+  // fall back to the per-file preview instead of showing "not found" on every card.
+  {
+    const calls = [];
+    const api = (p) => {
+      if (p === '/settings') return Promise.resolve({});
+      calls.push(p);
+      if (p === '/import/batch') return Promise.reject(Object.assign(new Error('Route not found'), { status: 404 }));
+      return Promise.resolve({ created: 3, updated: 0, skipped: 0, errors: [], warnings: [] });
+    };
+    const { ctx, box } = sandbox(api, [{ type: 'form', name: 'form.csv', csvData: 'F' }]);
+    await ctx._renderImportPreview();
+    assert.deepStrictEqual(calls, ['/import/batch', '/import/csv'], '[CR-N2] 404: per-file fallback');
+    assert.ok(!box.innerHTML.includes('Route not found'), '[CR-N2] 404: batch error not shown');
+    assert.ok(box.innerHTML.includes('3 to add'), '[CR-N2] 404: per-file counts shown');
+  }
   // A real validation 4xx from the batch call stays on the cards (no fallback).
   {
     const calls = [];

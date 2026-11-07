@@ -222,7 +222,8 @@ export function makeSearchService(
         const gender = person.gender === 'female' ? 'female' : 'male';
         leaderContacts = contactsForPerson(church, gender, { mask: false });
       }
-      const parentContact = makeParentContact(person, { mask: true });
+      // T-1 (Tom, 7 Nov): prayer gets no parent contact at all (no guardian name, no phone).
+      const parentContact = actor.role === 'prayer' ? null : makeParentContact(person, { mask: true });
       return [...leaderContacts, ...(parentContact ? [parentContact] : [])];
     },
 

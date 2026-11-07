@@ -97,7 +97,7 @@ export const UpdateSettingsSchema = z.object({
   checkinWindowAmEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
   checkinWindowPmStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
   checkinWindowPmEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM 24h').optional(),
-  campMode: z.enum(CAMP_MODES).optional(),
+  // DIR-M1: no campMode here; Zod strips it, so POST /admin/mode (setMode) is its only writer.
   /* 2026-07-29 (migration 0017): admin-set reference prices for a full-price ticket, used by the
      budget's ticket classification. `.nullish()` NOT `.optional()` — clearing the field is a
      normal edit and the SPA posts an explicit `null` for it, which `.optional()` would reject
