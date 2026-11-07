@@ -99,6 +99,10 @@ describe('access regression: GET /settings needs a login', () => {
     expect(s['campMode']).toBe('at-camp');
     expect(s['lastTempPasswords']).toBeUndefined();
   });
+  it('[DIR-M1] PATCH /settings cannot switch campMode; POST /admin/mode (setMode) is the only writer', async () => {
+    await call('PATCH', '/settings', actor('admin'), { body: { campMode: 'pre-camp', campName: 'Renamed' } });
+    expect(await c.repos.settings.getSingleton()).toMatchObject({ campMode: 'at-camp', campName: 'Renamed' });
+  });
 });
 
 describe('access regression: C5 (A3) write policy at the route level', () => {
