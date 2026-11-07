@@ -115,18 +115,21 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
       // TRUE transition on THIS call stamps it — re-saving `true` on top of an already-true lock
       // (e.g. an unrelated settings edit) must not keep pushing the epoch forward, or a
       // perfectly valid session minted seconds ago would be killed by an admin renaming the camp.
+      // B-7 (OQ-50): only the parsed keys and these stamps are written, never the whole row.
+      const fields: Partial<CampSettings> = { ...parsed, updatedAt: now };
       if (parsed.churchLoginLocked === true && current.churchLoginLocked !== true) {
-        updated.churchSessionsValidFrom = now;
+        fields.churchSessionsValidFrom = now;
       }
       if (parsed.zoneLeaderLoginLocked === true && current.zoneLeaderLoginLocked !== true) {
-        updated.zoneLeaderSessionsValidFrom = now;
+        fields.zoneLeaderSessionsValidFrom = now;
       }
       // Item 3: move day-keyed content with the camp days before persisting the new dates, so a
       // date change never silently orphans the devotionals/schedule an admin already wrote.
       const moves = remapDays(current.checkInDays ?? [], updated.checkInDays ?? []);
       if (moves.size > 0) await applyDayMoves(moves);
 
-      const saved = await repo.saveSingleton(updated);
+      // A stamp or lastExportedAt written during applyDayMoves is not reverted.
+      const saved = await repo.patchSingleton(fields);
       invalidateDashboardCache();
       return saved;
     },
@@ -138,8 +141,8 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
 
     async setMode(actor, mode) {
       assertCan(actor, 'admin:manage');
-      const current = await get();
-      const saved = await repo.saveSingleton({ ...current, campMode: mode, updatedAt: nowISO() });
+      await get(); // 404 if the row is missing
+      const saved = await repo.patchSingleton({ campMode: mode, updatedAt: nowISO() });
       invalidateDashboardCache();
       return saved;
     },
@@ -165,8 +168,8 @@ export function makeSettingsService(repo: ISettingsRepository, deps: SettingsSer
            was missed; the tags survived only because nothing had been re-tagged yet. */
         if (tag === 'inperson' || tag === 'sponsor' || tag === 'discount' || tag === 'upgrade') clean[key] = tag;
       }
-      const current = await get();
-      const saved = await repo.saveSingleton({ ...current, discountCodeTags: clean, updatedAt: nowISO() });
+      await get(); // 404 if the row is missing
+      const saved = await repo.patchSingleton({ discountCodeTags: clean, updatedAt: nowISO() });
       invalidateDashboardCache();
       return saved;
     },

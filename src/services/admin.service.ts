@@ -263,9 +263,8 @@ export function makeAdminService(
 
       // Stamp when defaults were last saved so the Data screen + close-out checklist can
       // show it (bugs 6 & 10). Tolerate a missing settings row (first-run/tests).
-      const settings = await settingsRepo.getSingleton();
-      if (settings) {
-        await settingsRepo.saveSingleton({ ...settings, defaultsSavedAt: nowISO(), updatedAt: nowISO() });
+      if (await settingsRepo.getSingleton()) {
+        await settingsRepo.patchSingleton({ defaultsSavedAt: nowISO(), updatedAt: nowISO() });
       }
 
       return { ok: true };
@@ -279,7 +278,7 @@ export function makeAdminService(
     async newYear(actor, year, opts) {
       if (actor.role !== 'admin') throw new ForbiddenError('Only admin can advance the year');
       await assertExported(opts);
-      const settings = await settingsService.get();
+      await settingsService.get(); // 404 if the settings row is missing
       const defaults = await snapshotRepo.getDefaults();
       if (!defaults) {
         throw new NotFoundError('No defaults snapshot saved — run Save Defaults before New Year');
@@ -333,12 +332,12 @@ export function makeAdminService(
         if (u.username) tempPasswords.push({ username: u.username, tempPassword });
       }
 
-      const updated = await settingsRepo.saveSingleton({
-        ...settings,
+      // Patch only what the rollover owns (B-7), so a concurrent settings write is kept.
+      const updated = await settingsRepo.patchSingleton({
         year,
         campMode: 'pre-camp',
         lastTempPasswords: tempPasswords,
-        // `settings` was read before clearExportStamp(); keep the stamp cleared (A-2).
+        // Keep the stamp cleared (A-2): the rollover is itself a wipe.
         lastExportedAt: null,
         updatedAt: nowISO(),
       });

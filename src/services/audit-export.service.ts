@@ -361,12 +361,10 @@ export function makeAuditExportService(
         for (const t of temps) {
           pwSheet.addRow([t.username, t.tempPassword]);
         }
-        // Clear lastTempPasswords after including in export
-        await settingsRepo.saveSingleton({
-          ...settings!,
-          lastTempPasswords: null,
-          updatedAt: nowISO(),
-        });
+        // Clear lastTempPasswords after including in export. Patch only that column (B-7):
+        // `settings` was read when the build started, so a whole-row save would revert any
+        // lock, revoke or mode change made during the export.
+        await settingsRepo.patchSingleton({ lastTempPasswords: null, updatedAt: nowISO() });
       }
 
       const buffer = await wb.xlsx.writeBuffer();

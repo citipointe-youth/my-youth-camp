@@ -408,6 +408,11 @@ export class InMemoryNotificationRepository
         }
       }
     }
+    // B-6: only claimForPush sets pushSentAt and nothing un-sets it, so a whole-row save
+    // (an edit that read the row before a claim) keeps the stored claim. Mirrors the coalesce
+    // in the Supabase upsert.
+    const stored = this.store.get(n.id);
+    if (stored?.pushSentAt != null) n = { ...n, pushSentAt: stored.pushSentAt };
     return super.save(n);
   }
 
@@ -558,7 +563,10 @@ export class InMemorySettingsRepository implements ISettingsRepository {
 
   async patchSingleton(fields: Partial<CampSettings>): Promise<CampSettings> {
     if (!this.settings) throw new Error('Settings row missing; nothing to patch');
-    return this.saveSingleton({ ...this.settings, ...fields, updatedAt: fields.updatedAt ?? new Date().toISOString() });
+    // Same contract as Supabase patchCols: undefined is skipped, id/createdAt are never written.
+    const { id: _id, createdAt: _c, ...rest } = fields;
+    const defined = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+    return this.saveSingleton({ ...this.settings, ...defined, updatedAt: fields.updatedAt ?? new Date().toISOString() });
   }
 }
 
