@@ -11,7 +11,7 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "harness": "node scripts/accom-export-harness.js && node scripts/contact-export-harness.js && node scripts/data-search-harness.js && node scripts/devotional-preview-harness.js && node scripts/login-activity-harness.js && node scripts/pulse-fa-harness.js && node scripts/push-activity-harness.js && node scripts/budget-xlsx-harness.js && node scripts/filter-persist-harness.js && node scripts/prayer-amend-harness.js && node scripts/qa-batch2-harness.js && node scripts/session-teardown-harness.js && node scripts/import-preview-harness.js && node scripts/sw-harness.js && node scripts/preview-queue-harness.js && node scripts/session-queue-harness.js"
+    "harness": "node scripts/accom-export-harness.js && node scripts/contact-export-harness.js && node scripts/data-search-harness.js && node scripts/devotional-preview-harness.js && node scripts/login-activity-harness.js && node scripts/pulse-fa-harness.js && node scripts/push-activity-harness.js && node scripts/budget-xlsx-harness.js && node scripts/filter-persist-harness.js && node scripts/prayer-amend-harness.js && node scripts/qa-batch2-harness.js && node scripts/session-teardown-harness.js && node scripts/import-preview-harness.js && node scripts/sw-harness.js && node scripts/preview-queue-harness.js && node scripts/session-queue-harness.js && node scripts/round-2026-11-07-harness.js"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
