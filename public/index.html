@@ -7777,7 +7777,7 @@ RENDER.incidents=async function(){
         <button type="button" class="on" id="incSev-low" onclick="setIncSeverity('low')">Low · record</button>
         <button type="button" id="incSev-high" onclick="setIncSeverity('high')">High · alert zones</button>
       </div>
-      <button class="btn" style="margin-top:12px" onclick="submitIncident()">Log incident</button>
+      <button class="btn" id="incLogBtn" style="margin-top:12px" onclick="submitIncident()">Log incident</button>
     </div>
     <h3 class="sec" style="margin-top:18px">Incidents</h3>
     <div id="incList">${rows}</div>`,'Incidents','Newest first');
@@ -7797,11 +7797,13 @@ function _incOccurredISO(){
 async function submitIncident(){
   const summary=val('incSummary');
   if(!summary){toast('Describe the incident');return;}
+  // ZN-2: one POST per tap; RENDER.incidents repaints a fresh button on success.
+  const btn=document.getElementById('incLogBtn');if(btn){if(btn.disabled)return;btn.disabled=true;}
   try{
     await api('/incidents',{method:'POST',body:{summary,severity:_incSeverity,occurredAt:_incOccurredISO()}});
     toast(_incSeverity==='high'?'Incident logged. Zone leaders, directors and admins are alerted.':'Incident logged');
     await RENDER.incidents();
-  }catch(e){toast(e.message);}
+  }catch(e){toast(e.message);if(btn)btn.disabled=false;}
 }
 async function deleteIncident(id){
   if(!await confirmSheet({title:'Delete this incident?',body:'This cannot be undone.',confirmLabel:'Delete',danger:true}))return;

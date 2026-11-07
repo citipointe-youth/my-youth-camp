@@ -241,6 +241,34 @@ await T('[DIR-N1] offline sheet card: Import disabled with a note in pre-camp, e
   vm.runInContext("CAMP_MODE='at-camp'",c);const at=vm.runInContext('_offlineSignInCardHtml()',c);
   assert.ok(!at.includes('disabled')&&!at.includes('available once camp starts'),'at camp: unchanged');
 });
+// ZN-2 / ZN-4: the incidents screen (zone leader / director / admin).
+function incBox(apiImpl){
+  const els={};const el=(id)=>els[id]||(els[id]={id,disabled:false,textContent:'',innerHTML:'',value:''});
+  const c={toasts:[],painted:'',Date,isNaN,Promise,
+    document:{getElementById:el},toast:(m)=>c.toasts.push(m),api:apiImpl,
+    val:(id)=>el(id).value,canManageIncident:()=>true,go(){},ACTOR:{role:'zoneLeader'},
+    icSm:()=>'',esc:(s)=>String(s),dtFmt:(s)=>String(s),emptyState:(i,t)=>'<empty>'+t+'</empty>',
+    paint:(id,h)=>{c.painted=h;}};
+  vm.createContext(c);
+  vm.runInContext("const RENDER={};let _incSeverity='low';"+between('RENDER.incidents=async function(){','/* `<input type="datetime-local">`')+extract('function _incOccurredISO(')+extract('async function submitIncident(')+';this.RENDER=RENDER;',c);
+  return {c,el};
+}
+await T('[ZN-2] Log incident: the button is disabled while the POST is in flight, so a double tap posts once',async()=>{
+  let posts=0,release;const held=new Promise(r=>release=r);
+  const {c,el}=incBox(async(p,o)=>{if(o&&o.method==='POST'){posts++;await held;}return [];});
+  el('incSummary').value='Fell over';
+  const first=vm.runInContext('submitIncident()',c);
+  assert.strictEqual(el('incLogBtn').disabled,true,'disabled in flight');
+  await vm.runInContext('submitIncident()',c);
+  release();await first;
+  assert.strictEqual(posts,1,'second tap ignored');
+});
+await T('[ZN-2] Log incident: a failed POST re-enables the button',async()=>{
+  const {c,el}=incBox(async(p,o)=>{if(o&&o.method==='POST')throw new Error('Server error');return [];});
+  el('incSummary').value='Fell over';
+  await vm.runInContext('submitIncident()',c);
+  assert.strictEqual(el('incLogBtn').disabled,false);assert.deepStrictEqual(c.toasts,['Server error']);
+});
 console.log(results.join('\n'));
 console.log(failures?failures+' FAILED':'all passed'+(KNOWN.length?' ('+KNOWN.length+' KNOWN-FAIL)':''));
 process.exitCode=failures?1:0;
