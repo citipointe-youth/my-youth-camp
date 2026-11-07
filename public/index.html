@@ -10887,8 +10887,9 @@ async function _renderImportPreview(){
   }catch(e){
     // C11 review 1: Vercel caps a request body at 4.5 MB, so the three files together can 413. On that,
     // a 5xx or no answer, preview file by file as before (Ticket/Invoice can't see the staged Form).
-    // An app 4xx with its own message (bad body, session gone) stays on the cards.
-    const real4xx=e.status>=400&&e.status<500&&e.status!==413&&!/^Request failed \(/.test(e.message||'');
+    // An app 4xx with its own message (bad body, session gone) stays on the cards. A 404 means the
+    // server has no /import/batch (rolled back before C11), so it falls back too (CR-N2).
+    const real4xx=e.status>=400&&e.status<500&&e.status!==413&&e.status!==404&&!/^Request failed \(/.test(e.message||'');
     if(real4xx)results=_importBatch.map(b=>({b,err:e.message}));
     else{
       perFile=true;results=[];
