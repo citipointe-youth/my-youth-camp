@@ -3835,6 +3835,8 @@ function _optimisticState(camperId,roster,queue){
 }
 // B-1: dropped taps are not reconstructed (banner only, owner ruling). The banner names them and
 // says to tap again; tapping the banner only clears it.
+// ZN-3: offline or waiting for a signal is not a server problem.
+function _stuckLead(){return (navigator.onLine&&!_queueWaiting)?'The server had a problem.':'No signal.';}
 function _dismissFailedCheckins(){
   _checkinFailed=0;_checkinFailReason='';_checkinFailNames=[];_checkinOldNames=[];_checkinOldCount=0;
   if(CHECKIN_QUEUE.length)drainQueue();else _rCheckin();
@@ -4128,7 +4130,7 @@ async function _renderDailyCheckin(){
   const syncingN=CHECKIN_QUEUE.length;
   const stuck=CHECKIN_QUEUE.filter(e=>e.tries>0);
   const stuckNames=[...new Set(stuck.map(e=>(roster.find(r=>r.id===e.camperId)||{}).name||''))].filter(Boolean);
-  const stuckBanner=stuck.length?`<div class="ci-sync ci-sync-pending" id="ciStuck">${icSm('alert')} <span>Not sent yet: ${esc(stuckNames.join(', ')||(stuck.length+' check-in'+(stuck.length===1?'':'s')))}. The server had a problem. Saved on this phone and still trying.</span></div>`:'';
+  const stuckBanner=stuck.length?`<div class="ci-sync ci-sync-pending" id="ciStuck">${icSm('alert')} <span>Not sent yet: ${esc(stuckNames.join(', ')||(stuck.length+' check-in'+(stuck.length===1?'':'s')))}. ${_stuckLead()} Saved on this phone and still trying.</span></div>`:'';
   const oldBanner=_checkinOldCount?`<div class="ci-sync ci-sync-fail" id="ciTooOld" role="button" onclick="_dismissFailedCheckins()">${icSm('alert')} <span>Not sent, over 48 hours old: ${esc(_checkinOldNames.join(', ')||_checkinOldCount+' check-in'+(_checkinOldCount===1?'':'s'))}${(_checkinOldNames.length&&_checkinOldCount>_checkinOldNames.length)?' and '+(_checkinOldCount-_checkinOldNames.length)+' more':''}. Check the paper sheet. Tap here to dismiss.</span></div>`:'';
   const syncBanner=(syncingN>stuck.length||_checkinFailed>0)?
     (_checkinFailed>0

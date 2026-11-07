@@ -224,6 +224,13 @@ await T('[ZN-1] expiry then another login: no failed/old check-in names, roster 
   assert.deepStrictEqual(JSON.parse(b.r('JSON.stringify([_checkinFailed,_checkinFailReason,_checkinFailNames,_checkinOldNames,_checkinOldCount,_lastRoster,_pulseSess,_ciPulseChurch])')),
     [0,'',[],[],0,null,null,null]);
 });
+// ZN-3: the stuck-tap banner's lead line names the real cause.
+await T('[ZN-3] stuck banner lead: "server had a problem" only when online and not waiting, else "No signal"',async()=>{
+  const b=box();await b.login('alice');
+  b.c.navigator.onLine=true;b.r('_queueWaiting=false');assert.strictEqual(b.r('_stuckLead()'),'The server had a problem.');
+  b.r('_queueWaiting=true');assert.strictEqual(b.r('_stuckLead()'),'No signal.');
+  b.c.navigator.onLine=false;b.r('_queueWaiting=false');assert.strictEqual(b.r('_stuckLead()'),'No signal.');
+});
 console.log(results.join('\n'));
 console.log(failures?failures+' FAILED':'all passed'+(KNOWN.length?' ('+KNOWN.length+' KNOWN-FAIL)':''));
 process.exitCode=failures?1:0;
