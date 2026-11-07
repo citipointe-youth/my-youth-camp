@@ -4018,7 +4018,7 @@ async function _renderDailyCheckin(){
         <div class="nm">${esc(c.name)}${c.medicalFlag?_medPill():''}</div>
         ${subTxt?`<div class="sub">${subTxt}</div>`:''}
       </div>
-      <button class="btn ghost sm" style="z-index:1;flex:none;min-height:44px;padding:8px 12px" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(jsq(c.name))}')">Add note</button>
+      <button class="btn ghost sm" style="z-index:1;flex:none;min-height:44px;padding:8px 12px" onclick="event.stopPropagation();notePrompt('${c.id}','${esc(jsq(c.name))}',SEL_SESSION)">Add note</button>
       ${actionBtn}
     </div>`;
   }
@@ -4153,9 +4153,10 @@ function _offerNoteDraft(){
     <button class="btn" onclick="closeModal();notePrompt('${d.camperId}','${esc(jsq(d.name))}')">Open the note</button>
     <button class="btn ghost" style="margin-top:6px" onclick="_ndPut('${d.camperId}',null);closeModal()">Discard it</button>`);
 }
-function notePrompt(camperId,name){
+// B-10: only a check-in row (and "‹ Edit" handing back the same note's) passes sessionId.
+function notePrompt(camperId,name,sessionId){
   if(_ciTapLocked()){_ciTapIgnored(camperId,name);return;} // QA item 4: same stray second tap, landing on the next row's Add note
-  window._noteCtx={camperId,name};
+  window._noteCtx={camperId,name,sessionId};
   const d=_ndAll()[camperId]||{body:'',sensitive:false};
   modal(`<h3>Note · ${esc(name)}</h3>
     <label>Note</label><textarea id="noteBody" maxlength="1900" oninput="_noteDraftSave()" placeholder="e.g. left dinner early, looked unwell">${esc(d.body)}</textarea>
@@ -4171,22 +4172,23 @@ function reviewNote(camperId,name){
   // Item 7e: the leader name is optional — the backend already attributes the note to the
   // logged-in actor (see confirmNote below); this field is only a "logged by" annotation.
   if(!body){toast('Type a note first');return;}
-  if(leader)LAST_LEADER=leader;window._draft={camperId,name,leader,body,sensitive};_ndPut(camperId,{name,body,sensitive});
+  if(leader)LAST_LEADER=leader;window._draft={camperId,name,leader,body,sensitive,sessionId:window._noteCtx&&window._noteCtx.camperId===camperId?window._noteCtx.sessionId:undefined};_ndPut(camperId,{name,body,sensitive});
   modal(`<h3>Review note</h3><div class="card" style="margin:6px 0 10px">
     <div class="sub">Student</div><div class="nm">${esc(name)}</div>
     ${leader?`<div class="sub" style="margin-top:7px">Logged by</div><div class="nm">${esc(leader)}</div>`:''}
     <div class="sub" style="margin-top:7px">Note</div><div style="font-size:var(--t-body)">${esc(body)}</div>
     ${sensitive?`<div class="sub" style="margin-top:7px">Visibility</div><div style="font-size:var(--t-body)">${icSm('alert')} Sensitive — hidden from church logins. Zone leaders, directors, admins and the prayer team can read it. Saving it does not alert anyone.</div>`:''}</div>
     <button class="btn" onclick="confirmNote('${camperId}')">Confirm &amp; submit</button>
-    <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(jsq(name))}')">‹ Edit</button>`);
+    <button class="btn ghost" style="margin-top:6px" onclick="notePrompt('${camperId}','${esc(jsq(name))}',window._draft&&window._draft.sessionId)">‹ Edit</button>`);
 }
 async function confirmNote(camperId){const d=window._draft;if(!d||_sheetBusy)return;
   // Backend attributes the note to the logged-in actor; the typed leader name is folded into the body.
   const body=d.leader&&d.leader!==ACTOR.displayName?`${d.body}\n— logged by ${d.leader}`:d.body;
-  // Bug 19: SEL_SESSION is null outside the check-in screen — omit the key entirely rather than
-  // posting `sessionId: null` (see AddNoteSchema in src/services/note.service.ts).
+  // B-10: the session comes from the check-in row the note was opened from, never the SEL_SESSION
+  // global, which keeps the last check-in session after leaving that screen. No session: omit the
+  // key rather than posting `sessionId: null` (Bug 19, AddNoteSchema in src/services/note.service.ts).
   const payload={camperId,body,category:'note',sensitive:!!d.sensitive};
-  if(SEL_SESSION)payload.sessionId=SEL_SESSION;
+  if(d.sessionId)payload.sessionId=d.sessionId;
   _sheetSending(true);
   try{
     await api('/notes',{method:'POST',body:payload});window._draft=null;_ndPut(camperId,null);_sheetSending(false);

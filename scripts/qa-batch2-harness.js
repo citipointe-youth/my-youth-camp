@@ -270,7 +270,35 @@ function queueOwners() {
   assert.strictEqual(vm.runInContext('_checkinOldCount', e), 2, 'and counted, for the one with no name');
   assert.ok(/Ann/.test(e.toasts[0]), 'told straight away');
 }
+// B-10 (camp arch 2026-11-07): a note carries the check-in session only when it was opened from a
+// check-in row, not whatever session the check-in screen last showed.
+async function noteSession() {
+  const posts = [];
+  const c = {
+    modal() {}, closeModal() {}, toast() {}, _sheetSending() {}, _ciTapLocked: () => false, _ndAll: () => ({}), _ndPut() {},
+    _actingName: () => '', esc: (s) => s, jsq: (s) => s, icSm: () => '', dtFmt: () => '', window: {},
+    document: { getElementById: (id) => (id === 'noteBody' ? { value: 'Left dinner early' } : { checked: false }) },
+    api: async (p, o) => { posts.push(o.body); },
+  };
+  vm.createContext(c);
+  vm.runInContext('var ACTOR={displayName:"Sam"},SEL_SESSION="mon-am",LAST_LEADER="",_sheetBusy=false;'
+    + extract('function notePrompt(') + extract('function reviewNote(') + extract('async function confirmNote('), c);
+  // Students, profile and search open the note with no session.
+  c.notePrompt('a', 'Ann'); c.reviewNote('a', 'Ann'); await c.confirmNote('a');
+  assert.ok(!('sessionId' in posts[0]), 'a note from Students/profile/search is not tagged with the last check-in session');
+  // A check-in row passes its session, and "‹ Edit" hands the same note's session back.
+  const edit = () => vm.runInContext('window._draft&&window._draft.sessionId', c);
+  c.notePrompt('a', 'Ann', 'mon-am'); c.reviewNote('a', 'Ann'); c.notePrompt('a', 'Ann', edit()); c.reviewNote('a', 'Ann'); await c.confirmNote('a');
+  assert.strictEqual(posts[1].sessionId, 'mon-am', 'a check-in row note keeps its session through Edit');
+  assert.ok(extract('function reviewNote(').includes("onclick=\"notePrompt('${camperId}','${esc(jsq(name))}',window._draft&&window._draft.sessionId)\">‹ Edit"), 'Edit passes the note session');
+  // Opened from a check-in row and cancelled, then opened for the same student from Students.
+  c.notePrompt('b', 'Bo', 'mon-am'); c.notePrompt('b', 'Bo'); c.reviewNote('b', 'Bo'); await c.confirmNote('b');
+  assert.ok(!('sessionId' in posts[2]), 'a cancelled check-in-row note leaves nothing behind');
+  assert.ok(/notePrompt\('\$\{c\.id\}','\$\{esc\(jsq\(c\.name\)\)\}',SEL_SESSION\)/.test(extract('function rowHtml(')), 'the check-in row passes its session');
+}
+
 (async () => {
+  await noteSession();
   const nonApp = Object.assign(new Error('x'), { transient: true, nonApp: true });
   const net = Object.assign(new Error('x'), { transient: true });
   const appNo = Object.assign(new Error('x'), { code: 'FORBIDDEN' });
