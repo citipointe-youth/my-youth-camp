@@ -169,7 +169,7 @@ describe('access-control: prayer role', () => {
     for (const a of [
       'camper:read:sensitive', 'attendance:write', 'checkin:write', 'note:write', 'note:read',
       'note:write:firstaid', 'note:read:firstaid', 'registrant:read', 'registrant:write',
-      'incident:manage', 'export:compliance', 'admin:manage', 'camper:write',
+      'incident:manage', 'export:compliance', 'admin:manage',
       'notification:send:zone', 'notification:send:camp',
     ] as const) {
       expect(can(p, a)).toBe(false);

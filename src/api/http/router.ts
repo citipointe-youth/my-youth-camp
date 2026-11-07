@@ -103,7 +103,6 @@ export function buildRoutes(services: Services): (Route | BufferRoute)[] {
     { method: 'GET', path: '/campers', auth: true, handler: (r) => camper.list(r) },
     { method: 'POST', path: '/campers/:id/reveal-medicare', auth: true, handler: (r) => camper.revealMedicare(r) },
     { method: 'GET', path: '/campers/:id', auth: true, handler: (r) => camper.get(r) },
-    { method: 'PATCH', path: '/campers/:id', auth: true, handler: (r) => camper.update(r) },
 
     // ----- Check-in -----
     { method: 'GET', path: '/checkin/sessions', auth: true, handler: (r) => checkIn.sessions(r) },

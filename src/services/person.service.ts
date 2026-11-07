@@ -5,6 +5,7 @@ import type { CheckInEntry, SignOutEvent } from '../core/entities/person';
 import type { Actor } from '../core/entities/user';
 import { assertCan, canAccessChurch, canAccessPerson, isOversight } from './access-control';
 import { NotFoundError, BadRequestError } from '../core/errors/app-error';
+import { RegistrantPatchSchema } from '../core/validation';
 import { ageFromDob, nowISO } from '../utils/date';
 import { newId } from '../utils/id';
 import { withCheckIn, withSignEvent } from './person-lifecycle';
@@ -40,6 +41,12 @@ export interface PersonService {
   /** Create a pre-camp registrant (lifecycle 'registered'). */
   create(actor: Actor, input: { firstName: string; lastName: string; gender: Person['gender']; kind?: Person['kind']; grade?: Person['grade'] | null; churchId: string; churchName: string; zone: string; paymentStatus?: Person['paymentStatus']; accommodationKind?: Person['accommodationKind']; accommodationLabel?: string | null; parentGuardianName?: string | null; parentPhone?: string | null; mobile?: string | null; medicalConditions?: string[]; dietaryRequirements?: string[] }): Promise<Person>;
   update(actor: Actor, id: string, patch: Partial<Person>): Promise<Person>;
+  /**
+   * PATCH /registrants/:id (A3): THE one interpreter of a wire body — legacy aliases (status,
+   * medical, dietary, parentName, blueCardCollected, kind), then `update`. Unknown keys are
+   * dropped. The church field strip and value checks live in `update`.
+   */
+  patch(actor: Actor, id: string, body: unknown): Promise<Person>;
   remove(actor: Actor, id: string): Promise<void>;
   /** Apply a check-in entry — first 'in' promotes registered → arrived (Day-1 sign-in). */
   checkIn(actor: Actor, personId: string, entry: Omit<CheckInEntry, 'id'>): Promise<Person>;
@@ -88,7 +95,7 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
     return p;
   }
 
-  return {
+  const service: PersonService = {
     buildProfile,
 
     async list(actor, opts = {}) {
@@ -202,6 +209,16 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
     async update(actor, id, patch) {
       assertCan(actor, 'registrant:write');
       const existing = await getOwned(actor, id);
+      const ov = patch.accommodationOverride;
+      if (ov !== undefined && ov !== null && ov !== 'tent' && ov !== 'classroom') {
+        throw new BadRequestError('accommodationOverride must be tent, classroom or null');
+      }
+      for (const k of ['amountPaidOverride', 'refundAmount'] as const) {
+        const v = patch[k];
+        if (v !== undefined && v !== null && (!Number.isFinite(v) || v < 0)) {
+          throw new BadRequestError(`${k} must be a non-negative number or null`);
+        }
+      }
       // History, atCamp, and createdAt are never patchable; lifecycle is restricted to
       // registered ↔ cancelled (camp-state transitions go via checkIn/signEvent).
       const { id: _i, atCamp: _a, checkInHistory: _ch, signOutHistory: _sh, createdAt: _c, lifecycle, ...safeRest } = patch;
@@ -263,6 +280,84 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       return saved;
     },
 
+    async patch(actor, id, body) {
+      const b = RegistrantPatchSchema.parse(body) as Record<string, unknown>;
+
+      // Map blueCardCollected boolean ↔ blueCardNumber string.
+      // If blueCardNumber is provided directly, it takes precedence.
+      let blueCardNumber: string | null | undefined;
+      if ('blueCardNumber' in b) {
+        blueCardNumber = (b['blueCardNumber'] as string | null) ?? null;
+      } else if ('blueCardCollected' in b) {
+        const existing = await service.get(actor, id);
+        blueCardNumber = b['blueCardCollected']
+          ? (existing.blueCardNumber ?? 'collected')
+          : null;
+      }
+
+      const patch: Partial<Person> = {
+        ...(b['firstName'] !== undefined && { firstName: b['firstName'] as string }),
+        ...(b['lastName'] !== undefined && { lastName: b['lastName'] as string }),
+        ...(b['gender'] !== undefined && { gender: b['gender'] as Person['gender'] }),
+        ...(b['kind'] !== undefined && { kind: b['kind'] === 'leader' ? 'leader' : 'youth' }),
+        ...(b['grade'] !== undefined && { grade: b['grade'] as Person['grade'] }),
+        // Church move (at-camp student edit): the SPA sends all three of churchId/churchName/zone
+        // together from its /accounts/churches list so the denormalized snapshot stays consistent.
+        ...(b['churchId'] !== undefined && { churchId: b['churchId'] as string }),
+        ...(b['churchName'] !== undefined && { churchName: b['churchName'] as string }),
+        ...(b['zone'] !== undefined && { zone: b['zone'] as string }),
+        ...(b['paymentStatus'] !== undefined && { paymentStatus: b['paymentStatus'] as Person['paymentStatus'] }),
+        ...(b['accommodationKind'] !== undefined && { accommodationKind: b['accommodationKind'] as Person['accommodationKind'] }),
+        ...(b['accommodationLabel'] !== undefined && { accommodationLabel: b['accommodationLabel'] as string }),
+        ...(b['mobile'] !== undefined && { mobile: b['mobile'] as string }),
+        ...((b['parentGuardianName'] !== undefined || b['parentName'] !== undefined) && {
+          parentGuardianName: ((b['parentGuardianName'] ?? b['parentName']) as string) ?? null,
+        }),
+        ...(b['parentPhone'] !== undefined && { parentPhone: b['parentPhone'] as string }),
+        ...(b['blueCardExpiry'] !== undefined && { blueCardExpiry: b['blueCardExpiry'] as string }),
+        // Map dietary/medical strings to arrays (legacy Registrant shape)
+        ...(b['dietary'] !== undefined && {
+          dietaryRequirements: b['dietary'] ? [b['dietary'] as string] : [],
+        }),
+        ...(b['medical'] !== undefined && {
+          medicalConditions: b['medical'] ? [b['medical'] as string] : [],
+        }),
+        // Map status → lifecycle
+        ...(b['status'] !== undefined && {
+          lifecycle: b['status'] === 'cancelled' ? 'cancelled' : 'registered',
+        }),
+        ...(blueCardNumber !== undefined && { blueCardNumber }),
+        // Ticket List / Invoice import fields — lets an admin manually clear
+        // needsReview/needsReviewReason after reconciling an orphan, or hand-correct
+        // ticketNumber/accommodationKindConfidence/the four money fields.
+        ...(b['ticketNumber'] !== undefined && { ticketNumber: b['ticketNumber'] as string | null }),
+        ...(b['invoiceNumber'] !== undefined && { invoiceNumber: b['invoiceNumber'] as string | null }),
+        ...(b['accommodationKindConfidence'] !== undefined && {
+          accommodationKindConfidence: b['accommodationKindConfidence'] as Person['accommodationKindConfidence'],
+        }),
+        /* Individual overrides (0022, Data Import). `null` is a meaningful value for all three
+           (clear the override / clear the refund), so these test `!== undefined`, matching every
+           other entry here. No importer can reach this path. */
+        ...(b['accommodationOverride'] !== undefined && {
+          accommodationOverride: b['accommodationOverride'] as Person['accommodationOverride'],
+        }),
+        ...(b['amountPaidOverride'] !== undefined && {
+          amountPaidOverride: b['amountPaidOverride'] == null ? null : Number(b['amountPaidOverride']),
+        }),
+        ...(b['refundAmount'] !== undefined && {
+          refundAmount: b['refundAmount'] == null ? null : Number(b['refundAmount']),
+        }),
+        ...(b['discountAmount'] !== undefined && { discountAmount: b['discountAmount'] as number | null }),
+        ...(b['amountPaid'] !== undefined && { amountPaid: b['amountPaid'] as number | null }),
+        ...(b['feesAmount'] !== undefined && { feesAmount: b['feesAmount'] as number | null }),
+        ...(b['taxAmount'] !== undefined && { taxAmount: b['taxAmount'] as number | null }),
+        ...(b['needsReview'] !== undefined && { needsReview: b['needsReview'] as boolean }),
+        ...(b['needsReviewReason'] !== undefined && { needsReviewReason: b['needsReviewReason'] as string | null }),
+      };
+
+      return service.update(actor, id, patch);
+    },
+
     async remove(actor, id) {
       assertCan(actor, 'person:delete');
       await getOwned(actor, id);
@@ -322,4 +417,5 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
       return saved;
     },
   };
+  return service;
 }

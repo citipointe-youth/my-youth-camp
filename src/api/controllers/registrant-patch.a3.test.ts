@@ -145,3 +145,33 @@ describe('A3 PATCH /registrants/:id body → stored person (pinned pre-refactor)
     `);
   });
 });
+
+describe('A3 PersonService interface', () => {
+  async function svc() {
+    const repo = new InMemoryPersonRepository();
+    await repo.init();
+    await repo.save(person());
+    return { repo, svc: makePersonService(repo) };
+  }
+
+  it('update itself refuses a bad override or a negative/non-finite amount (was controller-only)', async () => {
+    const { svc: s } = await svc();
+    for (const patch of [{ accommodationOverride: 'bogus' }, { refundAmount: -1 }, { amountPaidOverride: Number.NaN }]) {
+      await expect(s.update(ACTORS.admin!, 'p1', patch as Partial<Person>)).rejects.toMatchObject({ statusCode: 400 });
+    }
+  });
+
+  it('patch maps the wire aliases and drops unknown keys', async () => {
+    const { repo, svc: s } = await svc();
+    await s.patch(ACTORS.admin!, 'p1', { status: 'cancelled', medical: 'asthma', otherMedications: 'x' });
+    const p = (await repo.findById('p1'))!;
+    expect(p).toMatchObject({ lifecycle: 'cancelled', medicalConditions: ['asthma'] });
+    expect(p.otherMedications).toBeUndefined();
+  });
+
+  it('a role without registrant:write now gets 403 before any body check (was 400 first)', async () => {
+    const { svc: s } = await svc();
+    const firstAid = { ...ACTORS.admin!, role: 'firstAid' } as Actor;
+    await expect(s.patch(firstAid, 'p1', { accommodationOverride: 'bogus' })).rejects.toMatchObject({ statusCode: 403 });
+  });
+});

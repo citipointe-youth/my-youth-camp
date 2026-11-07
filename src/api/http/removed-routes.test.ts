@@ -14,6 +14,8 @@ describe('router: removed post-camp routes', () => {
     "path: '/notifications/latest'",
     "path: '/import/churches'",
     "path: '/accounts/churches/split'",
+    // A3 (IA OQ-20): a second, unvalidated patch path with no SPA or console caller.
+    "method: 'PATCH', path: '/campers/:id'",
   ];
   for (const frag of removed) {
     it(`does not declare ${frag}`, () => {

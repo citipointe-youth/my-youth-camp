@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { makeRegistrantController } from './registrant.controller';
@@ -53,14 +53,15 @@ function person(): Person {
   } as unknown as Person;
 }
 
-function controller() {
-  const p = person();
-  const personSvc = {
-    get: async () => p,
-    update: async (_actor: Actor, _id: string, patch: Partial<Person>) => ({ ...p, ...patch }),
-  } as unknown as PersonService;
-  return makeRegistrantController({ person: personSvc });
-}
+// A3: the bounds checks moved into PersonService, so these run the real service on memory.
+let ctl: ReturnType<typeof makeRegistrantController>;
+beforeEach(async () => {
+  const repo = new InMemoryPersonRepository();
+  await repo.init();
+  await repo.save(person());
+  ctl = makeRegistrantController({ person: makePersonService(repo) });
+});
+const controller = () => ctl;
 
 function req(body: Record<string, unknown>): HttpRequest {
   return { ctx: { actor: actor(), token: 't' }, params: { id: 'p1' }, query: {}, body };
