@@ -288,7 +288,7 @@ describe('cancel / refund / overrides (0022)', () => {
 
   it('clearing atCamp is what makes a cancel reach check-in, warnings and the dashboard', async () => {
     const p = await svc.create(admin, baseInput());
-    await repo.savePresence({ ...(await repo.findById(p.id))!, atCamp: true }); // B-1: fixture sets presence
+    await repo.transition(p.id, (c) => ({ atCamp: true, lifecycle: c.lifecycle, updatedAt: c.updatedAt })); // fixture sets presence (P3)
     const out = await svc.update(admin, p.id, { lifecycle: 'cancelled' } as Partial<Person>);
     expect(out.lifecycle).toBe('cancelled');
     expect(out.atCamp).toBe(false);

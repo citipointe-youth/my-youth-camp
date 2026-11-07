@@ -5,7 +5,7 @@ import type { Actor } from '../core/entities/user';
 import { assertCan } from './access-control';
 import { canAccessPerson } from './person.service';
 import { parseCsv } from '../utils/csv';
-import { transition } from './presence';
+import { transition, writeOf } from './presence';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import { BadRequestError } from '../core/errors/app-error';
@@ -98,7 +98,7 @@ export function makeOfflineSignInService(personRepo: IPersonRepository, settings
       }
 
       const now = nowISO();
-      const toSignIn: Person[] = [];
+      const toSignIn: string[] = [];
       const queued = new Set<string>(); // B-4: a repeated row must not log a second 'in' event
       let alreadySignedIn = 0;
       const unmatched: string[] = [];
@@ -144,15 +144,24 @@ export function makeOfflineSignInService(personRepo: IPersonRepository, settings
           continue;
         }
         queued.add(person.id);
-        toSignIn.push(o.next);
+        toSignIn.push(person.id);
       }
 
+      // P3: one transaction, rows locked in id order, each decision re-made on the stored row, so
+      // a leader's tap that lands between the read above and this write is counted, not doubled.
+      let signedIn = 0;
       if (toSignIn.length > 0) {
-        await personRepo.savePresenceMany(toSignIn);
+        await personRepo.transitionMany(toSignIn, (current) => {
+          const event: SignOutEvent = { id: newId('so'), type: 'in', leaderName: actor.displayName,
+            reason: 'Offline sign-in sheet', authorId: actor.id, timestamp: now };
+          const w = writeOf(current, transition(current, { kind: 'signIn', event }, { actor, campMode, now }));
+          if (w) signedIn++; else alreadySignedIn++;
+          return w;
+        });
         invalidateDashboardCache();
       }
 
-      return { signedIn: toSignIn.length, alreadySignedIn, unmatched, cancelledSkipped };
+      return { signedIn, alreadySignedIn, unmatched, cancelledSkipped };
     },
   };
 }

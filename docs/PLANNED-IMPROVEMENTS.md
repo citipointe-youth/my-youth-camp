@@ -12,10 +12,10 @@ without going through clarifying questions first.
 Source: `src/camp-arch-2026-11-07/build/b-*.md`. None is a defect in what shipped.
 
 - **SettingsService intents** (`stampExport`, `stampImport`, `clearTempPasswords`). B-7 converted the writers in place; moving them behind service intents lands with D4 (controllers lose their raw repos).
-- **The B-5 guard is per statement, not per row.** The SQL compares each new check-in row against stored rows only, so two new same-type rows for one person+session in a single save would both insert (the in-memory mirror would keep one). No writer does that today (`checkIn` adds one row per save). Fix if a batch writer ever appends several: insert the rows one by one, or dedupe in `appendHistories`.
-- **In-memory sign-out history still replaces on save** (Supabase appends). Parity is P3's job.
+- **(Closed by P3+D2, 7 Nov:** check-in rows now come one per locked `transition`, and `save` writes history only on INSERT.) **The B-5 guard is per statement, not per row.** The SQL compares each new check-in row against stored rows only, so two new same-type rows for one person+session in a single save would both insert (the in-memory mirror would keep one). No writer does that today (`checkIn` adds one row per save). Fix if a batch writer ever appends several: insert the rows one by one, or dedupe in `appendHistories`.
+- **(Closed by P3+D2:** neither adapter writes history on an update save.) In-memory sign-out history replaced on save.
 - **The B-13 download timeout covers headers only**, not a stalled body (same as JSON calls).
-- **The B-1 sign-vs-sign race** stays as listed under Phase A's known residuals.
+- **The B-1 sign-vs-sign race** — closed by P3+D2 (row lock in `transition`), see below.
 
 ## 2026-11-07 — Deferred from the camp architecture round (Phase A, `camp-v151`) — OPEN
 
@@ -35,7 +35,7 @@ None of these is a defect in what shipped. Phases B and C of the round are plann
   routes need any-of or "no permission" semantics. `role-floor.test.ts` stays the guard.
 
 ### Known residuals
-- **B-1 sign-vs-sign race.** B-1 stops PATCH, import and check-in from reverting a sign-out, but two
+- **(Closed by P3+D2, 7 Nov: every presence write is decided under `select … for update` in `IPersonRepository.transition`; cancel too, gate B M3.)** **B-1 sign-vs-sign race.** B-1 stops PATCH, import and check-in from reverting a sign-out, but two
   presence writers from stale reads still race: last commit wins on `atCamp`/`lifecycle` (both
   history rows are kept). It needs two leaders acting on one child within about 50 ms. Fix if ever
   seen: `select ... for update` and recompute in the Supabase sign path.

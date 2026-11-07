@@ -52,10 +52,6 @@ export class SupabaseNoteRepository implements INoteRepository {
     return (await this.sql`select * from notes where camper_id = ${camperId} order by created_at desc`).map(toNote);
   }
 
-  async findByAuthor(authorId: string): Promise<StudentNote[]> {
-    return (await this.sql`select * from notes where author_id = ${authorId} order by created_at desc`).map(toNote);
-  }
-
   async findByZone(zone: string, limit?: number): Promise<StudentNote[]> {
     // Join with people to filter by zone (notes have no direct zone column).
     if (limit != null) {

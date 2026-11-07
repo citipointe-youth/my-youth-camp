@@ -5,8 +5,6 @@ export { SupabasePersonRepository } from './supabase.people';
 export { SupabaseClassroomRepository } from './supabase.classroom';
 export { SupabaseAllocationRepository } from './supabase.allocation';
 export { SupabaseClassroomFreezeRepository } from './supabase.classroom-freeze';
-export { SupabaseZoneRepository } from './supabase.zones';
-export { SupabaseGroupRepository } from './supabase.groups';
 export { SupabaseNoteRepository } from './supabase.notes';
 export { SupabaseNotificationRepository } from './supabase.notifications';
 export { SupabaseIncidentRepository } from './supabase.incidents';

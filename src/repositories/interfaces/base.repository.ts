@@ -3,17 +3,16 @@ export interface IRepository<T extends { id: string }> {
   findAll(): Promise<T[]>;
   save(entity: T): Promise<T>;
   /**
-   * Persist many records in one operation, returning them. Replaces per-row save
-   * loops (defect C1) — the in-memory store writes its JSON file ONCE at the end
-   * instead of once per row; Supabase implementations map this to a chunked bulk
-   * INSERT. Order of the returned array matches the input.
+   * Persist many records, returning them in input order. Replaces per-row save loops (defect
+   * C1): the in-memory store writes its JSON file once. On Supabase most adapters still upsert
+   * row by row; only `people`, `users` and `notifications` do it inside one transaction
+   * (all-or-nothing). Others can fail part-way (scaffold repos, rare admin writes; OQ-45).
    */
   saveMany(entities: T[]): Promise<T[]>;
   delete(id: string): Promise<boolean>;
   /**
-   * Bulk-remove every record, returning the count deleted. Replaces row-by-row
-   * delete loops (defect A3) — one write instead of N. Supabase implementations
-   * map this to `TRUNCATE ... CASCADE` to avoid the per-statement timeout.
+   * Bulk-remove every record, returning the count deleted (defect A3: one statement, not N).
+   * Supabase uses `delete … returning id`. Exception: users keep every admin (both adapters).
    */
   deleteAll(): Promise<number>;
   init(): Promise<void>;

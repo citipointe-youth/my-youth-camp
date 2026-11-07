@@ -7,10 +7,11 @@
 // `people`, encrypted `*_enc` columns, and the check-in / sign-out histories hydrated
 // from CHILD TABLES (check_in_history, sign_out_history).
 import type { SqlClient, TxClient } from './client';
-import type { IPersonRepository } from '../interfaces/entity-repositories';
+import type { IPersonRepository, PresenceDecide, PresenceWrite } from '../interfaces/entity-repositories';
+import { withPresenceWrite } from '../interfaces/entity-repositories';
+import { NotFoundError } from '../../core/errors/app-error';
 import type { Person } from '../../core/entities/person';
 import type { CheckInEntry, SignOutEvent, ElvantoMeta } from '../../core/entities/person';
-import { isCamper } from '../../core/entities/person';
 import { maybeEncrypt, maybeDecrypt } from '../../utils/field-crypto';
 
 const T = 'people';
@@ -187,7 +188,7 @@ export class SupabasePersonRepository implements IPersonRepository {
   // --- history hydration -----------------------------------------------------
 
   /** Fetch + group both history tables for a set of person ids (avoids N+1). */
-  private async loadHistories(ids: string[]): Promise<{
+  private async loadHistories(ids: string[], db: SqlClient | TxClient = this.sql): Promise<{
     checkIns: Map<string, CheckInEntry[]>;
     signOuts: Map<string, SignOutEvent[]>;
   }> {
@@ -195,15 +196,16 @@ export class SupabasePersonRepository implements IPersonRepository {
     const signOuts = new Map<string, SignOutEvent[]>();
     if (ids.length === 0) return { checkIns, signOuts };
 
-    const ciRows = await this.sql`
-      select * from check_in_history where person_id in ${this.sql(ids)} order by timestamp
+    // `, id` breaks timestamp ties so the order is stable (last-entry-wins depends on it).
+    const ciRows = await db`
+      select * from check_in_history where person_id in ${db(ids)} order by timestamp, id
     `;
     for (const r of ciRows) {
       const pid = r['person_id'] as string;
       (checkIns.get(pid) ?? checkIns.set(pid, []).get(pid)!).push(toCheckInEntry(r));
     }
-    const soRows = await this.sql`
-      select * from sign_out_history where person_id in ${this.sql(ids)} order by timestamp
+    const soRows = await db`
+      select * from sign_out_history where person_id in ${db(ids)} order by timestamp, id
     `;
     for (const r of soRows) {
       const pid = r['person_id'] as string;
@@ -212,9 +214,9 @@ export class SupabasePersonRepository implements IPersonRepository {
     return { checkIns, signOuts };
   }
 
-  private async hydrate(rows: readonly Record<string, unknown>[]): Promise<Person[]> {
+  private async hydrate(rows: readonly Record<string, unknown>[], db: SqlClient | TxClient = this.sql): Promise<Person[]> {
     const ids = rows.map((r) => r['id'] as string);
-    const { checkIns, signOuts } = await this.loadHistories(ids);
+    const { checkIns, signOuts } = await this.loadHistories(ids, db);
     return rows.map((r) =>
       toPerson(r, checkIns.get(r['id'] as string) ?? [], signOuts.get(r['id'] as string) ?? []),
     );
@@ -244,30 +246,6 @@ export class SupabasePersonRepository implements IPersonRepository {
     return this.hydrate(await this.sql`select * from people where zone = ${zone} order by last_name, first_name`);
   }
 
-  async findByGroup(groupId: string): Promise<Person[]> {
-    return this.hydrate(await this.sql`select * from people where group_id = ${groupId} order by last_name, first_name`);
-  }
-
-  async findByKind(kind: string): Promise<Person[]> {
-    return this.hydrate(await this.sql`select * from people where kind = ${kind} order by last_name, first_name`);
-  }
-
-  async findByLifecycle(lifecycle: string): Promise<Person[]> {
-    return this.hydrate(await this.sql`select * from people where lifecycle = ${lifecycle} order by last_name, first_name`);
-  }
-
-  async findCampers(): Promise<Person[]> {
-    // lifecycle ∈ {arrived, checked_out, departed}
-    const rows = await this.sql`
-      select * from people where lifecycle in ('arrived','checked_out','departed') order by last_name, first_name
-    `;
-    return this.hydrate(rows);
-  }
-
-  async findAtCamp(): Promise<Person[]> {
-    return this.hydrate(await this.sql`select * from people where at_camp = true order by last_name, first_name`);
-  }
-
   async search(query: string): Promise<Person[]> {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return [];
@@ -281,55 +259,52 @@ export class SupabasePersonRepository implements IPersonRepository {
 
   // --- writes ----------------------------------------------------------------
 
-  /** Upsert the `people` row + append any new history child rows in one transaction.
-   *  B-1: `at_camp`/`lifecycle` are not in the UPDATE set (see savePresence).
-   *  Returns the caller's `person` as given — NOT a read-back, so its atCamp/lifecycle may be
-   *  stale against the row (the in-memory repo returns the stored pair instead). */
+  /** Upsert the `people` row. P3: the UPDATE set never holds presence (`at_camp`, `lifecycle`,
+   *  `cancelled_at`) and history child rows are written only when the row was INSERTED
+   *  (`xmax = 0`), so a stale full-row save can't revert a tap or re-insert cleared history.
+   *  Returns the caller's `person` as given — NOT a read-back. */
   async save(person: Person): Promise<Person> {
-    return this.upsertOne(person, PERSON_UPDATE_COLS);
-  }
-
-  /** B-1 presence writer: as save, plus `at_camp`/`lifecycle` in the UPDATE set. */
-  async savePresence(person: Person): Promise<Person> {
-    return this.upsertOne(person, PERSON_UPDATE_COLS_WITH_PRESENCE);
-  }
-
-  async saveMany(people: Person[]): Promise<Person[]> {
-    return this.upsertMany(people, PERSON_UPDATE_COLS);
-  }
-
-  async savePresenceMany(people: Person[]): Promise<Person[]> {
-    return this.upsertMany(people, PERSON_UPDATE_COLS_WITH_PRESENCE);
-  }
-
-  private async upsertOne(person: Person, cols: readonly string[]): Promise<Person> {
     await this.sql.begin(async (tx: TxClient) => {
-      // ⚠ The upsert MUST stay before appendHistories: it row-locks this person's `people` row,
-      // which is what makes B-5's conditional check-in insert atomic. Do not reorder.
-      await tx`
-        insert into people ${tx(personColumns(person))}
-        on conflict (id) do update set ${tx(personColumns(person), ...cols)}
-      `;
-      await appendHistories(tx, person);
+      await upsertPerson(tx, person);
     });
     return person;
   }
 
-  private async upsertMany(people: Person[], cols: readonly string[]): Promise<Person[]> {
+  async saveMany(people: Person[]): Promise<Person[]> {
     if (people.length === 0) return [];
     await this.sql.begin(async (tx: TxClient) => {
       // Each person must be upserted individually — the batch ON CONFLICT DO UPDATE
       // would incorrectly overwrite every conflicting row with batch[0]'s values.
-      for (const p of people) {
-        // ⚠ Upsert before appendHistories (row lock for B-5), as in save.
-        await tx`
-          insert into people ${tx(personColumns(p))}
-          on conflict (id) do update set ${tx(personColumns(p), ...cols)}
-        `;
-        await appendHistories(tx, p);
-      }
+      for (const p of people) await upsertPerson(tx, p);
     });
     return people;
+  }
+
+  /** P3 presence seam: lock the row, decide on the stored state, write presence + one history row. */
+  async transition(id: string, decide: PresenceDecide): Promise<Person> {
+    return this.sql.begin(async (tx: TxClient) => {
+      const [current] = await this.lockAndLoad(tx, [id]);
+      if (!current) throw new NotFoundError('Person not found');
+      return writePresence(tx, current, decide(current));
+    });
+  }
+
+  async transitionMany(ids: string[], decide: PresenceDecide): Promise<Person[]> {
+    if (ids.length === 0) return [];
+    return this.sql.begin(async (tx: TxClient) => {
+      const out: Person[] = [];
+      for (const current of await this.lockAndLoad(tx, [...new Set(ids)])) {
+        out.push(await writePresence(tx, current, decide(current)));
+      }
+      return out;
+    });
+  }
+
+  /** `select … for update` in id order (IA OQ-9), then load histories on the SAME transaction —
+   *  using `this.sql` here would take a second pool connection while this one holds the lock. */
+  private async lockAndLoad(tx: TxClient, ids: string[]): Promise<Person[]> {
+    const rows = await tx`select * from people where id in ${tx(ids)} order by id for update`;
+    return this.hydrate(rows, tx);
   }
 
   async delete(id: string): Promise<boolean> {
@@ -344,11 +319,22 @@ export class SupabasePersonRepository implements IPersonRepository {
     return rows.length;
   }
 
-  /** Reset logs (A-2): saveMany only appends history (appendHistories), so the delete is explicit. */
-  async clearPresenceHistory(): Promise<void> {
-    await this.sql.begin(async (tx: TxClient) => {
+  /** Reset logs (A-2, P3): presence reset and both history deletes in one transaction. The
+   *  UPDATE runs first because its `exists` tests read the history rows the deletes remove. */
+  async clearPresence(now: string): Promise<number> {
+    return this.sql.begin(async (tx: TxClient) => {
+      const touched = await tx`
+        update people set
+          at_camp = false,
+          lifecycle = case when lifecycle in ('cancelled', 'registered') then lifecycle else 'registered' end,
+          updated_at = ${now}
+        where at_camp
+           or exists (select 1 from check_in_history h where h.person_id = people.id)
+           or exists (select 1 from sign_out_history s where s.person_id = people.id)
+        returning id`;
       await tx`delete from check_in_history`;
       await tx`delete from sign_out_history`;
+      return touched.length;
     });
   }
 }
@@ -429,7 +415,8 @@ export function personColumns(p: Person): Record<string, unknown> {
   };
 }
 
-// Columns updated on conflict (everything except id + created_at, and the two presence columns).
+// Columns updated on conflict: everything except id, created_at and presence (at_camp, lifecycle,
+// cancelled_at — written only by transition/transitionMany/clearPresence, P3).
 const PERSON_UPDATE_COLS = [
   'first_name', 'last_name', 'gender', 'date_of_birth', 'grade', 'school', 'kind',
   'church_id', 'church_name', 'zone', 'group_id', 'mobile', 'email', 'suburb',
@@ -447,13 +434,37 @@ const PERSON_UPDATE_COLS = [
   'ticket_number', 'invoice_number', 'accommodation_kind_confidence', 'discount_amount',
   'amount_paid', 'fees_amount', 'tax_amount', 'needs_review', 'needs_review_reason',
   // Individual overrides + cancel/refund (0022). Never written by any importer.
-  'accommodation_override', 'amount_paid_override', 'refund_amount', 'refunded_at', 'cancelled_at',
+  // `cancelled_at` left this set in P3: cancel/uncancel write it through `transition`.
+  'accommodation_override', 'amount_paid_override', 'refund_amount', 'refunded_at',
   // Every invoice number seen for this person (0023).
   'invoice_numbers',
 ] as const;
 
-/** B-1: presence is written on UPDATE only by the presence writers (savePresence*). */
-const PERSON_UPDATE_COLS_WITH_PRESENCE = [...PERSON_UPDATE_COLS, 'lifecycle', 'at_camp'] as const;
+
+/** Insert-or-update one person. History rows only on a real INSERT (`xmax = 0` is true for a
+ *  freshly inserted row, false for one the ON CONFLICT branch updated). */
+async function upsertPerson(tx: TxClient, p: Person): Promise<void> {
+  const [r] = await tx`
+    insert into people ${tx(personColumns(p))}
+    on conflict (id) do update set ${tx(personColumns(p), ...PERSON_UPDATE_COLS)}
+    returning (xmax = 0) as inserted
+  `;
+  if (r?.['inserted'] === true) await appendHistories(tx, p);
+}
+
+/** Write a decided presence change on an already-locked row. Null = no-op, nothing written. */
+async function writePresence(tx: TxClient, current: Person, w: PresenceWrite | null): Promise<Person> {
+  if (!w) return current;
+  const set: Record<string, unknown> = { at_camp: w.atCamp, lifecycle: w.lifecycle, updated_at: w.updatedAt };
+  if (w.cancelledAt !== undefined) set['cancelled_at'] = w.cancelledAt;
+  await tx`update people set ${tx(set)} where id = ${current.id}`;
+  await appendHistories(tx, {
+    ...current,
+    checkInHistory: w.appendCheckIn ? [w.appendCheckIn] : [],
+    signOutHistory: w.appendSignEvent ? [w.appendSignEvent] : [],
+  });
+  return withPresenceWrite(current, w);
+}
 
 /**
  * Append a person's history child rows additively (INSERT … ON CONFLICT DO NOTHING).
@@ -462,7 +473,7 @@ const PERSON_UPDATE_COLS_WITH_PRESENCE = [...PERSON_UPDATE_COLS, 'lifecycle', 'a
  * tables have `id text primary key`), a row is never edited after creation, and no
  * domain flow removes an individual entry — entries only disappear when the person row
  * itself is deleted (ON DELETE CASCADE), on reset/new-year (deleteAll), or all at once on
- * Reset logs (clearPresenceHistory). Saving a person with empty arrays deletes nothing.
+ * Reset logs (clearPresence). Called on an INSERT and by writePresence, never on an UPDATE save.
  *
  * This used to DELETE-then-reinsert the whole history from the in-memory copy, which
  * meant two concurrent writers to the same person could silently drop an entry the
@@ -515,6 +526,3 @@ async function appendHistories(tx: TxClient, p: Person): Promise<void> {
     )} on conflict (id) do nothing`;
   }
 }
-
-// Silence "unused" until the live switchover wires findCampers' helper usage.
-void isCamper;
