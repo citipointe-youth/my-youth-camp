@@ -69,6 +69,9 @@ assert.strictEqual(pay({ ticketNumber: 'T1', registrationCost: 180, discountAmou
 assert.strictEqual(pay({ ticketNumber: 'T1', registrationCost: 180, discountAmount: 30, amountPaid: 0 }), true, 'part discount, nothing paid');
 assert.strictEqual(pay({ ticketNumber: 'T1', registrationCost: 180, amountPaid: 100 }), true, 'part paid');
 assert.strictEqual(pay({ ticketNumber: 'T1', registrationCost: 180, amountPaid: 180 }), false, 'paid in full, status never set');
+// I5: the server's paymentStanding wins when present; the rule above is the fallback.
+assert.strictEqual(pay({ ticketNumber: 'T1', paymentStanding: { state: 'settled', owing: null } }), false, 'server says settled');
+assert.strictEqual(pay({ paymentStatus: 'paid', paymentStanding: { state: 'owing', owing: 10 } }), true, 'server says owing');
 
 // Batch 3: only the app's own answer counts.
 const answer = (status, type) => ({ ok: status < 400, status, headers: { get: () => type } });

@@ -3550,6 +3550,9 @@ function _missingItems(s){
    free; a hand-entered paid amount; nothing matched yet; then what is owing. With no price, a $0
    invoice is not flagged, or every free invoice would be. */
 function _paymentMissing(s){
+  // I5: the server works this out (payment-standing.ts). The body below is the fallback for a
+  // cached response without the field, and must stay the same rule (payment-standing.test.ts).
+  if(s.paymentStanding)return s.paymentStanding.state==='owing';
   if(['paid','free','refunded'].includes(s.paymentStatus)||s.refundAmount!=null)return false;
   if(s.amountPaidOverride>0)return false;
   if(!(s.ticketNumber||s.invoiceNumber))return false;
