@@ -35,7 +35,10 @@ signed out too; the SW keeps one shell copy under '/'. B-17 (Tom reversed the
 "banner only" ruling, 7 Nov): a live check-in tap that gets a 5xx/429, a 20 s timeout
 or no answer while the phone says online stays in ycp_ciq_<login> and retries with the
 30 s -> 5 min back-off under the amber "still trying"/"saved on this phone" banner; only
-a 4xx refusal drops and names the tap; the 48 h purge still clears it. Verified: npx tsc --noEmit clean,
+a 4xx refusal drops and names the tap; the 48 h purge still clears it. Banner copy: a
+queued tap kept while online says "Can't reach the camp server. N check-in(s) saved and
+will send automatically." ("No signal" only when offline); the red 4xx banner ends the
+reason with a full stop and says to check the person on the Students tab. Verified: npx tsc --noEmit clean,
 npx vitest run 1434 pass / 91 files, npm run harness all green.
 
 2026-11-07 - Architecture round, Phase A (camp-v151)
