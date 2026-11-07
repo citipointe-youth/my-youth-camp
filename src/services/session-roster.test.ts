@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { lastEntryFor, isCheckedInFor, onSessionRoster } from './session-roster';
 import { makeCheckInService } from './checkin.service';
 import { makeDashboardService } from './dashboard.service';
+import { makeDashboardCache } from './dashboard-cache';
 import { churchesBehindFor } from './checkin-warnings';
 import { sessionFor } from './checkin-sessions';
 import { InMemoryPersonRepository, InMemorySettingsRepository, InMemoryNotificationRepository, InMemoryChurchRepository } from '../repositories/in-memory';
@@ -89,7 +90,7 @@ describe('roster, push warnings and dashboard agree (P2 parity)', () => {
     const behind = churchesBehindFor(await people.findAll(), [user],
       { session: sessionFor('2026-07-01', 'am'), windowEnd: '12:00', windowEndAt: '2026-07-01T12:00:00.000Z' }, { includeZero: true });
 
-    const dash = await makeDashboardService(people, new InMemoryNotificationRepository(), new InMemoryChurchRepository()).home(church, settings);
+    const dash = await makeDashboardService(people, new InMemoryNotificationRepository(), new InMemoryChurchRepository(), makeDashboardCache()).home(church, settings);
     if (dash.mode !== 'at-camp') throw new Error('expected at-camp');
 
     expect(rosterRemaining).toBe(3); // inout, none, past-only

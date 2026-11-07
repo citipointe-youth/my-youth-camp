@@ -32,8 +32,8 @@ function actorKey(actor: Actor): string {
   return `${actor.id}:${actor.role}:${actor.churchId ?? '_'}:${actor.zone ?? '_'}:${actor.genderScope ?? '_'}`;
 }
 
-export function makeDashboardCache(opts: { ttlMs?: number } = {}): DashboardCache {
-  const cache = new ResponseCache<DashboardResult>(opts.ttlMs ?? 30_000);
+export function makeDashboardCache(): DashboardCache {
+  const cache = new ResponseCache<DashboardResult>(30_000);
   return {
     get: (actor) => cache.get(actorKey(actor)),
     set: (actor, value) => cache.set(actorKey(actor), value),

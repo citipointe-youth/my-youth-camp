@@ -11,7 +11,7 @@ import { buildSessions, currentSession as pickCurrentSession, sessionClock } fro
 import type { Person } from '../core/entities/person';
 import { isRegistrant, isCamper } from '../core/entities/person';
 import { canAccessPerson } from './person.service';
-import { makeDashboardCache, type DashboardCache } from './dashboard-cache';
+import type { DashboardCache } from './dashboard-cache';
 import { isOversight } from './access-control';
 import { onSessionRoster, isCheckedInFor } from './session-roster';
 
@@ -72,7 +72,7 @@ export function makeDashboardService(
   notifRepo: INotificationRepository,
   churchRepo: IChurchRepository,
   /** One per container (D3); tests get a fresh one each. */
-  cache: DashboardCache = makeDashboardCache(),
+  cache: DashboardCache,
 ): DashboardService {
   /**
    * The narrowest repo query the actor's scope allows.
