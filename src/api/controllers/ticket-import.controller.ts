@@ -1,12 +1,11 @@
 import type { HttpRequest } from '../http/types';
 import type { TicketImportService } from '../../services/ticket-import.service';
-import type { ISettingsRepository } from '../../repositories/interfaces/entity-repositories';
+import type { SettingsService } from '../../services/settings.service';
 import { UnauthorizedError } from '../../core/errors/app-error';
-import { stampImport } from './_import-stamp';
 
 export interface TicketImportControllerServices {
   ticketImport: TicketImportService;
-  settingsRepo: ISettingsRepository;
+  settings: Pick<SettingsService, 'stampImport'>;
 }
 
 export function makeTicketImportController(services: TicketImportControllerServices) {
@@ -14,7 +13,7 @@ export function makeTicketImportController(services: TicketImportControllerServi
     async run(req: HttpRequest) {
       if (!req.ctx) throw new UnauthorizedError();
       const result = await services.ticketImport.importTicketsCsv(req.ctx.actor, req.body);
-      await stampImport(services.settingsRepo, 'ticketsImportedAt', result);
+      await services.settings.stampImport('tickets', result);
       return result;
     },
   };

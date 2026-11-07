@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { makeSettingsService } from './settings.service';
 import { makeAuditExportService } from './audit-export.service';
-import { stampImport } from '../api/controllers/_import-stamp';
 import { makeAuditController } from '../api/controllers/audit.controller';
 import {
   InMemorySettingsRepository, InMemoryPersonRepository, InMemoryNoteRepository, InMemoryIncidentRepository,
@@ -56,7 +55,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('B-7: settings writers never revert a concurrent change', () => {
   it('M2: an import stamp racing a wipe does not bring back the cleared lastExportedAt', async () => {
     raceAfterNextRead(() => repo.patchSingleton({ lastExportedAt: null })); // a wipe's clearExportStamp
-    await stampImport(repo, 'formImportedAt', {});
+    await makeSettingsService(repo).stampImport('form', {});
     const s = await repo.getSingleton();
     expect(s?.lastExportedAt).toBeNull();
     expect(s?.formImportedAt).toBeTruthy();
@@ -64,7 +63,7 @@ describe('B-7: settings writers never revert a concurrent change', () => {
 
   it('an import stamp racing a lock and mode change keeps both', async () => {
     raceAfterNextRead(async () => { await lockRace(); await repo.patchSingleton({ campMode: 'at-camp' }); });
-    await stampImport(repo, 'ticketsImportedAt', {});
+    await makeSettingsService(repo).stampImport('tickets', {});
     const s = await repo.getSingleton();
     expect(s).toMatchObject({ churchLoginLocked: true, churchSessionsValidFrom: '2026-11-07T01:00:00.000Z', campMode: 'at-camp' });
     expect(s?.ticketsImportedAt).toBeTruthy();
@@ -73,7 +72,7 @@ describe('B-7: settings writers never revert a concurrent change', () => {
   it('a failed import stamp is logged, not thrown', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     repo.patchSingleton = async () => { throw new Error('db down'); };
-    await expect(stampImport(repo, 'invoicesImportedAt', {})).resolves.toBeUndefined();
+    await expect(makeSettingsService(repo).stampImport('invoices', {})).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalled();
     expect(String(warn.mock.calls[0])).toContain('db down');
   });
@@ -94,7 +93,7 @@ describe('B-7: settings writers never revert a concurrent change', () => {
   it('the workbook export stamp racing a lock keeps the lock', async () => {
     const ctl = makeAuditController({
       auditExport: { exportMasterWorkbook: async () => Buffer.from('x') } as never,
-      settingsRepo: repo,
+      settings: makeSettingsService(repo),
     });
     raceAfterNextRead(lockRace);
     await ctl.exportWorkbook({ ctx: { actor: admin } } as unknown as HttpRequest);

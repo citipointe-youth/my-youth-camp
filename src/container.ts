@@ -109,6 +109,7 @@ import { makeAuditExportService, type AuditExportService } from './services/audi
 import { makeOfflineSignInService, type OfflineSignInService } from './services/offline-signin.service';
 import { makeCronService, type CronService } from './services/cron.service';
 import { makePushService, type PushService } from './services/push.service';
+import { makePushSubscriptionService, type PushSubscriptionService } from './services/push-subscription.service';
 
 export interface Repositories {
   users: IUserRepository;
@@ -155,11 +156,7 @@ export interface Services {
   account: AccountService;
   dashboard: DashboardService;
   admin: AdminService;
-  // Expose raw user repo for auth/me lookup and audit controller
-  users: IUserRepository;
-  settingsRepo: ISettingsRepository;
-  /** Exposed on Services so the router can build the push controller (same precedent as settingsRepo). */
-  pushSubscriptionRepo: IPushSubscriptionRepository;
+  pushSubscriptions: PushSubscriptionService;
   cron: CronService;
   push: PushService;
 }
@@ -258,8 +255,8 @@ export async function buildContainer(): Promise<Container> {
       importService: importSvc, exportService: exportSvc, allocation,
       ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
       auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
-      account, dashboard, admin, users, settingsRepo, cron, push,
-      pushSubscriptionRepo: pushSubscriptions,
+      account, dashboard, admin, cron, push,
+      pushSubscriptions: makePushSubscriptionService(pushSubscriptions, users),
     };
 
     return { repos, services };
@@ -450,11 +447,9 @@ export async function buildContainer(): Promise<Container> {
     account,
     dashboard,
     admin,
-    users,
-    settingsRepo,
     cron,
     push,
-    pushSubscriptionRepo: pushSubscriptions,
+    pushSubscriptions: makePushSubscriptionService(pushSubscriptions, users),
   };
 
   return { repos, services };

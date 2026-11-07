@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { makePushController } from './push.controller';
+import { makePushSubscriptionService } from '../../services/push-subscription.service';
 import { InMemoryPushSubscriptionRepository } from '../../repositories/in-memory/in-memory.repositories';
 import { summariseDevices } from '../../services/push.service';
 import type { PushSubscription } from '../../core/entities/push-subscription';
@@ -31,7 +32,7 @@ const req = (a: Actor, body?: unknown): HttpRequest => ({ ctx: { actor: a }, bod
 async function setup(rows: PushSubscription[]) {
   const repo = new InMemoryPushSubscriptionRepository();
   for (const r of rows) await repo.save(r);
-  return { repo, ctrl: makePushController({ subscriptions: repo }) };
+  return { repo, ctrl: makePushController({ subscriptions: makePushSubscriptionService(repo) }) };
 }
 
 describe('summariseDevices', () => {
@@ -84,7 +85,7 @@ describe('POST /push/label', () => {
     const repo = new InMemoryPushSubscriptionRepository();
     await repo.save(sub({ deviceLabel: 'iPhone' }));
     const users = { findById: async (id: string) => (id === 'usr_church' ? ({ username: 'b-victory' } as never) : null) };
-    const ctrl = makePushController({ subscriptions: repo, users });
+    const ctrl = makePushController({ subscriptions: makePushSubscriptionService(repo, users) });
     const res = await ctrl.label(req(actor('church', 'usr_other'), { endpoint: sub().endpoint, device: 'iPhone' }));
     expect(res.owner).toBe('b-victory');
     expect((await repo.findByEndpoint(sub().endpoint))!.userId).toBe('usr_church');

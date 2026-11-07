@@ -1,10 +1,10 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { verifyPassword } from '../utils/crypto';
+import { verifyPassword, hashPassword } from '../utils/crypto';
 import type { IUserRepository, ISettingsRepository } from '../repositories/interfaces/entity-repositories';
 import { MAX_LOGIN_HISTORY } from '../core/entities/user';
 import type { Actor, User, SafeUser } from '../core/entities/user';
 import type { ZoneName } from '../core/types/enums';
-import { UnauthorizedError } from '../core/errors/app-error';
+import { UnauthorizedError, BadRequestError, NotFoundError, ForbiddenError } from '../core/errors/app-error';
 import { LoginInputSchema } from '../core/validation/auth.schema';
 import type { LoginInput } from '../core/validation/auth.schema';
 import { ResponseCache } from '../utils/response-cache';
@@ -193,6 +193,10 @@ export interface AuthService {
   /** Mint a real signed session token for an arbitrary active user (admin account preview).
    *  actorOverrides let the caller force fields on the embedded actor (e.g. mustChangePassword:false). */
   issueTokenFor(userId: string, actorOverrides?: Partial<Actor>): Promise<string | null>;
+  /** GET /auth/me: the signed-in account without its hash. 401 if the account is gone. */
+  me(actorId: string): Promise<SafeUser>;
+  /** POST /setup: first-run only — sets the first admin's username + password while it has none. */
+  setupFirstAdmin(body: unknown): Promise<{ ok: true }>;
 }
 
 export function makeAuthService(users: IUserRepository, settings?: ISettingsRepository): AuthService {
@@ -279,6 +283,24 @@ export function makeAuthService(users: IUserRepository, settings?: ISettingsRepo
 
     async logout(_token: string) {
       // Stateless tokens — logout is handled client-side by discarding the token.
+    },
+
+    async me(actorId) {
+      const user = await users.findById(actorId);
+      if (!user) throw new UnauthorizedError();
+      return toSafeUser(user);
+    },
+
+    async setupFirstAdmin(input) {
+      const body = (input ?? {}) as { username?: string; password?: string };
+      if (!body.username || !body.password) throw new BadRequestError('username and password required');
+      if (body.password.length < 8) throw new BadRequestError('Password must be at least 8 characters');
+      const admin = (await users.findByRole('admin'))[0];
+      if (!admin) throw new NotFoundError('No admin account found — run migrations first');
+      if (admin.passwordHash) throw new ForbiddenError('Admin password already set');
+      const hash = await hashPassword(body.password);
+      await users.save({ ...admin, username: body.username, passwordHash: hash });
+      return { ok: true };
     },
 
     async issueTokenFor(userId, actorOverrides) {

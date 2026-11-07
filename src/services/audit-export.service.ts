@@ -6,6 +6,7 @@ import { assertCan } from './access-control';
 import { toCsvString } from '../utils/csv';
 import { isCamper } from '../core/entities/person';
 import { nowISO } from '../utils/date';
+import { makeSettingsService } from './settings.service';
 
 export interface AuditExportService {
   exportMasterWorkbook(actor: Actor): Promise<Buffer>;
@@ -364,7 +365,7 @@ export function makeAuditExportService(
         // Clear lastTempPasswords after including in export. Patch only that column (B-7):
         // `settings` was read when the build started, so a whole-row save would revert any
         // lock, revoke or mode change made during the export.
-        await settingsRepo.patchSingleton({ lastTempPasswords: null, updatedAt: nowISO() });
+        await makeSettingsService(settingsRepo).clearTempPasswords();
       }
 
       const buffer = await wb.xlsx.writeBuffer();

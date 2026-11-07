@@ -1,19 +1,18 @@
 import type { HttpRequest } from '../http/types';
 import type { AuditExportService } from '../../services/audit-export.service';
-import type { ISettingsRepository } from '../../repositories/interfaces/entity-repositories';
+import type { SettingsService } from '../../services/settings.service';
 import { UnauthorizedError } from '../../core/errors/app-error';
-import { nowISO } from '../../utils/date';
 import { createLogger } from '../../utils/logger';
 
 const logger = createLogger('audit');
 
 export interface AuditControllerServices {
   auditExport: AuditExportService;
-  settingsRepo: ISettingsRepository;
+  settings: Pick<SettingsService, 'stampExport'>;
 }
 
 export function makeAuditController(services: AuditControllerServices) {
-  const { auditExport, settingsRepo } = services;
+  const { auditExport, settings } = services;
 
   return {
     async exportWorkbook(req: HttpRequest): Promise<Buffer> {
@@ -22,9 +21,7 @@ export function makeAuditController(services: AuditControllerServices) {
 
       // Patch only lastExportedAt (B-7), so a lock, mode change or wipe that lands meanwhile
       // is never written back over.
-      if (await settingsRepo.getSingleton()) {
-        await settingsRepo.patchSingleton({ lastExportedAt: nowISO(), updatedAt: nowISO() });
-      }
+      await settings.stampExport();
       logger.info(`[audit] workbook exported by ${req.ctx.actor.displayName} (${req.ctx.actor.role}) from ${req.ip ?? 'unknown'}`);
 
       return buffer;

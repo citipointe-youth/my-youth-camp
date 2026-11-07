@@ -70,7 +70,7 @@ A deep audit across three areas was completed and all bugs addressed. Key change
 - **2026-11-07 (A-2, `camp-v151`):** `force` + `confirmWipe` no longer skips the export check. Reset, Reset logs and New Year each need an audit workbook export after the last wipe, and each wipe nulls `lastExportedAt`. See `docs/reference/infrastructure-and-safety.md`.
 
 **Backend:**
-- **BUG-08** (superseded 2026-11-07, B-7): the audit controller now patches only `{lastExportedAt, updatedAt}` and the temp-password clear patches only `lastTempPasswords`, so neither can revert the other or any concurrent settings change. Every settings writer uses `patchSingleton`; `saveSingleton` is seed-only.
+- **BUG-08** (superseded 2026-11-07, B-7): the audit controller now patches only `{lastExportedAt, updatedAt}` and the temp-password clear patches only `lastTempPasswords`, so neither can revert the other or any concurrent settings change. Every settings writer uses `patchSingleton`; `saveSingleton` is seed-only. Since D4 (Phase C) the stamps are `SettingsService.stampExport/clearExportStamp/stampImport/clearTempPasswords`, and `Services` no longer exposes `users`, `settingsRepo` or a raw push-subscription repo (controllers get services only).
 - Import service preserves existing `elvantoMeta` on update if the CSV row has no `dateSubmitted`.
 
 **New tests:**

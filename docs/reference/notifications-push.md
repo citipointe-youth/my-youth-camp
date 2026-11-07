@@ -251,7 +251,9 @@ all open the app in the same second.
 Owner's decision: push ships for this camp. New `web-push` dependency, `src/services/push.service.ts`,
 `src/api/controllers/push.controller.ts`, three routes (`GET /push/config`,
 `POST`/`DELETE /push/subscribe`, all `auth:true`), sw.js `push` + `notificationclick` handlers, and
-an "Alerts on this device" card on both home screens.
+an "Alerts on this device" card on both home screens. (Since D4, Phase C 2026-11-07, the
+subscribe/label/devices/unsubscribe logic lives in `src/services/push-subscription.service.ts`;
+the controller only unwraps the request.)
 
 - **⚠ INERT WITHOUT VAPID KEYS, BY DESIGN.** This shipped to prod *before* the keys exist. With any
   of the three env vars unset, `/push/config` returns `configured:false`, the SPA card renders

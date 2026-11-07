@@ -121,9 +121,7 @@ export function makeAdminService(
     }
   }
 
-  async function clearExportStamp(): Promise<void> {
-    await settingsRepo.patchSingleton({ lastExportedAt: null, updatedAt: nowISO() });
-  }
+  const clearExportStamp = () => settingsService.clearExportStamp();
 
   /** Replace a repository's whole contents with the given records (clear then save). */
   async function replaceAll<T extends { id: string }>(
