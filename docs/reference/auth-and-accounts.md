@@ -205,8 +205,8 @@ up to 60s (owner-accepted).
   REVOKE**. At deploy no epoch is set, so nothing breaks; the rule only bites once a role is
   actually locked, which is the intent.
 - `makeAuthService(users, settings?)` takes settings **optionally** (many unit tests build it
-  without one) — undefined is treated as "no epoch on record". **Both real composition paths
-  (`container.ts:212` and `:367`) pass it**, verified; if a third is ever added and forgets, the
+  without one) — undefined is treated as "no epoch on record". **The one composition path
+  (`buildServices` in `container.ts`, since D1) passes it**; if another is ever added and forgets, the
   kill switch silently does nothing.
 
 ### 2 — A CHURCH-ONLY "randomise & export", beside the existing all-accounts one

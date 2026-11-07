@@ -113,8 +113,8 @@ checks, disabling growth fails 9). `node --check` OK on the SPA body (range **10
   needs the whole people table (rooms are shared across churches), so it is cached 30s per warm
   instance (`effectiveCache`), cleared by every write in the service — an import is NOT a write
   here, so up to 30s stale after one.
-- Admin `reset` and `newYear` clear the freeze (optional 17th arg to `makeAdminService`, both
-  container paths pass it).
+- Admin `reset` and `newYear` clear the freeze (optional 17th arg to `makeAdminService`; `buildServices`
+  in `container.ts` passes it).
 
 ### SPA
 - `RENDER.accom` loads **`/accommodation/state`** (`_accomApplyState`); `window._accomAlloc` is the
