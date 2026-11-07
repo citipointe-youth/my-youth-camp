@@ -3,6 +3,22 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, final patch (camp-v158)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change. Fixes from the round's Step 3 triage plus rulings T-1 and T-2.
+T-1: prayer gets no parent phone, guardian name or camper mobile on GET /campers, /campers?scope=all,
+/campers/:id and /search, and no parent contact from /search/contacts/:id (firstAid and church keep the
+masked phone plus Reveal; consents stay). T-2: firstAid and prayer keep reach to a student cancelled
+after arrival (any check-in or sign history), so they can still log for them; records stay on Records
+and the digest. CR-M1: a person cancelled between the offline-sheet read and write is reported as
+cancelled, not already signed in. CH-1: an absent import person with a hand-set payment status
+(not unpaid) is kept as needs-review. DIR-M1: PATCH /settings can no longer change campMode (POST
+/admin/mode is the only writer). SPA: ZN-1 leave() on expiry/refusal clears failed/old check-in
+names, roster and pulse state (saved taps untouched); ZN-2 incident Log button disabled while saving;
+ZN-3 stuck banner says "No signal" when offline/waiting; ZN-4 incidents list shows a load error, not
+"No incidents"; DIR-N1 offline-sheet Import disabled in pre-camp; CR-N2 import preview falls back
+per file on a 404. Harness: round-2026-11-07-harness, import-preview-harness.
+
 2026-11-07 - Architecture round, Phase C16: S4 (camp-v157)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change. SPA only (plus a comment fix in note.service.ts). S4 closes
