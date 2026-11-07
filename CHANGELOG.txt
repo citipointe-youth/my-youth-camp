@@ -3,6 +3,16 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C16: S4 (camp-v157)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change. SPA only (plus a comment fix in note.service.ts). S4 closes
+the three cross-screen leaks: a Home pulse tap now opens Check-in with a temporary church filter
+(_ciPulseChurch via gotoTab('checkin',{church,sessionId}); FILTER and the saved view are never
+changed; the strip says "Church from the Home tap, not saved."; it clears on leaving Check-in, Show
+all or a church/zone pick). A mode change picked up on Home resets SESSIONS/SEL_SESSION like
+_applyModeChange. The note session leak was already closed in Phase B (B-10). Harness:
+filter-persist-harness sections 6-7.
+
 2026-11-07 - Architecture round, Phase C15: S1+S3 (camp-v156)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change. SPA only. S1: one session module in public/index.html.
