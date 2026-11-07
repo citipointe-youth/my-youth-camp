@@ -189,7 +189,7 @@ export function levenshteinWithin(a: string, b: string, maxDistance: number): nu
   return distance <= maxDistance ? distance : null;
 }
 
-// ---------- Merge primitive ----------
+// ---------- Blank test (shared with field-ownership.ts) ----------
 
 /** True for '', whitespace-only strings, null, undefined, and []. False for 0, false, and non-empty strings/arrays/objects. */
 export function isBlank(value: unknown): boolean {
@@ -197,28 +197,6 @@ export function isBlank(value: unknown): boolean {
   if (typeof value === 'string') return value.trim() === '';
   if (Array.isArray(value)) return value.length === 0;
   return false;
-}
-
-/**
- * Returns a NEW object: existing with each key in ownedKeys overwritten by incoming[key]
- * IFF incoming[key] is present in the incoming object AND not isBlank(); otherwise
- * existing[key] is kept as-is. Fields not listed in ownedKeys are passed through from
- * `existing` unconditionally untouched. Array fields are treated as atomic (a non-blank
- * incoming array wholesale-replaces; blank/absent keeps existing) — no element-wise merge.
- */
-export function mergeOwnedFields<T extends object, K extends keyof T>(
-  existing: T,
-  incoming: Partial<Record<K, T[K]>>,
-  ownedKeys: readonly K[],
-): T {
-  const result: T = { ...existing };
-  for (const key of ownedKeys) {
-    if (!Object.prototype.hasOwnProperty.call(incoming, key)) continue;
-    const value = incoming[key];
-    if (isBlank(value)) continue;
-    result[key] = value as T[K];
-  }
-  return result;
 }
 
 // ---------- Phone helper ----------

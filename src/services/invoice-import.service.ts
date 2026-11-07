@@ -9,8 +9,9 @@ import { parseCsv } from '../utils/csv';
 import { nowISO } from '../utils/date';
 import { field, isBlankRow, titleCaseName } from './elvanto-mapping';
 import {
-  buildNameIndex, findPersonMatch, mergeOwnedFields,
+  buildNameIndex, findPersonMatch,
 } from './person-matching';
+import { applyRow } from './field-ownership';
 import { stage, NO_OVERRIDES, type ImportStore } from './import-store';
 import { buildTicketPriceTable, priceForTicket, ticketPriceCatalogue } from './ticket-prices';
 import { resolveInvoiceSplit } from './invoice-split';
@@ -171,22 +172,6 @@ export function splitExact(total: number, weights: readonly number[], weightSum:
 function formatMoney(v: number | null): string {
   return v === null ? '—' : `$${v.toFixed(2)}`;
 }
-
-const OWNED_KEYS = [
-  'registrationCost',
-  'discountCode',
-  'discountAmount',
-  'amountPaid',
-  'feesAmount',
-  'taxAmount',
-  'accommodationKind',
-  'accommodationKindRaw',
-  'accommodationKindConfidence',
-  // Item A (2026-07-28): the multi-invoice review flag has to be an owned key or
-  // `mergeOwnedFields` silently drops it (it only copies keys named here).
-  'needsReview',
-  'needsReviewReason',
-] as const satisfies readonly (keyof Person)[];
 
 // The Invoice import never reads or writes churches; the port still names them so one stage serves all three.
 const NO_CHURCHES: ImportStore['churches'] = {
@@ -526,7 +511,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
             continue;
           }
 
-          const merged = mergeOwnedFields(person, incoming, OWNED_KEYS);
+          const merged = applyRow('invoice', person, incoming); // I1: field-ownership.ts
           merged.updatedAt = nowISO();
           const firstTouch = !touched.has(merged.id);
           touched.set(merged.id, merged);
@@ -647,7 +632,7 @@ export function makeInvoiceImportService(personRepo: IPersonRepository): Invoice
                   `Shared invoice ${invoiceNumber ?? ''} split equally between ${matchedPeople.length} people — ticket price unknown`.trim();
               }
               if (Object.keys(incoming).length === 0) continue;
-              const merged = mergeOwnedFields(person, incoming, OWNED_KEYS);
+              const merged = applyRow('invoice', person, incoming); // I1: field-ownership.ts
               merged.updatedAt = nowISO();
               const firstTouch = !touched.has(merged.id);
               touched.set(merged.id, merged);

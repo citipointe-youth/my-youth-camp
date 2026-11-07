@@ -10,8 +10,9 @@ import { field, isBlankRow, titleCaseName } from './elvanto-mapping';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
 import {
-  buildNameIndex, addToIndex, findPersonMatch, mergeOwnedFields,
+  buildNameIndex, addToIndex, findPersonMatch,
 } from './person-matching';
+import { applyRow } from './field-ownership';
 import { stage, NO_OVERRIDES, type ImportStore } from './import-store';
 import { z } from 'zod';
 
@@ -72,8 +73,6 @@ function blankConsents(): Person['consents'] {
   const mk = (): { granted: boolean; timestamp: null } => ({ granted: false, timestamp: null });
   return { medical: mk(), media: mk(), supervision: mk() } as Person['consents'];
 }
-
-const OWNED_KEYS = ['ticketNumber', 'invoiceNumber', 'paymentStatus', 'registrationType'] as const satisfies readonly (keyof Person)[];
 
 export function makeTicketImportService(
   personRepo: IPersonRepository,
@@ -254,24 +253,18 @@ export function makeTicketImportService(
               finalConfidence = 'confirmed';
             }
 
-            const mergedOwned = mergeOwnedFields(
-              existing,
-              {
-                ticketNumber, invoiceNumber,
-                paymentStatus: parsedPaymentStatus ?? undefined,
-                registrationType: ticketTypeRaw || undefined,
-              },
-              OWNED_KEYS,
-            );
-
-            const merged: Person = {
-              ...mergedOwned,
+            // I1: field-ownership.ts decides what lands (blank ticket#/invoice#/status/type keep;
+            // invoiceNumbers and the kind trio always land).
+            const merged = applyRow('ticket', existing, {
+              ticketNumber, invoiceNumber,
+              paymentStatus: parsedPaymentStatus,
+              registrationType: ticketTypeRaw,
               invoiceNumbers: seenInvoices.length > 0 ? [...seenInvoices] : null,
               accommodationKind: finalKind,
               accommodationKindRaw: finalKind,
               accommodationKindConfidence: finalConfidence,
               updatedAt: now,
-            };
+            });
 
             if (dupTickets > 1) {
               const kindLabel = finalKind ?? 'unchanged';
