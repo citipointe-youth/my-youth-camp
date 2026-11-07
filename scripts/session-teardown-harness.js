@@ -122,5 +122,18 @@ function sandbox(store, extra) {
     assert.strictEqual(el('previewBanner').classList.contains('show'), false, 'restore refused: banner');
     assert.strictEqual(ls.get(QUEUE_KEY), QUEUE, 'restore refused: saved check-in queue untouched');
   }
+  {
+    // Gate A code review M3: a staff account with no first/last name signs as its username, never
+    // blank (the server 400s a blank leaderName). A church still signs with its initials.
+    const ctx = { ACTOR: { displayName: '', username: 'fa2' }, LEADER_INITIALS: '', _isChurchAccount: () => false };
+    vm.createContext(ctx);
+    vm.runInContext(extract('function _actingName('), ctx);
+    assert.strictEqual(ctx._actingName(), 'fa2', 'acting name: blank display name falls back to username');
+    ctx.ACTOR.displayName = 'Sam Lee';
+    assert.strictEqual(ctx._actingName(), 'Sam Lee', 'acting name: display name wins');
+    ctx._isChurchAccount = () => true; ctx.LEADER_INITIALS = 'AB';
+    assert.strictEqual(ctx._actingName(), 'AB', 'acting name: church uses initials');
+    assert.ok(/const leaderName=_actingName\(\);/.test(extract('async function fdConfirmAll(')), 'first-day arrival uses _actingName');
+  }
   console.log('All checks passed.');
 })().catch((e) => { console.error(e); process.exit(1); });

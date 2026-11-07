@@ -1352,7 +1352,8 @@ function _scoped(path){
 // Item 2: the name attributed to a sign-in/out or note. ONLY the first-aid log form still asks for
 // a typed name; every other action uses the account's own name automatically — a church login uses
 // its saved initials, every other role uses the logged-in account's display name.
-function _actingName(){return _isChurchAccount()?LEADER_INITIALS:((ACTOR&&ACTOR.displayName)||'');}
+// Gate A M3: an account with no first/last name signs as its username (the server 400s a blank name).
+function _actingName(){return _isChurchAccount()?LEADER_INITIALS:((ACTOR&&(ACTOR.displayName||ACTOR.username))||'');}
 function _initialsKey(){return 'ycp_initials_'+((ACTOR&&(ACTOR.username||ACTOR.id))||'');}
 function _updateInitialsBadge(){
   const el=document.getElementById('initialsBadge');if(!el)return;
@@ -6974,8 +6975,8 @@ async function fdConfirmAll(){
   if(!_ensureInitials())return; // item 7: church initials gate (no-op once set)
   const btn=document.querySelector('#fdConfirmBar button');
   if(btn){btn.textContent='Signing in…';btn.disabled=true;}
-  const leaderName=LEADER_INITIALS||ACTOR.displayName; // church: initials; others: display name
-  let ok=0,fail=0;
+  const leaderName=_actingName(); // church: initials; others: display name, else username
+  let ok=0,fail=0,firstErr='';
   await Promise.all(pending.map(id=>
     api('/attendance/sign-in',{method:'POST',body:{camperId:id,leaderName}})
       .then(()=>{
@@ -6984,9 +6985,9 @@ async function fdConfirmAll(){
         window._fdPending.delete(id);
         ok++;
       })
-      .catch(()=>fail++)
+      .catch(e=>{fail++;if(!firstErr)firstErr=(e&&e.message)||'';})
   ));
-  if(fail)toast(fail+' failed — please retry');
+  if(fail)toast(fail+' failed — '+(firstErr||'please retry'));
   else toast(ok+' signed in');
   fdDraw();
 }
