@@ -4108,6 +4108,8 @@ function _performCheck(camperId,type,name){
     _rCheckin();
     return;
   }
+  // Phase B fix-up: an at-camp account preview is read-only, so refuse the tap here rather than queue it for api()'s guard to drop (a stale "Not saved" banner survived Exit).
+  if(PREVIEW_MODE||ACCOUNT_PREVIEW){toast('Preview — this is read-only');return;}
   // Check-out no longer asks for confirmation — reaching this point already required
   // actively opening the "Done" section and tapping the row, which is deliberate enough.
   // Optimistic flip

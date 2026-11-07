@@ -58,11 +58,11 @@ var PREVIEW_MODE=false,ACCOUNT_PREVIEW=false,TOKEN='admintok',ACTOR={id:'u1',use
 var SETTINGS={campMode:'${campMode}'},CAMP_MODE='${campMode}',STACK=['home'],SESSIONS=[],SEL_SESSION=null;
 var LEADER_INITIALS='AD',_bootOffline=false,_rosterInUse=false,_previewStash=null,_previewLocalFlips={};
 var _rCheckin=async()=>{},_hideUndoToast=()=>{},_offlineBootRecover=()=>{},_rosterSynced=()=>{};
-var updateModeUI=()=>{},buildTabs=()=>{},gotoTab=()=>{},_restoreFilters=()=>{};`, c);
+var updateModeUI=()=>{},buildTabs=()=>{},gotoTab=()=>{},_restoreFilters=()=>{},_ensureInitials=()=>true,_showUndoToast=()=>{};`, c);
   vm.runInContext(between('async function api(', '/* After login, warm'), c); // `opt={}` defeats extract()
   vm.runInContext(between('const CHECKIN_QUEUE=[]', 'function _dismissFailedCheckins(')
     .replace("window.addEventListener('online'", "void 0&&window.addEventListener('online'"), c);
-  for (const fn of ['function enterPreview(', 'function exitPreview(', 'async function enterAccountPreview(', 'function exitAccountPreview(']) vm.runInContext(extract(fn), c);
+  for (const fn of ['function _previewSimActive(', 'function _performCheck(', 'function enterPreview(', 'function exitPreview(', 'async function enterAccountPreview(', 'function exitAccountPreview(']) vm.runInContext(extract(fn), c);
   const state = () => JSON.parse(vm.runInContext('JSON.stringify({q:CHECKIN_QUEUE.length,failed:_checkinFailed,names:_checkinFailNames,retry:!!_drainRetry})', c));
   return { c, out, store, state, run: (code) => vm.runInContext(code, c) };
 }
@@ -133,7 +133,26 @@ async function samePreview() {
   assert.strictEqual(s.state().failed, 0);
 }
 
+async function tapDuringAccountPreview() {
+  // Real mode at-camp, admin previews a church and taps a row: the tap is refused up front
+  // (never queued, never dropped by api()'s guard), so no "Not saved" banner is left after Exit.
+  const s = sandbox('at-camp', ok);
+  s.store[ADMIN_KEY] = '[]';
+  await s.run("enterAccountPreview('u2')");
+  s.run("_performCheck('c9','in','Kid Nine')");
+  await settle();
+  await s.run('drainQueue()');
+  assert.deepStrictEqual(s.state(), { q: 0, failed: 0, names: [], retry: false }, 'preview tap is not queued and not counted as failed');
+  assert.strictEqual(s.out.posts.length, 0, 'nothing sent');
+  assert.ok(s.out.toasts.includes('Preview — this is read-only'), 'the read-only toast is shown');
+  s.run('exitAccountPreview()');
+  await settle();
+  assert.strictEqual(s.state().failed, 0, 'no stale banner after Exit');
+  assert.strictEqual(s.out.posts.length, 0, 'the preview tap is not sent as the admin on Exit');
+}
+
 (async () => {
+  await tapDuringAccountPreview();
   await accountPreview();
   await inFlightAtEntry();
   await samePreview();
