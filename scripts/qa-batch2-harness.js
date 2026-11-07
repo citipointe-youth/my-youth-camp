@@ -219,7 +219,7 @@ function restoreCtx(store, actor) {
     localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } }, window: { _ciqRestored: false } };
   vm.createContext(c);
   for (const fn of ['_ciqKey', '_persistQueue', '_restoreQueue', '_queueStop', '_queueLoad', '_queuePurgeOld', '_qRemove']) vm.runInContext(extract('function ' + fn + '('), c);
-  vm.runInContext('var PREVIEW_MODE=false,ACCOUNT_PREVIEW=false,_drainRetry=null,_queueGen=0,_draining=false,_inFlight=null,_queueWaiting=false,_checkinOldNames=[],_checkinOldCount=0;function clearTimeout(){}', c);
+  vm.runInContext('var PREVIEW_MODE=false,ACCOUNT_PREVIEW=false,_drainRetry=null,_queueGen=0,_draining=false,_inFlight=null,_queueWaiting=false,_checkinOldNames=[],_checkinOldCount=0,_undoTimer=null,_undoCamperId=null;function clearTimeout(){}function _hideUndoToast(){}', c);
   return c;
 }
 function queueOwners() {
@@ -305,12 +305,12 @@ async function downloads() {
     const c = {
       AbortController, String, JSON, Error, Response,
       setTimeout: (f, ms) => { out.timeouts.push(ms); return 0; }, clearTimeout() {},
-      fetch: async () => answer(), _npStart() {}, _npDone() {}, _showChangePasswordGate() {},
+      fetch: async () => { out.fetches = (out.fetches || 0) + 1; return answer(); }, _npStart() {}, _npDone() {}, _showChangePasswordGate() {},
       _rlSaveBlob: (b, n) => out.saved.push([b, n]), toast: (m) => out.toasts.push(m),
       sessionExpired: () => { out.expired++; }, localStorage: { setItem() {} },
     };
     vm.createContext(c);
-    vm.runInContext('var TOKEN="t",ACTOR={},SETTINGS={year:2026};' + stmt('const API_TIMEOUT_MS=')
+    vm.runInContext('var TOKEN="t",ACTOR={},SETTINGS={year:2026},_dlBusy=false;' + stmt('const API_TIMEOUT_MS=')
       + ['function _isAppAnswer(', 'async function _doFetch(', 'function _exportName(', 'async function downloadAuditExport(',
         'async function downloadCsvExport(', 'async function downloadOfflineSignInTemplate('].map(extract).join('\n'), c);
     return Promise.resolve(call(c)).then((r) => ({ ...out, r }));
@@ -320,7 +320,11 @@ async function downloads() {
   for (const dl of [(c) => c.downloadAuditExport(), (c) => c.downloadOfflineSignInTemplate()]) {
     const portal = await run(res('<html>Sign in to wifi</html>', 200, 'text/html; charset=utf-8'), dl);
     assert.strictEqual(portal.saved.length, 0, 'a wifi sign-in page is not saved as the file');
-    assert.ok(/sign-in page/.test(portal.toasts[0]), portal.toasts[0]);
+    assert.ok(/sign-in page/.test(portal.toasts.at(-1)), portal.toasts.at(-1));
+    // Gate B UX 3/5: a server outage is not called a wifi problem; a download says it is working.
+    const down = await run(res('<html>503</html>', 503, 'text/html'), dl);
+    assert.ok(/server is having a problem/.test(down.toasts.at(-1)) && !/sign-in page/.test(down.toasts.at(-1)), down.toasts.at(-1));
+    assert.ok(/^Preparing the file/.test(portal.toasts[0]), 'working toast first: ' + portal.toasts[0]);
     const gone = await run(res(JSON.stringify({ code: 'UNAUTHORIZED', message: 'Session expired' }), 401, 'application/json'), dl);
     assert.strictEqual(gone.expired, 1, 'a 401 ends the session');
     assert.strictEqual(gone.saved.length, 0);
@@ -328,11 +332,23 @@ async function downloads() {
     assert.strictEqual(ok.saved.length, 1, 'the real file is saved');
     assert.strictEqual(await ok.saved[0][0].text(), 'PK-xlsx');
     assert.deepStrictEqual(ok.timeouts, [90000], 'downloads get the 90 s timeout');
+    assert.ok(/^Downloaded youth-camp-.*\.xlsx\. Check your Downloads folder\.$/.test(ok.toasts.at(-1)), ok.toasts.at(-1));
   }
+  // A second tap while the first file is still coming starts no second download.
+  let release;
+  const slow = await run(() => new Promise((r) => { release = r; }), async (c) => {
+    const first = c.downloadAuditExport();
+    await c.downloadAuditExport();
+    release(new Response('PK', { status: 200, headers: { 'content-type': XLSX } }));
+    await first;
+  });
+  assert.strictEqual(slow.fetches, 1, 'one fetch for two taps');
+  assert.strictEqual(slow.saved.length, 1);
+  assert.ok(slow.toasts.some((t) => /^Still preparing/.test(t)), slow.toasts.join(' | '));
   const named = await run(res('PK', 200, XLSX), (c) => c.downloadOfflineSignInTemplate());
   assert.ok(/^youth-camp-2026-offline-sign-in-\d{4}-\d\d-\d\d\.xlsx$/.test(named.saved[0][1]), named.saved[0][1]);
   const refused = await run(res(JSON.stringify({ code: 'FORBIDDEN', message: 'Not allowed' }), 403, 'application/json'), (c) => c.downloadAuditExport());
-  assert.deepStrictEqual(refused.toasts, ['Not allowed'], 'the app refusal message is shown');
+  assert.strictEqual(refused.toasts.at(-1), 'Not allowed', 'the app refusal message is shown');
   // Control: a JSON call is untouched (20 s timeout, parsed body).
   const json = await run(res('{"a":1}', 200, 'application/json'), (c) => c._doFetch('/home', {}));
   assert.deepStrictEqual(json.r, { a: 1 });

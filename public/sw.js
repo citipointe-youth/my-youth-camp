@@ -41,13 +41,15 @@ self.addEventListener('fetch', (e) => {
   // B-12: the shell is cached under '/', so ignoreSearch lets '/?nav=<screen>' (a tapped
   // notification) find it. A 5xx (function outage) also gets the cached shell, which boots in
   // offline mode; with nothing cached the 5xx passes through. A non-ok answer is never cached.
+  // Gate B L1: one copy, always stored and read under '/'. Storing '/?nav=…' as its own entry let
+  // ignoreSearch return that older copy after a deploy.
   if (url.pathname === '/' || url.pathname === '/index.html') {
-    const cached = () => caches.match(request, { ignoreSearch: true });
+    const cached = () => caches.match('/');
     e.respondWith(
       fetch(request).then((res) => {
         if (res.ok) {
           const clone = res.clone();
-          caches.open(CACHE).then((c) => c.put(request, clone));
+          caches.open(CACHE).then((c) => c.put('/', clone));
         }
         if (res.status >= 500) return cached().then((hit) => hit || res);
         return res;

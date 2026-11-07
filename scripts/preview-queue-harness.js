@@ -58,11 +58,12 @@ var PREVIEW_MODE=false,ACCOUNT_PREVIEW=false,TOKEN='admintok',ACTOR={id:'u1',use
 var SETTINGS={campMode:'${campMode}'},CAMP_MODE='${campMode}',STACK=['home'],SESSIONS=[],SEL_SESSION=null;
 var LEADER_INITIALS='AD',_bootOffline=false,_rosterInUse=false,_previewStash=null,_previewLocalFlips={};
 var _rCheckin=async()=>{},_hideUndoToast=()=>{},_offlineBootRecover=()=>{},_rosterSynced=()=>{};
-var updateModeUI=()=>{},buildTabs=()=>{},gotoTab=()=>{},_restoreFilters=()=>{},_ensureInitials=()=>true,_showUndoToast=()=>{};`, c);
+var updateModeUI=()=>{},buildTabs=()=>{},gotoTab=()=>{},_restoreFilters=()=>{},_showUndoToast=()=>{};
+var _sheets=0,enforceInitials=()=>{_sheets++;},_isChurchAccount=()=>!!(ACTOR&&ACTOR.role==='church');`, c);
   vm.runInContext(between('async function api(', '/* After login, warm'), c); // `opt={}` defeats extract()
   vm.runInContext(between('const CHECKIN_QUEUE=[]', 'function _dismissFailedCheckins(')
     .replace("window.addEventListener('online'", "void 0&&window.addEventListener('online'"), c);
-  for (const fn of ['function _previewSimActive(', 'function _performCheck(', 'function enterPreview(', 'function exitPreview(', 'async function enterAccountPreview(', 'function exitAccountPreview(']) vm.runInContext(extract(fn), c);
+  for (const fn of ['function _ensureInitials(', 'function _previewSimActive(', 'function undoCheck(', 'function _performCheck(', 'function enterPreview(', 'function exitPreview(', 'async function enterAccountPreview(', 'function exitAccountPreview(']) vm.runInContext(extract(fn), c);
   const state = () => JSON.parse(vm.runInContext('JSON.stringify({q:CHECKIN_QUEUE.length,failed:_checkinFailed,names:_checkinFailNames,retry:!!_drainRetry})', c));
   return { c, out, store, state, run: (code) => vm.runInContext(code, c) };
 }
@@ -151,7 +152,38 @@ async function tapDuringAccountPreview() {
   assert.strictEqual(s.out.posts.length, 0, 'the preview tap is not sent as the admin on Exit');
 }
 
+async function churchPreviewNoInitialsGate() {
+  // Gate B UX 2: an admin previewing a church login that has no initials on this device taps a
+  // row. The read-only refusal must come first: no initials sheet, nothing stored under the church.
+  const s = sandbox('at-camp', ok);
+  s.store[ADMIN_KEY] = '[]';
+  await s.run("enterAccountPreview('u2')");
+  s.run("LEADER_INITIALS=''");
+  s.run("_performCheck('c9','in','Kid Nine')");
+  assert.strictEqual(s.run('_sheets'), 0, 'no initials sheet during a preview');
+  assert.ok(s.out.toasts.includes('Preview — this is read-only'), 'the read-only toast is the first thing shown');
+  assert.ok(!Object.keys(s.store).some((k) => k.startsWith('ycp_initials_')), 'nothing written to the initials keys');
+  assert.strictEqual(s.out.posts.length, 0);
+}
+
+async function undoClearedOnPreview() {
+  // Queue review L3: tap, then enter a preview inside the 4 s Undo window. The Undo must be gone,
+  // not turned into a reverse tap that api()'s guard drops while the original drains on Exit.
+  const s = sandbox('at-camp', () => new Promise(() => {})); // the first tap stays in flight
+  s.store[ADMIN_KEY] = '[]';
+  s.run('_queueLoad(true)');
+  s.run("_performCheck('c9','in','Kid Nine')");
+  assert.strictEqual(s.run('_undoCamperId'), 'c9', 'setup: the Undo window is open');
+  await s.run("enterAccountPreview('u2')");
+  assert.strictEqual(s.run('_undoCamperId'), null, 'entering a preview closes the Undo window');
+  s.run('undoCheck()');
+  assert.strictEqual(s.state().q, 0, 'Undo during the preview queues nothing');
+  assert.strictEqual(s.state().failed, 0, 'and leaves no "Not saved" count');
+}
+
 (async () => {
+  await churchPreviewNoInitialsGate();
+  await undoClearedOnPreview();
   await tapDuringAccountPreview();
   await accountPreview();
   await inFlightAtEntry();

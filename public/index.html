@@ -853,6 +853,10 @@ textarea{min-height:84px;resize:vertical;}
   #tabs{display:none;}
   #stage{grid-area:main;padding:0;position:relative;overflow:hidden;min-height:0;}
   #stage .screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:var(--pad);}
+  /* Gate B UX 4: the offline strip gets its own row above the screen instead of overlaying it. */
+  #stage:has(>#netStrip){display:flex !important;flex-direction:column;}
+  #stage>#netStrip{margin:12px var(--pad) 0;flex:none;}
+  #stage:has(>#netStrip) .screen.active{position:relative;inset:auto;flex:1 1 auto;min-height:0;}
   .wide-nav{grid-area:widenav;display:flex;flex-direction:column;gap:2px;padding:14px 10px;border-right:1px solid var(--line);background:#f9f8ff;overflow-y:auto;}
   .wide-nav-item{display:flex;align-items:center;gap:10px;padding:10px 13px;border-radius:12px;cursor:pointer;font-size:var(--t-body);font-weight:500;color:var(--ink);text-decoration:none;transition:background .12s;}
   .wide-nav-item:hover{background:var(--chip);}
@@ -1153,7 +1157,10 @@ async function _doFetch(path,opt){
   // QA batch 3: a wifi sign-in page or an edge proxy can answer 401/403/429 too. Only the app's own
   // {code,message} body can say anything about this session; anything else means "not reached".
   if(res.status!==204&&!_isAppAnswer(j,res)){
-    const na=new Error(res.status===413?'That is too large to send. Try a smaller file.':'Can’t reach the camp server. If this wifi has a sign-in page, finish that first, then try again.');
+    // Gate B UX 3: a 5xx page is the server (or its host) failing, not a wifi sign-in page.
+    const na=new Error(res.status===413?'That is too large to send. Try a smaller file.'
+      :res.status>=500?'The camp server is having a problem right now. Wait a minute, then try again.'
+      :'Can’t reach the camp server. If this wifi has a sign-in page, finish that first, then try again.');
     na.transient=true;na.nonApp=true;throw na;
   }
   if(res.status===401&&path.indexOf('/auth/login')!==0){
@@ -1425,6 +1432,9 @@ function _confirmEnforceInitials(){
 // Guard for attributed writes: true when initials are present (normal case — no prompt at all),
 // else pops the enforced gate and returns false so the caller aborts and retries after saving.
 function _ensureInitials(){
+  // Gate B UX 2: a preview is read-only, so refuse before the sheet — an admin previewing a church
+  // must never be asked for (or store over) that church's initials on this device.
+  if(PREVIEW_MODE||ACCOUNT_PREVIEW){toast('Preview — this is read-only');return false;}
   if(!_isChurchAccount()||LEADER_INITIALS)return true;
   enforceInitials();return false;
 }
@@ -3625,6 +3635,7 @@ function _queueStop(){
   CHECKIN_QUEUE.length=0;window._ciqRestored=false;
   _queueGen++;_draining=false;_inFlight=null;_queueWaiting=false;
   clearTimeout(_drainRetry);_drainRetry=null;
+  clearTimeout(_undoTimer);_undoCamperId=null;_hideUndoToast(); // gate B L3: an Undo can't outlive its login
 }
 // Load and start sending at sign-in or reopen, without waiting for the check-in screen.
 // keepAll: signing back in, or the server can't say which session is current. Nothing is judged.
@@ -4095,7 +4106,6 @@ function _rCheckin(){
 }
 function _performCheck(camperId,type,name){
   if(_ciTapLocked()){_ciTapIgnored(camperId,name);return;}
-  if(!_ensureInitials())return; // item 7: church initials gate (no-op once set; other roles pass)
   _ciTapLockUntil=Date.now()+500;_ciLastTapId=camperId;
   // Fix 4 (review 2026-07-17, MEDIUM-LOW): during the preview simulation there is no real
   // check-in session — the api() write-guard blocks the POST `_queueEntry` would fire, so the
@@ -4108,8 +4118,9 @@ function _performCheck(camperId,type,name){
     _rCheckin();
     return;
   }
-  // Phase B fix-up: an at-camp account preview is read-only, so refuse the tap here rather than queue it for api()'s guard to drop (a stale "Not saved" banner survived Exit).
-  if(PREVIEW_MODE||ACCOUNT_PREVIEW){toast('Preview — this is read-only');return;}
+  // Phase B fix-up: any other preview is read-only, so _ensureInitials refuses the tap here (before
+  // the initials sheet) rather than queue it for api()'s guard to drop. Item 7: church initials gate.
+  if(!_ensureInitials())return;
   // Check-out no longer asks for confirmation — reaching this point already required
   // actively opening the "Done" section and tapping the row, which is deliberate enough.
   // Optimistic flip
@@ -7192,11 +7203,12 @@ async function openCamper(id,push=true){
   if(canReadCamperNotes()){try{const notes=await api('/notes/camper/'+id);
     notesHtml=`<div class="h3">Notes</div>${notes.length?notes.map(n=>`<div class="noteitem">${n.sensitive?`<span class="pill warn" style="margin-bottom:4px">${icSm('alert')} Sensitive</span> `:''}${_noteBodyHtml(n)}<div class="meta">${n.category&&n.category!=='note'?esc(n.category)+' · ':''}${esc(n.authorName)} · ${dtFmt(n.createdAt)}</div></div>`).join(''):'<p class="sub">No notes.</p>'}`;
   }catch(e){}}
+  const cancelled=p.lifecycle==='cancelled'; // gate B UX 1: say so, and offer no sign-in
   const camp=`<div class="card"><div class="h3" style="margin-top:0">Camp attendance</div>
-    <div class="kv"><span class="k">Status</span><span class="v">${atCamp?'<span class="pill ok">Signed in</span>':lastSignOut?'<span class="pill warn">Signed out</span>':'<span class="pill info">Not arrived yet</span>'}</span></div>
+    <div class="kv"><span class="k">Status</span><span class="v">${cancelled?'<span class="pill" style="background:var(--chip);color:var(--muted)">Registration cancelled</span>':atCamp?'<span class="pill ok">Signed in</span>':lastSignOut?'<span class="pill warn">Signed out</span>':'<span class="pill info">Not arrived yet</span>'}</span></div>
     ${!atCamp&&lastSignOut?`<div class="kv"><span class="k">Signed out by</span><span class="v">${esc(lastSignOut.leaderName)}</span></div>
     <div class="kv"><span class="k">Reason</span><span class="v">${esc(lastSignOut.reason||'—')}</span></div>`:''}
-    ${(!atCamp&&CAMP_MODE==='pre-camp')?'':atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
+    ${(cancelled||(!atCamp&&CAMP_MODE==='pre-camp'))?'':atCamp?`<button class="btn red" onclick="signOutPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">Sign out of camp</button>`:`<button class="btn" onclick="signInPrompt('${id}','${esc(jsq(p.fullName||p.firstName+' '+p.lastName))}',${lead})">${(p.signOutHistory||[]).some(e=>e.type==='out')?'Sign back in to camp':'Sign in to camp (late arrival)'}</button>`}</div>`;
   const fullName=p.fullName||p.firstName+' '+p.lastName;
   document.getElementById('camper').innerHTML=`<div class="detail-hd"><div class="av-lg">${initials(fullName)}</div>
     <h2>${esc(fullName)}</h2><div style="color:#cfe0ff;font-size:.82rem">${esc(p.zone)} Zone · ${lead?'Leader (18+)':'Grade '+(p.grade||'—')}</div></div>
@@ -7241,8 +7253,17 @@ async function _refreshAfterAttendance(id){
   const el2=_scroller(document.getElementById(cur));
   if(el2)el2.scrollTop=y;
 }
-async function _doSignIn(id,leaderName){
-  try{await api('/attendance/sign-in',{method:'POST',body:{camperId:id,leaderName}});toast('Signed in');_refreshAfterAttendance(id);}catch(e){toast(e.message);}
+async function _doSignIn(id,leaderName,name){
+  try{await api('/attendance/sign-in',{method:'POST',body:{camperId:id,leaderName}});toast('Signed in');_refreshAfterAttendance(id);}
+  catch(e){
+    // Gate B UX 1: the screen was stale (cancelled since it loaded). Say why, and refresh it so the
+    // row drops out and the profile shows the cancelled status instead of a sign-in button.
+    if(/cancelled person/.test((e&&e.message)||'')){
+      toast(`${name||'This person'}’s registration was cancelled, so they can’t be signed in. If that’s a mistake, ask the camp office.`);
+      _invalidate('/attendance');_refreshAfterAttendance(id);return;
+    }
+    toast(e.message);
+  }
 }
 function signOutPrompt(id,name,isLeader){
   const who=isLeader?'leader':'youth';
@@ -7276,7 +7297,7 @@ function signInPrompt(id,name,isLeader){
   // (church → its initials; other roles → the account display name), never a typed field, and the
   // originating list updates in place.
   if(_isChurchAccount()&&!_ensureInitials())return; // church initials gate only
-  _doSignIn(id,_actingName());
+  _doSignIn(id,_actingName(),name);
 }
 // Confirm step before signing someone in from the My-students "Not signed in" list — the button
 // sits in a scrollable list, so a mis-tap should not silently mark a young person on site. (Sign-in
@@ -8519,19 +8540,19 @@ function _exportName(base,ext){
 }
 // B-13: through _doFetch's blob mode, so a wifi sign-in page is never saved as the file, a 401 ends
 // the session and a stalled network times out. _doFetch, not api(): a Blob must not enter Cache.
-async function downloadAuditExport(){
-  try{
-    const blob=await _doFetch('/export/audit',{as:'blob'});
-    _rlSaveBlob(blob,_exportName('audit-workbook','xlsx'));
-    toast('Audit workbook downloaded');
-  }catch(e){toast(e.message||'Export failed');}
-}
+async function downloadAuditExport(){return downloadCsvExport('/export/audit',_exportName('audit-workbook','xlsx'));}
+// Gate B UX 5: one download at a time (a slow one can take 90 s, and a second tap made a second
+// file), with a "working" toast up front and the file name on success.
+let _dlBusy=false;
 async function downloadCsvExport(path,filename){
+  if(_dlBusy){toast('Still preparing the last file. Please wait.');return;}
+  _dlBusy=true;toast('Preparing the file. This can take up to a minute.');
   try{
     const blob=await _doFetch(path,{as:'blob'});
     _rlSaveBlob(blob,filename);
-    toast('Downloaded');
+    toast('Downloaded '+filename+'. Check your Downloads folder.');
   }catch(e){toast(e.message||'Export failed');}
+  finally{_dlBusy=false;}
 }
 
 RENDER.adminCloseOut=async function(){
@@ -10226,7 +10247,7 @@ function crRemove(id){ _crIds=_crIds.filter(x=>x!==id); _renderAllocCards(); }
 function crCancel(id){
   const p=_allocState.regsAll.find(r=>r.id===id); if(!p)return;
   modal(`<div class="h3" style="margin-top:0">Cancel registration</div>
-    <p class="note-hint" style="text-align:left">Cancel <b>${esc(p.firstName)} ${esc(p.lastName)}</b>'s registration? They drop off the check-in roster and every on-screen list immediately. <b>Their money stays in the budget</b> — record a refund separately if one is owed.</p>
+    <p class="note-hint" style="text-align:left">Cancel <b>${esc(p.firstName)} ${esc(p.lastName)}</b>'s registration? They drop off the check-in roster and every on-screen list immediately. If they are at camp now, they will be signed out as well. <b>Their money stays in the budget</b> — record a refund separately if one is owed.</p>
     <div class="rowsb" style="gap:6px;margin-top:10px">
       <button class="btn ghost" onclick="closeModal()">Keep registered</button>
       <button class="btn" onclick="crCancelConfirm('${esc(id)}')">Cancel registration</button>
@@ -11186,7 +11207,7 @@ async function _tryRestoreSession(){
     _loadLeaderInitials(); // restore the badge/prefill
     enforceInitials();     // item 7: a restored church session with no initials is still gated
     _offerNoteDraft();
-    if(_bootOffline){_netStrip();return;}
+    if(_bootOffline){_renderWideNav(STACK[STACK.length-1]||'home');_netStrip();return;} // gate B UX 4: home's paint failed, so draw the sidebar here
     _offerAlertsAfterLogin();  // reopening the installed app counts as a sign-in for this offer
     // Cold start from a tapped notification (sw.js openWindow('/?nav=…')). Done AFTER
     // gotoTab('home') so 'home' stays on the stack and Back behaves normally. Routed through

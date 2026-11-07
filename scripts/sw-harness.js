@@ -24,9 +24,10 @@ const SHELL = '<html>SHELL</html>';
 async function shell(net, url, cached = true) {
   const store = new Map();
   if (cached) store.set(ORIGIN + '/', new Response(SHELL, { status: 200 }));
+  const key = (r) => new URL(typeof r === 'string' ? r : r.url, ORIGIN);
   const caches = {
-    open: async () => ({ put: async (r, res) => { store.set(r.url, res); }, addAll: async () => {} }),
-    match: async (r, o) => { const u = new URL(r.url); if (o && o.ignoreSearch) u.search = ''; const hit = store.get(u.href); return hit && hit.clone(); },
+    open: async () => ({ put: async (r, res) => { store.set(key(r).href, res); }, addAll: async () => {} }),
+    match: async (r, o) => { const u = key(r); if (o && o.ignoreSearch) u.search = ''; const hit = store.get(u.href); return hit && hit.clone(); },
     keys: async () => [], delete: async () => true,
   };
   const listeners = {};
@@ -84,6 +85,12 @@ function controllerChange(controlledAtBoot) {
   const fresh = await shell(200, '/');
   assert.strictEqual(fresh.body, '<html>NEW</html>', 'online: network first');
   assert.strictEqual(fresh.cachedShell, '<html>NEW</html>', 'and the new shell is cached');
+
+  // Queue review L1: an online /?nav= load refreshes the one shell copy under '/', and makes no
+  // second copy that ignoreSearch could later pick (the browser returns the oldest match).
+  const navOnline = await shell(200, '/?nav=notifs');
+  assert.deepStrictEqual(navOnline.keys, [ORIGIN + '/'], 'only one shell copy, under /');
+  assert.strictEqual(navOnline.cachedShell, '<html>NEW</html>', 'and it is the new one');
 
   // B-12b
   const nav = await shell('offline', '/?nav=notifs');

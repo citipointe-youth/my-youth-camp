@@ -6,7 +6,7 @@ YOUTH CAMP PLATFORM — CHANGELOG
 2026-11-07 - Architecture round, Phase B (camp-v152)
 -----------------------------------------------------------------------------------
 Four lanes merged on arch/2026-11-07; no migration. Presence: atCamp/lifecycle are
-written on UPDATE only by saves passing {presence:true} (sign events, cancel/uncancel,
+written on UPDATE only by savePresence/savePresenceMany (sign events, cancel/uncancel,
 offline sheet, Reset logs, setMode revert), so a stale PATCH, import or check-in can't
 undo a sign-out (B-1); a sign event that moves nothing writes nothing and signing in a
 cancelled person is a 400 (B-2); cancelling someone at camp writes an 'out' event
@@ -23,8 +23,16 @@ shell on a 5xx and for ?nav=, and no longer reloads on first install (B-12); pre
 park the check-in queue and resume it on Exit, and a tap during an account preview is
 refused with the read-only toast (B-14 + fix-up). New SQL checked on production with
 read-only SELECTs only. New harnesses scripts/sw-harness.js and
-scripts/preview-queue-harness.js. sw.js camp-v151 -> camp-v152. Verified: npx tsc
---noEmit clean, npx vitest run 1433 pass / 91 files, npm run harness all green.
+scripts/preview-queue-harness.js. sw.js camp-v151 -> camp-v152.
+Gate fix-up: a PATCH lifecycle 'registered' only uncancels; signing in someone cancelled
+since the screen loaded names them, says why and refreshes the row/profile, and the
+profile shows "Registration cancelled" with no sign-in button; a preview refuses a write
+before the church initials sheet (nothing stored over the church's initials); Undo is
+cleared when the queue parks; a 5xx is no longer called a wifi sign-in page; the offline
+strip has its own row and the sidebar shows on desktop; downloads toast "Preparing the
+file", run one at a time and name the file; the cancel modal says an at-camp person is
+signed out too; the SW keeps one shell copy under '/'. Verified: npx tsc --noEmit clean,
+npx vitest run 1434 pass / 91 files, npm run harness all green.
 
 2026-11-07 - Architecture round, Phase A (camp-v151)
 -----------------------------------------------------------------------------------
