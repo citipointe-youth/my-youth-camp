@@ -146,6 +146,32 @@ describe('access regression: C4 (A1) access-policy key cells', () => {
   });
 });
 
+describe('[T-2] firstAid and prayer keep reach to a student cancelled after arrival (Tom, Step 3 ruling T-2)', () => {
+  const ev = (type: 'in' | 'out') => ({ id: 'so-' + type, type, leaderName: 'L', authorId: 'a', timestamp: NOW });
+  const sentHome = person({ lifecycle: 'cancelled', atCamp: false, signOutHistory: [ev('in'), ev('out')] } as Partial<Person>);
+  const neverCame = person({ id: 'p2', lifecycle: 'cancelled', atCamp: false });
+
+  it('[T-2] reach: full for firstAid/prayer only, and only with check-in or sign history', () => {
+    expect(reach(actor('firstAid'), sentHome)).toBe('full');
+    expect(reach(actor('prayer'), sentHome)).toBe('full');
+    expect(reach(actor('firstAid'), neverCame)).toBe('none');
+    expect(reach(actor('prayer'), neverCame)).toBe('none');
+    for (const a of [actor('admin'), actor('director'), actor('zoneLeader', { zone: 'Yellow' }), actor('church', { churchId: 'c1' }), actor('church', { churchId: 'c2' })]) {
+      expect(reach(a, sentHome), a.role).toBe('none');
+    }
+  });
+
+  it('[T-2] staff can still log for them, and the records stay on Records and the digest', async () => {
+    const c = await buildMemoryContainer();
+    await c.repos.people.save(sentHome);
+    const fa = await c.services.note.add(actor('firstAid'), { camperId: 'p1', body: 'Ice pack', category: 'firstaid' });
+    const pr = await c.services.note.add(actor('prayer'), { camperId: 'p1', body: 'Prayed', category: 'prayer' });
+    expect((await c.services.note.recentFirstAid(actor('firstAid'))).map((n) => n.id)).toEqual([fa.id]);
+    expect((await c.services.note.recentPrayer(actor('prayer'))).map((n) => n.id)).toEqual([pr.id]);
+    expect((await c.services.note.forCamper(actor('prayer'), 'p1')).map((n) => n.id)).toEqual(expect.arrayContaining([fa.id, pr.id]));
+  });
+});
+
 describe('access regression: C5 (A3) write policy', () => {
   it('[C5] camper:write is gone from every role (IA-OQ-20)', () => {
     for (const role of ['church', 'zoneLeader', 'director', 'admin', 'firstAid', 'prayer'] as const) {
