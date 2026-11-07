@@ -3,6 +3,16 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C14: I5 (camp-v155)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change. I5: both Invoice passes (single / shared) call one apply step
+(applyShare + commit in invoice-import.service.ts: accumulate, ledger, multiple-invoices-summed,
+owned money fields), so the A-7 guess/touched fix lives once. The "Still needed" payment rule moved
+to the server, src/services/payment-standing.ts: paymentStanding(p) -> { state, owing }, sent on
+RegistrantDto only (never CamperDto/search, A-6). The SPA reads it when present (old _paymentMissing
+body kept as fallback during the cache overlap). Same people flagged. public/ changed -> camp-v155.
+
+
 2026-11-07 - Architecture round, Phase C13: I3 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change, no public/ change. I3: one matcher that reports how it
