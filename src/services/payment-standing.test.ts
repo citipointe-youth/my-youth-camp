@@ -91,7 +91,7 @@ describe('who receives paymentStanding (A-6 / OQ-58)', () => {
   } as unknown as Person;
 
   it('RegistrantDto carries it', () => {
-    expect(toRegistrantDto(p).paymentStanding).toEqual({ state: 'owing', owing: 80 });
+    expect(toRegistrantDto(p, { id: 'admin-1', role: 'admin', churchId: null, churchName: null, zone: null, displayName: 'Admin User' }).paymentStanding).toEqual({ state: 'owing', owing: 80 });
   });
 
   it('CamperDto never does, for any role', () => {
