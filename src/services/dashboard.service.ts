@@ -12,6 +12,7 @@ import type { Person } from '../core/entities/person';
 import { isRegistrant, isCamper } from '../core/entities/person';
 import { canAccessPerson } from './person.service';
 import { getCachedDashboard, setCachedDashboard } from './dashboard-cache';
+import { onSessionRoster, isCheckedInFor } from './session-roster';
 
 export { invalidateDashboardCache } from './dashboard-cache';
 
@@ -204,15 +205,14 @@ export function makeDashboardService(
         // Leaders are excluded — they're never on the twice-daily check-in roster (see
         // checkin.service), so they'd never get a checkInHistory entry and would sit
         // permanently "due" once bulk-signed-in at the mode switch.
-        const atCampNow = allCampers.filter((p) => p.atCamp && p.kind !== 'leader');
+        // The rule is session-roster.ts (P2), shared with the roster and the push warnings.
+        const sessionRoster = currentSession
+          ? allCampers.filter((p) => onSessionRoster(p, currentSession.id, currentSession.id))
+          : [];
         const checkInsDue = currentSession
-          ? atCampNow.filter((p) => {
-              const entries = p.checkInHistory.filter((e) => e.sessionId === currentSession.id);
-              const last = entries[entries.length - 1];
-              return last?.type !== 'in';
-            }).length
+          ? sessionRoster.filter((p) => !isCheckedInFor(p, currentSession.id)).length
           : 0;
-        const sessionExpected = currentSession ? atCampNow.length : 0;
+        const sessionExpected = sessionRoster.length;
 
         const dashboard: AtCampDashboard = {
           mode: 'at-camp',

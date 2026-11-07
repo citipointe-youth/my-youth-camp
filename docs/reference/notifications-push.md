@@ -857,7 +857,7 @@ Pure, fully tested, **clock injected** (`zonedNow(tz, now)`) so there is no hidd
 `warnWindow()` is the cheap settings-only gate; `churchesBehind()` does the roster work. Three
 traps are baked in and must not be "cleaned up":
 
-1. **"Checked in" is last-entry-wins**, matching `toRosterEntry` in `src/api/dto/person.dto.ts`
+1. **"Checked in" is last-entry-wins**, matching `toRosterEntry` (the rule now lives in `src/services/session-roster.ts`, P2 2026-11-07)
    exactly. A student checked in and then out is NOT checked in. Diverge from this and the push
    count disagrees with the roster the leader is staring at.
 2. **AC-1**: the first camp day is **PM-only** and the last day is **AM-only**, so there is no

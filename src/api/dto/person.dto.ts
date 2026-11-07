@@ -2,6 +2,7 @@ import type { Person } from '../../core/entities/person';
 import type { Actor } from '../../core/entities/user';
 import { isCamper } from '../../core/entities/person';
 import { maskPhone } from '../../utils/mask';
+import { lastEntryFor } from '../../services/session-roster';
 
 /**
  * The JSON shape /registrants returns — the SPA's pre-camp My Youth screen reads
@@ -348,8 +349,7 @@ export function toCrossScopeHitDto(p: Person): CrossScopeHitDto {
 }
 
 export function toRosterEntry(p: Person, sessionId: string): RosterEntry {
-  const sessionEntries = p.checkInHistory.filter((e) => e.sessionId === sessionId);
-  const last = sessionEntries[sessionEntries.length - 1] ?? null;
+  const last = lastEntryFor(p, sessionId); // last-entry-wins (session-roster.ts)
   return {
     camperId: p.id,
     firstName: p.firstName,

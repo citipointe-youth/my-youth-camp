@@ -2,6 +2,7 @@ import type { Person, CheckInEntry, SignOutEvent } from '../core/entities/person
 import type { Actor } from '../core/entities/user';
 import type { CampMode, PersonLifecycle } from '../core/types/enums';
 import { newId } from '../utils/id';
+import { lastEntryFor } from './session-roster';
 
 /**
  * Presence transitions (P1+I4). The ONE place that decides how a person's presence
@@ -76,14 +77,9 @@ export function transition(p: Person, intent: PresenceIntent, ctx: PresenceCtx):
     case 'checkIn': {
       if (p.lifecycle === 'cancelled') return { result: 'refused', reason: CHECKIN_REFUSAL_CANCELLED };
       if (!p.atCamp) return { result: 'refused', reason: CHECKIN_REFUSAL_NOT_AT_CAMP };
-      // N5: idempotent per (session, person, type) against the LAST entry for that session only —
+      // N5: idempotent per (session, person, type) against the LAST entry for that session only
       // "checked in" is last-entry-wins, so a real in -> out -> in is three entries.
-      for (let i = p.checkInHistory.length - 1; i >= 0; i--) {
-        const prev = p.checkInHistory[i];
-        if (!prev || prev.sessionId !== intent.entry.sessionId) continue;
-        if (prev.type === intent.entry.type) return NOOP;
-        break;
-      }
+      if (lastEntryFor(p, intent.entry.sessionId)?.type === intent.entry.type) return NOOP;
       return applied({ ...p, checkInHistory: [...p.checkInHistory, intent.entry], updatedAt: now }, { checkIn: intent.entry });
     }
     case 'signIn':
