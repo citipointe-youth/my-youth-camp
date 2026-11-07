@@ -20,12 +20,12 @@ import { isBlank } from './person-matching';
 // ---------------------------------------------------------------------------
 
 export type Importer = 'form' | 'ticket' | 'invoice';
-export type WritePolicy = 'write' | 'write-blank' | 'seed-only';
+type WritePolicy = 'write' | 'write-blank' | 'seed-only';
 
 /** What one row says: any owned field, `null`/blank meaning "this row has no value". */
-export type RowValues = { [K in keyof Person]?: Person[K] | null };
+type RowValues = { [K in keyof Person]?: Person[K] | null };
 
-export interface FieldRule {
+interface FieldRule {
   write: Partial<Record<Importer, WritePolicy>>;
   /** The stored value a `seed-only` write tests, when it is not the field itself. */
   stored?: (p: Person) => unknown;
@@ -89,9 +89,9 @@ export const OWNERSHIP: Partial<Record<keyof Person, FieldRule>> = {
   feesAmount: { write: { invoice: 'write' } },
   taxAmount: { write: { invoice: 'write' } },
 
-  // ---- Review flag: set by Ticket/Invoice, cleared by nobody (latch, PLANNED-IMPROVEMENTS) ----
-  needsReview: { write: { ticket: 'write', invoice: 'write' } },
-  needsReviewReason: { write: { ticket: 'write', invoice: 'write' } },
+  // ---- Review flag: Invoice via applyRow (Ticket sets it directly after applyRow), cleared by nobody (latch, PLANNED-IMPROVEMENTS) ----
+  needsReview: { write: { invoice: 'write' } },
+  needsReviewReason: { write: { invoice: 'write' } },
 
   updatedAt: { write: { form: 'write', ticket: 'write', invoice: 'write' } },
 };
