@@ -283,7 +283,13 @@ export function makePersonService(repo: IPersonRepository, settings?: ISettingsR
         safeRest.refundAmount !== undefined && safeRest.refundAmount !== existing.refundAmount
           ? { refundedAt: safeRest.refundAmount == null ? null : nowISO() }
           : {};
-      const updated: Person = { ...existing, ...safeRest, ...rawPatch, ...cancelPatch, ...refundPatch,
+      /* B-3: cancelling someone at camp signs them out FIRST (arrived -> checked_out + one 'out'
+         event), then cancels. After the cancel, withSignEvent's no-op rule (B-2) would skip it. */
+      const base: Person = cancelling && existing.atCamp
+        ? withSignEvent(existing, { id: newId('so'), type: 'out', leaderName: actor.displayName || 'Staff',
+            reason: 'Registration cancelled', authorId: actor.id, timestamp: nowISO() }, nowISO())
+        : existing;
+      const updated: Person = { ...base, ...safeRest, ...rawPatch, ...cancelPatch, ...refundPatch,
         id: existing.id, lifecycle: nextLifecycle, updatedAt: nowISO() };
       // Fail-closed: the patched result must still be inside the actor's scope (a zoneLeader/
       // admin/director changing church/zone can't push a person out of what they may access).

@@ -116,3 +116,30 @@ describe('B-2 signEvent on wrong-state people (IA OQ-8)', () => {
     await expect(svc.checkIn(admin, 'r', e)).rejects.toMatchObject({ statusCode: 400, message: 'Cannot check in a person who is not currently at camp' });
   });
 });
+
+describe('B-3 cancelling someone at camp signs them out first', () => {
+  it('writes one out event (actor, "Registration cancelled"), then cancels; undo + sign in balances it', async () => {
+    const repo = await repoWith(P({ id: 'a', lifecycle: 'arrived', atCamp: true,
+      signOutHistory: [{ id: 'so0', type: 'in', ...ev }] }));
+    const svc = makePersonService(repo);
+    await svc.update(admin, 'a', { lifecycle: 'cancelled' } as Partial<Person>);
+    let after = (await repo.findById('a'))!;
+    expect(after).toMatchObject({ lifecycle: 'cancelled', atCamp: false });
+    expect(after.signOutHistory.map((e) => e.type)).toEqual(['in', 'out']);
+    expect(after.signOutHistory[1]).toMatchObject({ leaderName: 'A', authorId: 'u', reason: 'Registration cancelled' });
+    await svc.update(admin, 'a', { lifecycle: 'registered' } as Partial<Person>);
+    await svc.signEvent(admin, 'a', { type: 'in', ...ev });
+    after = (await repo.findById('a'))!;
+    expect(after).toMatchObject({ lifecycle: 'arrived', atCamp: true });
+    expect(after.signOutHistory.map((e) => e.type)).toEqual(['in', 'out', 'in']);
+  });
+
+  it('cancelling someone not at camp writes no event', async () => {
+    const repo = await repoWith(P({ id: 'r' }), P({ id: 'o', lifecycle: 'checked_out' }));
+    const svc = makePersonService(repo);
+    await svc.update(admin, 'r', { lifecycle: 'cancelled' } as Partial<Person>);
+    await svc.update(admin, 'o', { lifecycle: 'cancelled' } as Partial<Person>);
+    expect((await repo.findById('r'))!.signOutHistory).toEqual([]);
+    expect((await repo.findById('o'))!).toMatchObject({ lifecycle: 'cancelled', signOutHistory: [] });
+  });
+});
