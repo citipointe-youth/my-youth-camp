@@ -3,6 +3,15 @@ YOUTH CAMP PLATFORM — CHANGELOG
 
 >> This file is not maintained after 2026-07-31. For later history use `git log`.
 
+2026-11-07 - Architecture round, Phase C4: A1 (server only, no cache bump)
+-----------------------------------------------------------------------------------
+No migration, no Supabase SQL change, no public/ change. A1: one access-policy module.
+access-control.ts now holds inScope (the one church/zone/gender switch; canAccessPerson and
+canAccessChurch wrap it), reach(actor, person) = full|locate|none (replaces note's
+preCampEligible pair, search's inline rule and revealContact's cross-scope leader rule) and
+isOversight (admin|director, replaces 13 inline checks). The role x target truth table is
+pinned in access-policy.a1.test.ts before the refactor and did not change. No behaviour change.
+
 2026-11-07 - Architecture round, Phase C3: A2 (server only, no cache bump)
 -----------------------------------------------------------------------------------
 No migration, no Supabase SQL change, no public/ change. A2: person DTOs are viewer-aware.
