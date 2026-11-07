@@ -63,7 +63,7 @@ var _sheets=0,enforceInitials=()=>{_sheets++;},_isChurchAccount=()=>!!(ACTOR&&AC
   vm.runInContext(between('async function api(', '/* After login, warm'), c); // `opt={}` defeats extract()
   vm.runInContext(between('const CHECKIN_QUEUE=[]', 'function _dismissFailedCheckins(')
     .replace("window.addEventListener('online'", "void 0&&window.addEventListener('online'"), c);
-  for (const fn of ['function _ensureInitials(', 'function _previewSimActive(', 'function undoCheck(', 'function _performCheck(', 'function enterPreview(', 'function exitPreview(', 'async function enterAccountPreview(', 'function exitAccountPreview(']) vm.runInContext(extract(fn), c);
+  for (const fn of ['function _ensureInitials(', 'function _previewSimActive(', 'function undoCheck(', 'function _performCheck(', 'function enterPreview(', 'function _previewShell(', 'function exitPreview(', 'async function enterAccountPreview(', 'function exitAccountPreview(']) vm.runInContext(extract(fn), c);
   const state = () => JSON.parse(vm.runInContext('JSON.stringify({q:CHECKIN_QUEUE.length,failed:_checkinFailed,names:_checkinFailNames,retry:!!_drainRetry})', c));
   return { c, out, store, state, run: (code) => vm.runInContext(code, c) };
 }
