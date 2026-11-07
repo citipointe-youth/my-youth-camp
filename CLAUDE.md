@@ -41,7 +41,7 @@ unbuilt designs + topics queued for future brainstorming), `docs/archive/` (hist
 
 ### Status of the bigger roadmap
 - **Verification gate:** `npm run typecheck` clean, `npm test` green (91 files / 1,434 tests on 2026-11-07, Phase B), `npm run harness` exit 0.
-- **Supabase repo layer is complete and wired** (`PERSISTENCE==='supabase'` branch in `container.ts`); migrations applied; all repos verified round-tripping in prod (R11 closed).
+- **Supabase repo layer is complete and wired** (`supabaseRepos` adapter in `container.ts`); migrations applied; all repos verified round-tripping in prod (R11 closed).
 - **Phase 1 (Person unification) is COMPLETE.** The unified `Person` entity/repo/service is the live path. `/registrants` and `/campers` are lifecycle-filtered DTO views over `PersonService` — no separate Registrant/Camper services exist. The Supabase layer targets the `people` table. `docs/archive/STEP4-SWITCHOVER.md` is historical.
 - **Fixed defects** (now compiler-confirmed): app-won't-start, accommodation availability (B1), reset/new-year (A3/A4), timezone (B3), CSV import perf + BOM (C1), remind scoping (C2), stateless auth + security headers + login rate-limit.
 
@@ -184,7 +184,7 @@ api (Express) → controllers → services → repositories (interfaces) → cor
 - **`src/repositories/`** — interfaces (DB-swap surface) + in-memory implementations + JSON file persistence.
 - **`src/services/`** — all business logic + RBAC. Depend on repo *interfaces* only.
 - **`src/api/`** — thin controllers → declarative route table (`http/router.ts`) → Express adapter. Express lives only under `src/api/http/` and `src/api/middleware/`.
-- **`src/container.ts`** — composition root. The only file that names concrete repositories.
+- **`src/container.ts`** — composition root. The only file that names concrete repositories. Two adapters (`supabaseRepos(sql)`, `memoryRepos({dataDir?})`) build a `Repositories` set; `buildServices(repos)` is the one service graph; `buildContainer()` picks the adapter by `PERSISTENCE`, `buildMemoryContainer()` gives tests fresh state (D1, 2026-11-07).
 
 ## Roles
 

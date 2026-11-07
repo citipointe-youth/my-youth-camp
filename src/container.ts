@@ -45,7 +45,7 @@ import {
   SupabaseDefaultsRepository,
   SupabasePushSubscriptionRepository,
 } from './repositories/supabase';
-import { getSqlClient } from './repositories/supabase/client';
+import { getSqlClient, type SqlClient } from './repositories/supabase/client';
 import type {
   IUserRepository,
   IChurchRepository,
@@ -169,208 +169,74 @@ export interface Container {
   services: Services;
 }
 
-function makeJsonPersistence<T>(filename: string) {
-  return new JsonFilePersistence<T>(join(env.DATA_DIR, filename));
+/** Supabase adapter: every repo shares one pooled SQL client. */
+export function supabaseRepos(sql: SqlClient): Repositories {
+  return {
+    users: new SupabaseUserRepository(sql),
+    churches: new SupabaseChurchRepository(sql),
+    allocationOverrides: new SupabaseAllocationOverrideRepository(sql),
+    people: new SupabasePersonRepository(sql),
+    classrooms: new SupabaseClassroomRepository(sql),
+    allocations: new SupabaseAllocationRepository(sql),
+    classroomFreeze: new SupabaseClassroomFreezeRepository(sql),
+    zones: new SupabaseZoneRepository(sql),
+    groups: new SupabaseGroupRepository(sql),
+    notes: new SupabaseNoteRepository(sql),
+    notifications: new SupabaseNotificationRepository(sql),
+    incidents: new SupabaseIncidentRepository(sql),
+    revealAudit: new SupabaseRevealAuditRepository(sql),
+    schedule: new SupabaseScheduleRepository(sql),
+    devotionals: new SupabaseDevotionalRepository(sql),
+    faqs: new SupabaseFaqRepository(sql),
+    settings: new SupabaseSettingsRepository(sql),
+    snapshots: new SupabaseDefaultsRepository(sql),
+    pushSubscriptions: new SupabasePushSubscriptionRepository(sql),
+  };
 }
 
-export async function buildContainer(): Promise<Container> {
-  // ----- Repositories -----
-
-  // Supabase production backend — all repos share one pooled SQL client.
-  if (env.PERSISTENCE === 'supabase') {
-    const sql = getSqlClient();
-    const users: IUserRepository = new SupabaseUserRepository(sql);
-    const churches: IChurchRepository = new SupabaseChurchRepository(sql);
-    const allocationOverrides: IAllocationOverrideRepository = new SupabaseAllocationOverrideRepository(sql);
-    const people: IPersonRepository = new SupabasePersonRepository(sql);
-    const classrooms: IClassroomRepository = new SupabaseClassroomRepository(sql);
-    const allocations: IAllocationRepository = new SupabaseAllocationRepository(sql);
-    const classroomFreeze: IClassroomFreezeRepository = new SupabaseClassroomFreezeRepository(sql);
-    const zones: IZoneRepository = new SupabaseZoneRepository(sql);
-    const groups: IGroupRepository = new SupabaseGroupRepository(sql);
-    const notes: INoteRepository = new SupabaseNoteRepository(sql);
-    const notifications: INotificationRepository = new SupabaseNotificationRepository(sql);
-    const incidents: IIncidentRepository = new SupabaseIncidentRepository(sql);
-    const revealAudit: IRevealAuditRepository = new SupabaseRevealAuditRepository(sql);
-    const scheduleRepo: IScheduleRepository = new SupabaseScheduleRepository(sql);
-    const devotionals: IDevotionalRepository = new SupabaseDevotionalRepository(sql);
-    const faqs: IFaqRepository = new SupabaseFaqRepository(sql);
-    const settingsRepo: ISettingsRepository = new SupabaseSettingsRepository(sql);
-    const snapshots: ISnapshotRepository = new SupabaseDefaultsRepository(sql);
-    const pushSubscriptions: IPushSubscriptionRepository = new SupabasePushSubscriptionRepository(sql);
-
-    const repos: Repositories = {
-      users, churches, allocationOverrides, people, classrooms, allocations, classroomFreeze,
-      zones, groups, notes, notifications, incidents, revealAudit, schedule: scheduleRepo,
-      devotionals, faqs, settings: settingsRepo, snapshots, pushSubscriptions,
-    };
-
-    await Promise.all([
-      users.init(), churches.init(), allocationOverrides.init(), people.init(), classrooms.init(), allocations.init(), classroomFreeze.init(),
-      zones.init(), groups.init(), notes.init(), notifications.init(), incidents.init(), revealAudit.init(),
-      scheduleRepo.init(), devotionals.init(), faqs.init(), settingsRepo.init(), snapshots.init(),
-      pushSubscriptions.init(),
-    ]);
-
-    const auth = makeAuthService(users, settingsRepo);
-    // Item 3 (2026-07-28): the devotional + schedule repos let a camp-date change carry day-keyed
-  // content across to the new dates (see remapDays in settings.service.ts).
-  const settings = makeSettingsService(settingsRepo, { devotionals, schedule: scheduleRepo });
-    const personSvc = makePersonService(people, settingsRepo);
-    const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people, classroomFreeze);
-    const checkIn = makeCheckInService(people, settingsRepo);
-    // ⚠ `push` is constructed BEFORE notification/incident (moved 2026-08-03). Both of those
-    // now take it so an urgent notice / high-severity incident alert is pushed the moment it
-    // is created rather than waiting up to 5 minutes for the cron tick. `push` has no
-    // dependency on either service, so the ordering is free.
-    const push = makePushService({
-      subscriptions: pushSubscriptions,
-      notifications,
-      users,
-      settings: settingsRepo,
-    });
-    const notification = makeNotificationService(notifications, push, { users, settings: settingsRepo });
-    const incident = makeIncidentService(incidents, notifications, push);
-    const revealAuditSvc = makeRevealAuditService(revealAudit, users);
-    const search = makeSearchService(people, churches, revealAuditSvc);
-    const note = makeNoteService(notes, people);
-    const schedule = makeScheduleService(scheduleRepo);
-    const content = makeContentService(faqs, devotionals);
-    const importSvc = makeImportService(people, churches, allocationOverrides);
-    const exportSvc = makeExportService(people, churches, allocationOverrides);
-    const allocation = makeAllocationService(people, churches, allocationOverrides);
-    const ticketImportSvc = makeTicketImportService(people, churches);
-    const invoiceImportSvc = makeInvoiceImportService(people);
-    const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
-    const offlineSignInSvc = makeOfflineSignInService(people, settingsRepo);
-    const account = makeAccountService(users, churches, people);
-    const dashboard = makeDashboardService(people, notifications, churches);
-    const admin = makeAdminService(
-      users, churches, people, classrooms, allocations, faqs, scheduleRepo,
-      notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
-      incidents, pushSubscriptions, revealAudit, classroomFreeze,
-    );
-  const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
-
-    const services: Services = {
-      auth, settings, person: personSvc, accommodation: accommodationSvc,
-      checkIn, notification, incident, revealAudit: revealAuditSvc, search, note, schedule, content,
-      importService: importSvc, exportService: exportSvc, allocation,
-      ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
-      auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
-      account, dashboard, admin, users, settingsRepo, cron, push,
-      pushSubscriptionRepo: pushSubscriptions,
-    };
-
-    return { repos, services };
-  }
-
-  const useJson = env.PERSISTENCE === 'json';
-
-  const users: IUserRepository = new InMemoryUserRepository(
-    useJson ? makeJsonPersistence<User>('users.json') : undefined,
-  );
-  const churches: IChurchRepository = new InMemoryChurchRepository(
-    useJson ? makeJsonPersistence<Church>('churches.json') : undefined,
-  );
-  const allocationOverrides: IAllocationOverrideRepository = new InMemoryAllocationOverrideRepository(
-    useJson ? makeJsonPersistence<AllocationOverride>('allocation-overrides.json') : undefined,
-  );
-  const people: IPersonRepository = new InMemoryPersonRepository(
-    useJson ? makeJsonPersistence<Person>('people.json') : undefined,
-  );
-  const classrooms: IClassroomRepository = new InMemoryClassroomRepository(
-    useJson ? makeJsonPersistence<Classroom>('classrooms.json') : undefined,
-  );
-  const allocations: IAllocationRepository = new InMemoryAllocationRepository(
-    useJson ? makeJsonPersistence<RoomAllocation>('allocations.json') : undefined,
-  );
-  const classroomFreeze: IClassroomFreezeRepository = new InMemoryClassroomFreezeRepository(
-    useJson ? makeJsonPersistence<ClassroomFreeze>('classroom-freeze.json') : undefined,
-  );
-  const zones: IZoneRepository = new InMemoryZoneRepository(
-    useJson ? makeJsonPersistence<Zone>('zones.json') : undefined,
-  );
-  const groups: IGroupRepository = new InMemoryGroupRepository(
-    useJson ? makeJsonPersistence<Group>('groups.json') : undefined,
-  );
-  const notes: INoteRepository = new InMemoryNoteRepository(
-    useJson ? makeJsonPersistence<StudentNote>('notes.json') : undefined,
-  );
-  const notifications: INotificationRepository = new InMemoryNotificationRepository(
-    useJson ? makeJsonPersistence<Notification>('notifications.json') : undefined,
-  );
-  const incidents: IIncidentRepository = new InMemoryIncidentRepository(
-    useJson ? makeJsonPersistence<Incident>('incidents.json') : undefined,
-  );
-  const revealAudit: IRevealAuditRepository = new InMemoryRevealAuditRepository(
-    useJson ? makeJsonPersistence<RevealAudit>('reveal-audit.json') : undefined,
-  );
-  const scheduleRepo: IScheduleRepository = new InMemoryScheduleRepository(
-    useJson ? makeJsonPersistence<ScheduleItem>('schedule.json') : undefined,
-  );
-  const devotionals: IDevotionalRepository = new InMemoryDevotionalRepository(
-    useJson ? makeJsonPersistence<Devotional>('devotionals.json') : undefined,
-  );
-  const faqs: IFaqRepository = new InMemoryFaqRepository(
-    useJson ? makeJsonPersistence<FaqItem>('faqs.json') : undefined,
-  );
-  const settingsRepo: ISettingsRepository = new InMemorySettingsRepository(
-    useJson ? makeJsonPersistence<CampSettings>('settings.json') : undefined,
-  );
-  const snapshots: ISnapshotRepository = new InMemorySnapshotRepository(
-    useJson ? makeJsonPersistence<CampDefaults>('snapshots.json') : undefined,
-  );
-  const pushSubscriptions: IPushSubscriptionRepository = new InMemoryPushSubscriptionRepository(
-    useJson ? makeJsonPersistence<PushSubscription>('push-subscriptions.json') : undefined,
-  );
-
-  const repos: Repositories = {
-    users,
-    churches,
-    allocationOverrides,
-    people,
-    classrooms,
-    allocations,
-    classroomFreeze,
-    zones,
-    groups,
-    notes,
-    notifications,
-    incidents,
-    revealAudit,
-    schedule: scheduleRepo,
-    devotionals,
-    faqs,
-    settings: settingsRepo,
-    snapshots,
-    pushSubscriptions,
+/**
+ * In-memory adapter. With `dataDir` each repo is snapshotted to `<dataDir>/<file>.json`
+ * (PERSISTENCE=json); without it, state lives only in this process (tests, PERSISTENCE=memory).
+ */
+export function memoryRepos(opts: { dataDir?: string } = {}): Repositories {
+  const { dataDir } = opts;
+  const file = <T>(name: string) => (dataDir ? new JsonFilePersistence<T>(join(dataDir, name)) : undefined);
+  return {
+    users: new InMemoryUserRepository(file<User>('users.json')),
+    churches: new InMemoryChurchRepository(file<Church>('churches.json')),
+    allocationOverrides: new InMemoryAllocationOverrideRepository(file<AllocationOverride>('allocation-overrides.json')),
+    people: new InMemoryPersonRepository(file<Person>('people.json')),
+    classrooms: new InMemoryClassroomRepository(file<Classroom>('classrooms.json')),
+    allocations: new InMemoryAllocationRepository(file<RoomAllocation>('allocations.json')),
+    classroomFreeze: new InMemoryClassroomFreezeRepository(file<ClassroomFreeze>('classroom-freeze.json')),
+    zones: new InMemoryZoneRepository(file<Zone>('zones.json')),
+    groups: new InMemoryGroupRepository(file<Group>('groups.json')),
+    notes: new InMemoryNoteRepository(file<StudentNote>('notes.json')),
+    notifications: new InMemoryNotificationRepository(file<Notification>('notifications.json')),
+    incidents: new InMemoryIncidentRepository(file<Incident>('incidents.json')),
+    revealAudit: new InMemoryRevealAuditRepository(file<RevealAudit>('reveal-audit.json')),
+    schedule: new InMemoryScheduleRepository(file<ScheduleItem>('schedule.json')),
+    devotionals: new InMemoryDevotionalRepository(file<Devotional>('devotionals.json')),
+    faqs: new InMemoryFaqRepository(file<FaqItem>('faqs.json')),
+    settings: new InMemorySettingsRepository(file<CampSettings>('settings.json')),
+    snapshots: new InMemorySnapshotRepository(file<CampDefaults>('snapshots.json')),
+    pushSubscriptions: new InMemoryPushSubscriptionRepository(file<PushSubscription>('push-subscriptions.json')),
   };
+}
 
-  // Init all repos
-  await Promise.all([
-    users.init(),
-    churches.init(),
-    allocationOverrides.init(),
-    people.init(),
-    classrooms.init(),
-    allocations.init(),
-    classroomFreeze.init(),
-    zones.init(),
-    groups.init(),
-    notes.init(),
-    notifications.init(),
-    incidents.init(),
-    revealAudit.init(),
-    scheduleRepo.init(),
-    devotionals.init(),
-    faqs.init(),
-    settingsRepo.init(),
-    snapshots.init(),
-    pushSubscriptions.init(),
-  ]);
+/** Init every repo in parallel (no-ops on Supabase; JSON load in memory/json). */
+export async function initRepos(repos: Repositories): Promise<void> {
+  await Promise.all(Object.values(repos).map((r) => r.init()));
+}
 
-  // ----- Services -----
+/** The service graph. Pure and synchronous; the only place it is wired. */
+export function buildServices(repos: Repositories): Services {
+  const {
+    users, churches, allocationOverrides, people, classrooms, allocations, classroomFreeze,
+    notes, notifications, incidents, revealAudit, schedule: scheduleRepo, devotionals, faqs,
+    settings: settingsRepo, snapshots, pushSubscriptions,
+  } = repos;
+
   const auth = makeAuthService(users, settingsRepo);
   // Item 3 (2026-07-28): the devotional + schedule repos let a camp-date change carry day-keyed
   // content across to the new dates (see remapDays in settings.service.ts).
@@ -378,8 +244,10 @@ export async function buildContainer(): Promise<Container> {
   const personSvc = makePersonService(people, settingsRepo);
   const accommodationSvc = makeAccommodationService(classrooms, allocations, churches, settingsRepo, people, classroomFreeze);
   const checkIn = makeCheckInService(people, settingsRepo);
-  // ⚠ See the note in the other composition block above — `push` is built first so an urgent
-  // notice / high-severity incident alert can be pushed at creation time, not on the tick.
+  // ⚠ `push` is constructed BEFORE notification/incident (moved 2026-08-03). Both of those
+  // take it so an urgent notice / high-severity incident alert is pushed the moment it is
+  // created rather than waiting up to 5 minutes for the cron tick. `push` has no dependency
+  // on either service, so the ordering is free.
   const push = makePushService({
     subscriptions: pushSubscriptions,
     notifications,
@@ -401,61 +269,37 @@ export async function buildContainer(): Promise<Container> {
   const auditExportSvc = makeAuditExportService(people, notes, incidents, settingsRepo, revealAudit);
   const offlineSignInSvc = makeOfflineSignInService(people, settingsRepo);
   const account = makeAccountService(users, churches, people);
-  const dashboard = makeDashboardService(
-    people,
-    notifications,
-    churches,
-  );
+  const dashboard = makeDashboardService(people, notifications, churches);
   const admin = makeAdminService(
-    users,
-    churches,
-    people,
-    classrooms,
-    allocations,
-    faqs,
-    scheduleRepo,
-    notifications,
-    notes,
-    devotionals,
-    settingsRepo,
-    snapshots,
-    allocationOverrides,
-    incidents,
-    pushSubscriptions,
-    revealAudit,
-    classroomFreeze,
+    users, churches, people, classrooms, allocations, faqs, scheduleRepo,
+    notifications, notes, devotionals, settingsRepo, snapshots, allocationOverrides,
+    incidents, pushSubscriptions, revealAudit, classroomFreeze,
   );
   const cron = makeCronService({ notifications, people, users, settings: settingsRepo, push });
 
-  const services: Services = {
-    auth,
-    settings,
-    person: personSvc,
-    accommodation: accommodationSvc,
-    checkIn,
-    notification,
-    incident,
-    revealAudit: revealAuditSvc,
-    search,
-    note,
-    schedule,
-    content,
-    importService: importSvc,
-    exportService: exportSvc,
-    allocation,
-    ticketImport: ticketImportSvc,
-    invoiceImport: invoiceImportSvc,
-    auditExport: auditExportSvc,
-    offlineSignIn: offlineSignInSvc,
-    account,
-    dashboard,
-    admin,
-    users,
-    settingsRepo,
-    cron,
-    push,
+  return {
+    auth, settings, person: personSvc, accommodation: accommodationSvc,
+    checkIn, notification, incident, revealAudit: revealAuditSvc, search, note, schedule, content,
+    importService: importSvc, exportService: exportSvc, allocation,
+    ticketImport: ticketImportSvc, invoiceImport: invoiceImportSvc,
+    auditExport: auditExportSvc, offlineSignIn: offlineSignInSvc,
+    account, dashboard, admin, users, settingsRepo, cron, push,
     pushSubscriptionRepo: pushSubscriptions,
   };
+}
 
-  return { repos, services };
+/** Production/dev entry: pick the adapter by `env.PERSISTENCE`, init, wire. */
+export async function buildContainer(): Promise<Container> {
+  const repos = env.PERSISTENCE === 'supabase'
+    ? supabaseRepos(getSqlClient())
+    : memoryRepos({ dataDir: env.PERSISTENCE === 'json' ? env.DATA_DIR : undefined });
+  await initRepos(repos);
+  return { repos, services: buildServices(repos) };
+}
+
+/** Fresh in-memory container for tests (no `env`, no disk). */
+export async function buildMemoryContainer(): Promise<Container> {
+  const repos = memoryRepos();
+  await initRepos(repos);
+  return { repos, services: buildServices(repos) };
 }
