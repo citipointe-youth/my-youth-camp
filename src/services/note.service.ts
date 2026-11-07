@@ -15,8 +15,9 @@ const FIRSTAID_CATEGORY = 'firstaid';
 const PRAYER_CATEGORY = 'prayer';
 
 /* Bug 19 (2026-07-28) — "Validation failed" when adding a note from the Students screen.
-   The SPA posts `sessionId: SEL_SESSION`, and `SEL_SESSION` is genuinely `null` anywhere outside
-   the daily check-in screen (it is only set when a session is picked there). Zod's `.optional()`
+   The SPA posted `sessionId: SEL_SESSION`, which was `null` before any session had been picked on
+   the daily check-in screen. (Since B-10, 2026-11-07, the session comes only from the check-in row
+   the note was opened from; Search and person-card notes carry none.) Zod's `.optional()`
    accepts `undefined` but NOT `null`, so every note added from a student's profile / the Students
    list was rejected before it reached the service — while the same modal opened from check-in
    worked, which is why it looked intermittent. `.nullish()` accepts both; `?? null` downstream

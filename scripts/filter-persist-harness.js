@@ -41,6 +41,7 @@ const ctx = {
   ACTOR: null,
   FILTER: null,
   MY_FILTER: null,
+  _ciPulseChurch: null, // S4: read by _filterBanner
   esc: (x) => String(x),
 };
 ctx.globalThis = ctx;
@@ -152,6 +153,45 @@ checkTrue('the leaders option reads as "Leaders", not "Yr leaders"',
   && ctx._filterBanner('my', 3, 20).indexOf('Yr leaders') < 0);
 checkTrue('omits the count when totals are unknown',
   ctx._filterBanner('my').indexOf(' of ') < 0, ctx._filterBanner('my'));
+
+// ── 6. S4 / IA-OQ-21: a Home pulse tap is a TEMPORARY church filter, never saved ────────────
+console.log('\n6. Pulse tap gives a temporary church filter');
+{
+  const nav = [];
+  const c = {
+    JSON, Object, String, localStorage: ctx.localStorage, ACTOR: { username: 'zone1', id: 'id-zone1' },
+    FILTER: null, MY_FILTER: null, SEL_SESSION: 's-old', _pulseSess: 's-pulse', _forceCheckinFace: null,
+    campPhase: () => 'checkin', _renderArrival: async () => {}, _renderDailyCheckin: async () => {}, RENDER: {},
+    esc: (x) => String(x), icSm: () => '',
+  };
+  c.gotoTab = (id, arg) => { nav.push(id); return c.RENDER.checkin(arg); };
+  c.globalThis = c;
+  vm.createContext(c);
+  vm.runInContext('var _ciPulseChurch=null;' + ['function _filtKey()', 'function _saveFilters()', 'function _restoreFilters()',
+    'function _filterActive(f)', 'function _filterBanner(which,shown,total)', 'function setFilter(k,v)', 'function _pulseGoToChurch(church)', 'RENDER.checkin=']
+    .map(extract).join('\n') + ';' + (SRC.includes('function _ciFilter(') ? extract('function _ciFilter(') : ''), c);
+  c._restoreFilters(); c.FILTER.grade = '8'; c._saveFilters();
+  c._pulseGoToChurch('Victory');
+  const eff = () => (c._ciFilter ? c._ciFilter() : c.FILTER);
+  check('opens check-in on the pulse session', [nav[0], c.SEL_SESSION], ['checkin', 's-pulse']);
+  check('the roster shows the tapped church', eff().church, 'Victory');
+  c.setFilter('gender', 'female');
+  check('another filter change saves the pre-pulse church', JSON.parse(store['ycp_filters_zone1']).checkin.church, 'all');
+  check('and the view keeps the tapped church', eff().church, 'Victory');
+  const ban = c._filterBanner('checkin', 3, 9);
+  checkTrue('strip names the church and says it is not saved', ban.indexOf('Victory') >= 0 && /not saved/i.test(ban), ban);
+  c.setFilter('church', 'Grace');
+  check('an explicit church pick replaces it and is saved', [eff().church, JSON.parse(store['ycp_filters_zone1']).checkin.church], ['Grace', 'Grace']);
+  checkTrue('leaving Check-in drops it (_navTo)', /if\(id!=='checkin'\)_ciPulseChurch=null;/.test(extract('async function _navTo(')));
+  checkTrue('Show all drops it', /_ciPulseChurch=null/.test(extract('function _clearFilters(')));
+}
+// ── 7. S4: a mode change picked up on Home refetches sessions (as _applyModeChange does) ──────
+console.log('\n7. Home mode re-sync resets SESSIONS');
+{
+  const i = SRC.indexOf('if(fresh.campMode!==CAMP_MODE){');
+  const branch = SRC.slice(i, SRC.indexOf('}', i) + 1);
+  checkTrue('SESSIONS and SEL_SESSION reset on the re-sync', /SESSIONS=\[\];SEL_SESSION=null;/.test(branch), branch);
+}
 
 console.log('\n' + (failures ? failures + ' CHECK(S) FAILED' : 'All checks passed.'));
 process.exit(failures ? 1 : 0);

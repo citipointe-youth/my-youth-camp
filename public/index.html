@@ -1310,7 +1310,7 @@ function _restoreFilters(){
   }catch(_){}
 }
 function _clearFilters(which){
-  if(which!=='my')FILTER={gender:'all',grade:'all',church:'all',zone:'all'};
+  if(which!=='my'){FILTER={gender:'all',grade:'all',church:'all',zone:'all'};_ciPulseChurch=null;}
   if(which!=='checkin')MY_FILTER={church:'all',gender:'all',grade:'all'};
   _saveFilters();
   if(which==='my'){
@@ -1330,7 +1330,8 @@ function _filterActive(f){return Object.keys(f).some(k=>f[k]!=='all');}
    hiding anyone, they are looking at their group. "12 of 47" is the same information without
    implying something is wrong. */
 function _filterBanner(which,shown,total){
-  const f=which==='my'?MY_FILTER:FILTER;
+  const pulse=which!=='my'&&!!_ciPulseChurch;
+  const f=which==='my'?MY_FILTER:pulse?{...FILTER,church:_ciPulseChurch}:FILTER;
   if(!_filterActive(f))return '';
   const bits=[];
   if(f.zone&&f.zone!=='all')bits.push(f.zone+' Zone');
@@ -1340,7 +1341,7 @@ function _filterBanner(which,shown,total){
   const count=(typeof shown==='number'&&typeof total==='number'&&total>0)?` · ${shown} of ${total}`:'';
   return `<div class="filtban"><div style="flex:1;min-width:0">
     <span class="fb-eye">${icSm('preview')}</span> Showing <b>${esc(bits.join(' · '))}</b>${count}
-    <div class="sub" style="margin-top:1px">Your saved view on this phone.</div></div>
+    <div class="sub" style="margin-top:1px">${pulse?'Church from the Home tap, not saved.':'Your saved view on this phone.'}</div></div>
     <button class="btn ghost sm" style="width:auto;margin:0;flex:0 0 auto" onclick="_clearFilters('${which}')">Show all</button></div>`;
 }
 let LAST_LEADER='';
@@ -2701,6 +2702,7 @@ async function _stepBack(){STACK.pop();await _navTo(STACK[STACK.length-1]);}
 async function _navTo(id,arg){
   _armBack();
   if(id!==_navId)_ciQ=''; // name search resets on a real navigation (see _applyNameFilter)
+  if(id!=='checkin')_ciPulseChurch=null; // S4: a pulse tap's church lasts only while on Check-in
   const tok=++_navToken; _navId=id;
   // PHONE body-scroll: all screens share the one document scroll, so a genuine navigation must
   // reset it to the top (each screen no longer keeps its own scrollTop). In-place refreshes don't
@@ -2717,13 +2719,13 @@ async function _navTo(id,arg){
   catch(e){ if(!_stale(tok)) { const el2=document.getElementById(id); if(el2)el2.innerHTML='<p class="err" style="display:block">'+esc(e.message||'Something went wrong')+'</p>'; } }
 }
 async function go(id,arg){STACK.push(id);await _navTo(id,arg);}
-async function gotoTab(id){
+async function gotoTab(id,arg){
   // Phase 4: firstAid has no 'home' tab — its landing is Search. Redirect any home navigation
   // (incl. the post-login gotoTab('home')) so the role lands on its real first screen.
   if(id==='home'&&ACTOR&&(ACTOR.role==='firstAid'||ACTOR.role==='prayer'))id='search';
   const keepHome=['checkin','search','notifs'];
   STACK=keepHome.includes(id)?['home',id]:[id];
-  await _navTo(id);
+  await _navTo(id,arg);
 }
 async function back(){
   // QA item 17: the first-aid log and other on-screen forms have no sheet to stay open.
@@ -2901,6 +2903,7 @@ RENDER.home=async function renderHome(skipModeSync){
         if(fresh.campMode!==CAMP_MODE){
           CAMP_MODE=fresh.campMode;
           if(SETTINGS)SETTINGS.campMode=fresh.campMode;
+          SESSIONS=[];SEL_SESSION=null; // S4: the old mode's sessions must be refetched, as in _applyModeChange
           updateModeUI();buildTabs();
         }
       }
@@ -3364,11 +3367,15 @@ async function _pulseStep(dir){
 }
 // Tapping a church bar (zoneLeader pulse) jumps to Check-in pre-filtered to that church, on the
 // session the pulse was showing.
+/* S4 / IA-OQ-21: the tapped church is a TEMPORARY filter, passed as a one-shot nav arg. It is not
+   written into FILTER, so _saveFilters can never save it as the leader's view; it clears when they
+   leave Check-in (_navTo), tap Show all, or pick a church themselves. */
+let _ciPulseChurch=null;
 function _pulseGoToChurch(church){
-  FILTER.church=church;
-  if(_pulseSess)SEL_SESSION=_pulseSess;
-  gotoTab('checkin');
+  gotoTab('checkin',{church,sessionId:_pulseSess});
 }
+// The check-in filter as shown: the saved FILTER, with a pulse tap's church over it.
+function _ciFilter(){return _ciPulseChurch?{...FILTER,church:_ciPulseChurch}:FILTER;}
 // Tapping the Unallocated bar opens Data Import with its "Unallocated" card expanded (one-shot,
 // consumed in _renderAllocCards).
 let _openAllocCard=null;
@@ -3825,7 +3832,9 @@ function _dismissFailedCheckins(){
 }
 
 // Unified entry: one nav id, phase-branched. Arrival sign-in before the switchover, daily after.
-RENDER.checkin=async function(){
+RENDER.checkin=async function(arg){
+  // S4: a Home pulse tap arrives as {church, sessionId}; re-renders (filters, taps) pass nothing.
+  if(arg&&arg.church){_ciPulseChurch=arg.church;if(arg.sessionId)SEL_SESSION=arg.sessionId;}
   // Item 8: an explicit home tap (openCheckinFace) forces the face; otherwise time-driven phase.
   const forced=_forceCheckinFace;_forceCheckinFace=null;
   if((forced||campPhase())==='signin'){ await _renderArrival(); return; }
@@ -4059,10 +4068,11 @@ async function _renderDailyCheckin(){
   const showChurch=['zoneLeader','director','admin'].includes(ACTOR.role);
   const zonesOpt=['all'];
   const churchesOpt=['all',...[...new Set(roster.map(c=>c.church))].sort((a,b)=>String(a).localeCompare(String(b)))];
-  let list=off?roster:roster.filter(c=>(FILTER.gender==='all'||c.gender===FILTER.gender)&&
-    (FILTER.grade==='all'||String(c.grade)===FILTER.grade)&&
-    (FILTER.zone==='all'||c.zone===FILTER.zone)&&
-    (FILTER.church==='all'||c.church===FILTER.church));
+  const F=_ciFilter();
+  let list=off?roster:roster.filter(c=>(F.gender==='all'||c.gender===F.gender)&&
+    (F.grade==='all'||String(c.grade)===F.grade)&&
+    (F.zone==='all'||c.zone===F.zone)&&
+    (F.church==='all'||c.church===F.church));
   const dueList=list.filter(c=>!c.present);
   const doneList=list.filter(c=>c.present);
   const dueShown=dueList.length,presentShown=doneList.length;
@@ -4074,7 +4084,7 @@ async function _renderDailyCheckin(){
   const dayBtns=SESSIONS.map(s=>`<button class="${s.id===SEL_SESSION?'on':''}" onclick="selDay('${s.id}')">${esc(_ciLabel(s))}${s.id===CUR_ID?' •':''}</button>`).join('');
   const gradeOpts=['all',...GRADES].map(g=>`<option value="${g}" ${String(g)===FILTER.grade?'selected':''}>${g==='all'?'All grades':'Grade '+g}</option>`).join('');
   const zoneSelOpts=zonesOpt.map(z=>`<option value="${z}" ${z===FILTER.zone?'selected':''}>${z==='all'?'All zones':z+' Zone'}</option>`).join('');
-  const churchSelOpts=churchesOpt.map(ch=>`<option value="${esc(ch)}" ${ch===FILTER.church?'selected':''}>${ch==='all'?'All churches':esc(ch)}</option>`).join('');
+  const churchSelOpts=churchesOpt.map(ch=>`<option value="${esc(ch)}" ${ch===F.church?'selected':''}>${ch==='all'?'All churches':esc(ch)}</option>`).join('');
   // Item 5/9/11: grade/gender badge to the LEFT of the name; church logins don't repeat their own
   // church on each tile (they only ever see their own), so those rows collapse to a single line and
   // fit more per screen. Item 4: when viewing a non-current session as a restricted church, the
@@ -4146,7 +4156,7 @@ async function _renderDailyCheckin(){
   if(_undoCamperId)_showUndoToast(_undoType);
 };
 function selDay(id){SEL_SESSION=id;RENDER.checkin();}
-function setFilter(k,v){FILTER[k]=v;if(k==='zone')FILTER.church='all';_saveFilters();RENDER.checkin();}
+function setFilter(k,v){if(k==='church'||k==='zone')_ciPulseChurch=null;FILTER[k]=v;if(k==='zone')FILTER.church='all';_saveFilters();RENDER.checkin();}
 
 // Re-render the check-in screen WITHOUT jumping back to the top of a long roster. paint() keeps the
 // scroll on a clean same-screen repaint, but a check-in/out reflow (a row moving into the collapsed
