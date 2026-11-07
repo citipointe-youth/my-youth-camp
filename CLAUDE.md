@@ -259,7 +259,7 @@ exist.
 
 ## Key design rules
 
-- **RBAC in one file**: `src/services/access-control.ts`. Never scatter role checks.
+- **RBAC in one file**: `src/services/access-control.ts`. Never scatter role checks. Since A1 (Phase C, 2026-11-07) it also holds the scope rules: `inScope` (the one church/zone/gender switch; `canAccessPerson` and `canAccessChurch` wrap it), `reach(actor, person)` = `full | locate | none` for search/notes/contact reveals, and `isOversight` (admin|director). The truth table is pinned in `access-policy.a1.test.ts`; a snapshot change there is an access change.
 - **Validation inside services**: all external input parsed with Zod inside the service, not the controller.
 - **Repos return deep clones**: in-memory base repository clones on every read/write.
 - **Accommodation lock**: `CampSettings.accommodationLocked` — server blocks non-admin writes when true.

@@ -1,7 +1,7 @@
 import type { INotificationRepository, ISettingsRepository, IUserRepository } from '../repositories/interfaces/entity-repositories';
 import type { Notification } from '../core/entities/notification';
 import type { Actor } from '../core/entities/user';
-import { assertCanSendNotification } from './access-control';
+import { assertCanSendNotification, isOversight } from './access-control';
 import { CreateNotificationSchema, UpdateNotificationSchema } from '../core/validation/notification.schema';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
@@ -158,10 +158,10 @@ export function makeNotificationService(
     async scheduled(actor) {
       const now = nowISO();
       const all = await notifRepo.findAll();
-      const isOversight = actor.role === 'director' || actor.role === 'admin';
+      const oversight = isOversight(actor);
       return all
         .filter((n) => n.scheduledFor != null && n.scheduledFor > now)
-        .filter((n) => isOversight || n.senderId === actor.id)
+        .filter((n) => oversight || n.senderId === actor.id)
         .sort((a, b) => (a.scheduledFor as string).localeCompare(b.scheduledFor as string));
     },
 
@@ -170,8 +170,8 @@ export function makeNotificationService(
       const data = UpdateNotificationSchema.parse(input);
       const existing = await notifRepo.findById(id);
       if (!existing) throw new NotFoundError('Notification not found');
-      const isOversight = actor.role === 'director' || actor.role === 'admin';
-      if (!isOversight && existing.senderId !== actor.id) {
+      const oversight = isOversight(actor);
+      if (!oversight && existing.senderId !== actor.id) {
         throw new ForbiddenError('You can only edit notices you created');
       }
       const scope = data.scope ?? existing.scope;
@@ -211,11 +211,11 @@ export function makeNotificationService(
     async remove(actor, id) {
       const existing = await notifRepo.findById(id);
       if (!existing) throw new NotFoundError('Notification not found');
-      const isOversight = actor.role === 'director' || actor.role === 'admin';
+      const oversight = isOversight(actor);
       const isCreator = existing.senderId === actor.id;
       // A creator may always delete their own notice (needed for a zoneLeader's own scheduled
       // ones); otherwise only director/admin, plus the legacy zoneLeader-own-zone allowance.
-      if (!isOversight && !isCreator) {
+      if (!oversight && !isCreator) {
         if (actor.role !== 'zoneLeader') {
           throw new ForbiddenError('Not allowed to delete notifications');
         }

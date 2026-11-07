@@ -6,7 +6,7 @@ import type { Classroom, RoomAllocation, AllocationGender, AllocationBracket, Cl
 import { CLASSROOM_FREEZE_ID } from '../core/entities/accommodation';
 import type { Actor } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
-import { assertCan, assertCanAccessChurch } from './access-control';
+import { assertCan, assertCanAccessChurch, isOversight } from './access-control';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../core/errors/app-error';
 import { CreateClassroomSchema, UpdateClassroomSchema, SetAllocationsSchema, SetPerRegistrationSchema, SetSoftFreezeSchema } from '../core/validation/accommodation.schema';
 import { newId } from '../utils/id';
@@ -74,7 +74,7 @@ export function makeAccommodationService(
   }
 
   function assertDirectorOrAdmin(actor: Actor): void {
-    if (actor.role !== 'admin' && actor.role !== 'director') {
+    if (!isOversight(actor)) {
       throw new ForbiddenError('Allocations are managed by directors and admins only');
     }
   }

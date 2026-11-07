@@ -6,7 +6,7 @@ import type {
 import type { User, SafeUser, GenderScope } from '../core/entities/user';
 import type { Church } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
-import { assertCan, canAccessChurch } from './access-control';
+import { assertCan, canAccessChurch, isOversight } from './access-control';
 import { NotFoundError, BadRequestError, ForbiddenError, UnauthorizedError } from '../core/errors/app-error';
 import {
   CreateUserSchema,
@@ -723,8 +723,8 @@ export function makeAccountService(
       // The capability alone is not the gate. A church login holds it for its OWN church only;
       // without this check any church could rewrite every other church's emergency contacts,
       // which are exactly the numbers first aid calls at 2am. Oversight roles are camp-wide.
-      const isOversight = actor.role === 'admin' || actor.role === 'director';
-      if (!isOversight && actor.churchId !== id) {
+      const oversight = isOversight(actor);
+      if (!oversight && actor.churchId !== id) {
         throw new ForbiddenError('You can only edit your own church’s contacts');
       }
       const data = UpdateChurchContactsSchema.parse(input);

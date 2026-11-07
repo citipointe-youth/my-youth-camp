@@ -4,7 +4,11 @@ import {
   assertCan,
   canAccessChurch,
   canSendNotification,
+  inScope,
+  reach,
+  isOversight,
 } from './access-control';
+import type { Person } from '../core/entities/person';
 import { canAccessPerson } from './person.service';
 import type { Actor } from '../core/entities/user';
 import { ForbiddenError } from '../core/errors/app-error';
@@ -193,5 +197,37 @@ describe('access-control: prayer role', () => {
     expect(canSendNotification(p, 'camp')).toBe(false);
     expect(canSendNotification(p, 'zone', 'Red')).toBe(false);
     expect(canSendNotification(p, 'church')).toBe(false);
+  });
+});
+
+describe('A1 policy interface: inScope / reach / isOversight', () => {
+  const person = (over: Partial<Person>) =>
+    ({ churchId: 'c1', zone: 'Yellow', gender: 'male', lifecycle: 'arrived', ...over } as Person);
+
+  it('isOversight is admin and director only', () => {
+    expect((['admin', 'director', 'church', 'zoneLeader', 'firstAid', 'prayer'] as const).filter((r) => isOversight({ role: r })))
+      .toEqual(['admin', 'director']);
+  });
+
+  it('inScope: zone leader needs a zone on both sides; gender narrows only when the target carries one', () => {
+    expect(inScope(actor('zoneLeader', { zone: 'Yellow' }), { churchId: 'x', zone: 'Yellow' })).toBe(true);
+    expect(inScope(actor('zoneLeader', { zone: 'Yellow' }), { churchId: 'x' })).toBe(false);
+    expect(inScope(actor('zoneLeader', { zone: null }), { churchId: 'x', zone: null })).toBe(false);
+    const boys = actor('church', { churchId: 'c1', genderScope: 'male' });
+    expect(inScope(boys, { churchId: 'c1' })).toBe(true);
+    expect(inScope(boys, { churchId: 'c1', gender: 'female' })).toBe(false);
+    expect(inScope(boys, { churchId: 'c1', gender: 'other' as Person['gender'] })).toBe(true);
+  });
+
+  it('reach: full in scope once arrived (registrants too for firstAid/prayer); locate for leaders cross-scope', () => {
+    const church = actor('church', { churchId: 'c1' });
+    expect(reach(church, person({}))).toBe('full');
+    expect(reach(church, person({ lifecycle: 'registered' }))).toBe('none');
+    expect(reach(church, person({ churchId: 'c2' }))).toBe('locate');
+    expect(reach(church, person({ churchId: 'c2', lifecycle: 'registered' }))).toBe('none');
+    expect(reach(actor('firstAid'), person({ lifecycle: 'registered' }))).toBe('full');
+    expect(reach(actor('prayer'), person({ lifecycle: 'cancelled' }))).toBe('none');
+    expect(reach(actor('director'), person({ lifecycle: 'registered' }))).toBe('none');
+    expect(reach(actor('zoneLeader', { zone: 'Blue' }), person({}))).toBe('locate');
   });
 });

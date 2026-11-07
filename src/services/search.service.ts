@@ -3,9 +3,7 @@ import type { RevealAuditService } from './reveal-audit.service';
 import type { Person } from '../core/entities/person';
 import type { Church, ChurchContact } from '../core/entities/church';
 import type { Actor } from '../core/entities/user';
-import { assertCan } from './access-control';
-import { isCamper, isRegistrant } from '../core/entities/person';
-import { canAccessPerson } from './person.service';
+import { assertCan, canAccessPerson, reach } from './access-control';
 import { NotFoundError } from '../core/errors/app-error';
 import { maskPhone } from '../utils/mask';
 
@@ -195,16 +193,9 @@ export function makeSearchService(
       // medicare). director/admin already access everyone; their results are never redacted.
       const results: SearchResult[] = [];
       for (const person of persons) {
-        const owned = canAccessPerson(actor, person);
-        let visible: boolean;
-        if (owned) {
-          visible = isCamper(person) || ((actor.role === 'firstAid' || actor.role === 'prayer') && isRegistrant(person));
-        } else if (actor.role === 'church' || actor.role === 'zoneLeader') {
-          visible = isCamper(person);
-        } else {
-          visible = false;
-        }
-        if (!visible) continue;
+        const r = reach(actor, person);
+        if (r === 'none') continue;
+        const owned = r === 'full';
         const { masked } = await getContactsForPerson(person);
         results.push({ camper: owned ? person : redactSensitive(person), limited: !owned, contacts: masked });
       }
@@ -247,8 +238,7 @@ export function makeSearchService(
       // A leader may find any arrived camper to reach that camper's church leaders (items 6/7/10
       // in search() above), so the leader contact search offers must also open. The same reach as
       // search: church and zone leader, arrived campers only. The parent number never crosses scope.
-      const crossScopeLeader =
-        contactRole !== PARENT_ROLE && (actor.role === 'church' || actor.role === 'zoneLeader') && isCamper(person);
+      const crossScopeLeader = contactRole !== PARENT_ROLE && reach(actor, person) === 'locate';
       if (!canAccessPerson(actor, person) && !crossScopeLeader) {
         throw new NotFoundError('Student not found');
       }

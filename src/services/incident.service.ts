@@ -2,7 +2,7 @@ import type { IIncidentRepository, INotificationRepository } from '../repositori
 import type { Incident } from '../core/entities/incident';
 import type { Notification } from '../core/entities/notification';
 import type { Actor } from '../core/entities/user';
-import { assertCan } from './access-control';
+import { assertCan, isOversight } from './access-control';
 import { CreateIncidentSchema } from '../core/validation/incident.schema';
 import { newId } from '../utils/id';
 import { nowISO } from '../utils/date';
@@ -104,7 +104,7 @@ export function makeIncidentService(
 
     async remove(actor, id) {
       // Append-only: only admin/director may delete an incident.
-      if (actor.role !== 'admin' && actor.role !== 'director') {
+      if (!isOversight(actor)) {
         throw new ForbiddenError('Only admin or director can delete an incident');
       }
       const existing = await incidentRepo.findById(id);

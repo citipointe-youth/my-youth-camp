@@ -12,6 +12,7 @@ import type { Person } from '../core/entities/person';
 import { isRegistrant, isCamper } from '../core/entities/person';
 import { canAccessPerson } from './person.service';
 import { getCachedDashboard, setCachedDashboard } from './dashboard-cache';
+import { isOversight } from './access-control';
 
 export { invalidateDashboardCache } from './dashboard-cache';
 
@@ -135,7 +136,7 @@ export function makeDashboardService(
           accommodationSummary,
         };
 
-        if (actor.role === 'admin' || actor.role === 'director') {
+        if (isOversight(actor)) {
           const churches = await churchRepo.findAll();
           const breakdown = churches.map((ch) => {
             const churchRegs = scoped.filter((p) => p.churchId === ch.id);

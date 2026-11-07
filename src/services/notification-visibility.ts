@@ -1,5 +1,6 @@
 import type { Notification } from '../core/entities/notification';
 import type { Actor } from '../core/entities/user';
+import { isOversight } from './access-control';
 
 /**
  * Can this actor see this notification right now?
@@ -48,19 +49,19 @@ export function canSeeNotification(
 
   // Leaders-only notices (e.g. incident alerts) never reach church/firstAid, whatever
   // the scope — their bodies can describe a minor.
-  if (n.leadersOnly && actor.role !== 'zoneLeader' && actor.role !== 'director' && actor.role !== 'admin') {
+  if (n.leadersOnly && actor.role !== 'zoneLeader' && !isOversight(actor)) {
     return false;
   }
 
   if (n.scope === 'camp') return true;
 
   if (n.scope === 'zone') {
-    if (actor.role === 'admin' || actor.role === 'director') return true;
+    if (isOversight(actor)) return true;
     return actor.zone != null && n.zone === actor.zone;
   }
 
   if (n.scope === 'church') {
-    if (actor.role === 'admin' || actor.role === 'director') return true;
+    if (isOversight(actor)) return true;
     return actor.churchId != null && n.churchId === actor.churchId;
   }
 

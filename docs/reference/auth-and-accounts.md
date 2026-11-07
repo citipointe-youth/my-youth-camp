@@ -108,7 +108,7 @@ existing pair's passwords, and without it surviving new-year rollover. Backend +
 > dual-login row until then.
 
 ### It needed almost no new RBAC — `genderScope: null` already means "see both"
-`canAccessPerson` (`person.service.ts`) only narrows by gender when `actor.genderScope` is
+`canAccessPerson` (`access-control.ts` since A1; re-exported from `person.service.ts`) only narrows by gender when `actor.genderScope` is
 truthy; capabilities (`checkin:write`, `note:write`, …) are granted by `role:'church'` alone,
 never by gender scope. So the dual login is just a normal `role:'church'` user with
 `genderScope: null` — every read/write path already does the right thing for it with **zero**
